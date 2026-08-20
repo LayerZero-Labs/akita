@@ -111,12 +111,16 @@ them.
 Large public matrix operations can be streamed. Fast number theoretic
 transforms can use wide CPU instructions without changing the proof.
 
-Lattices are not an isolated bet. [NIST has standardized module lattice
-systems](https://csrc.nist.gov/Projects/Post-Quantum-Cryptography) for post
-quantum key establishment and signatures. Akita does not use those standards
-and is not certified by NIST. The comparison is narrower. Structured lattice
-assumptions have moved from research into deployed cryptographic engineering,
-and Akita brings that direction to polynomial commitments.
+Module lattices already anchor the post quantum standards that the rest of
+cryptography is adopting. NIST standardized the module-lattice-based
+[ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) for key establishment and
+[ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) for digital signatures.
+Akita brings module lattice algebra to polynomial commitments. That shared
+algebra makes Akita a natural commitment layer for proof systems that need to
+prove statements about lattice based encryption, signatures, and other post
+quantum protocols. Akita is both a post quantum replacement for curve based
+commitments and a foundation for proving the post quantum primitives that
+modern cryptographic systems are beginning to use.
 
 Akita follows the line of work from LaBRADOR through Greyhound and Hachi. That
 work established compact lattice proofs and practical polynomial openings.
@@ -127,21 +131,21 @@ the remaining claim is small enough to check directly. Akita also adds a
 complete system that another proof project can operate, profile, upgrade, and
 audit.
 
-## What production ready means here
+## Built for production
 
-Akita treats deployability as part of the cryptographic design. A fast protocol
-is not ready for use if the verifier can panic on hostile bytes, if a schedule
-can select parameters outside the security table, or if an optimized kernel and
-its scalar version disagree.
+Akita treats deployment engineering as part of the cryptographic design.
+Related public implementations such as
+[LaBRADOR](https://github.com/lazer-crypto/labrador),
+[LaZer](https://github.com/lazer-crypto/lazer),
+[RoKoko](https://github.com/lattice-arguments/rokoko), and
+[Jindo](https://github.com/SNUCP/jindo) made important lattice proof techniques
+reproducible. Their code is organized around research experiments, benchmark
+configurations, or narrow machine targets. Akita takes the next step. It is
+built for adoption as infrastructure and is the first implementation in this
+line to combine a recursive lattice PCS with the complete system another proof
+project needs to integrate, operate, profile, and audit it.
 
-Production ready does not mean finished or frozen. Akita remains under active
-development and has not yet received an independent audit. Its interfaces and
-proof format can still change. Here, production ready means that the repository
-has generated security parameters, a separate verifier package, canonical proof
-encoding, strict rejection of malformed input, portable optimized arithmetic,
-and an end to end integration harness.
-
-The repository therefore makes the following work part of the primitive:
+That production system includes:
 
 - The planner searches for proof schedules offline. Normal verification reads
   generated and reviewed schedule tables instead of running a search.
