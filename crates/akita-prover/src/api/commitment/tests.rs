@@ -86,8 +86,8 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
     )
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
-    let d_key = params.open.matrix.sis_table_key();
-    params.open.matrix = OpenCommitMatrixParams::new_unchecked(
+    let d_key = params.open().matrix.sis_table_key();
+    params.open_matrix = OpenCommitMatrixParams::new_unchecked(
         d_key.policy,
         d_key.table_digest,
         d_key.modulus_profile,
@@ -97,9 +97,9 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         D,
     );
     let commit_only_fields = akita_types::commit_only_setup_field_elements(
-        &params.inner.matrix,
-        &params.outer.matrix,
-        params.outer_slice_count,
+        &params.inner().matrix,
+        &params.outer().matrix,
+        params.outer_slice_count(),
     )
     .unwrap();
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
@@ -126,20 +126,20 @@ fn sliced_commit_params() -> CommittedGroupParams {
         1,
         SparseChallengeConfig::pm1_only(1),
     );
-    params.outer_slice_count = akita_types::CommitmentSliceCount::FOUR;
+    params.own_group_mut().profile.outer_slice_count = akita_types::CommitmentSliceCount::FOUR;
     params.with_decomp(2, 16, 1, 1, 1).unwrap()
 }
 
 fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
-    let key = params.outer.matrix.sis_table_key();
-    params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let key = params.outer().matrix.sis_table_key();
+    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         key.policy,
         key.table_digest,
         key.modulus_profile,
-        params.outer.matrix.output_rank(),
+        params.outer().matrix.output_rank(),
         input_width,
         key.coeff_linf_bound,
-        params.outer.matrix.ring_dimension(),
+        params.outer().matrix.ring_dimension(),
     );
 }
 
@@ -151,14 +151,15 @@ fn commitment_request_binds_slice_count_and_exact_b_width() {
         .expect("canonical sliced geometry");
 
     let mut wrong_slice_count = params.clone();
-    wrong_slice_count.outer_slice_count = akita_types::CommitmentSliceCount::ONE;
+    wrong_slice_count.own_group_mut().profile.outer_slice_count =
+        akita_types::CommitmentSliceCount::ONE;
     assert!(matches!(
         wrong_slice_count.validate_commitment_request(0, 1),
         Err(AkitaError::InvalidSetup(_))
     ));
 
     let mut wrong_width = params.clone();
-    set_outer_width(&mut wrong_width, params.outer.matrix.input_width() + 1);
+    set_outer_width(&mut wrong_width, params.outer().matrix.input_width() + 1);
     assert!(matches!(
         wrong_width.validate_commitment_request(0, 1),
         Err(AkitaError::InvalidSetup(_))
@@ -179,11 +180,11 @@ fn commitment_request_binds_polynomial_count_in_both_directions() {
 
     let mut two_polynomials = one_polynomial.clone();
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
-        two_polynomials.outer_slice_count,
-        two_polynomials.blocks.live_blocks,
+        two_polynomials.outer_slice_count(),
+        two_polynomials.blocks().live_blocks,
         2,
-        two_polynomials.inner.matrix.output_rank(),
-        two_polynomials.outer.digits.num_digits,
+        two_polynomials.inner().matrix.output_rank(),
+        two_polynomials.outer().digits.num_digits,
         two_polynomials.role_dims().d_a(),
         two_polynomials.role_dims().d_b(),
     )
@@ -398,7 +399,7 @@ fn commitment_params_for_slice_count(
         1,
         SparseChallengeConfig::pm1_only(1),
     );
-    params.outer_slice_count = slice_count;
+    params.own_group_mut().profile.outer_slice_count = slice_count;
     params
         .with_decomp(2, 16, slice_fixture_num_digits_inner(), 1, 1)
         .expect("unsliced commitment geometry")
@@ -421,16 +422,16 @@ fn commit_unsliced_reference(
         prepared,
         views,
         plan,
-        params.blocks.live_blocks,
-        params.outer.digits.num_digits,
-        params.outer.digits.log_basis,
+        params.blocks().live_blocks,
+        params.outer().digits.num_digits,
+        params.outer().digits.log_basis,
     )?;
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         akita_types::CommitmentSliceCount::ONE,
-        params.blocks.live_blocks,
+        params.blocks().live_blocks,
         polys.len(),
-        params.inner.matrix.output_rank(),
-        params.outer.digits.num_digits,
+        params.inner().matrix.output_rank(),
+        params.outer().digits.num_digits,
         D,
         D,
     )?;
@@ -442,7 +443,7 @@ fn commit_unsliced_reference(
     for (_, digits) in &prepared_polynomials {
         reference_b_input.extend_from_slice(digits.typed_planes::<D>()?);
     }
-    if reference_b_input.len() != params.outer.matrix.input_width() {
+    if reference_b_input.len() != params.outer().matrix.input_width() {
         return Err(AkitaError::InvalidSetup(
             "unsliced reference B input width mismatch".into(),
         ));
@@ -460,12 +461,12 @@ fn commit_unsliced_reference(
         ));
     }
 
-    let n_b = params.outer.matrix.output_rank();
+    let n_b = params.outer().matrix.output_rank();
     let reference_b_image = backend.digit_rows::<D>(
         prepared,
         n_b,
         &reference_b_input,
-        params.outer.digits.log_basis,
+        params.outer().digits.log_basis,
     )?;
     let production_b_image = commit_outer_slices::<F, _, D>(
         backend,
@@ -473,7 +474,7 @@ fn commit_unsliced_reference(
         n_b,
         prepared_polynomials.iter().map(|(_, digits)| digits),
         &geometry,
-        params.outer.digits.log_basis,
+        params.outer().digits.log_basis,
     )?;
     if production_b_image != reference_b_image {
         return Err(AkitaError::InvalidSetup(
@@ -483,7 +484,7 @@ fn commit_unsliced_reference(
 
     let source = RingVec::from_ring_elems(&reference_b_image);
     let compression_plan = CompressionChainPlan::for_complete_source(
-        params.outer.matrix.sis_table_key().modulus_profile,
+        params.outer().matrix.sis_table_key().modulus_profile,
         source.coeff_len(),
     )?;
     let (mut outputs, _) = execute_compression_chains(
@@ -597,12 +598,12 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
             .complete_source_coefficients(
-                sliced_params.outer.matrix.output_rank(),
-                sliced_params.outer.matrix.ring_dimension(),
+                sliced_params.outer().matrix.output_rank(),
+                sliced_params.outer().matrix.ring_dimension(),
             )
             .expect("complete source coefficients");
         let plan = CompressionChainPlan::for_complete_source(
-            sliced_params.outer.matrix.sis_table_key().modulus_profile,
+            sliced_params.outer().matrix.sis_table_key().modulus_profile,
             source_coefficients,
         )
         .expect("real compression plan");
@@ -617,34 +618,35 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     const NUM_VARS: usize = 10;
     let canonical = commitment_params_for_slice_count(akita_types::CommitmentSliceCount::ONE);
     let mut packing_plan = canonical.clone();
-    packing_plan.opening_method = OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
+    packing_plan.own_group_mut().opening.opening_method =
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
     let group = PolynomialGroupLayout::new(NUM_VARS, 1);
     let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
         group,
 
         blocks: akita_types::BlockGeometry::new(
-            params.blocks.live_ring_elements_per_claim,
-            params.blocks.positions_per_block,
-            params.blocks.live_blocks,
+            params.blocks().live_ring_elements_per_claim,
+            params.blocks().positions_per_block,
+            params.blocks().live_blocks,
         ),
 
-        outer_slice_count: params.outer_slice_count,
+        outer_slice_count: params.outer_slice_count(),
         inner: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(
-                params.inner.digits.log_basis,
-                params.inner.digits.num_digits,
+                params.inner().digits.log_basis,
+                params.inner().digits.num_digits,
             ),
-            params.inner.matrix,
+            params.inner().matrix,
         ),
         outer: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(
-                params.outer.digits.log_basis,
-                params.outer.digits.num_digits,
+                params.outer().digits.log_basis,
+                params.outer().digits.num_digits,
             ),
-            params.outer.matrix,
+            params.outer().matrix,
         ),
     };
     assert_eq!(

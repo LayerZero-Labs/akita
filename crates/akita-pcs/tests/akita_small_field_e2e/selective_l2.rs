@@ -6,9 +6,9 @@ fn fp32_l2_onehot_poly(
 ) -> akita_prover::OneHotPoly<fp32::Field, u8> {
     let onehot_k = 256;
     let total_field = params
-        .blocks
+        .blocks()
         .live_blocks
-        .checked_mul(params.blocks.positions_per_block)
+        .checked_mul(params.blocks().positions_per_block)
         .and_then(|count| count.checked_mul(params.d_a()))
         .expect("fp32 L2 fixture length");
     assert_eq!(total_field % onehot_k, 0);
@@ -66,20 +66,20 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .iter()
             .find(|step| {
                 matches!(
-                    step.params.inner.matrix.security_route(),
+                    step.params.inner().matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             })
             .expect("schedule-selected small-field L2 fold");
         assert_eq!(l2_step.params.d_a(), 128);
         assert_eq!(
-            l2_step.params.fold_challenge_config,
+            l2_step.params.fold_challenge_config(),
             akita_challenges::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
         );
         assert_eq!(
             akita_challenges::selective_l2_operator_norm_rejection(
                 128,
-                &l2_step.params.fold_challenge_config,
+                &l2_step.params.fold_challenge_config(),
             ),
             Some(akita_challenges::OperatorNormRejection::D128_SELECTIVE_L2),
         );
@@ -87,7 +87,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             response_l2_sq_cap,
             norm_proof_shape,
             ..
-        } = l2_step.params.inner.matrix.security_route()
+        } = l2_step.params.inner().matrix.security_route()
         else {
             unreachable!("selected route checked above")
         };

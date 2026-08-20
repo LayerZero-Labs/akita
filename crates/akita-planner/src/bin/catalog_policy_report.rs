@@ -84,7 +84,7 @@ pub(super) fn catalog_policy_signature(
     );
     for (level, params, input_witness_len, output_witness_len) in nonterminal {
         let eor = if matches!(
-            params.opening_method,
+            params.opening_method(),
             akita_types::OpeningMethod::EvaluationTrace
         ) {
             let final_group = akita_types::PolynomialGroupLayout::singleton(
@@ -115,11 +115,11 @@ pub(super) fn catalog_policy_signature(
             params.witness_chunk.num_chunks,
             params.witness_chunk.num_activated_levels,
             opening_policy_signature(
-                params.opening_method,
+                params.opening_method(),
                 params.source_encoding,
                 spec.policy.claim_ext_degree,
                 params.d_a(),
-                params.inner.matrix.security_route(),
+                params.inner().matrix.security_route(),
             )?,
         )
         .map_err(|error| format!("write catalog policy signature: {error}"))?;

@@ -542,7 +542,6 @@ impl GeneratedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
-            group,
             payload_mode,
             source_encoding: CommittedSourceEncoding::for_producer(
                 opening_method,
@@ -551,52 +550,59 @@ impl GeneratedGroup {
                 producer_num_vars,
                 is_root,
             ),
-            opening_method,
-            inner: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
-                inner_commit_matrix,
-            ),
-            outer: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(log_basis_outer, num_digits_outer),
-                OuterCommitMatrixParams::try_new(
-                    sis_policy,
-                    policy.sis_table_digest,
-                    sis_modulus_profile,
-                    n_b,
-                    outer_width,
-                    b_bucket,
-                    dimensions.d_b(),
-                )?,
-            ),
-            open: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(log_basis_open, num_digits_open),
-                OpenCommitMatrixParams::try_new(
-                    sis_policy,
-                    policy.sis_table_digest,
-                    sis_modulus_profile,
-                    n_d,
-                    d_matrix_width,
-                    d_bucket,
-                    dimensions.d_d(),
-                )?,
-            ),
-
-            blocks: akita_types::BlockGeometry::new(
-                num_live_ring_elements_per_claim,
-                num_positions_per_block,
-                num_live_blocks,
-            ),
-
-            outer_slice_count,
-            fold_challenge_config: ring_challenge_cfg,
-            num_digits_fold,
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-            // Canonical order: an incoming prefix leads, then the frozen groups.
+            open_matrix: OpenCommitMatrixParams::try_new(
+                sis_policy,
+                policy.sis_table_digest,
+                sis_modulus_profile,
+                n_d,
+                d_matrix_width,
+                d_bucket,
+                dimensions.d_d(),
+            )?,
+            // Canonical order: an incoming prefix leads, then the frozen
+            // groups, then this fold's own new group last.
             groups: setup_prefix
                 .into_iter()
                 .chain(precommitted_groups)
+                .chain(std::iter::once(GroupOpenPhaseParams {
+                    profile: akita_types::GroupCommitPhaseParams {
+                        version: akita_types::GroupCommitPhaseParams::VERSION,
+                        group,
+                        blocks: akita_types::BlockGeometry::new(
+                            num_live_ring_elements_per_claim,
+                            num_positions_per_block,
+                            num_live_blocks,
+                        ),
+                        outer_slice_count,
+                        inner: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                            inner_commit_matrix,
+                        ),
+                        outer: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(log_basis_outer, num_digits_outer),
+                            OuterCommitMatrixParams::try_new(
+                                sis_policy,
+                                policy.sis_table_digest,
+                                sis_modulus_profile,
+                                n_b,
+                                outer_width,
+                                b_bucket,
+                                dimensions.d_b(),
+                            )?,
+                        ),
+                    },
+                    opening: akita_types::GroupOpeningPlan {
+                        opening_method,
+                        fold_challenge_config: ring_challenge_cfg,
+                        log_basis_open,
+                        num_digits_open,
+                        num_digits_fold,
+                    },
+                    setup_natural_len: None,
+                }))
                 .collect(),
         };
         Ok(params)

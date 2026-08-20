@@ -427,7 +427,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
     for params in candidates {
         let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
-        let score = (setup_score, params.outer_slice_count.get());
+        let score = (setup_score, params.outer_slice_count().get());
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)

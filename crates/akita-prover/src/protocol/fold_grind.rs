@@ -642,10 +642,11 @@ mod tests {
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        params.own_group_mut().opening.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
         let challenges =
@@ -687,7 +688,7 @@ mod tests {
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
 
@@ -695,7 +696,7 @@ mod tests {
             SparseChallengeConfig::pm1_only(0),
             SparseChallengeConfig::pm1_only(1),
         ] {
-            params.fold_challenge_config = config;
+            params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
             assert!(draw_group_fold_challenges::<F, F, _>(
                 &mut draw,

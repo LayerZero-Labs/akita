@@ -32,13 +32,13 @@ pub(super) fn level_candidates(
             level_setup_field_elements(&params)?,
             outer_payload_coeffs,
             params
-                .outer
+                .outer()
                 .matrix
                 .output_rank()
                 .checked_mul(params.role_dims().d_b())
                 .ok_or_else(|| AkitaError::InvalidSetup("B output dimension overflow".into()))?,
             params
-                .open
+                .open()
                 .matrix
                 .output_rank()
                 .checked_mul(params.role_dims().d_d())
@@ -68,18 +68,18 @@ pub(super) fn level_candidates(
                 best_params.payload_mode == candidate_params.payload_mode
                     && best_params.role_dims() == candidate_params.role_dims()
                     && matches!(
-                        best_params.opening_method,
+                        best_params.opening_method(),
                         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
                     ) == matches!(
-                        candidate_params.opening_method,
+                        candidate_params.opening_method(),
                         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
                     )
                     // This PR emits one L2 split and norm-proof shape per DP
                     // state. Keep Linf and L2 frontiers separate because these
                     // coordinates do not price the L2 norm payload.
-                    && std::mem::discriminant(&best_params.inner.matrix.security_route())
+                    && std::mem::discriminant(&best_params.inner().matrix.security_route())
                         == std::mem::discriminant(
-                            &candidate_params.inner.matrix.security_route(),
+                            &candidate_params.inner().matrix.security_route(),
                         )
                     && best_next_witness_len == candidate_next_witness_len
                     && best_source_moment == candidate_source_moment

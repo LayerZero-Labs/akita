@@ -21,9 +21,9 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     println!(
         "  L0: {:?}, ranks={}/{}/{}, input={}, output={}",
         schedule.root.params.role_dims(),
-        schedule.root.params.inner.matrix.output_rank(),
-        schedule.root.params.outer.matrix.output_rank(),
-        schedule.root.params.open.matrix.output_rank(),
+        schedule.root.params.inner().matrix.output_rank(),
+        schedule.root.params.outer().matrix.output_rank(),
+        schedule.root.params.open().matrix.output_rank(),
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     );
@@ -32,9 +32,9 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
             "  L{}: {:?}, ranks={}/{}/{}, input={}, output={}",
             index + 1,
             fold.params.role_dims(),
-            fold.params.inner.matrix.output_rank(),
-            fold.params.outer.matrix.output_rank(),
-            fold.params.open.matrix.output_rank(),
+            fold.params.inner().matrix.output_rank(),
+            fold.params.outer().matrix.output_rank(),
+            fold.params.open().matrix.output_rank(),
             fold.input_witness_len,
             fold.output_witness_len,
         );

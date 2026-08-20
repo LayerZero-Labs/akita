@@ -43,7 +43,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         assert_eq!(actual.terminal, expected_terminal);
         assert_eq!(actual.folds, expected_folds);
         assert!(actual.folds.iter().any(|(params, _)| matches!(
-            params.inner.matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )));
     }

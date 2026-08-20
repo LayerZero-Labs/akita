@@ -474,7 +474,7 @@ impl RingRelationProver {
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(
-            lp.open.digits.log_basis,
+            lp.open().digits.log_basis,
             "for i8 prover opening decomposition",
         )?;
         validate_chunked_witness_cfg(&lp)?;
@@ -581,7 +581,7 @@ impl RingRelationProver {
         // Extracted level numbers for the D-role and fused-y operations below;
         // the kernels inside the dispatch arms must not read schedule types.
         let d_log_basis = lp.shared_d_digit_log_basis();
-        let d_row_len = lp.open.matrix.output_rank();
+        let d_row_len = lp.open().matrix.output_rank();
         drop(prepare_span);
 
         // D-role operations: decompose the folded opening rows into `e_hat`

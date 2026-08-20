@@ -454,7 +454,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let claim_state = if matches!(
-        lp.opening_method,
+        lp.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
         if proof.extension_opening_reduction.is_some() {

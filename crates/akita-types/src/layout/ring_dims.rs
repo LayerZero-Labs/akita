@@ -212,7 +212,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
     // The shared D matrix is stored once, so it cannot disagree with itself.
     let root = &schedule.root.params;
     let final_params = &root;
-    let shared_d = root.open.matrix.ring_dimension();
+    let shared_d = root.open().matrix.ring_dimension();
     for (group_index, group) in root.precommitted_groups().iter().enumerate() {
         group.profile.validate_frozen_precommit(
             group
@@ -223,7 +223,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
                 .field_bits(),
         )?;
         group.validate()?;
-        if group.opening.log_basis_open != final_params.open.digits.log_basis {
+        if group.opening.log_basis_open != final_params.open().digits.log_basis {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
             )));
@@ -266,9 +266,9 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
 
 pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
     let dims = lp.role_dims();
-    let a_ring = lp.inner.matrix.ring_dimension();
-    let b_ring = lp.outer.matrix.sis_table_key().ring_dimension as usize;
-    let d_ring = lp.open.matrix.sis_table_key().ring_dimension as usize;
+    let a_ring = lp.inner().matrix.ring_dimension();
+    let b_ring = lp.outer().matrix.sis_table_key().ring_dimension as usize;
+    let d_ring = lp.open().matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {
         return Err(AkitaError::InvalidSetup(format!(
             "A-key ring dimension {a_ring} disagrees with role_dims.d_a={}",
@@ -287,7 +287,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
             dims.opening
         )));
     }
-    lp.fold_challenge_config
+    lp.fold_challenge_config()
         .validate_for_ring_dim(lp.d_a())
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(())

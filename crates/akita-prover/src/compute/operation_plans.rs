@@ -50,10 +50,10 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
     pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
-            n_a: params.inner.matrix.output_rank(),
-            num_positions_per_block: params.blocks.positions_per_block,
-            num_digits_inner: params.inner.digits.num_digits,
-            log_basis_inner: params.inner.digits.log_basis,
+            n_a: params.inner().matrix.output_rank(),
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_digits_inner: params.inner().digits.num_digits,
+            log_basis_inner: params.inner().digits.log_basis,
         }
     }
 

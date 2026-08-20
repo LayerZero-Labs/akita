@@ -242,7 +242,7 @@ where
         .into_schedule();
     let root_d = layout.d_a();
     let k = 256;
-    let total_ring = layout.blocks.live_blocks * layout.blocks.positions_per_block;
+    let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(
         total_ring * root_d,
         1usize << poly_nv,
@@ -488,7 +488,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             .expect("batched layout");
     let root_d = layout.d_a();
     let k = 256;
-    let total_ring = layout.blocks.live_blocks * layout.blocks.positions_per_block;
+    let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(total_ring * root_d, 1usize << poly_nv);
     let total_chunks = total_ring * root_d / k;
 

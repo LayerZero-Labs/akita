@@ -238,41 +238,53 @@ impl RecursiveCandidateContext<'_, '_> {
                 continue;
             };
             candidates.push(CommittedGroupParams {
-                // A recursive candidate commits one polynomial over the
-                // witness arriving at its level.
-                group: akita_types::PolynomialGroupLayout::singleton(
-                    akita_types::padded_boolean_opening_vars(request.current_witness_len)?,
-                ),
                 payload_mode: request.payload_mode,
                 source_encoding,
-                opening_method: request.opening.method(),
-                inner: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(request.log_basis_inner, core.num_digits_inner),
-                    core.inner_commit_matrix,
-                ),
-                outer: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(request.log_basis_open, core.num_digits_open),
-                    outer_commit_matrix,
-                ),
-                open: akita_types::RoleParams::new(
-                    akita_types::GadgetDigits::new(request.log_basis_open, core.num_digits_open),
-                    core.open_commit_matrix,
-                ),
-                blocks: akita_types::BlockGeometry::new(
-                    core.num_ring_elems,
-                    core.num_positions_per_block,
-                    core.num_live_blocks,
-                ),
-
-                outer_slice_count,
-                fold_challenge_config: request.opening.challenge_config(),
-
-                num_digits_fold: core.num_digits_fold,
                 witness_chunk: crate::policy::witness_chunk_at_level(
                     request.policy,
                     request.fold_level,
                 ),
-                groups: Vec::new(),
+                open_matrix: core.open_commit_matrix,
+                // A recursive candidate consumes no frozen groups, so its own
+                // new group is the whole list.
+                groups: vec![akita_types::GroupOpenPhaseParams {
+                    profile: akita_types::GroupCommitPhaseParams {
+                        version: akita_types::GroupCommitPhaseParams::VERSION,
+                        // It commits one polynomial over the witness arriving at
+                        // its level.
+                        group: akita_types::PolynomialGroupLayout::singleton(
+                            akita_types::padded_boolean_opening_vars(request.current_witness_len)?,
+                        ),
+                        blocks: akita_types::BlockGeometry::new(
+                            core.num_ring_elems,
+                            core.num_positions_per_block,
+                            core.num_live_blocks,
+                        ),
+                        outer_slice_count,
+                        inner: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(
+                                request.log_basis_inner,
+                                core.num_digits_inner,
+                            ),
+                            core.inner_commit_matrix,
+                        ),
+                        outer: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(
+                                request.log_basis_open,
+                                core.num_digits_open,
+                            ),
+                            outer_commit_matrix,
+                        ),
+                    },
+                    opening: akita_types::GroupOpeningPlan {
+                        opening_method: request.opening.method(),
+                        fold_challenge_config: request.opening.challenge_config(),
+                        log_basis_open: request.log_basis_open,
+                        num_digits_open: core.num_digits_open,
+                        num_digits_fold: core.num_digits_fold,
+                    },
+                    setup_natural_len: None,
+                }],
             });
         }
         Ok(candidates)
@@ -381,15 +393,15 @@ fn attach_recursive_setup_prefix(
         let prefix_d_width =
             prefix.d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
         let total_d_width = candidate_params
-            .open
+            .open()
             .matrix
             .input_width()
             .checked_add(prefix_d_width)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
             })?;
-        candidate_params.open.matrix = OpenCommitMatrixParams::try_new_with_min_rank(
-            candidate_params.open.matrix.sis_table_key(),
+        candidate_params.open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+            candidate_params.open().matrix.sis_table_key(),
             total_d_width,
         )?;
     }
@@ -413,7 +425,7 @@ fn finalize_recursive_level_candidate(
     };
     let score = layout_candidate_score(
         next_witness_len,
-        candidate_params.blocks.live_blocks,
+        candidate_params.blocks().live_blocks,
         search.num_chunks,
     )?;
     Ok(Some((score, candidate_params, next_witness_len)))
@@ -621,7 +633,7 @@ fn append_selective_l2_candidates(
     base_slices.retain(|candidate| {
         linf_slices
             .iter()
-            .any(|linf| linf.outer_slice_count == candidate.outer_slice_count)
+            .any(|linf| linf.outer_slice_count() == candidate.outer_slice_count())
     });
     for setup_prefix in &search.setup_prefixes {
         let mut sliced = Vec::new();

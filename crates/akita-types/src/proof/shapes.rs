@@ -183,12 +183,12 @@ pub fn canonical_base_field_proof_shape(
     ) -> Result<LevelProofShape, AkitaError> {
         let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
         let basis = 1usize
-            .checked_shl(params.open.digits.log_basis)
+            .checked_shl(params.open().digits.log_basis)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
             })?;
         let (stage1_stages, stage1_norm) = DigitRangePlan::new(basis)?
-            .proof_shapes_for_route(rounds, params.inner.matrix.security_route())?;
+            .proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
         let next_witness_binding = match successor {
             Some(next) => NextWitnessBindingShape::OuterPayload {
                 coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),

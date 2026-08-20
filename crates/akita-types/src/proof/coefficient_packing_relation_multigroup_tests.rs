@@ -15,10 +15,10 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     );
     let mut params = base.params.clone();
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
-    frozen.groups_mut().clear();
-    frozen.inner.digits.log_basis = 9;
-    let inner = frozen.inner.matrix;
-    frozen.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+    frozen.set_precommitted_groups(Vec::new());
+    frozen.own_group_mut().profile.inner.digits.log_basis = 9;
+    let inner = frozen.inner().matrix;
+    frozen.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().unwrap().table_digest,
         inner.sis_modulus_profile(),
@@ -27,8 +27,8 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         2,
         inner.ring_dimension(),
     );
-    let outer = frozen.outer.matrix;
-    frozen.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = frozen.outer().matrix;
+    frozen.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -45,9 +45,9 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             opening_method: OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64,
             },
-            fold_challenge_config: params.fold_challenge_config,
-            log_basis_open: params.open.digits.log_basis,
-            num_digits_open: params.open.digits.num_digits,
+            fold_challenge_config: params.fold_challenge_config(),
+            log_basis_open: params.open().digits.log_basis,
+            num_digits_open: params.open().digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
         },
     }]);
@@ -59,7 +59,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<F>(params.open.digits.log_basis),
+        r_decomp_levels::<F>(params.open().digits.log_basis),
     )
     .unwrap();
     let relation_address = RelationAddressGeometry::for_relation(
@@ -85,10 +85,10 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         vec![1, 0]
     );
 
-    let config = params.fold_challenge_config;
+    let config = params.fold_challenge_config();
     let make_challenges = |claims: usize| {
         Challenges::from_sparse(
-            (0..claims * params.blocks.live_blocks)
+            (0..claims * params.blocks().live_blocks)
                 .map(|challenge| SparseChallenge {
                     positions: (0..config.weight())
                         .map(|term| ((term + challenge) % 64) as u32)
@@ -99,7 +99,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
                         .collect(),
                 })
                 .collect(),
-            params.blocks.live_blocks,
+            params.blocks().live_blocks,
             claims,
         )
         .unwrap()

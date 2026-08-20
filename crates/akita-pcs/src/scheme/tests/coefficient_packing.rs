@@ -28,7 +28,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     assert_eq!(PackingCfg::EXT_DEGREE, 4);
     let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
-    } = root.opening_method
+    } = root.opening_method()
     else {
         panic!("synthetic root must use coefficient packing");
     };
@@ -64,7 +64,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         successor.input_witness_len
     );
     assert!(matches!(
-        successor.params.opening_method,
+        successor.params.opening_method(),
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64
         }
@@ -130,7 +130,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let root = &row.schedule().root.params;
             let OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
-            } = root.opening_method
+            } = root.opening_method()
             else {
                 panic!("test catalog did not select coefficient packing");
             };
@@ -149,9 +149,9 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .setup_prefix()
                 .is_some());
             assert!(
-                root.open.matrix.input_width()
-                    < root.open.digits.num_digits
-                        * root.blocks.live_blocks
+                root.open().matrix.input_width()
+                    < root.open().digits.num_digits
+                        * root.blocks().live_blocks
                         * root.d_a().div_ceil(root.role_dims().d_d()),
                 "the fixed row must shrink the shared D input"
             );
@@ -228,28 +228,28 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .expanded
                         .shared_matrix()
                         .ring_view::<D_A>(
-                            root.inner.matrix.output_rank(),
-                            root.inner.matrix.input_width(),
+                            root.inner().matrix.output_rank(),
+                            root.inner().matrix.input_width(),
                         )
                         .unwrap();
                     let mut source_digits = Vec::new();
                     for coefficients in evaluations
                         .chunks_exact(D_A)
-                        .take(root.blocks.positions_per_block)
+                        .take(root.blocks().positions_per_block)
                     {
                         source_digits.extend(
                             CyclotomicRing::<PackingField, D_A>::from_coefficients(
                                 coefficients.try_into().unwrap(),
                             )
                             .balanced_decompose_pow2_i8(
-                                root.inner.digits.num_digits,
-                                root.inner.digits.log_basis,
+                                root.inner().digits.num_digits,
+                                root.inner().digits.log_basis,
                             ),
                         );
                     }
                     let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
-                    let output_rank = root.inner.matrix.output_rank();
-                    assert_eq!(hint_rows.len(), output_rank * root.blocks.live_blocks);
+                    let output_rank = root.inner().matrix.output_rank();
+                    assert_eq!(hint_rows.len(), output_rank * root.blocks().live_blocks);
                     for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
                         let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
                             CyclotomicRing::zero(),

@@ -142,8 +142,8 @@ where
     let reduced_point = &padded_point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.blocks.positions_per_block,
-        layout.blocks.live_blocks,
+        layout.blocks().positions_per_block,
+        layout.blocks().live_blocks,
         basis,
     )
     .expect("opening point shape should match layout");
@@ -155,7 +155,7 @@ where
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.blocks.positions_per_block,
+            num_positions_per_block: layout.blocks().positions_per_block,
         },
     )
     .expect("evaluate_and_fold");

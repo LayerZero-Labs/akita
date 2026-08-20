@@ -30,25 +30,25 @@ fn relation_layout(
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    lp.inner.matrix = InnerCommitMatrixParams::new_unchecked(
-        lp.inner.matrix.security_policy(),
-        lp.inner
+    lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner().matrix.security_policy(),
+        lp.inner()
             .matrix
             .sis_table_key()
             .expect("test matrix is L infinity")
             .table_digest,
-        lp.inner.matrix.sis_modulus_profile(),
-        lp.inner.matrix.output_rank(),
-        lp.inner.matrix.input_width(),
+        lp.inner().matrix.sis_modulus_profile(),
+        lp.inner().matrix.output_rank(),
+        lp.inner().matrix.input_width(),
         2,
         lp.d_a(),
     );
-    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
-        lp.outer.matrix.security_policy(),
-        lp.outer.matrix.sis_table_key().table_digest,
-        lp.outer.matrix.sis_modulus_profile(),
-        lp.outer.matrix.output_rank(),
-        lp.outer.matrix.input_width(),
+    lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer().matrix.security_policy(),
+        lp.outer().matrix.sis_table_key().table_digest,
+        lp.outer().matrix.sis_modulus_profile(),
+        lp.outer().matrix.output_rank(),
+        lp.outer().matrix.input_width(),
         3,
         lp.d_a(),
     );
@@ -60,8 +60,8 @@ fn fold_challenge_config() -> SparseChallengeConfig {
 
 fn opening_point(lp: &CommittedGroupParams) -> RingOpeningPoint<F> {
     RingOpeningPoint {
-        position_weights: vec![F::zero(); lp.blocks.positions_per_block],
-        live_block_weights: vec![F::zero(); lp.blocks.live_blocks],
+        position_weights: vec![F::zero(); lp.blocks().positions_per_block],
+        live_block_weights: vec![F::zero(); lp.blocks().live_blocks],
     }
 }
 
@@ -77,12 +77,12 @@ fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("test params");
-    params.num_digits_fold = 3;
+    params.own_group_mut().opening.num_digits_fold = 3;
     params
 }
 
 fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
-    let total = lp.blocks.live_blocks * num_claims;
+    let total = lp.blocks().live_blocks * num_claims;
     Challenges::from_sparse(
         vec![
             SparseChallenge {
@@ -91,15 +91,15 @@ fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
             };
             total
         ],
-        lp.blocks.live_blocks,
+        lp.blocks().live_blocks,
         num_claims,
     )
     .expect("challenges")
 }
 
 fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
-    let config = lp.fold_challenge_config;
-    let sparse = (0..lp.blocks.live_blocks * num_claims)
+    let config = lp.fold_challenge_config();
+    let sparse = (0..lp.blocks().live_blocks * num_claims)
         .map(|_| SparseChallenge {
             positions: (0..config.weight())
                 .map(|position| position as u32)
@@ -110,7 +110,8 @@ fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenge
                 .collect(),
         })
         .collect();
-    Challenges::from_sparse(sparse, lp.blocks.live_blocks, num_claims).expect("packing challenges")
+    Challenges::from_sparse(sparse, lp.blocks().live_blocks, num_claims)
+        .expect("packing challenges")
 }
 
 fn evaluation_trace_openings(
@@ -168,7 +169,7 @@ fn chunk_test_level_params(
     )
     .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
     .expect("test params");
-    params.num_digits_fold = 3;
+    params.own_group_mut().opening.num_digits_fold = 3;
     params
 }
 
@@ -228,7 +229,7 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     // The shared r tail follows the unit's compact z, e, and t ranges.
     assert_eq!(resolved.r_range().start, unit.t_range().end);
     assert_eq!(unit.global_block_start(), 0);
-    assert_eq!(unit.num_live_blocks(), lp.blocks.live_blocks);
+    assert_eq!(unit.num_live_blocks(), lp.blocks().live_blocks);
 }
 
 #[test]
@@ -246,28 +247,28 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
             .segment_layout(&lp, None)
             .expect("layout");
         assert_eq!(layout.num_chunks_for_group(0), w);
-        let blocks_per_chunk = lp.blocks.live_blocks / w;
+        let blocks_per_chunk = lp.blocks().live_blocks / w;
 
         // Partitioned e/t lengths sum to the single-machine totals; z replicated.
         let e_sum: usize = layout.units().iter().map(|unit| unit.e_range().len()).sum();
         let t_sum: usize = layout.units().iter().map(|unit| unit.t_range().len()).sum();
         assert_eq!(
             e_sum,
-            lp.open.digits.num_digits * lp.blocks.live_blocks * num_claims * D
+            lp.open().digits.num_digits * lp.blocks().live_blocks * num_claims * D
         );
         assert_eq!(
             t_sum,
-            lp.outer.digits.num_digits
-                * lp.inner.matrix.output_rank()
-                * lp.blocks.live_blocks
+            lp.outer().digits.num_digits
+                * lp.inner().matrix.output_rank()
+                * lp.blocks().live_blocks
                 * num_claims
                 * D
         );
         for unit in layout.units() {
             assert_eq!(
                 unit.z_range().len(),
-                lp.blocks.positions_per_block
-                    * lp.inner.digits.num_digits
+                lp.blocks().positions_per_block
+                    * lp.inner().digits.num_digits
                     * lp.num_digits_fold()
                     * D
             );
@@ -286,7 +287,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         // Block windows tile [0, num_live_blocks).
         assert_eq!(
             layout.units().last().unwrap().global_block_start() + blocks_per_chunk,
-            lp.blocks.live_blocks
+            lp.blocks().live_blocks
         );
     }
 }
@@ -412,10 +413,10 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
             &precommit_lp,
         ),
         opening: crate::GroupOpeningPlan::evaluation_trace(
-            precommit_lp.fold_challenge_config,
-            precommit_lp.open.digits.log_basis,
-            precommit_lp.open.digits.num_digits,
-            precommit_lp.num_digits_fold,
+            precommit_lp.fold_challenge_config(),
+            precommit_lp.open().digits.log_basis,
+            precommit_lp.open().digits.num_digits,
+            precommit_lp.num_digits_fold(),
         ),
     };
     let mut multi_group_lp = lp;
@@ -452,7 +453,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
             CyclotomicRing::zero();
-            lp.open.matrix.output_rank()
+            lp.open().matrix.output_rank()
         ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
@@ -465,7 +466,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
     // With one chunk, authenticated group order gives one contiguous
     // `[z_g | e_g | t_g]` unit per group before the shared R tail.
     assert_eq!(layout.units().len(), num_groups);
-    let quotient_depth = r_decomp_levels::<F>(lp.open.digits.log_basis);
+    let quotient_depth = r_decomp_levels::<F>(lp.open().digits.log_basis);
     let quotient_coeff_len = layout
         .r_rows()
         .iter()
@@ -519,7 +520,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
             CyclotomicRing::zero();
-            lp.open.matrix.output_rank()
+            lp.open().matrix.output_rank()
         ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
@@ -658,7 +659,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             assert_eq!(&emitted[t_range], flatten_markers(expected_t).as_slice());
         }
     }
-    let quotient_depth = r_decomp_levels::<F>(lp.open.digits.log_basis);
+    let quotient_depth = r_decomp_levels::<F>(lp.open().digits.log_basis);
     for (row_index, row) in layout.r_rows().iter().enumerate() {
         for digit in 0..quotient_depth {
             for coefficient in 0..row.geometry().polynomial_modulus_dimension() {
@@ -688,20 +689,20 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("packing params");
-    lp.num_digits_fold = 3;
-    lp.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+    lp.own_group_mut().opening.num_digits_fold = 3;
+    lp.own_group_mut().opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    lp.fold_challenge_config =
+    lp.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
     certify_test_sis_bounds(&mut lp);
-    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
-        lp.open.matrix.security_policy(),
-        lp.open.matrix.sis_table_key().table_digest,
-        lp.open.matrix.sis_modulus_profile(),
-        lp.open.matrix.output_rank(),
+    lp.open_matrix = OpenCommitMatrixParams::new_unchecked(
+        lp.open().matrix.security_policy(),
+        lp.open().matrix.sis_table_key().table_digest,
+        lp.open().matrix.sis_modulus_profile(),
+        lp.open().matrix.output_rank(),
         8,
-        lp.open.matrix.coeff_linf_bound(),
+        lp.open().matrix.coeff_linf_bound(),
         PACK_D_D,
     );
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
@@ -713,14 +714,14 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
                 positions: Vec::new().into(),
                 coeffs: Vec::new().into(),
             };
-            lp.blocks.live_blocks
+            lp.blocks().live_blocks
         ],
-        lp.blocks.live_blocks,
+        lp.blocks().live_blocks,
         1,
     )
     .expect("structurally valid zero shell");
     assert!(CoefficientPackingChallenges::new(packing_geometry, zero_shell).is_err());
-    let config = lp.fold_challenge_config;
+    let config = lp.fold_challenge_config();
     let wrong_magnitude = Challenges::from_sparse(
         vec![
             SparseChallenge {
@@ -731,9 +732,9 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
                     .chain((1..config.weight()).map(|_| 1))
                     .collect(),
             };
-            lp.blocks.live_blocks
+            lp.blocks().live_blocks
         ],
-        lp.blocks.live_blocks,
+        lp.blocks().live_blocks,
         1,
     )
     .expect("structurally valid wrong shell");
@@ -769,8 +770,8 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     assert_eq!(unit.e_geometry().coordinate_plane_count(), 2);
     assert_eq!(unit.e_geometry().physical_coefficient_width(), 128);
 
-    let depth_open = lp.open.digits.num_digits;
-    let blocks = lp.blocks.live_blocks;
+    let depth_open = lp.open().digits.num_digits;
+    let blocks = lp.blocks().live_blocks;
     let role_subcolumns = packing_geometry.partial_base_field_width() / PACK_D_D;
     let source = (0..blocks * role_subcolumns * depth_open)
         .map(|index| marker::<PACK_D_D>(700 + index))

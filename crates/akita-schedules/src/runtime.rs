@@ -515,7 +515,7 @@ pub fn nonterminal_level_payload_bytes(
         }),
     )?;
     let eor = if matches!(
-        params.opening_method,
+        params.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
     ) {
         let final_group = PolynomialGroupLayout::singleton(
@@ -777,8 +777,10 @@ pub fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let quotient_depth =
-        akita_types::sis::compute_num_digits_field_width(field_bits, params.open.digits.log_basis);
+    let quotient_depth = akita_types::sis::compute_num_digits_field_width(
+        field_bits,
+        params.open().digits.log_basis,
+    );
     if !params.compression_sources_supported()? {
         return Ok(None);
     }

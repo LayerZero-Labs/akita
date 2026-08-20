@@ -378,7 +378,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             .map(|row| row.schedule().root.params.clone())
             .expect("layout");
         let root_d = layout.d_a();
-        let total_field = (layout.blocks.live_blocks * layout.blocks.positions_per_block)
+        let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
             .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -547,7 +547,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let layout =
             akita_batched_root_layout::<Cfg>(nv, SAME_POINT_ONEHOT_BATCH_SIZE).expect("layout");
         let root_d = layout.d_a();
-        let total_field = (layout.blocks.live_blocks * layout.blocks.positions_per_block)
+        let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
             .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;
@@ -743,7 +743,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let resolved = Cfg::resolve_schedule_selection(selection).expect("selected fp32 row");
         assert!(
             matches!(
-                resolved.schedule().root.params.opening_method,
+                resolved.schedule().root.params.opening_method(),
                 OpeningMethod::SubringCoefficientPacking { .. }
             ),
             "the shipped fp32 row must use coefficient packing at the root"
@@ -761,7 +761,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         {
             assert!(
                 matches!(
-                    step.params.opening_method,
+                    step.params.opening_method(),
                     OpeningMethod::SubringCoefficientPacking { .. }
                 ),
                 "every emitted early fp32 fold must use coefficient packing"
@@ -1065,17 +1065,18 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             .collect::<Vec<_>>();
         assert!(
             fold_params.iter().any(|params| {
-                params.blocks.live_ring_elements_per_claim % params.blocks.positions_per_block != 0
-                    && params.blocks.live_blocks
+                params.blocks().live_ring_elements_per_claim % params.blocks().positions_per_block
+                    != 0
+                    && params.blocks().live_blocks
                         == params
-                            .blocks
+                            .blocks()
                             .live_ring_elements_per_claim
-                            .div_ceil(params.blocks.positions_per_block)
+                            .div_ceil(params.blocks().positions_per_block)
             }),
             "fixture must cross a production fold with an exact partial final row"
         );
 
-        let total_field = (layout.blocks.live_blocks * layout.blocks.positions_per_block)
+        let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
             .checked_mul(root_d)
             .expect("total field size overflow");
         let total_chunks = total_field / ONEHOT_K;

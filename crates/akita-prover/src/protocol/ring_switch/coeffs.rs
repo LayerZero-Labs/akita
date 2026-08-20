@@ -327,7 +327,7 @@ where
 {
     let opening_batch = instance.opening_batch();
     validate_i8_setup_log_basis(
-        lp.open.digits.log_basis,
+        lp.open().digits.log_basis,
         "for i8 prover opening decomposition",
     )?;
     let RingRelationWitness {
@@ -506,7 +506,7 @@ where
             group_layout.num_polynomials(),
         )?;
     }
-    let levels = r_decomp_levels::<F>(lp.open.digits.log_basis);
+    let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
     {
         let _span = tracing::info_span!("ring_switch_emit_r_rows").entered();
         emit_r_rows(
@@ -514,7 +514,7 @@ where
             &witness_layout,
             &r,
             levels,
-            lp.open.digits.log_basis,
+            lp.open().digits.log_basis,
         )?;
     }
     if let Some(compression) = &compression {
@@ -544,7 +544,7 @@ where
                 group.params.log_basis_open(),
             ]
         })
-        .fold(lp.open.digits.log_basis, u32::max);
+        .fold(lp.open().digits.log_basis, u32::max);
     RecursiveWitnessFlat::from_witness_layout(out, &witness_layout, known_balanced_log_basis)
 }
 

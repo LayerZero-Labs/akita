@@ -590,7 +590,7 @@ mod sis_schedule_width_audit {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
             let width = u64::try_from(lp.inner_width()).expect("inner width should fit in u64");
-            let a_rank = match lp.inner.matrix.security_route() {
+            let a_rank = match lp.inner().matrix.security_route() {
                 InnerCommitSecurityRoute::Linf(key) => min_secure_rank(key, width),
                 InnerCommitSecurityRoute::L2 { table_key, .. } => {
                     min_secure_l2_rank(table_key, width)
@@ -599,54 +599,54 @@ mod sis_schedule_width_audit {
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.inner.digits.log_basis,
+                    lp.inner().digits.log_basis,
                     lp.inner_width()
                 )
             });
             assert!(
-                a_rank <= lp.inner.matrix.output_rank(),
+                a_rank <= lp.inner().matrix.output_rank(),
                 "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                lp.inner.digits.log_basis,
+                lp.inner().digits.log_basis,
                 lp.inner_width(),
-                lp.inner.matrix.output_rank(),
+                lp.inner().matrix.output_rank(),
             );
 
             let b_rank = min_secure_rank(
-                lp.outer.matrix.sis_table_key(),
+                lp.outer().matrix.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.outer.digits.log_basis,
+                    lp.outer().digits.log_basis,
                     lp.outer_width()
                 )
             });
             assert!(
-                b_rank <= lp.outer.matrix.output_rank(),
+                b_rank <= lp.outer().matrix.output_rank(),
                 "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
-                lp.outer.digits.log_basis,
+                lp.outer().digits.log_basis,
                 lp.outer_width(),
-                lp.outer.matrix.output_rank(),
+                lp.outer().matrix.output_rank(),
             );
 
             let d_rank = min_secure_rank(
-                lp.open.matrix.sis_table_key(),
+                lp.open().matrix.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.open.digits.log_basis,
+                    lp.open().digits.log_basis,
                     lp.d_matrix_width()
                 )
             });
             assert!(
-                d_rank <= lp.open.matrix.output_rank(),
+                d_rank <= lp.open().matrix.output_rank(),
                 "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                lp.open.digits.log_basis,
+                lp.open().digits.log_basis,
                 lp.d_matrix_width(),
-                lp.open.matrix.output_rank(),
+                lp.open().matrix.output_rank(),
             );
         }
     }

@@ -247,7 +247,12 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 
     let mut malformed_params = params.clone();
-    malformed_params.inner.digits.num_digits += 1;
+    malformed_params
+        .own_group_mut()
+        .profile
+        .inner
+        .digits
+        .num_digits += 1;
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,

@@ -749,7 +749,7 @@ pub(crate) fn next_source_moment(
             "response source moments disagree with the opening groups".into(),
         ));
     }
-    let quotient_depth = compute_num_digits_field_width(field_bits, params.open.digits.log_basis);
+    let quotient_depth = compute_num_digits_field_width(field_bits, params.open().digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
@@ -859,7 +859,7 @@ pub(crate) fn next_source_moment(
             let (energy, peak) = field_digit_moments(
                 scalar_count,
                 field_bits,
-                params.open.digits.log_basis,
+                params.open().digits.log_basis,
                 quotient_depth,
             )?;
             checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;

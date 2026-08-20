@@ -462,7 +462,6 @@ fn root_final_group_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
-        group: akita_types::PolynomialGroupLayout::new(ctx.final_num_vars, ctx.main_num_polys),
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         source_encoding: akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
@@ -471,31 +470,45 @@ fn root_final_group_level_params_candidate(
             ctx.final_num_vars,
             true,
         ),
-        opening_method: ctx.opening.method(),
-        inner: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
-            inner_commit_matrix,
-        ),
-        outer: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
-            outer_commit_matrix,
-        ),
-        open: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(log_basis_open, num_digits_open),
-            open_commit_matrix,
-        ),
-        blocks: akita_types::BlockGeometry::new(
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-        ),
-        outer_slice_count,
-        fold_challenge_config: ctx.opening.challenge_config(),
-        num_digits_fold,
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-        groups: precommitted_groups.to_vec(),
+        open_matrix: open_commit_matrix,
+        groups: precommitted_groups
+            .iter()
+            .copied()
+            .chain(std::iter::once(akita_types::GroupOpenPhaseParams {
+                profile: akita_types::GroupCommitPhaseParams {
+                    version: akita_types::GroupCommitPhaseParams::VERSION,
+                    group: akita_types::PolynomialGroupLayout::new(
+                        ctx.final_num_vars,
+                        ctx.main_num_polys,
+                    ),
+                    blocks: akita_types::BlockGeometry::new(
+                        num_live_ring_elements_per_claim,
+                        num_positions_per_block,
+                        num_live_blocks,
+                    ),
+                    outer_slice_count,
+                    inner: akita_types::RoleParams::new(
+                        akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                        inner_commit_matrix,
+                    ),
+                    outer: akita_types::RoleParams::new(
+                        akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
+                        outer_commit_matrix,
+                    ),
+                },
+                opening: akita_types::GroupOpeningPlan {
+                    opening_method: ctx.opening.method(),
+                    fold_challenge_config: ctx.opening.challenge_config(),
+                    log_basis_open,
+                    num_digits_open,
+                    num_digits_fold,
+                },
+                setup_natural_len: None,
+            }))
+            .collect(),
     };
 
     Ok(Some(params))

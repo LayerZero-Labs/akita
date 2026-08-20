@@ -350,15 +350,15 @@ fn build_relation_rhs_layout(
     extension_degree: usize,
 ) -> Result<RelationRhsLayout, AkitaError> {
     let final_group_index = lp.validate_opening_batch_geometry(opening_batch)?;
-    let n_d = lp.open.matrix.output_rank();
+    let n_d = lp.open().matrix.output_rank();
     let opening_plan = lp
         .payload_mode
         .is_compressed()
         .then(|| {
             compression_plan(
-                lp.open.matrix.sis_modulus_profile(),
+                lp.open().matrix.sis_modulus_profile(),
                 n_d,
-                lp.open.matrix.ring_dimension(),
+                lp.open().matrix.ring_dimension(),
             )
         })
         .transpose()?;
@@ -377,17 +377,17 @@ fn build_relation_rhs_layout(
                 group_index,
                 role_dims,
                 opening_geometry,
-                opening_method: lp.opening_method,
-                n_a: lp.inner.matrix.output_rank(),
-                physical_b_rows: lp.outer.matrix.output_rank(),
-                outer_slice_count: lp.outer_slice_count,
+                opening_method: lp.opening_method(),
+                n_a: lp.inner().matrix.output_rank(),
+                physical_b_rows: lp.outer().matrix.output_rank(),
+                outer_slice_count: lp.outer_slice_count(),
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
-                lp.outer.matrix.sis_modulus_profile(),
-                lp.outer_slice_count
-                    .logical_output_rows(lp.outer.matrix.output_rank())?,
+                lp.outer().matrix.sis_modulus_profile(),
+                lp.outer_slice_count()
+                    .logical_output_rows(lp.outer().matrix.output_rank())?,
                 role_dims.d_b(),
             )?;
             Some(RelationCompressionLayout {
@@ -419,17 +419,17 @@ fn build_relation_rhs_layout(
             lp.source_encoding,
             extension_degree,
         )?,
-        opening_method: lp.opening_method,
-        n_a: lp.inner.matrix.output_rank(),
-        physical_b_rows: lp.outer.matrix.output_rank(),
-        outer_slice_count: lp.outer_slice_count,
+        opening_method: lp.opening_method(),
+        n_a: lp.inner().matrix.output_rank(),
+        physical_b_rows: lp.outer().matrix.output_rank(),
+        outer_slice_count: lp.outer_slice_count(),
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
-            lp.outer.matrix.sis_modulus_profile(),
-            lp.outer_slice_count
-                .logical_output_rows(lp.outer.matrix.output_rank())?,
+            lp.outer().matrix.sis_modulus_profile(),
+            lp.outer_slice_count()
+                .logical_output_rows(lp.outer().matrix.output_rank())?,
             final_role_dims.d_b(),
         )?);
     }

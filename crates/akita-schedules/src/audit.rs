@@ -158,12 +158,12 @@ fn expected_d_width(
 ) -> Result<usize, AkitaError> {
     let dims = params.role_dims();
     let mut width = akita_types::opening_d_segment_width(
-        params.opening_method,
+        params.opening_method(),
         extension_degree,
         dims.d_a(),
         dims.d_d(),
-        params.open.digits.num_digits,
-        params.blocks.live_blocks,
+        params.open().digits.num_digits,
+        params.blocks().live_blocks,
         num_claims,
     )
     .map_err(|_| invalid(label, "main D width is incompatible with opening geometry"))?;
@@ -195,19 +195,19 @@ fn audit_committed_params(
     params.witness_chunk.validate()?;
     validate_role_dims(params.role_dims())?;
     params
-        .fold_challenge_config
+        .fold_challenge_config()
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    audit_inner_matrix(label, &params.inner.matrix, policy)?;
-    audit_outer_matrix(label, &params.outer.matrix, policy)?;
-    audit_open_matrix(label, &params.open.matrix, policy)?;
+    audit_inner_matrix(label, &params.inner().matrix, policy)?;
+    audit_outer_matrix(label, &params.outer().matrix, policy)?;
+    audit_open_matrix(label, &params.open().matrix, policy)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
-        log_basis: params.outer.digits.log_basis,
+        log_basis: params.outer().digits.log_basis,
         ..policy.decomposition
     });
     let expected_open_digits = num_digits_open(DecompositionParams {
-        log_basis: params.open.digits.log_basis,
+        log_basis: params.open().digits.log_basis,
         ..policy.decomposition
     });
     // A generated row stores its own `num_digits_inner` and expansion replays it
@@ -219,39 +219,39 @@ fn audit_committed_params(
     // under a possibly different producer bound and are not covered here.
     let expected_inner_digits = num_digits_inner(
         DecompositionParams {
-            log_basis: params.inner.digits.log_basis,
+            log_basis: params.inner().digits.log_basis,
             ..policy.decomposition
         },
         fold_level == 0,
     );
-    if params.inner.digits.num_digits != expected_inner_digits
-        || params.num_digits_fold == 0
-        || params.outer.digits.num_digits != expected_outer_digits
-        || params.open.digits.num_digits != expected_open_digits
+    if params.inner().digits.num_digits != expected_inner_digits
+        || params.num_digits_fold() == 0
+        || params.outer().digits.num_digits != expected_outer_digits
+        || params.open().digits.num_digits != expected_open_digits
     {
         return Err(invalid(label, "digit depths are missing or noncanonical"));
     }
 
     let dims = params.role_dims();
     let expected_a_width = params
-        .blocks
+        .blocks()
         .positions_per_block
-        .checked_mul(params.inner.digits.num_digits)
+        .checked_mul(params.inner().digits.num_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
     let expected_b_width = CommitmentSliceGeometry::try_new(
-        params.outer_slice_count,
-        params.blocks.live_blocks,
+        params.outer_slice_count(),
+        params.blocks().live_blocks,
         num_claims,
-        params.inner.matrix.output_rank(),
-        params.outer.digits.num_digits,
+        params.inner().matrix.output_rank(),
+        params.outer().digits.num_digits,
         dims.d_a(),
         dims.d_b(),
     )?
     .physical_input_width();
     let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
-    if params.inner.matrix.input_width() != expected_a_width
-        || params.outer.matrix.input_width() != expected_b_width
-        || params.open.matrix.input_width() != expected_d_width
+    if params.inner().matrix.input_width() != expected_a_width
+        || params.outer().matrix.input_width() != expected_b_width
+        || params.open().matrix.input_width() != expected_d_width
     {
         return Err(invalid(
             label,
@@ -259,7 +259,7 @@ fn audit_committed_params(
         ));
     }
 
-    match params.inner.matrix.security_route() {
+    match params.inner().matrix.security_route() {
         InnerCommitSecurityRoute::Linf(key) => audit_bound(
             label,
             key.coeff_linf_bound,
@@ -268,16 +268,16 @@ fn audit_committed_params(
                 policy.sis_table_digest,
                 policy.sis_modulus_profile,
                 dims.d_a(),
-                params.open.digits.log_basis,
-                &params.fold_challenge_config,
-                params.num_digits_fold,
+                params.open().digits.log_basis,
+                &params.fold_challenge_config(),
+                params.num_digits_fold(),
             ),
         )?,
         InnerCommitSecurityRoute::L2 {
             response_l2_sq_cap, ..
         } => {
             let fold_basis = 1usize
-                .checked_shl(params.open.digits.log_basis)
+                .checked_shl(params.open().digits.log_basis)
                 .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
             let expected = selective_l2_inner_matrix(
                 policy,
@@ -288,8 +288,8 @@ fn audit_committed_params(
                     inner_width: expected_a_width,
                     ring_dimension: dims.d_a(),
                     fold_basis,
-                    fold_digit_count: params.num_digits_fold,
-                    fold_challenge_config: &params.fold_challenge_config,
+                    fold_digit_count: params.num_digits_fold(),
+                    fold_challenge_config: &params.fold_challenge_config(),
                     response_l2_sq_cap: Some(response_l2_sq_cap),
                     norm_proof_shape: None,
                 },
@@ -300,7 +300,7 @@ fn audit_committed_params(
                     "L2 route is not admitted by the frozen suffix response cap",
                 )
             })?;
-            if params.inner.matrix != expected {
+            if params.inner().matrix != expected {
                 return Err(invalid(
                     label,
                     "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
@@ -310,24 +310,24 @@ fn audit_committed_params(
     }
     audit_bound(
         label,
-        params.outer.matrix.coeff_linf_bound(),
+        params.outer().matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
             dims.d_b(),
-            params.outer.digits.log_basis,
+            params.outer().digits.log_basis,
         ),
     )?;
     audit_bound(
         label,
-        params.open.matrix.coeff_linf_bound(),
+        params.open().matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Open,
             dims.d_d(),
-            shared_d_digit_log_basis(params.open.digits.log_basis, params.precommitted_groups()),
+            shared_d_digit_log_basis(params.open().digits.log_basis, params.precommitted_groups()),
         ),
     )
 }
@@ -486,7 +486,7 @@ pub(crate) fn audit_resolved_schedule(
     let root = &schedule.root.params;
     let final_params = &root;
     if !matches!(
-        final_params.inner.matrix.security_route(),
+        final_params.inner().matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)
     ) {
         return Err(invalid(

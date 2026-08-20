@@ -42,7 +42,7 @@ where
                                 binding: akita_types::NextWitnessBindingPolicy|
      -> Result<(), AkitaError> {
         if matches!(
-            params.opening_method,
+            params.opening_method(),
             akita_types::OpeningMethod::SubringCoefficientPacking { .. }
         ) && fold.extension_opening_reduction().is_some()
         {

@@ -98,8 +98,8 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     )
     .with_decomp(4, 8, 1, 1, 1)
     .unwrap();
-    let outer = &lp.outer.matrix;
-    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &lp.outer().matrix;
+    lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -108,8 +108,8 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         outer.coeff_linf_bound(),
         D_PROJECTED,
     );
-    let opening = &lp.open.matrix;
-    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = &lp.open().matrix;
+    lp.open_matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
@@ -123,7 +123,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
-    let quotient_depth = r_decomp_levels::<MixedF>(lp.open.digits.log_basis);
+    let quotient_depth = r_decomp_levels::<MixedF>(lp.open().digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
@@ -141,19 +141,19 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: (0..lp.blocks.live_blocks)
+            c_alphas: (0..lp.blocks().live_blocks)
                 .map(|index| MixedF::from_u64(31 + index as u64))
                 .collect(),
-            opening_a_evals: (0..lp.blocks.positions_per_block)
+            opening_a_evals: (0..lp.blocks().positions_per_block)
                 .map(|index| MixedF::from_u64(41 + index as u64))
                 .collect(),
             group_id: 0,
             num_claims: 1,
             depth_fold,
             a_row_start: 1,
-            b_row_start: 1 + lp.inner.matrix.output_rank(),
+            b_row_start: 1 + lp.inner().matrix.output_rank(),
         }],
-        log_basis: lp.open.digits.log_basis,
+        log_basis: lp.open().digits.log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp,

@@ -15,8 +15,8 @@ fn sample_schedule() -> FoldSchedule {
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
-    let inner = committed.inner.matrix;
-    committed.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = committed.inner().matrix;
+    committed.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -309,19 +309,20 @@ fn terminal_sparse_sampler_changes_plan_binding() {
 fn role_local_ring_dimension_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    let matrix = &second.root.params.inner.matrix;
-    second.root.params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
-        matrix.security_policy(),
-        matrix
-            .sis_table_key()
-            .expect("L infinity test matrix")
-            .table_digest,
-        matrix.sis_modulus_profile(),
-        matrix.output_rank(),
-        matrix.input_width(),
-        matrix.coeff_linf_bound().expect("L infinity test matrix"),
-        matrix.ring_dimension() * 2,
-    );
+    let matrix = &second.root.params.inner().matrix;
+    second.root.params.own_group_mut().profile.inner.matrix =
+        InnerCommitMatrixParams::new_unchecked(
+            matrix.security_policy(),
+            matrix
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
+            matrix.sis_modulus_profile(),
+            matrix.output_rank(),
+            matrix.input_width(),
+            matrix.coeff_linf_bound().expect("L infinity test matrix"),
+            matrix.ring_dimension() * 2,
+        );
 
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),

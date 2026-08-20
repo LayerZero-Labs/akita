@@ -31,11 +31,11 @@ fn fixture() -> (
     .with_decomp(4, 6, 2, 2, 2)
     .unwrap();
     params.payload_mode = CommitmentPayloadMode::Raw;
-    params.opening_method = OpeningMethod::SubringCoefficientPacking {
+    params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: s,
     };
-    let opening = params.open.matrix;
-    params.open.matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = params.open().matrix;
+    params.open_matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),

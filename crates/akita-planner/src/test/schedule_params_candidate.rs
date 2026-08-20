@@ -13,22 +13,22 @@ fn synthetic_profile(
     GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
         group,
-        blocks: params.blocks,
+        blocks: params.blocks(),
 
-        outer_slice_count: params.outer_slice_count,
+        outer_slice_count: params.outer_slice_count(),
         inner: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(
-                params.inner.digits.log_basis,
-                params.inner.digits.num_digits,
+                params.inner().digits.log_basis,
+                params.inner().digits.num_digits,
             ),
-            params.inner.matrix,
+            params.inner().matrix,
         ),
         outer: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(
-                params.outer.digits.log_basis,
-                params.outer.digits.num_digits,
+                params.outer().digits.log_basis,
+                params.outer().digits.num_digits,
             ),
-            params.outer.matrix,
+            params.outer().matrix,
         ),
     }
 }
@@ -61,10 +61,10 @@ fn grouped_level_params() -> CommittedGroupParams {
         setup_natural_len: None,
         profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         opening: akita_types::GroupOpeningPlan::evaluation_trace(
-            precommitted.fold_challenge_config,
-            precommitted.open.digits.log_basis,
-            precommitted.open.digits.num_digits,
-            precommitted.num_digits_fold,
+            precommitted.fold_challenge_config(),
+            precommitted.open().digits.log_basis,
+            precommitted.open().digits.num_digits,
+            precommitted.num_digits_fold(),
         ),
     }]);
     params
@@ -185,7 +185,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner.matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
@@ -194,7 +194,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner.matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -205,7 +205,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter_map(|(params, _)| {
             matches!(
-                params.inner.matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
             .then_some(params.block_index_bits())
@@ -251,7 +251,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     assert!(!candidates.is_empty());
     for (params, next_witness_len) in &candidates {
         assert_eq!(
-            params.opening_method,
+            params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
@@ -261,18 +261,18 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         assert!(matches!(
-            params.inner.matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
-            params.open.matrix.input_width(),
+            params.open().matrix.input_width(),
             akita_types::opening_d_segment_width(
-                params.opening_method,
+                params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
                 dimensions.d_d(),
-                params.open.digits.num_digits,
-                params.blocks.live_blocks,
+                params.open().digits.num_digits,
+                params.blocks().live_blocks,
                 1,
             )
             .unwrap()
@@ -315,12 +315,12 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         );
         let d_d = params.role_dims().d_d();
         let witness_width = akita_types::opening_d_segment_width(
-            params.opening_method,
+            params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
             d_d,
-            params.open.digits.num_digits,
-            params.blocks.live_blocks,
+            params.open().digits.num_digits,
+            params.blocks().live_blocks,
             1,
         )
         .unwrap();
@@ -328,7 +328,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
-            params.open.matrix.input_width(),
+            params.open().matrix.input_width(),
             witness_width + prefix_width
         );
         assert_eq!(
@@ -502,24 +502,24 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
     for (params, next_witness_len) in &candidates {
         assert_eq!(
-            params.opening_method,
+            params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
         assert!(matches!(
-            params.inner.matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
-            params.open.matrix.input_width(),
+            params.open().matrix.input_width(),
             akita_types::opening_d_segment_width(
-                params.opening_method,
+                params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
                 dimensions.d_d(),
-                params.open.digits.num_digits,
-                params.blocks.live_blocks,
+                params.open().digits.num_digits,
+                params.blocks().live_blocks,
                 key.final_group.num_polynomials(),
             )
             .unwrap()
@@ -570,12 +570,12 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         );
         let d_d = params.role_dims().d_d();
         let final_width = akita_types::opening_d_segment_width(
-            params.opening_method,
+            params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
             d_d,
-            params.open.digits.num_digits,
-            params.blocks.live_blocks,
+            params.open().digits.num_digits,
+            params.blocks().live_blocks,
             grouped_key.final_group.num_polynomials(),
         )
         .unwrap();
@@ -583,7 +583,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
-            params.open.matrix.input_width(),
+            params.open().matrix.input_width(),
             final_width + precommit_width
         );
     }
@@ -1017,9 +1017,9 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     .with_decomp(width_s, width_s * 8, 1, 2, 2)
     .unwrap();
     params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.inner.matrix = raw_candidate.inner_commit_matrix;
-    params.outer.matrix = raw_candidate.outer_commit_matrix;
-    params.num_digits_fold = raw_candidate.num_digits_fold;
+    params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
+    params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
+    params.own_group_mut().opening.num_digits_fold = raw_candidate.num_digits_fold;
     assert!(params.compression_sources_supported().unwrap());
     params
         .validate_commitment_request(2, num_claims)

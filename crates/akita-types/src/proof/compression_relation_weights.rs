@@ -580,8 +580,8 @@ where
             * alpha
             + E::one();
         for (digit, gadget) in gadget_row_scalars::<F>(
-            r_decomp_levels::<F>(lp.open.digits.log_basis),
-            lp.open.digits.log_basis,
+            r_decomp_levels::<F>(lp.open().digits.log_basis),
+            lp.open().digits.log_basis,
         )
         .into_iter()
         .enumerate()

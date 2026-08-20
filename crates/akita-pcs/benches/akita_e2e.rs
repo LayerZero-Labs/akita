@@ -268,8 +268,8 @@ fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     .root
     .params
     .clone();
-    let total_ring = layout.blocks.live_blocks * layout.blocks.positions_per_block;
-    let root_ring_dimension = layout.inner.matrix.ring_dimension();
+    let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
+    let root_ring_dimension = layout.inner().matrix.ring_dimension();
     let onehot_k = 256;
     let total_field = total_ring * root_ring_dimension;
     assert_eq!(total_field, 1usize << nv);

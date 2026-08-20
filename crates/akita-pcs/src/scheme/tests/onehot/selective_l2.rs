@@ -21,8 +21,8 @@ fn selective_l2_proof_rejects_transcript_mutations() {
                 poly,
                 &point,
                 layout.d_a(),
-                layout.blocks.positions_per_block,
-                layout.blocks.live_blocks,
+                layout.blocks().positions_per_block,
+                layout.blocks().live_blocks,
             )
         })
         .collect();

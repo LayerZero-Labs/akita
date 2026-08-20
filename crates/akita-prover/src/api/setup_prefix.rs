@@ -241,66 +241,68 @@ mod tests {
             2,
         )
         .expect("level params");
-        let inner = params.inner.matrix;
-        params.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                policy: inner.security_policy(),
-                table_digest: inner
-                    .sis_table_key()
-                    .expect("L infinity test matrix")
-                    .table_digest,
-                modulus_profile: inner.sis_modulus_profile(),
-                role: akita_types::sis::SisMatrixRole::Inner,
-                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
-                coeff_linf_bound: 131_071,
-            },
-            inner.input_width(),
-        )
-        .expect("audited inner matrix");
+        let inner = params.inner().matrix;
+        params.own_group_mut().profile.inner.matrix =
+            InnerCommitMatrixParams::try_new_with_min_rank(
+                SisTableKey {
+                    policy: inner.security_policy(),
+                    table_digest: inner
+                        .sis_table_key()
+                        .expect("L infinity test matrix")
+                        .table_digest,
+                    modulus_profile: inner.sis_modulus_profile(),
+                    role: akita_types::sis::SisMatrixRole::Inner,
+                    ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                    coeff_linf_bound: 131_071,
+                },
+                inner.input_width(),
+            )
+            .expect("audited inner matrix");
         params = params
             .with_decomp(
-                params.blocks.positions_per_block,
-                params.blocks.live_ring_elements_per_claim,
-                params.inner.digits.num_digits,
-                params.outer.digits.num_digits,
-                params.open.digits.num_digits,
+                params.blocks().positions_per_block,
+                params.blocks().live_ring_elements_per_claim,
+                params.inner().digits.num_digits,
+                params.outer().digits.num_digits,
+                params.open().digits.num_digits,
             )
             .expect("layout rebuilt for audited inner rank");
-        let outer = params.outer.matrix;
-        params.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                policy: outer.security_policy(),
-                table_digest: outer.sis_table_key().table_digest,
-                modulus_profile: outer.sis_modulus_profile(),
-                role: akita_types::sis::SisMatrixRole::Outer,
-                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
-                coeff_linf_bound: 3,
-            },
-            outer.input_width(),
-        )
-        .expect("audited outer matrix");
+        let outer = params.outer().matrix;
+        params.own_group_mut().profile.outer.matrix =
+            OuterCommitMatrixParams::try_new_with_min_rank(
+                SisTableKey {
+                    policy: outer.security_policy(),
+                    table_digest: outer.sis_table_key().table_digest,
+                    modulus_profile: outer.sis_modulus_profile(),
+                    role: akita_types::sis::SisMatrixRole::Outer,
+                    ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                    coeff_linf_bound: 3,
+                },
+                outer.input_width(),
+            )
+            .expect("audited outer matrix");
         params
     }
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         let a_fields = level_params
-            .inner
+            .inner()
             .matrix
             .output_rank()
-            .checked_mul(level_params.inner.matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.inner.matrix.ring_dimension()))
+            .checked_mul(level_params.inner().matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.inner().matrix.ring_dimension()))
             .expect("A setup capacity");
         let b_fields = level_params
-            .outer
+            .outer()
             .matrix
             .output_rank()
-            .checked_mul(level_params.outer.matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.outer.matrix.ring_dimension()))
+            .checked_mul(level_params.outer().matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.outer().matrix.ring_dimension()))
             .expect("B setup capacity");
-        let compression_source =
-            level_params.outer.matrix.output_rank() * level_params.outer.matrix.ring_dimension();
+        let compression_source = level_params.outer().matrix.output_rank()
+            * level_params.outer().matrix.ring_dimension();
         let compression_fields = CompressionChainPlan::for_complete_source(
-            level_params.outer.matrix.sis_modulus_profile(),
+            level_params.outer().matrix.sis_modulus_profile(),
             compression_source,
         )
         .expect("compression plan")
@@ -372,9 +374,9 @@ mod tests {
         )
         .expect("level params");
         let witness_ring_slots = level_params
-            .blocks
+            .blocks()
             .live_blocks
-            .checked_mul(level_params.blocks.positions_per_block)
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
@@ -410,9 +412,9 @@ mod tests {
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
-            .blocks
+            .blocks()
             .live_blocks
-            .checked_mul(level_params.blocks.positions_per_block)
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch)
@@ -447,9 +449,9 @@ mod tests {
     fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
-            .blocks
+            .blocks()
             .live_blocks
-            .checked_mul(level_params.blocks.positions_per_block)
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =

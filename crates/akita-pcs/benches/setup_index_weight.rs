@@ -91,33 +91,33 @@ fn make_case_with_shape(
         depth_open,
     )
     .unwrap();
-    level_params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
-        level_params.inner.matrix.security_policy(),
+    level_params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        level_params.inner().matrix.security_policy(),
         level_params
-            .inner
+            .inner()
             .matrix
             .sis_table_key()
             .expect("benchmark setup matrix is L infinity")
             .table_digest,
-        level_params.inner.matrix.sis_modulus_profile(),
+        level_params.inner().matrix.sis_modulus_profile(),
         n_a,
         num_positions_per_block * depth_commit,
         1,
         role_dims.d_a(),
     );
-    level_params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
-        level_params.outer.matrix.security_policy(),
-        level_params.outer.matrix.sis_table_key().table_digest,
-        level_params.outer.matrix.sis_modulus_profile(),
+    level_params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        level_params.outer().matrix.security_policy(),
+        level_params.outer().matrix.sis_table_key().table_digest,
+        level_params.outer().matrix.sis_modulus_profile(),
         n_b,
         num_claims * n_a * depth_commit * num_live_blocks,
         1,
         role_dims.d_b(),
     );
-    level_params.open.matrix = OpenCommitMatrixParams::new_unchecked(
-        level_params.open.matrix.security_policy(),
-        level_params.open.matrix.sis_table_key().table_digest,
-        level_params.open.matrix.sis_modulus_profile(),
+    level_params.open_matrix = OpenCommitMatrixParams::new_unchecked(
+        level_params.open().matrix.security_policy(),
+        level_params.open().matrix.sis_table_key().table_digest,
+        level_params.open().matrix.sis_modulus_profile(),
         n_d,
         num_claims * depth_open * num_live_blocks,
         1,

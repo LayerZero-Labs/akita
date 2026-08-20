@@ -220,7 +220,7 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
     );
     let root = &selected.schedule.root.params;
     assert!(matches!(
-        root.opening_method,
+        root.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     let terminal_eor = extension_opening_reduction_level_bytes(
@@ -307,7 +307,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     )
     .expect("packing schedule from mixed domain");
     assert!(matches!(
-        selected.schedule.root.params.opening_method,
+        selected.schedule.root.params.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     let unpruned = unpruned_search::find_schedule(
@@ -318,7 +318,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     )
     .expect("unpruned packing schedule from mixed domain");
     assert!(matches!(
-        unpruned.schedule.root.params.opening_method,
+        unpruned.schedule.root.params.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ));
     assert_eq!(
@@ -346,7 +346,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         .recursive_folds
         .iter()
         .all(|fold| matches!(
-            fold.params.opening_method,
+            fold.params.opening_method(),
             akita_types::OpeningMethod::SubringCoefficientPacking { .. }
         )));
 }
@@ -436,7 +436,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     .expect("shipped fp128 selective L2 schedule");
     assert!(selected.schedule.recursive_folds.iter().any(|step| {
         matches!(
-            step.params.inner.matrix.security_route(),
+            step.params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )
     }));
@@ -705,12 +705,12 @@ fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
         }
     );
     assert_eq!(selected.schedule.recursive_folds[0].params.role_dims(), d64);
-    let opening_methods = std::iter::once(selected_root.opening_method).chain(
+    let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
             .schedule
             .recursive_folds
             .iter()
-            .map(|fold| fold.params.opening_method),
+            .map(|fold| fold.params.opening_method()),
     );
     for (level, opening_method) in opening_methods.enumerate() {
         if level <= 1 {

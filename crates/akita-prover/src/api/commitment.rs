@@ -140,15 +140,15 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
     fn from(params: &'a CommittedGroupParams) -> Self {
         Self {
             context: "commit params",
-            num_positions_per_block: params.blocks.positions_per_block,
-            num_live_blocks: params.blocks.live_blocks,
-            log_basis_inner: params.inner.digits.log_basis,
-            num_digits_inner: params.inner.digits.num_digits,
-            inner_matrix: &params.inner.matrix,
-            log_basis_outer: params.outer.digits.log_basis,
-            num_digits_outer: params.outer.digits.num_digits,
-            outer_matrix: &params.outer.matrix,
-            outer_slice_count: params.outer_slice_count,
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_live_blocks: params.blocks().live_blocks,
+            log_basis_inner: params.inner().digits.log_basis,
+            num_digits_inner: params.inner().digits.num_digits,
+            inner_matrix: &params.inner().matrix,
+            log_basis_outer: params.outer().digits.log_basis,
+            num_digits_outer: params.outer().digits.num_digits,
+            outer_matrix: &params.outer().matrix,
+            outer_slice_count: params.outer_slice_count(),
         }
     }
 }
@@ -224,12 +224,12 @@ where
     F: FieldCore + CanonicalField,
 {
     let slice_geometry = params.validate_commitment_request(fold_level, num_polynomials)?;
-    if params.blocks.live_blocks == 0 || params.blocks.positions_per_block == 0 {
+    if params.blocks().live_blocks == 0 || params.blocks().positions_per_block == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.inner.digits.num_digits == 0 || params.outer.digits.num_digits == 0 {
+    if params.inner().digits.num_digits == 0 || params.outer().digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero A/B digit depths".to_string(),
         ));
@@ -238,19 +238,22 @@ where
 
     // D/opening geometry is level-only: standalone commitment profiles freeze
     // only the A/B matrices used to materialize the commitment.
-    if params.open.digits.num_digits == 0 {
+    if params.open().digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero opening digit depth".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(params.open.digits.log_basis, "for i8 opening decomposition")?;
+    validate_i8_setup_log_basis(
+        params.open().digits.log_basis,
+        "for i8 opening decomposition",
+    )?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
-    if params.open.matrix.input_width() == 0 {
+    if params.open().matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
-            params.open.matrix.input_width()
+            params.open().matrix.input_width()
         )));
     }
     // Commitment materialization uses only A and B. In particular, a

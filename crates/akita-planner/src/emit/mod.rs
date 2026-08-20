@@ -234,17 +234,17 @@ fn committed_group(p: &CommittedGroupParams, num_digits_inner: Option<u32>) -> G
     GeneratedGroup {
         geometry: geometry(p),
         inner_commit_matrix: GeneratedMatrix {
-            ring_dimension: p.inner.matrix.ring_dimension() as u32,
-            log_basis: p.inner.digits.log_basis,
+            ring_dimension: p.inner().matrix.ring_dimension() as u32,
+            log_basis: p.inner().digits.log_basis,
         },
         outer_commit_matrix: GeneratedMatrix {
-            ring_dimension: p.outer.matrix.ring_dimension() as u32,
-            log_basis: p.outer.digits.log_basis,
+            ring_dimension: p.outer().matrix.ring_dimension() as u32,
+            log_basis: p.outer().digits.log_basis,
         },
-        outer_slice_count: p.outer_slice_count.get() as u32,
+        outer_slice_count: p.outer_slice_count().get() as u32,
         num_digits_inner,
-        num_digits_fold: p.num_digits_fold as u32,
-        opening_method: p.opening_method,
+        num_digits_fold: p.num_digits_fold() as u32,
+        opening_method: p.opening_method(),
     }
 }
 
@@ -272,7 +272,7 @@ fn frozen_group(slot: &GroupOpenPhaseParams) -> GeneratedFrozenGroup {
 
 /// Response cap of whichever security route this group's A matrix took.
 fn response_l2_sq_cap(p: &CommittedGroupParams) -> Option<u128> {
-    match p.inner.matrix.security_route() {
+    match p.inner().matrix.security_route() {
         akita_types::InnerCommitSecurityRoute::Linf(_) => None,
         akita_types::InnerCommitSecurityRoute::L2 {
             response_l2_sq_cap, ..
@@ -293,7 +293,7 @@ fn generated_fold(
         group: committed_group(p, num_digits_inner),
         precommitted_groups,
         setup_prefix: p.setup_prefix().map(frozen_group),
-        open_commit_matrix: open_matrix_params(&p.open.matrix, p.open.digits.log_basis),
+        open_commit_matrix: open_matrix_params(&p.open().matrix, p.open().digits.log_basis),
         witness_chunks: p.witness_chunk.num_chunks as u32,
         payload_mode: p.payload_mode,
         response_l2_sq_cap: response_l2_sq_cap(p),
@@ -340,7 +340,7 @@ fn generated_entry(
         final_group: key.final_group,
         root: generated_fold(
             root_params,
-            Some(root_params.inner.digits.num_digits as u32),
+            Some(root_params.inner().digits.num_digits as u32),
             Box::leak(precommitted_groups.into_boxed_slice()),
         ),
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
@@ -926,7 +926,7 @@ mod preplanned_scalar_tests {
         )
         .expect("planned packing schedule");
         assert!(matches!(
-            planned.schedule.root.params.opening_method,
+            planned.schedule.root.params.opening_method(),
             akita_types::OpeningMethod::SubringCoefficientPacking { .. }
         ));
         let expanded = akita_schedules::expanded_schedule_proof_payload_bytes(

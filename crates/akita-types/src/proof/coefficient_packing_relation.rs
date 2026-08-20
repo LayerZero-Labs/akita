@@ -87,7 +87,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if SignedDigitKernel::for_log_basis(level_params.open.digits.log_basis)
+    if SignedDigitKernel::for_log_basis(level_params.open().digits.log_basis)
         != Some(SignedDigitKernel::I8)
     {
         return Err(AkitaError::InvalidSetup(
@@ -351,8 +351,8 @@ where
     }
 
     let quotient_gadget = gadget_row_scalars::<F>(
-        r_decomp_levels::<F>(inputs.level_params.open.digits.log_basis),
-        inputs.level_params.open.digits.log_basis,
+        r_decomp_levels::<F>(inputs.level_params.open().digits.log_basis),
+        inputs.level_params.open().digits.log_basis,
     )
     .into_iter()
     .map(E::lift_base)

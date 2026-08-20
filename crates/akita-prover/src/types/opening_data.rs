@@ -457,25 +457,25 @@ mod tests {
             group,
 
             blocks: akita_types::BlockGeometry::new(
-                params.blocks.live_ring_elements_per_claim,
-                params.blocks.positions_per_block,
-                params.blocks.live_blocks,
+                params.blocks().live_ring_elements_per_claim,
+                params.blocks().positions_per_block,
+                params.blocks().live_blocks,
             ),
 
-            outer_slice_count: params.outer_slice_count,
+            outer_slice_count: params.outer_slice_count(),
             inner: akita_types::RoleParams::new(
                 akita_types::GadgetDigits::new(
-                    params.inner.digits.log_basis,
-                    params.inner.digits.num_digits,
+                    params.inner().digits.log_basis,
+                    params.inner().digits.num_digits,
                 ),
-                params.inner.matrix,
+                params.inner().matrix,
             ),
             outer: akita_types::RoleParams::new(
                 akita_types::GadgetDigits::new(
-                    params.outer.digits.log_basis,
-                    params.outer.digits.num_digits,
+                    params.outer().digits.log_basis,
+                    params.outer().digits.num_digits,
                 ),
-                params.outer.matrix,
+                params.outer().matrix,
             ),
         }
     }
@@ -494,29 +494,31 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("precommitted params");
-        let inner = &pre.inner.matrix;
-        pre.inner.matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-            inner.security_policy(),
-            inner
-                .sis_table_key()
-                .expect("test matrix is L infinity")
-                .table_digest,
-            inner.sis_modulus_profile(),
-            inner.output_rank(),
-            inner.input_width(),
-            2,
-            inner.ring_dimension(),
-        );
-        let outer = &pre.outer.matrix;
-        pre.outer.matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
-            outer.security_policy(),
-            outer.sis_table_key().table_digest,
-            outer.sis_modulus_profile(),
-            outer.output_rank(),
-            outer.input_width(),
-            3,
-            outer.ring_dimension(),
-        );
+        let inner = &pre.inner().matrix;
+        pre.own_group_mut().profile.inner.matrix =
+            akita_types::InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner
+                    .sis_table_key()
+                    .expect("test matrix is L infinity")
+                    .table_digest,
+                inner.sis_modulus_profile(),
+                inner.output_rank(),
+                inner.input_width(),
+                2,
+                inner.ring_dimension(),
+            );
+        let outer = &pre.outer().matrix;
+        pre.own_group_mut().profile.outer.matrix =
+            akita_types::OuterCommitMatrixParams::new_unchecked(
+                outer.security_policy(),
+                outer.sis_table_key().table_digest,
+                outer.sis_modulus_profile(),
+                outer.output_rank(),
+                outer.input_width(),
+                3,
+                outer.ring_dimension(),
+            );
         let mut root = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -529,14 +531,14 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
-        root.groups_mut().push(GroupOpenPhaseParams {
+        root.insert_precommitted_group(GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
-                pre.fold_challenge_config,
-                pre.open.digits.log_basis,
-                pre.open.digits.num_digits,
-                pre.num_digits_fold,
+                pre.fold_challenge_config(),
+                pre.open().digits.log_basis,
+                pre.open().digits.num_digits,
+                pre.num_digits_fold(),
             ),
         });
         root

@@ -101,30 +101,31 @@ fn rebuild_group_output_matrices(
 ) -> Result<(), AkitaError> {
     let dims = params.role_dims();
     let outer_width = akita_types::CommitmentSliceGeometry::try_new(
-        params.outer_slice_count,
-        params.blocks.live_blocks,
+        params.outer_slice_count(),
+        params.blocks().live_blocks,
         num_claims,
-        params.inner.matrix.output_rank(),
-        params.outer.digits.num_digits,
+        params.inner().matrix.output_rank(),
+        params.outer().digits.num_digits,
         dims.d_a(),
         dims.d_b(),
     )?
     .physical_input_width();
-    params.outer.matrix = akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
-        params.outer.matrix.sis_table_key(),
-        outer_width,
-    )?;
+    params.own_group_mut().profile.outer.matrix =
+        akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
+            params.outer().matrix.sis_table_key(),
+            outer_width,
+        )?;
     let d_width = akita_types::opening_d_segment_width(
-        params.opening_method,
+        params.opening_method(),
         extension_degree,
         dims.d_a(),
         dims.d_d(),
-        params.open.digits.num_digits,
-        params.blocks.live_blocks,
+        params.open().digits.num_digits,
+        params.blocks().live_blocks,
         num_claims,
     )?;
-    params.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
-        params.open.matrix.sis_table_key(),
+    params.open_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+        params.open_matrix.sis_table_key(),
         d_width,
     )?;
     Ok(())
@@ -139,7 +140,7 @@ fn rebuild_group_output_matrices(
 /// `final_group_scalar` to reach a group would impose that helper's
 /// power-of-two source-length rule on a synthetic successor whose live ring
 /// element count is not a power of two.
-struct FoldDigitInputs<'a> {
+struct FoldDigitInputs {
     d_a: usize,
     log_basis_inner: u32,
     log_basis_open: u32,
@@ -148,25 +149,25 @@ struct FoldDigitInputs<'a> {
     num_live_blocks: usize,
     num_live_ring_elements_per_claim: usize,
     opening_method: akita_types::OpeningMethod,
-    fold_challenge_config: &'a akita_challenges::SparseChallengeConfig,
+    fold_challenge_config: akita_challenges::SparseChallengeConfig,
 }
 
-impl<'a> FoldDigitInputs<'a> {
-    fn of_fold(params: &'a akita_types::CommittedGroupParams) -> Self {
+impl FoldDigitInputs {
+    fn of_fold(params: &akita_types::CommittedGroupParams) -> Self {
         Self {
-            d_a: params.inner.matrix.ring_dimension(),
-            log_basis_inner: params.inner.digits.log_basis,
-            log_basis_open: params.open.digits.log_basis,
-            num_digits_inner: params.inner.digits.num_digits,
-            num_positions_per_block: params.blocks.positions_per_block,
-            num_live_blocks: params.blocks.live_blocks,
-            num_live_ring_elements_per_claim: params.blocks.live_ring_elements_per_claim,
-            opening_method: params.opening_method,
-            fold_challenge_config: &params.fold_challenge_config,
+            d_a: params.inner().matrix.ring_dimension(),
+            log_basis_inner: params.inner().digits.log_basis,
+            log_basis_open: params.open().digits.log_basis,
+            num_digits_inner: params.inner().digits.num_digits,
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_live_blocks: params.blocks().live_blocks,
+            num_live_ring_elements_per_claim: params.blocks().live_ring_elements_per_claim,
+            opening_method: params.opening_method(),
+            fold_challenge_config: params.fold_challenge_config(),
         }
     }
 
-    fn of_group(params: &'a akita_types::GroupOpenPhaseParams) -> Self {
+    fn of_group(params: &akita_types::GroupOpenPhaseParams) -> Self {
         Self {
             d_a: params.profile.inner.matrix.ring_dimension(),
             log_basis_inner: params.profile.inner.digits.log_basis,
@@ -176,13 +177,13 @@ impl<'a> FoldDigitInputs<'a> {
             num_live_blocks: params.profile.blocks.live_blocks,
             num_live_ring_elements_per_claim: params.profile.blocks.live_ring_elements_per_claim,
             opening_method: params.opening.opening_method,
-            fold_challenge_config: &params.opening.fold_challenge_config,
+            fold_challenge_config: params.opening.fold_challenge_config,
         }
     }
 }
 
 fn universal_fold_digit_depth(
-    params: FoldDigitInputs<'_>,
+    params: FoldDigitInputs,
     field_bits: u32,
     num_claims: usize,
     num_chunks: usize,
@@ -213,7 +214,7 @@ fn universal_fold_digit_depth(
         num_fold_coeffs,
         witness_norms,
         log_basis_response: params.log_basis_open,
-        challenge_config: params.fold_challenge_config,
+        challenge_config: &params.fold_challenge_config,
     })
 }
 
@@ -380,17 +381,18 @@ where
         let mut schedule = base.into_schedule();
         let policy = policy_of::<Self>();
         let root = &mut schedule.root.params;
-        let d_a = root.inner.matrix.ring_dimension();
+        let d_a = root.inner().matrix.ring_dimension();
         akita_types::SubringCoefficientPackingGeometry::try_new(
             Self::EXT_DEGREE,
             d_a,
             challenge_subring_dimension,
         )?;
-        root.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        };
+        root.own_group_mut().opening.opening_method =
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            };
         root.source_encoding = akita_types::CommittedSourceEncoding::CanonicalCoefficientTable;
-        root.fold_challenge_config =
+        root.own_group_mut().opening.fold_challenge_config =
             SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -407,41 +409,42 @@ where
             policy.sis_modulus_profile,
             akita_types::SisMatrixRole::Open,
             root_open_dimension,
-            root.open.digits.log_basis,
+            root.open().digits.log_basis,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("root packing test has no audited D bound".into())
         })?;
-        let mut root_open_key = root.open.matrix.sis_table_key();
+        let mut root_open_key = root.open_matrix.sis_table_key();
         root_open_key.ring_dimension = root_open_dimension
             .try_into()
             .map_err(|_| AkitaError::InvalidSetup("root packing D dimension exceeds u32".into()))?;
         root_open_key.coeff_linf_bound = root_open_bound;
-        root.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+        root.open_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
             root_open_key,
-            root.open.matrix.input_width(),
+            root.open_matrix.input_width(),
         )?;
         let required_a_bound = akita_types::sis::rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             d_a,
-            root.open.digits.log_basis,
-            &root.fold_challenge_config,
-            root.num_digits_fold,
+            root.open().digits.log_basis,
+            &root.fold_challenge_config(),
+            root.num_digits_fold(),
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("root packing challenge family has no audited A bound".into())
         })?;
-        let current_a = root.inner.matrix;
+        let current_a = root.inner().matrix;
         let mut current_key = current_a.sis_table_key().ok_or_else(|| {
             AkitaError::InvalidSetup("root packing requires a L-infinity A matrix".into())
         })?;
         current_key.coeff_linf_bound = required_a_bound;
-        root.inner.matrix = akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
-            current_key,
-            current_a.input_width(),
-        )?;
+        root.own_group_mut().profile.inner.matrix =
+            akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
+                current_key,
+                current_a.input_width(),
+            )?;
         rebuild_group_output_matrices(root, key.final_group.num_polynomials(), Self::EXT_DEGREE)?;
 
         let opening_batch = key.opening_layout()?;
@@ -455,29 +458,37 @@ where
         let mut successor = successor_template;
         successor.input_witness_len = root_output_witness_len;
         let successor_witness = &mut successor.params;
-        if successor_witness.inner.digits.log_basis != root.open.digits.log_basis
-            || successor_witness.inner.digits.num_digits != 1
+        if successor_witness.inner().digits.log_basis != root.open().digits.log_basis
+            || successor_witness.inner().digits.num_digits != 1
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "packing recursive digit basis mismatch: predecessor open={}, successor inner={} with {} digits",
-                root.open.digits.log_basis,
-                successor_witness.inner.digits.log_basis,
-                successor_witness.inner.digits.num_digits,
+                root.open().digits.log_basis,
+                successor_witness.inner().digits.log_basis,
+                successor_witness.inner().digits.num_digits,
             )));
         }
-        successor_witness.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        };
+        successor_witness.own_group_mut().opening.opening_method =
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            };
         successor_witness.source_encoding =
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable;
-        successor_witness.fold_challenge_config =
+        successor_witness
+            .own_group_mut()
+            .opening
+            .fold_challenge_config =
             SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
                         "successor packing subring is not in the production ladder".into(),
                     )
                 })?;
-        successor_witness.blocks.live_ring_elements_per_claim =
+        successor_witness
+            .own_group_mut()
+            .profile
+            .blocks
+            .live_ring_elements_per_claim =
             root_output_witness_len.div_ceil(successor_witness.d_a());
 
         let root_setup_natural_len = akita_types::active_setup_field_len(root, &opening_batch)?;
@@ -492,45 +503,46 @@ where
                     "packing setup prefix does not align to the successor A ring".into(),
                 )
             })?;
-        successor_witness.blocks.positions_per_block = prefix_ring_slots.next_power_of_two();
-        successor_witness.blocks.live_blocks = successor_witness
+        successor_witness
+            .own_group_mut()
+            .profile
             .blocks
+            .positions_per_block = prefix_ring_slots.next_power_of_two();
+        successor_witness.own_group_mut().profile.blocks.live_blocks = successor_witness
+            .blocks()
             .live_ring_elements_per_claim
-            .div_ceil(successor_witness.blocks.positions_per_block);
-        successor_witness.num_digits_fold = universal_fold_digit_depth(
+            .div_ceil(successor_witness.blocks().positions_per_block);
+        successor_witness.own_group_mut().opening.num_digits_fold = universal_fold_digit_depth(
             FoldDigitInputs::of_fold(successor_witness),
             policy.decomposition.field_bits(),
             1,
             successor_witness.witness_chunk.num_chunks,
         )?;
         let successor_a_width = successor_witness
-            .blocks
+            .blocks()
             .positions_per_block
-            .checked_mul(successor_witness.inner.digits.num_digits)
+            .checked_mul(successor_witness.inner().digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("packing successor A width overflow".into()))?;
-        let mut successor_a_key =
-            successor_witness
-                .inner
-                .matrix
-                .sis_table_key()
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "packing successor requires a L-infinity A matrix".into(),
-                    )
-                })?;
+        let mut successor_a_key = successor_witness
+            .inner()
+            .matrix
+            .sis_table_key()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("packing successor requires a L-infinity A matrix".into())
+            })?;
         successor_a_key.coeff_linf_bound = akita_types::sis::rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             successor_witness.d_a(),
-            successor_witness.open.digits.log_basis,
-            &successor_witness.fold_challenge_config,
-            successor_witness.num_digits_fold,
+            successor_witness.open().digits.log_basis,
+            &successor_witness.fold_challenge_config(),
+            successor_witness.num_digits_fold(),
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("packing successor has no audited A bound".into())
         })?;
-        successor_witness.inner.matrix =
+        successor_witness.own_group_mut().profile.inner.matrix =
             akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
                 successor_a_key,
                 successor_a_width,
@@ -541,7 +553,7 @@ where
         let prefix_blocks = prefix_ring_slots
             .checked_div(prefix_positions)
             .filter(|blocks| {
-                *blocks >= successor_witness.outer_slice_count.get()
+                *blocks >= successor_witness.outer_slice_count().get()
                     && prefix_ring_slots.is_multiple_of(prefix_positions)
             })
             .ok_or_else(|| {
@@ -549,19 +561,28 @@ where
             })?;
         let mut prefix_source_params = successor_witness.clone();
         prefix_source_params.set_setup_prefix(None);
-        prefix_source_params.inner.digits.log_basis = root.inner.digits.log_basis;
-        prefix_source_params.inner.digits.num_digits =
-            akita_types::sis::compute_num_digits_field_width(
-                policy.decomposition.field_bits(),
-                root.inner.digits.log_basis,
-            );
+        prefix_source_params
+            .own_group_mut()
+            .profile
+            .inner
+            .digits
+            .log_basis = root.own_group_mut().profile.inner.digits.log_basis;
+        prefix_source_params
+            .own_group_mut()
+            .profile
+            .inner
+            .digits
+            .num_digits = akita_types::sis::compute_num_digits_field_width(
+            policy.decomposition.field_bits(),
+            root.inner().digits.log_basis,
+        );
         let prefix_inner_width = prefix_positions
-            .checked_mul(prefix_source_params.inner.digits.num_digits)
+            .checked_mul(prefix_source_params.inner().digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("packing prefix A width overflow".into()))?;
-        prefix_source_params.inner.matrix =
+        prefix_source_params.own_group_mut().profile.inner.matrix =
             akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
                 prefix_source_params
-                    .inner
+                    .inner()
                     .matrix
                     .sis_table_key()
                     .ok_or_else(|| {
@@ -572,18 +593,18 @@ where
                 prefix_inner_width,
             )?;
         let prefix_outer_width = akita_types::CommitmentSliceGeometry::try_new(
-            prefix_source_params.outer_slice_count,
+            prefix_source_params.outer_slice_count(),
             prefix_blocks,
             1,
-            prefix_source_params.inner.matrix.output_rank(),
-            prefix_source_params.outer.digits.num_digits,
+            prefix_source_params.inner().matrix.output_rank(),
+            prefix_source_params.outer().digits.num_digits,
             prefix_source_params.d_a(),
             prefix_source_params.role_dims().d_b(),
         )?
         .physical_input_width();
-        prefix_source_params.outer.matrix =
+        prefix_source_params.own_group_mut().profile.outer.matrix =
             akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
-                prefix_source_params.outer.matrix.sis_table_key(),
+                prefix_source_params.outer().matrix.sis_table_key(),
                 prefix_outer_width,
             )?;
         let mut prefix_params = akita_types::setup_prefix_precommitted_params(
@@ -653,7 +674,7 @@ where
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
         successor_witness.set_setup_prefix(Some(incoming_setup_prefix));
         let successor_d_width = successor_witness
-            .open
+            .open()
             .matrix
             .input_width()
             .checked_add(
@@ -661,8 +682,8 @@ where
                     .d_segment_width(Self::EXT_DEGREE, successor_witness.role_dims().d_d())?,
             )
             .ok_or_else(|| AkitaError::InvalidSetup("packing successor D width overflow".into()))?;
-        successor_witness.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
-            successor_witness.open.matrix.sis_table_key(),
+        successor_witness.open_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+            successor_witness.open_matrix.sis_table_key(),
             successor_d_width,
         )?;
         let successor_opening_batch = akita_types::suffix_opening_layout(
@@ -723,20 +744,24 @@ where
                 "early-ET test level must be zero or one".into(),
             ));
         };
-        params.opening_method = akita_types::OpeningMethod::EvaluationTrace;
-        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(params.d_a())
-            .ok_or_else(|| {
+        params.own_group_mut().opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
+        params.own_group_mut().opening.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(params.d_a()).ok_or_else(|| {
                 AkitaError::InvalidSetup("missing early-ET witness challenge family".into())
             })?;
         params.source_encoding = akita_types::CommittedSourceEncoding::for_producer(
-            params.opening_method,
+            params.opening_method(),
             Self::EXT_DEGREE,
             params.d_a(),
             0,
             LEVEL == 0,
         );
         if LEVEL == 1 {
-            schedule.recursive_folds[0].params.fold_challenge_config = params.fold_challenge_config;
+            schedule.recursive_folds[0]
+                .params
+                .own_group_mut()
+                .opening
+                .fold_challenge_config = params.own_group_mut().opening.fold_challenge_config;
         }
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
         let selection = OpeningScheduleSelection {

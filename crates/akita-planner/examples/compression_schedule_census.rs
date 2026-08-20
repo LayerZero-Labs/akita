@@ -156,8 +156,8 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.outer.matrix,
-        root.outer_slice_count,
+        &root.outer().matrix,
+        root.outer_slice_count(),
     )?;
     record_open(
         stats,
@@ -165,7 +165,7 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.open.matrix,
+        &root.open().matrix,
     )?;
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         for (group_index, group) in fold.params.precommitted_group_iter().enumerate() {
@@ -185,8 +185,8 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.outer.matrix,
-            fold.params.outer_slice_count,
+            &fold.params.outer().matrix,
+            fold.params.outer_slice_count(),
         )?;
         record_open(
             stats,
@@ -194,7 +194,7 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.open.matrix,
+            &fold.params.open().matrix,
         )?;
     }
     Ok(())

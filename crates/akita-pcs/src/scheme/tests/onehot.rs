@@ -321,7 +321,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     );
     assert_eq!(
         final_commitment.rows().count(),
-        main_params.outer.matrix.output_rank()
+        main_params.outer().matrix.output_rank()
     );
     assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
     assert_eq!(
@@ -519,7 +519,7 @@ where
             &opening_layout,
             &relation_geometry,
             root_commitment.witness_chunk.num_chunks,
-            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open.digits.log_basis),
+            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(
@@ -578,8 +578,8 @@ where
                 poly,
                 &final_point,
                 main_params.d_a(),
-                main_params.blocks.positions_per_block,
-                main_params.blocks.live_blocks,
+                main_params.blocks().positions_per_block,
+                main_params.blocks().live_blocks,
             )
         })
         .collect();
@@ -808,7 +808,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const BATCH_SIZE: usize = 2;
 
     let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
-    let total_field = (layout.blocks.live_blocks * layout.blocks.positions_per_block)
+    let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     let total_chunks = total_field / BENCH_ONEHOT_K;
@@ -828,8 +828,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 poly,
                 &point,
                 layout.d_a(),
-                layout.blocks.positions_per_block,
-                layout.blocks.live_blocks,
+                layout.blocks().positions_per_block,
+                layout.blocks().live_blocks,
             )
         })
         .collect();

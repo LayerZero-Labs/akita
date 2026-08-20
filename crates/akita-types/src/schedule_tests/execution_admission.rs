@@ -7,12 +7,34 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     };
     let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
     let mut schedule = recursive_schedule(64, 64, true);
-    schedule.root.params.opening_method = packing;
-    schedule.root.params.fold_challenge_config = production;
-    schedule.root.params.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.opening_method = packing;
-    schedule.recursive_folds[0].params.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.fold_challenge_config = production;
+    schedule.root.params.own_group_mut().opening.opening_method = packing;
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .opening_method = packing;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
     let mut first_prefix = *schedule.recursive_folds[0]
         .params
         .setup_prefix()
@@ -25,9 +47,9 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
 
     append_recursive_fold(&mut schedule);
     let level2 = &mut schedule.recursive_folds[1];
-    level2.params.opening_method = OpeningMethod::EvaluationTrace;
-    level2.params.fold_challenge_config = production;
-    level2.params.fold_challenge_config = production;
+    level2.params.own_group_mut().opening.opening_method = OpeningMethod::EvaluationTrace;
+    level2.params.own_group_mut().opening.fold_challenge_config = production;
+    level2.params.own_group_mut().opening.fold_challenge_config = production;
     let natural_len = 64;
     provision_setup_prefix_capacity(&mut level2.params, natural_len);
     let commitment_params = crate::setup_prefix_precommitted_params(&level2.params, natural_len)
@@ -78,7 +100,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
 fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree: usize) {
     let root = &mut schedule.root.params;
     root.source_encoding = crate::CommittedSourceEncoding::for_producer(
-        root.opening_method,
+        root.opening_method(),
         extension_degree,
         root.d_a(),
         schedule.root.input_witness_len.trailing_zeros() as usize,
@@ -87,7 +109,7 @@ fn use_expected_producer_encodings(schedule: &mut FoldSchedule, extension_degree
     for step in &mut schedule.recursive_folds {
         let witness = &mut step.params;
         witness.source_encoding = crate::CommittedSourceEncoding::for_producer(
-            witness.opening_method,
+            witness.opening_method(),
             extension_degree,
             witness.d_a(),
             0,
@@ -102,13 +124,18 @@ fn use_required_early_packing(schedule: &mut FoldSchedule, extension_degree: usi
     };
     let production = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
     let root = &mut schedule.root.params;
-    root.opening_method = packing;
-    root.fold_challenge_config = production;
-    schedule.root.params.fold_challenge_config = production;
+    root.own_group_mut().opening.opening_method = packing;
+    root.own_group_mut().opening.fold_challenge_config = production;
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
     if let Some(first) = schedule.recursive_folds.first_mut() {
-        first.params.opening_method = packing;
-        first.params.fold_challenge_config = production;
-        first.params.fold_challenge_config = production;
+        first.params.own_group_mut().opening.opening_method = packing;
+        first.params.own_group_mut().opening.fold_challenge_config = production;
+        first.params.own_group_mut().opening.fold_challenge_config = production;
     }
     use_expected_producer_encodings(schedule, extension_degree);
 }
@@ -128,10 +155,11 @@ fn accepts_packing_geometry_for_every_extension_degree() {
 fn accepts_group_local_packing_subring_dimensions() {
     let packing_group = |s| {
         let mut params = committed_params(128);
-        params.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: s,
-        };
-        params.fold_challenge_config =
+        params.own_group_mut().opening.opening_method =
+            crate::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension: s,
+            };
+        params.own_group_mut().opening.fold_challenge_config =
             akita_challenges::SparseChallengeConfig::production_for_ring_dim(s).unwrap();
         params.source_encoding = crate::CommittedSourceEncoding::CanonicalCoefficientTable;
         params
@@ -140,16 +168,16 @@ fn accepts_group_local_packing_subring_dimensions() {
     let s128 = packing_group(128);
     let groups = [
         OpeningExecutionGroup {
-            opening_method: s64.opening_method,
-            inner_commit_matrix: &s64.inner.matrix,
-            fold_challenge_config: &s64.fold_challenge_config,
+            opening_method: s64.opening_method(),
+            inner_commit_matrix: &s64.inner().matrix,
+            fold_challenge_config: s64.fold_challenge_config(),
             source_encoding: s64.source_encoding,
             expected_source_encoding: None,
         },
         OpeningExecutionGroup {
-            opening_method: s128.opening_method,
-            inner_commit_matrix: &s128.inner.matrix,
-            fold_challenge_config: &s128.fold_challenge_config,
+            opening_method: s128.opening_method(),
+            inner_commit_matrix: &s128.inner().matrix,
+            fold_challenge_config: s128.fold_challenge_config(),
             source_encoding: s128.source_encoding,
             expected_source_encoding: None,
         },
@@ -173,10 +201,11 @@ fn rejects_level_two_packing() {
     use_required_early_packing(&mut schedule, 2);
     append_recursive_fold(&mut schedule);
     let recursive = &mut schedule.recursive_folds[1].params;
-    recursive.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    recursive.fold_challenge_config =
+    recursive.own_group_mut().opening.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    recursive.own_group_mut().opening.fold_challenge_config =
         akita_challenges::SparseChallengeConfig::production_for_ring_dim(64).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
     assert!(matches!(
@@ -196,12 +225,18 @@ fn rejects_subring_that_ignores_extension_degree() {
 fn rejects_unaudited_recursive_packing_family() {
     let mut schedule = recursive_schedule(64, 64, false);
     use_required_early_packing(&mut schedule, 1);
-    schedule.recursive_folds[0].params.opening_method =
-        crate::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-    schedule.recursive_folds[0].params.fold_challenge_config =
-        akita_challenges::SparseChallengeConfig::pm1_only(1);
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = akita_challenges::SparseChallengeConfig::pm1_only(1);
     assert!(schedule.validate_nonterminal_opening_execution(1).is_err());
 }
 
@@ -242,8 +277,9 @@ fn rejects_evaluation_trace_at_level_one() {
     let mut schedule = recursive_schedule(128, 128, false);
     use_required_early_packing(&mut schedule, 2);
     let witness = &mut schedule.recursive_folds[0].params;
-    witness.opening_method = OpeningMethod::EvaluationTrace;
-    witness.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+    witness.own_group_mut().opening.opening_method = OpeningMethod::EvaluationTrace;
+    witness.own_group_mut().opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
 
     assert!(matches!(
@@ -257,9 +293,16 @@ fn rejects_extension_recursive_trace_mutated_to_canonical() {
     let mut schedule = recursive_schedule(128, 128, false);
     use_required_early_packing(&mut schedule, 2);
     append_recursive_fold(&mut schedule);
-    schedule.recursive_folds[1].params.opening_method = OpeningMethod::EvaluationTrace;
-    schedule.recursive_folds[1].params.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).unwrap();
+    schedule.recursive_folds[1]
+        .params
+        .own_group_mut()
+        .opening
+        .opening_method = OpeningMethod::EvaluationTrace;
+    schedule.recursive_folds[1]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(128).unwrap();
     use_expected_producer_encodings(&mut schedule, 2);
     schedule.recursive_folds[1].params.source_encoding =
         crate::CommittedSourceEncoding::CanonicalCoefficientTable;
@@ -305,12 +348,34 @@ fn prefix_at_index_zero_does_not_redefine_the_opening_family() {
 
     // A level-1 fold consuming a prefix, consistent in the packing family.
     let mut schedule = recursive_schedule(64, 64, true);
-    schedule.root.params.opening_method = packing;
-    schedule.root.params.fold_challenge_config = production;
-    schedule.root.params.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.opening_method = packing;
-    schedule.recursive_folds[0].params.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.fold_challenge_config = production;
+    schedule.root.params.own_group_mut().opening.opening_method = packing;
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .opening_method = packing;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
+    schedule.recursive_folds[0]
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config = production;
     if let Some(mut prefix) = schedule.recursive_folds[0].params.setup_prefix().copied() {
         prefix.opening.opening_method = packing;
         prefix.opening.fold_challenge_config = production;

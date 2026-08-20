@@ -1050,7 +1050,7 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let d_physical_cols = level_params.open.matrix.input_width();
+    let d_physical_cols = level_params.open().matrix.input_width();
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_params = level_params.group_params(opening_batch, group_index)?;
@@ -1072,7 +1072,7 @@ fn active_setup_projection_geometry(
     }
     crate::SetupProjectionGeometry::from_groups(
         level_params.role_dims(),
-        level_params.open.matrix.output_rank(),
+        level_params.open().matrix.output_rank(),
         d_physical_cols,
         &groups,
     )
@@ -1098,8 +1098,8 @@ pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<GroupOpenPhaseParams, AkitaError> {
-    let d_setup = prefix_params.inner.matrix.ring_dimension();
-    let d_outer = prefix_params.outer.matrix.ring_dimension();
+    let d_setup = prefix_params.inner().matrix.ring_dimension();
+    let d_outer = prefix_params.outer().matrix.ring_dimension();
     if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix A dimension must be a multiple of its B dimension".to_string(),
@@ -1112,52 +1112,52 @@ pub fn setup_prefix_precommitted_params(
     }
     let setup_num_digits = crate::sis::compute_num_digits_field_width(
         prefix_params
-            .inner
+            .inner()
             .matrix
             .sis_modulus_profile()
             .field_bits(),
-        prefix_params.inner.digits.log_basis,
+        prefix_params.inner().digits.log_basis,
     );
     let ring_slots = n_prefix / d_setup;
     let mut num_positions_per_block = 1usize;
     while num_positions_per_block <= ring_slots.max(1) {
         let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
-        if prefix_params.outer_slice_count.get() > num_live_blocks {
+        if prefix_params.outer_slice_count().get() > num_live_blocks {
             break;
         }
         let inner_width = num_positions_per_block
             .checked_mul(setup_num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
         let outer_width = CommitmentSliceGeometry::try_new(
-            prefix_params.outer_slice_count,
+            prefix_params.outer_slice_count(),
             num_live_blocks,
             1,
-            prefix_params.inner.matrix.output_rank(),
-            prefix_params.outer.digits.num_digits,
+            prefix_params.inner().matrix.output_rank(),
+            prefix_params.outer().digits.num_digits,
             d_setup,
             d_outer,
         )?
         .physical_input_width();
-        if inner_width <= prefix_params.inner.matrix.input_width()
-            && outer_width <= prefix_params.outer.matrix.input_width()
+        if inner_width <= prefix_params.inner().matrix.input_width()
+            && outer_width <= prefix_params.outer().matrix.input_width()
         {
-            if prefix_params.inner.matrix.sis_table_key().is_none() {
+            if prefix_params.inner().matrix.sis_table_key().is_none() {
                 return Err(AkitaError::InvalidSetup(
                     "setup prefix cannot be derived from an L2 A security route".into(),
                 ));
             }
             let inner_commit_matrix = prefix_params
-                .inner
+                .inner()
                 .matrix
                 .try_with_input_width(inner_width)?;
             let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-                prefix_params.outer.matrix.security_policy(),
-                prefix_params.outer.matrix.sis_table_key().table_digest,
-                prefix_params.outer.matrix.sis_modulus_profile(),
-                prefix_params.outer.matrix.output_rank(),
+                prefix_params.outer().matrix.security_policy(),
+                prefix_params.outer().matrix.sis_table_key().table_digest,
+                prefix_params.outer().matrix.sis_modulus_profile(),
+                prefix_params.outer().matrix.output_rank(),
                 outer_width,
-                prefix_params.outer.matrix.coeff_linf_bound(),
-                prefix_params.outer.matrix.ring_dimension(),
+                prefix_params.outer().matrix.coeff_linf_bound(),
+                prefix_params.outer().matrix.ring_dimension(),
             );
             return Ok(GroupOpenPhaseParams {
                 setup_natural_len: None,
@@ -1171,27 +1171,27 @@ pub fn setup_prefix_precommitted_params(
                         num_live_blocks,
                     ),
 
-                    outer_slice_count: prefix_params.outer_slice_count,
+                    outer_slice_count: prefix_params.outer_slice_count(),
                     inner: crate::RoleParams::new(
                         crate::GadgetDigits::new(
-                            prefix_params.inner.digits.log_basis,
+                            prefix_params.inner().digits.log_basis,
                             setup_num_digits,
                         ),
                         inner_commit_matrix,
                     ),
                     outer: crate::RoleParams::new(
                         crate::GadgetDigits::new(
-                            prefix_params.outer.digits.log_basis,
-                            prefix_params.outer.digits.num_digits,
+                            prefix_params.outer().digits.log_basis,
+                            prefix_params.outer().digits.num_digits,
                         ),
                         outer_commit_matrix,
                     ),
                 },
                 opening: crate::GroupOpeningPlan::evaluation_trace(
-                    prefix_params.fold_challenge_config,
-                    prefix_params.open.digits.log_basis,
-                    prefix_params.open.digits.num_digits,
-                    prefix_params.num_digits_fold,
+                    prefix_params.fold_challenge_config(),
+                    prefix_params.open().digits.log_basis,
+                    prefix_params.open().digits.num_digits,
+                    prefix_params.num_digits_fold(),
                 ),
             });
         }

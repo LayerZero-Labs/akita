@@ -78,11 +78,12 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
     );
     evaluation_trace.payload_mode = akita_types::CommitmentPayloadMode::Raw;
     let mut packing = evaluation_trace.clone();
-    packing.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    packing.open.digits.log_basis = 4;
-    packing.open.digits.num_digits = 32;
+    packing.own_group_mut().opening.opening_method =
+        akita_types::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    packing.own_group_mut().opening.log_basis_open = 4;
+    packing.own_group_mut().opening.num_digits_open = 32;
     assert_ne!(
         evaluation_trace.canonical_descriptor_bytes(),
         packing.canonical_descriptor_bytes()
@@ -112,16 +113,17 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         "successors in one parent-observable bucket must price identically"
     );
 
-    let outer = packing.outer.matrix;
-    packing.outer.matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        outer.output_rank() * 2,
-        outer.input_width(),
-        outer.coeff_linf_bound(),
-        outer.ring_dimension(),
-    );
+    let outer = packing.outer().matrix;
+    packing.own_group_mut().profile.outer.matrix =
+        akita_types::OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank() * 2,
+            outer.input_width(),
+            outer.coeff_linf_bound(),
+            outer.ring_dimension(),
+        );
     assert_ne!(
         super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
         super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),

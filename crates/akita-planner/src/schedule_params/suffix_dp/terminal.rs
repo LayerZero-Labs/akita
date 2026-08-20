@@ -76,12 +76,12 @@ pub(crate) fn terminal_direct_suffix_cost(
     }
     let (mut terminal_params, certified_linf_cap) =
         akita_types::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
-    let mut sparse_challenge_config = terminal_lp.fold_challenge_config;
+    let mut sparse_challenge_config = terminal_lp.fold_challenge_config();
     if let Some(l2_challenge) =
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
     {
         let fold_basis = 1usize
-            .checked_shl(terminal_lp.open.digits.log_basis)
+            .checked_shl(terminal_lp.open().digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
         let response_l2_sq_cap = source_moment
             .and_then(|moment| moment.response_l2_sq_cap(l2_challenge.challenge_l2_sq_max()));
@@ -94,7 +94,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                 inner_width: terminal_params.inner_width(),
                 ring_dimension: terminal_params.d_a(),
                 fold_basis,
-                fold_digit_count: terminal_lp.num_digits_fold,
+                fold_digit_count: terminal_lp.num_digits_fold(),
                 fold_challenge_config: &l2_challenge,
                 response_l2_sq_cap,
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {

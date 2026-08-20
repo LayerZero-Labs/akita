@@ -81,14 +81,14 @@ impl FoldParams {
     #[inline]
     #[must_use]
     pub fn open_commit_matrix(&self) -> &crate::OpenCommitMatrixParams {
-        &self.params.open.matrix
+        &self.params.open_matrix
     }
 
     /// Fold-challenge family for this level.
     #[inline]
     #[must_use]
-    pub fn sparse_challenge_config(&self) -> &akita_challenges::SparseChallengeConfig {
-        &self.params.fold_challenge_config
+    pub fn sparse_challenge_config(&self) -> akita_challenges::SparseChallengeConfig {
+        self.params.fold_challenge_config()
     }
 
     /// The incoming setup prefix, when this fold consumes one.
@@ -150,7 +150,7 @@ impl TerminalFoldParams {
     /// existing `params_only` then `with_decomp` idiom on `CommittedGroupParams`.
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
-            fold_challenge_config: params.fold_challenge_config,
+            fold_challenge_config: params.fold_challenge_config(),
             response_shape: TerminalResponseShape {
                 layout: crate::TailSegmentLayout {
                     ring_dimension: params.d_a(),
@@ -162,12 +162,15 @@ impl TerminalFoldParams {
             blocks: params.blocks(),
             inner: crate::RoleParams::new(
                 crate::GadgetDigits::new(
-                    params.inner.digits.log_basis,
-                    params.inner.digits.num_digits,
+                    params.inner().digits.log_basis,
+                    params.inner().digits.num_digits,
                 ),
-                params.inner.matrix,
+                params.inner().matrix,
             ),
-            fold: crate::GadgetDigits::new(params.open.digits.log_basis, params.num_digits_fold),
+            fold: crate::GadgetDigits::new(
+                params.open().digits.log_basis,
+                params.num_digits_fold(),
+            ),
         }
     }
 
@@ -176,7 +179,7 @@ impl TerminalFoldParams {
     pub fn try_from_expanded_group(
         params: CommittedGroupParams,
     ) -> Result<(Self, u128), AkitaError> {
-        let sparse = params.fold_challenge_config;
+        let sparse = params.fold_challenge_config();
         let num_fold_coeffs = usize::try_from(params.num_fold_coeffs()).map_err(|_| {
             AkitaError::InvalidSetup("terminal fold coefficient count exceeds usize".into())
         })?;
@@ -184,9 +187,9 @@ impl TerminalFoldParams {
             crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
         let witness =
-            crate::sis::FoldWitnessNorms::bounded(params.inner.digits.log_basis, params.d_a());
+            crate::sis::FoldWitnessNorms::bounded(params.inner().digits.log_basis, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
-            params.blocks.live_blocks,
+            params.blocks().live_blocks,
             1,
             challenge,
             witness,
@@ -507,7 +510,7 @@ impl FoldSchedule {
                 OpeningExecutionGroup {
                     opening_method: commitment.opening.opening_method,
                     inner_commit_matrix: &commitment.profile.inner.matrix,
-                    fold_challenge_config: &commitment.opening.fold_challenge_config,
+                    fold_challenge_config: commitment.opening.fold_challenge_config,
                     // Precommitted groups are canonical by admission.
                     source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
@@ -521,12 +524,12 @@ impl FoldSchedule {
             })
             .collect();
         root_groups.push(OpeningExecutionGroup {
-            opening_method: root_final.opening_method,
-            inner_commit_matrix: &root_final.inner.matrix,
-            fold_challenge_config: &root_final.fold_challenge_config,
+            opening_method: root_final.opening_method(),
+            inner_commit_matrix: &root_final.inner().matrix,
+            fold_challenge_config: root_final.fold_challenge_config(),
             source_encoding: root_final.source_encoding,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                root_final.opening_method,
+                root_final.opening_method(),
                 extension_degree,
                 root_final.d_a(),
                 self.root.input_witness_len.trailing_zeros() as usize,
@@ -542,18 +545,18 @@ impl FoldSchedule {
                 groups.push(OpeningExecutionGroup {
                     opening_method: prefix.opening.opening_method,
                     inner_commit_matrix: &prefix.profile.inner.matrix,
-                    fold_challenge_config: &prefix.opening.fold_challenge_config,
+                    fold_challenge_config: prefix.opening.fold_challenge_config,
                     source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: None,
                 });
             }
             groups.push(OpeningExecutionGroup {
-                opening_method: witness.opening_method,
-                inner_commit_matrix: &witness.inner.matrix,
-                fold_challenge_config: &witness.fold_challenge_config,
+                opening_method: witness.opening_method(),
+                inner_commit_matrix: &witness.inner().matrix,
+                fold_challenge_config: witness.fold_challenge_config(),
                 source_encoding: witness.source_encoding,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                    witness.opening_method,
+                    witness.opening_method(),
                     extension_degree,
                     witness.d_a(),
                     0,
@@ -591,7 +594,7 @@ struct OpeningExecutionGroup<'a> {
     /// this admission check meant to impose.
     opening_method: OpeningMethod,
     inner_commit_matrix: &'a crate::InnerCommitMatrixParams,
-    fold_challenge_config: &'a akita_challenges::SparseChallengeConfig,
+    fold_challenge_config: akita_challenges::SparseChallengeConfig,
     /// Encoding the committing fold actually used for this group.
     ///
     /// Carried explicitly rather than read from `params`: a group's own
@@ -699,7 +702,7 @@ fn validate_level_opening_execution(
                 "coefficient packing requires the L-infinity A security route".into(),
             ));
         }
-        if *group.fold_challenge_config != expected {
+        if group.fold_challenge_config != expected {
             return Err(AkitaError::InvalidSetup(
                 "coefficient packing requires its audited production challenge family".into(),
             ));
@@ -733,7 +736,7 @@ fn validate_stage2_successor_capacity(
     let mut relation_coefficient_block_len = role_dims.common_relation_coeff_count();
     if let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
-    } = predecessor.opening_method
+    } = predecessor.opening_method()
     {
         relation_coefficient_block_len =
             relation_coefficient_block_len.min(challenge_subring_dimension);
@@ -821,9 +824,9 @@ pub struct PlannedFoldSchedule {
 
 /// Witness length entering the root fold, in field elements.
 pub fn root_input_witness_len(lp: &CommittedGroupParams) -> usize {
-    lp.blocks
+    lp.blocks()
         .live_blocks
-        .checked_mul(lp.blocks.positions_per_block)
+        .checked_mul(lp.blocks().positions_per_block)
         .and_then(|len| len.checked_mul(lp.d_a()))
         .unwrap_or(0)
 }

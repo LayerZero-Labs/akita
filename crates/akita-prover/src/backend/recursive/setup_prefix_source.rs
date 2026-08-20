@@ -692,8 +692,8 @@ mod tests {
         )
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
-        let inner = &params.inner.matrix;
-        params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        let inner = &params.inner().matrix;
+        params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner.sis_table_key().unwrap().table_digest,
             inner.sis_modulus_profile(),
@@ -702,8 +702,8 @@ mod tests {
             2,
             D,
         );
-        let outer = &params.outer.matrix;
-        params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &params.outer().matrix;
+        params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
