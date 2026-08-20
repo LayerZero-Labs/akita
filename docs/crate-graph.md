@@ -139,13 +139,13 @@ graph TD
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
-- `akita-planner` is the `Cfg`-free schedule engine: generated table types,
-  on-demand compact→`LevelParams` expansion, catalog identity validation, and
-  the schedule-search DP. It sits **below** `akita-config` and names no
+- `akita-planner` is the `Cfg`-free offline schedule search and table emission
+  engine. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
-  and `akita-error`.
-- `akita-schedules` stores the tracked generated tables and their Cargo feature
-  wiring. The family modules are deterministic planner output. The crate
+  `akita-error`, and `akita-schedules`.
+- `akita-schedules` owns generated row types, catalog identity validation,
+  runtime row expansion, and the tracked generated tables with their Cargo
+  feature wiring. The family modules are deterministic planner output. The crate
   depends only on `akita-error`, `akita-types`, and `akita-challenges`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
   policy trait. It depends on `akita-schedules`: `CommitmentConfig::resolve_catalog_row_for_key`

@@ -1,7 +1,8 @@
 # Jolt recursion
 
-> **Status:** current integration note. The standalone recursion README remains
-> the canonical operational runbook.
+> **Status:** current integration note. The
+> [standalone recursion README](https://github.com/LayerZero-Labs/akita/blob/main/profile/akita-recursion/README.md)
+> remains the canonical operational runbook.
 
 The standalone `profile/akita-recursion/` sub-workspace (excluded from the main
 workspace; Rust 1.95 + RISC-V): the artifact → host → guest flow, the
@@ -84,6 +85,6 @@ pass.
 
 ## Sources to fold in
 
-- `profile/akita-recursion/README.md` (canonical runbook)
+- [Canonical recursion runbook](https://github.com/LayerZero-Labs/akita/blob/main/profile/akita-recursion/README.md)
 - `profile/akita-recursion/glue/src/lib.rs`
 - `specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`

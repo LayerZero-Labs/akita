@@ -1,8 +1,8 @@
 # Configuration and planning
 
 How a preset turns into a concrete recursion schedule: the single
-`CommitmentConfig` trait, the `LevelParams` it produces, and the planner that
-selects (or searches for) the schedule and prices its proof size.
+`CommitmentConfig` trait, the `FoldSchedule` it resolves, and the planner that
+searches for schedules and prices their proof size offline.
 
 ## CommitmentConfig and presets
 
@@ -26,20 +26,25 @@ dimension selected by the fold that consumes the prefix.
 
 **Implementation map**
 
-- `crates/akita-config/src/lib.rs:54-120`.
+- `crates/akita-config/src/lib.rs` (`CommitmentConfig`).
 - `crates/akita-config/src/proof_optimized/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 
-## Schedule and LevelParams
+## Schedule and fold parameters
 
-What a schedule fixes per level (decomposition depth and ring/ext degrees),
-the `LevelParams` representation, and the invariants the verifier
-re-derives rather than trusts.
+`FoldSchedule` contains one `RootFoldStep`, zero or more
+`RecursiveFoldStep` values, and one `TerminalFoldStep`. Their parameter types
+are `RootFoldParams`, `RecursiveFoldParams`, and `TerminalFoldParams`.
+`CommittedGroupParams` records the commitment matrices, ring dimensions,
+decomposition depths, opening method, and block geometry for one committed
+group. The verifier derives and checks these values from the selected generated
+row rather than trusting proof bytes.
 
 **Implementation map**
 
-- `crates/akita-types/src/layout/params.rs:41-97`.
-- `crates/akita-types/src/schedule.rs` (`FoldStep`, `TerminalWitnessPlan`, `Schedule`).
+- `crates/akita-types/src/layout/params.rs` (`CommittedGroupParams`).
+- `crates/akita-types/src/schedule.rs` (`RootFoldParams`,
+  `RecursiveFoldParams`, `TerminalFoldParams`, and `FoldSchedule`).
 - Paper §3.11 `sec:akita-planner` ("What the schedule fixes").
 - Council architecture + newcomer reports (schedule invariants, level overload).
 
@@ -47,9 +52,10 @@ re-derives rather than trusts.
 
 The `Cfg`-free planner owns offline schedule search and table emission. The
 feature-gated `akita-schedules` crate owns shipped table data and runtime
-compact to `LevelParams` expansion. Verification resolves an enabled generated
-row and never runs planner search. The shared proof-size formulas remain
-verifier-reachable and must reject malformed input without panicking.
+expansion into `FoldSchedule` and its committed group parameters. Verification
+resolves an enabled generated row and never runs planner search. The shared
+proof-size formulas remain verifier-reachable and must reject malformed input
+without panicking.
 
 **Implementation map**
 
