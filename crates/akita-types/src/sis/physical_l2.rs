@@ -10,7 +10,7 @@ use std::ops::Range;
 /// field-specific no-wrap ceiling.
 const MAX_LIMB_GRAM_BLOCK_LEN: usize = 1 << 12;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::ajtai_key::{SisModulusProfileId, SisSecurityPolicyId, SisTableKey};
 use super::l2_table::SisL2TableKey;

@@ -7,7 +7,8 @@
 
 use super::poly::DensePoly;
 use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///

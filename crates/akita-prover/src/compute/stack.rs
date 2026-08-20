@@ -20,7 +20,8 @@ use crate::compute::backend::{ComputeBackendSetup, NttCacheOwnerId};
 use crate::compute::requirements::{
     NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 use std::marker::PhantomData;
 

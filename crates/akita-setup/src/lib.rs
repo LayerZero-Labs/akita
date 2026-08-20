@@ -7,8 +7,9 @@
 mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
+use akita_error::AkitaError;
 use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]

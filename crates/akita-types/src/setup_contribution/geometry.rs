@@ -1,6 +1,8 @@
 //! Challenge-free setup product geometry: projection sizing and envelope guards.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::FieldCore;
 
 use crate::layout::{validate_role_dims, CommitmentRingDims};
 use crate::proof::AkitaExpandedSetup;

@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{CommittedGroupParams, SetupMatrixCapacity, TerminalCommittedGroupParams};
 
 pub(crate) fn level_setup_field_elements(

@@ -7,7 +7,7 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
 };

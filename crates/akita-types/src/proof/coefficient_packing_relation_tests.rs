@@ -1093,7 +1093,7 @@ fn semantic_events_match_an_independent_dense_accumulation() {
 
 #[test]
 fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
-    assert!(checked_product("test", &[usize::MAX, 2]).is_err());
+    assert!(akita_error::checked::product([usize::MAX, 2]).is_none());
     let fixture = fixture::<F, E>(
         SisModulusProfileId::Q64Offset59,
         256,

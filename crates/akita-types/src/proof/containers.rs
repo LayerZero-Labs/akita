@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 /// D-erased storage for a sequence of ring elements as raw field-element
 /// coefficients.
@@ -540,11 +541,9 @@ pub struct DigitBlockIter<'a> {
 }
 
 /// Sum block sizes with overflow checking.
-fn checked_total_planes(block_sizes: &[usize]) -> Result<usize, AkitaError> {
-    block_sizes.iter().try_fold(0usize, |acc, &size| {
-        acc.checked_add(size)
-            .ok_or_else(|| AkitaError::InvalidInput("digit block size overflow".to_string()))
-    })
+fn total_planes(block_sizes: &[usize]) -> Result<usize, AkitaError> {
+    checked::sum(block_sizes.iter().copied())
+        .ok_or_else(|| AkitaError::InvalidInput("digit block size overflow".to_string()))
 }
 
 impl DigitBlocks {
@@ -565,7 +564,7 @@ impl DigitBlocks {
     /// Returns an error if the block sizes overflow the total plane count or if
     /// the resulting digit length overflows.
     pub fn zeroed(block_sizes: Vec<usize>, digit_stride: usize) -> Result<Self, AkitaError> {
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let total_digits = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -588,7 +587,7 @@ impl DigitBlocks {
         block_sizes: Vec<usize>,
         digit_stride: usize,
     ) -> Result<Self, AkitaError> {
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let expected = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -615,7 +614,7 @@ impl DigitBlocks {
     /// Returns an error if any plane width differs from `digit_stride`.
     pub fn from_blocks(blocks: Vec<Vec<Vec<i8>>>, digit_stride: usize) -> Result<Self, AkitaError> {
         let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let total_digits = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -874,10 +873,8 @@ impl Valid for DigitBlocks {
                 "digit blocks require a non-zero digit stride".to_string(),
             ));
         }
-        let total_planes = self.block_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                SerializationError::InvalidData("digit block size overflow".to_string())
-            })
+        let total_planes = checked::sum(self.block_sizes.iter().copied()).ok_or_else(|| {
+            SerializationError::InvalidData("digit block size overflow".to_string())
         })?;
         let expected = total_planes.checked_mul(self.digit_stride).ok_or_else(|| {
             SerializationError::InvalidData("digit block length overflow".to_string())
@@ -933,10 +930,8 @@ impl AkitaDeserialize for DigitBlocks {
         let digit_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let block_sizes =
             Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                SerializationError::InvalidData("digit block size overflow".to_string())
-            })
+        let total_planes = checked::sum(block_sizes.iter().copied()).ok_or_else(|| {
+            SerializationError::InvalidData("digit block size overflow".to_string())
         })?;
         let total_digits = total_planes.checked_mul(digit_stride).ok_or_else(|| {
             SerializationError::InvalidData("digit block length overflow".to_string())

@@ -1,7 +1,7 @@
 //! Sumcheck proof containers and round-message types.
 
 use akita_algebra::uni_poly::CompressedUniPoly;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,

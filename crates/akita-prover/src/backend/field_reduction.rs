@@ -1,5 +1,6 @@
 use super::RecursiveWitnessFlat;
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
 
 fn tensor_extension_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>

@@ -5,7 +5,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     fold_coefficient_packing_partials, CoefficientPackingFoldProduct, CommittedGroupParams,
     DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,

@@ -2,7 +2,8 @@
 
 use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
 use crate::offset_eq::OffsetEqWindow;
-use crate::{AkitaError, FieldCore};
+use crate::FieldCore;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 
 /// Materialize the left-address weights induced by tensor families and one

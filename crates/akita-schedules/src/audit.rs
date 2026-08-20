@@ -1,6 +1,6 @@
 //! Canonical security audit for one fully expanded schedule row.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     num_digits_inner, num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,

@@ -11,9 +11,10 @@ use super::{
     compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
 };
 use akita_algebra::split_eq::GruenSplitEq;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 
 struct CompactRangeLeafState<E: FieldCore> {

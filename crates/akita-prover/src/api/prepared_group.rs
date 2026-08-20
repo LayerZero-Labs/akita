@@ -1,9 +1,9 @@
 //! Typed borrowed group carriers for prover execution.
 
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    MulBaseUnreduced,
+    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
 use akita_serialization::AkitaSerialize;
 use akita_types::FpExtEncoding;

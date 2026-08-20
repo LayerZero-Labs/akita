@@ -1,6 +1,7 @@
 use akita_algebra::offset_eq::{eval_affine_digit_intervals, AffineWeight};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
 use std::sync::Arc;
 

@@ -22,9 +22,10 @@
 use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
-use akita_field::{AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore};
+use akita_field::{AdditiveGroup, CanonicalField, ExtField, FieldCore};
 use akita_types::RingMatrixView;
 use std::marker::PhantomData;
 
