@@ -6,10 +6,10 @@ use crate::Invertible;
 use crate::{Fp128, Fp32, Fp64};
 use core::arch::aarch64::{
     uint32x2_t, uint32x4_t, uint64x2_t, vaddq_u32, vaddq_u64, vandq_u32, vandq_u64, vbslq_u64,
-    vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32, vdupq_n_u64,
-    vget_low_u32, vminq_u32, vmlsq_u32, vmovn_u64, vmull_high_u32, vmull_u32, vmulq_u32, vorrq_u64,
-    vqdmulhq_s32, vreinterpretq_s32_u32, vreinterpretq_u32_s32, vshlq_n_u64, vshlq_u64,
-    vshrq_n_u32, vshrq_n_u64, vsubq_u32, vsubq_u64,
+    vcltq_s64, vcltq_u32, vcltq_u64, vcombine_u32, vdup_n_u32, vdupq_n_s64, vdupq_n_u32,
+    vdupq_n_u64, vget_low_u32, vminq_u32, vmlsq_u32, vmovn_u64, vmull_high_u32, vmull_u32,
+    vmulq_u32, vorrq_u64, vqdmulhq_s32, vreinterpretq_s32_u32, vreinterpretq_s64_u64,
+    vreinterpretq_u32_s32, vshlq_n_u64, vshlq_u64, vshrq_n_u32, vshrq_n_u64, vsubq_u32, vsubq_u64,
 };
 use core::fmt;
 use core::mem::transmute;

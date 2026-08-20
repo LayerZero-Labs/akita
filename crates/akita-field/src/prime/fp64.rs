@@ -226,9 +226,9 @@ impl<const P: u64> Fp64<P> {
         }
     }
 
-    /// BMI2 fast path: avoid re-materializing `u128` product in the common
-    /// sub-word configuration where reduction stays in `u64`.
-    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    /// Reduce a multiplication product supplied as exact low and high words.
+    /// This avoids wide shifts and masks for sub-word fields even when the
+    /// first Solinas fold itself needs two words.
     #[inline(always)]
     fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {
@@ -237,6 +237,16 @@ impl<const P: u64> Fp64<P> {
             let f2 = (f1 & Self::MASK64) + Self::mul_c_narrow(f1 >> Self::BITS);
             let reduced = f2.wrapping_sub(P);
             let borrow = reduced >> 63;
+            reduced.wrapping_add(borrow.wrapping_neg() & P)
+        } else if Self::BITS < 64 {
+            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+            let c_high = Self::mul_c(high);
+            let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
+            let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
+            let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
+            let fold2 = (fold1_lo & Self::MASK64) + Self::mul_c_narrow(fold1_high);
+            let reduced = fold2.wrapping_sub(P);
+            let borrow = u64::from(fold2 < P);
             reduced.wrapping_add(borrow.wrapping_neg() & P)
         } else {
             Self::reduce_product(lo as u128 | ((hi as u128) << 64))
@@ -251,16 +261,11 @@ impl<const P: u64> Fp64<P> {
             let reduced = folded.wrapping_sub(P);
             let borrow = (folded < P) as u64;
             reduced.wrapping_add(borrow.wrapping_neg() & P)
-        } else if Self::BITS <= 62 {
-            let s = a + b;
-            let reduced = s.wrapping_sub(P);
-            let borrow = reduced >> 63;
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
         } else {
-            let s = (a as u128) + (b as u128);
-            let reduced = s.wrapping_sub(P as u128);
-            let borrow = reduced >> 127;
-            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+            // For every sub-word modulus, 2P < 2^64, so canonical inputs
+            // cannot overflow this addition.
+            let sum = a + b;
+            sum.min(sum.wrapping_sub(P))
         }
     }
 
@@ -269,28 +274,16 @@ impl<const P: u64> Fp64<P> {
         if Self::BITS == 64 {
             let (diff, underflow) = a.overflowing_sub(b);
             diff.wrapping_sub((underflow as u64).wrapping_neg() & Self::C)
-        } else if Self::BITS <= 62 {
-            let diff = a.wrapping_sub(b);
-            let borrow = diff >> 63;
-            diff.wrapping_add(borrow.wrapping_neg() & P)
         } else {
-            let diff = (a as u128).wrapping_sub(b as u128);
-            let borrow = diff >> 127;
-            diff.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
+            let diff = a.wrapping_sub(b);
+            diff.min(diff.wrapping_add(P))
         }
     }
 
     #[inline(always)]
     fn mul_raw(a: u64, b: u64) -> u64 {
-        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
-        {
-            let (lo, hi) = mul64_wide(a, b);
-            Self::reduce_product_wide(lo, hi)
-        }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
-        {
-            Self::reduce_product((a as u128) * (b as u128))
-        }
+        let (lo, hi) = mul64_wide(a, b);
+        Self::reduce_product_wide(lo, hi)
     }
 
     #[inline(always)]
@@ -596,6 +589,7 @@ mod tests {
     use rand::SeedableRng;
 
     type F40 = Fp64<{ (1u64 << 40) - 195 }>; // 2^40 - 195
+    type F63 = Fp64<{ (1u64 << 63) - 259 }>; // test-only wide sub-word modulus
     type F64 = Fp64<{ u64::MAX - 58 }>; // 2^64 - 59
 
     #[test]
@@ -603,8 +597,45 @@ mod tests {
         assert_eq!(F40::BITS, 40);
         assert_eq!(F40::C, 195);
 
+        assert_eq!(F63::BITS, 63);
+        assert_eq!(F63::C, 259);
+
         assert_eq!(F64::BITS, 64);
         assert_eq!(F64::C, 59);
+    }
+
+    #[test]
+    fn arithmetic_wide_sub_word_matches_integer_reference() {
+        const P: u64 = (1u64 << 63) - 259;
+        let boundary = [0, 1, 2, (P - 1) / 2, P - 2, P - 1];
+
+        let check = |a: u64, b: u64| {
+            let lhs = F63::from_canonical_u64(a);
+            let rhs = F63::from_canonical_u64(b);
+            assert_eq!(
+                (lhs + rhs).to_canonical_u64(),
+                ((a as u128 + b as u128) % P as u128) as u64
+            );
+            assert_eq!(
+                (lhs - rhs).to_canonical_u64(),
+                ((a as u128 + P as u128 - b as u128) % P as u128) as u64
+            );
+            assert_eq!(
+                (lhs * rhs).to_canonical_u64(),
+                ((a as u128 * b as u128) % P as u128) as u64
+            );
+        };
+
+        for &a in &boundary {
+            for &b in &boundary {
+                check(a, b);
+            }
+        }
+
+        let mut rng = StdRng::seed_from_u64(0x63_0259);
+        for _ in 0..4096 {
+            check(rng.next_u64() % P, rng.next_u64() % P);
+        }
     }
 
     #[test]
