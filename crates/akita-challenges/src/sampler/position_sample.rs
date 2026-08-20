@@ -211,8 +211,9 @@ mod tests {
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {
         for (universe, weight) in [(128usize, 7usize), (256, 23), (1024, 16), (2048, 14)] {
             let seed = [universe.trailing_zeros() as u8; 32];
-            let mut dense_cursor = XofCursor::from_seed(&seed);
-            let mut sparse_cursor = XofCursor::from_seed(&seed);
+            let prefix = crate::sampler::IndexedXofPrefix::new(&seed).unwrap();
+            let mut dense_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
+            let mut sparse_cursor = XofCursor::from_indexed_prefix(&prefix, 0);
             let mut dense = vec![0u32; weight];
             let mut sparse = vec![0u32; weight];
             let mut scratch = DistinctPositionScratch::new();

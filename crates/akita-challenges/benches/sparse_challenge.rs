@@ -28,7 +28,7 @@ type F = Prime128OffsetA7F7;
 
 const D: usize = 64;
 
-const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 12, 1 << 15];
+const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 8, 1 << 9, 1 << 10, 1 << 12, 1 << 15];
 
 fn fresh_transcript() -> AkitaTranscript<F> {
     let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);
