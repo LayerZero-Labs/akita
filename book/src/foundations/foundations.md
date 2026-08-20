@@ -86,7 +86,6 @@ code.
 | [Equality factored sumcheck](./eq-factored-sumcheck.md) | How does Akita exploit the structure of an equality polynomial while avoiding verifier inversions? | Short implementation guide. It assumes the general sumcheck chapter. |
 | [Extension opening reduction](./extension-opening-reduction.md) | How is an opening over an extension field reduced to claims over the base field? | Short protocol guide. It still needs an end to end numerical example and a fuller code map. |
 | [Polynomial commitments and binding](./pcs-and-binding.md) | What do setup, commitment, opening, and verification promise, and how is incompatible opening tied to Module SIS? | Current security overview with implementation anchors. More introductory examples can still be added. |
-| [Zero knowledge background](./zero-knowledge.md) | What would have to be hidden, and what does the current repository support? | Short status page. The current implementation boundary is clear, but the remaining background still needs a self contained and code checked account. |
 | [Glossary and notation](./glossary.md) | What do recurring Akita names and symbols mean? | Developing reference. Use it as a lookup aid, not as the first explanation of a concept. |
 | [Spec index](./spec-index.md) | Which design records are live, implemented, or retained as history? | Current maintainer index. |
 | [References](./references.md) | Where can a reader find stable external background for the ideas used here? | Developing bibliography. |
@@ -106,7 +105,8 @@ answer specific questions:
   points;
 - fields and rings explain which value types belong to a configuration;
 - polynomial commitments and binding explain what acceptance means;
-- zero knowledge background explains what the current proof does not hide.
+- the [zero knowledge roadmap](../roadmap/zero-knowledge.md) explains what the
+  current proof does not hide.
 
 ### Protocol contribution
 

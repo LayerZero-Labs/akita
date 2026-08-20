@@ -20,6 +20,8 @@ This part covers, in reading order:
 - [Transcript and instance binding](./transcript.md) — Fiat-Shamir and the descriptor preamble.
 - [The proving protocol](./proving/proving.md) — the per-level fold pipeline (its own section).
 - [Recursion and proof shape](./recursion.md) — chaining folds and proof anatomy.
+- [Setup offloading](./setup-offloading.md) — replacing selected online setup
+  scans with prepared prefix commitments and Stage 3 proofs.
 - [Verification](./verification.md) — per-level replay and the no-panic contract.
 - [Security model](./security.md) — the hardness assumption and norm regimes.
 - [Optimizations](./optimizations.md) — the implementation-level speedups.
@@ -28,4 +30,3 @@ This part covers, in reading order:
 
 - Council architecture report (numbered end-to-end flow, dispatch table).
 - `crates/akita-prover/src/protocol/core/`, `crates/akita-verifier/src/protocol/core/`.
-- Paper §3 `sec:akita-recap` (the protocol, end to end).

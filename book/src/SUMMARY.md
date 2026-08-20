@@ -30,8 +30,9 @@
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)
-    - [The distributed prover](./how/proving/distributed-prover.md)
+  - [The distributed prover](./how/proving/distributed-prover.md)
   - [Recursion and proof shape](./how/recursion.md)
+  - [Setup offloading](./how/setup-offloading.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
     - [The Stage 2 fused check](./how/verifying/stage2.md)
@@ -53,7 +54,6 @@
   - [Equality-factored sum-check](./foundations/eq-factored-sumcheck.md)
   - [Extension-opening reduction](./foundations/extension-opening-reduction.md)
   - [Polynomial commitments and binding](./foundations/pcs-and-binding.md)
-  - [Zero-knowledge background](./foundations/zero-knowledge.md)
   - [Glossary and notation](./foundations/glossary.md)
   - [Spec index](./foundations/spec-index.md)
   - [References](./foundations/references.md)
@@ -61,6 +61,5 @@
 # Roadmap
 
 - [Roadmap](./roadmap/roadmap.md)
-  - [Verifier offloading](./roadmap/verifier-offloading.md)
-  - [Zero-knowledge](./roadmap/zero-knowledge.md)
+  - [Zero knowledge](./roadmap/zero-knowledge.md)
   - [Compute backends (GPU/Metal)](./roadmap/compute-backends.md)

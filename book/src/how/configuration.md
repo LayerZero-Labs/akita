@@ -69,6 +69,20 @@ without panicking.
   `crates/akita-schedules/src/resolve.rs` (`resolve_generated_catalog_row_for_key`).
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
 
+### Recursive setup catalogs
+
+Ordinary configuration catalogs use direct setup evaluation. The supported
+`RecursiveCommitmentConfig<Cfg>` adapters select separate catalogs that may
+carry a committed setup prefix into the next fold. Keeping the catalogs
+separate prevents an ordinary verifier from accepting a recursive setup shape
+under a direct configuration.
+
+The planner prices the Stage 3 proof and the later prefix opening as part of the
+complete suffix. Generated rows record every selected prefix edge. Runtime
+expansion checks those edges and never reruns the search. See
+[Setup offloading](./setup-offloading.md) for the selection rules, setup
+artifacts, and recursive claim flow.
+
 ### Selective L2 candidates
 
 The coefficient `L∞` route remains available at every fold. A production
