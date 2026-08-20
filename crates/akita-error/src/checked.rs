@@ -2,6 +2,7 @@
 //!
 //! These functions never wrap, saturate, or panic. They return [`None`] when
 //! the requested value cannot be represented or an operation is undefined.
+//! They do not allocate or collect iterator inputs.
 //! The caller maps that failure to the protocol error that matches its trust
 //! boundary, such as invalid setup, invalid input, or an invalid proof.
 //!
@@ -23,9 +24,10 @@ pub fn sum(values: impl IntoIterator<Item = usize>) -> Option<usize> {
 
 /// Return the exact product of all `factors`, or [`None`] on overflow.
 ///
-/// An empty input has product one. A fixed array such as `[a, b, c]` replaces
-/// separate helpers for each factor count without requiring a const generic at
-/// the call site.
+/// This function does not allocate or collect its input. A fixed array such as
+/// `[a, b, c]` is consumed directly. A borrowed slice can use
+/// `factors.iter().copied()` without allocating. An empty input has product
+/// one.
 #[inline]
 #[must_use]
 pub fn product(factors: impl IntoIterator<Item = usize>) -> Option<usize> {
