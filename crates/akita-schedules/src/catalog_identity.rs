@@ -17,7 +17,7 @@ use akita_types::{
 };
 
 use crate::generated::{
-    generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
+    generated_schedule_key_cmp, GeneratedFold, GeneratedFrozenGroup, GeneratedGroup,
     GeneratedFoldScheduleEntry, GeneratedMatrix, GeneratedScheduleCatalogIdentity,
     GeneratedScheduleTable,
 };
@@ -364,21 +364,21 @@ fn catalog_identity_mismatch_error(family_name: &str, field: &str) -> AkitaError
 fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
-        collect_group_ring_dimensions(entry.root.final_group.commitment, &mut dims);
+        collect_group_ring_dimensions(entry.root.group, &mut dims);
         push_unique(
             &mut dims,
             entry.root.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            push_unique(&mut dims, group.descriptor.inner.matrix.ring_dimension());
-            push_unique(&mut dims, group.descriptor.outer.matrix.ring_dimension());
+            push_unique(&mut dims, group.profile.inner.matrix.ring_dimension());
+            push_unique(&mut dims, group.profile.outer.matrix.ring_dimension());
         }
         for fold in entry.recursive_folds {
-            collect_group_ring_dimensions(fold.witness, &mut dims);
+            collect_group_ring_dimensions(fold.group, &mut dims);
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
-            if let Some(prefix) = fold.incoming_setup_prefix {
-                push_unique(&mut dims, prefix.commitment.inner.matrix.ring_dimension());
-                push_unique(&mut dims, prefix.commitment.outer.matrix.ring_dimension());
+            if let Some(prefix) = fold.setup_prefix {
+                push_unique(&mut dims, prefix.profile.inner.matrix.ring_dimension());
+                push_unique(&mut dims, prefix.profile.outer.matrix.ring_dimension());
             }
         }
         push_unique(
@@ -404,26 +404,26 @@ fn validate_entry_dimensions(
     entries: &[GeneratedFoldScheduleEntry],
     mode: RingDimensionScheduleMode,
 ) -> Result<(), AkitaError> {
-    let dimensions = |group: GeneratedCommittedGroup, opening: u32| CommitmentRingDims {
+    let dimensions = |group: GeneratedGroup, opening: u32| CommitmentRingDims {
         inner: group.inner_commit_matrix.ring_dimension as usize,
         outer: group.outer_commit_matrix.ring_dimension as usize,
         opening: opening as usize,
     };
     for entry in entries {
         let root = dimensions(
-            entry.root.final_group.commitment,
+            entry.root.group,
             entry.root.open_commit_matrix.ring_dimension,
         );
-        validate_level_dimensions(mode, 0, root, None, entry.root.final_group.layout)?;
+        validate_level_dimensions(mode, 0, root, None, entry.final_group)?;
         let mut previous = root;
         for (index, fold) in entry.recursive_folds.iter().enumerate() {
-            let current = dimensions(fold.witness, fold.open_commit_matrix.ring_dimension);
+            let current = dimensions(fold.group, fold.open_commit_matrix.ring_dimension);
             validate_level_dimensions(
                 mode,
                 index + 1,
                 current,
                 Some(previous),
-                entry.root.final_group.layout,
+                entry.final_group,
             )?;
             previous = current;
         }
@@ -433,7 +433,7 @@ fn validate_entry_dimensions(
         if !terminal_is_admitted {
             return Err(AkitaError::InvalidSetup(format!(
                 "generated terminal D{terminal_d} is outside the policy terminal dimension domain for key {:?}",
-                entry.root.final_group.layout
+                entry.final_group
             )));
         }
         if matches!(mode, RingDimensionScheduleMode::AdaptiveDimension { .. })
@@ -442,7 +442,7 @@ fn validate_entry_dimensions(
             return Err(AkitaError::InvalidSetup(format!(
                 "generated terminal D{terminal_d} exceeds predecessor A dimension D{} for key {:?}",
                 previous.d_a(),
-                entry.root.final_group.layout
+                entry.final_group
             )));
         }
     }
@@ -520,7 +520,7 @@ fn validate_level_dimensions(
     Ok(())
 }
 
-fn collect_group_ring_dimensions(group: GeneratedCommittedGroup, dims: &mut Vec<usize>) {
+fn collect_group_ring_dimensions(group: GeneratedGroup, dims: &mut Vec<usize>) {
     push_unique(dims, group.inner_commit_matrix.ring_dimension as usize);
     push_unique(dims, group.outer_commit_matrix.ring_dimension as usize);
 }
@@ -559,37 +559,11 @@ fn entries_key_digest_with_setup_prefix_content_mode(
     entries.sort_by(generated_schedule_key_cmp);
     let mut h = Fnv64::new();
     for entry in entries {
-        write_generated_schedule_key(&mut h, entry.root.final_group.layout);
-        write_generated_group(&mut h, entry.root.final_group.commitment);
-        h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
-        h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
-        write_opening_method(&mut h, entry.root.final_group.opening_method);
-        h.write_u64(entry.root.precommitted_groups.len() as u64);
-        for group in entry.root.precommitted_groups {
-            write_generated_precommitted_group_key(&mut h, &group.descriptor);
-            h.write_u64(u64::from(group.num_digits_fold));
-            write_opening_method(&mut h, group.opening_method);
-        }
-        write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
-        write_generated_partition(&mut h, entry.root.witness_chunks);
+        write_generated_schedule_key(&mut h, entry.final_group);
+        write_generated_fold(&mut h, &entry.root, write_full_prefix_content_mode);
         h.write_u64(entry.recursive_folds.len() as u64);
         for fold in entry.recursive_folds {
-            write_opening_method(&mut h, fold.opening_method);
-            write_generated_group(&mut h, fold.witness);
-            write_generated_open_matrix(&mut h, fold.open_commit_matrix);
-            write_generated_partition(&mut h, fold.witness_chunks);
-            h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
-            if let Some(prefix) = fold.incoming_setup_prefix {
-                if write_full_prefix_content_mode {
-                    write_setup_prefix_content_mode_full_prefix(&mut h);
-                }
-                h.write_u64(prefix.natural_len);
-                h.write_bytes(&prefix.commitment.canonical_descriptor_bytes());
-                // The opening plan is derived from the consuming fold, so the
-                // only prefix-owned inputs are the method and the fold depth.
-                write_opening_method(&mut h, prefix.opening_method);
-                h.write_u64(u64::from(prefix.num_digits_fold));
-            }
+            write_generated_fold(&mut h, fold, write_full_prefix_content_mode);
         }
         write_generated_geometry(&mut h, entry.terminal.geometry);
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
@@ -612,19 +586,56 @@ fn write_opening_method(h: &mut Fnv64, method: akita_types::OpeningMethod) {
     }
 }
 
-fn write_generated_geometry(h: &mut Fnv64, value: GeneratedBlockGeometry) {
-    h.write_u64(value.live_ring_elements_per_claim);
-    h.write_u64(value.positions_per_block);
-    h.write_u64(value.live_blocks);
+fn write_generated_geometry(h: &mut Fnv64, value: akita_types::BlockGeometry) {
+    // Same three numbers in the same order as the deleted generated mirror, so
+    // dropping that type does not by itself move `key_digest`.
+    h.write_u64(value.live_ring_elements_per_claim as u64);
+    h.write_u64(value.positions_per_block as u64);
+    h.write_u64(value.live_blocks as u64);
 }
 
-fn write_generated_group(h: &mut Fnv64, value: GeneratedCommittedGroup) {
+fn write_generated_group(h: &mut Fnv64, value: GeneratedGroup) {
     write_generated_geometry(h, value.geometry);
     h.write_u64(u64::from(value.inner_commit_matrix.ring_dimension));
     h.write_u64(u64::from(value.inner_commit_matrix.log_basis));
     h.write_u64(u64::from(value.outer_commit_matrix.ring_dimension));
     h.write_u64(u64::from(value.outer_commit_matrix.log_basis));
     h.write_u64(u64::from(value.outer_slice_count));
+    // Presence is hashed separately from the value so a pinned depth of zero
+    // can never collide with a derived one.
+    h.write_u64(u64::from(value.num_digits_inner.is_some()));
+    h.write_u64(u64::from(value.num_digits_inner.unwrap_or(0)));
+    h.write_u64(u64::from(value.num_digits_fold));
+    write_opening_method(h, value.opening_method);
+}
+
+fn write_generated_frozen_group(h: &mut Fnv64, value: &GeneratedFrozenGroup) {
+    write_generated_precommitted_group_key(h, &value.profile);
+    h.write_u64(u64::from(value.num_digits_fold));
+    // The opening plan is derived from the consuming fold, so the only
+    // group-owned inputs are the method and the fold depth.
+    write_opening_method(h, value.opening_method);
+    h.write_u64(u64::from(value.setup_natural_len.is_some()));
+    h.write_u64(value.setup_natural_len.unwrap_or(0));
+}
+
+/// Hash one fold level. Root and recursive folds share this, exactly as they
+/// share `GeneratedFold`.
+fn write_generated_fold(h: &mut Fnv64, fold: &GeneratedFold, full_prefix_content_mode: bool) {
+    write_generated_group(h, fold.group);
+    h.write_u64(fold.precommitted_groups.len() as u64);
+    for group in fold.precommitted_groups {
+        write_generated_frozen_group(h, group);
+    }
+    write_generated_open_matrix(h, fold.open_commit_matrix);
+    write_generated_partition(h, fold.witness_chunks);
+    h.write_u64(u64::from(fold.setup_prefix.is_some()));
+    if let Some(prefix) = &fold.setup_prefix {
+        if full_prefix_content_mode {
+            write_setup_prefix_content_mode_full_prefix(h);
+        }
+        write_generated_frozen_group(h, prefix);
+    }
 }
 
 fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedMatrix) {

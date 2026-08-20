@@ -199,9 +199,9 @@ fn generated_root_digit_depth_matches_the_declared_bound() {
                 family_decomposition.log_commit_bound,
             );
             assert_eq!(
-                entry.root.final_group.num_digits_inner as usize, expected,
+                entry.root.group.num_digits_inner as usize, expected,
                 "row {:?} stores a non-canonical root digit depth",
-                entry.root.final_group.layout
+                entry.final_group
             );
         }
     }

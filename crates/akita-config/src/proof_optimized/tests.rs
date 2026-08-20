@@ -293,7 +293,7 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
         if !entry.root.precommitted_groups.is_empty() {
             continue;
         }
-        let key = entry.root.final_group.layout;
+        let key = entry.final_group;
         let schedule = schedule_from_entry(
             entry,
             &AkitaScheduleLookupKey::single(key),
@@ -351,7 +351,7 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     let root = &schedule.root.params;
     assert_eq!(
         root.num_digits_fold,
-        first.root.final_group.num_digits_fold as usize
+        first.root.group.num_digits_fold as usize
     );
 }
 

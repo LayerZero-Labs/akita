@@ -1,12 +1,5 @@
 #![allow(missing_docs)]
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedBlockGeometry {
-    pub live_ring_elements_per_claim: u64,
-    pub positions_per_block: u64,
-    pub live_blocks: u64,
-}
-
 /// Compact planner input for any commitment matrix.
 ///
 /// Replaces `GeneratedMatrix`, `GeneratedMatrix`, and
@@ -20,64 +13,76 @@ pub struct GeneratedMatrix {
     pub log_basis: u32,
 }
 
+/// One group a fold derives and commits itself.
+///
+/// Replaces `GeneratedGroup` and `GeneratedGroup`. The second
+/// was a five-field wrapper around the first, and the split forced every caller
+/// to reach through `.commitment` to get at the geometry.
+///
+/// `num_digits_inner` is an `Option` because it already was one: it is the
+/// `exact_num_digits_inner` parameter the expansion function took. The root
+/// pins its inner digit depth; a fold's own new witness derives it from the
+/// witness length arriving from the level above.
+///
+/// The group's polynomial layout is deliberately *not* here. It is a property
+/// of the row's lookup key, not of a group, so it lives on
+/// `GeneratedFoldScheduleEntry` where every row has exactly one and no position
+/// has to default it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedCommittedGroup {
-    pub geometry: GeneratedBlockGeometry,
+pub struct GeneratedGroup {
+    pub geometry: akita_types::BlockGeometry,
     pub inner_commit_matrix: GeneratedMatrix,
     pub outer_commit_matrix: GeneratedMatrix,
     pub outer_slice_count: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRootFinalGroup {
-    pub layout: akita_types::PolynomialGroupLayout,
-    pub num_digits_inner: u32,
-    pub num_digits_fold: u32,
-    pub opening_method: akita_types::OpeningMethod,
-    pub commitment: GeneratedCommittedGroup,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRootPrecommittedGroup {
-    pub descriptor: akita_types::GroupCommitPhaseParams,
+    pub num_digits_inner: Option<u32>,
     pub num_digits_fold: u32,
     pub opening_method: akita_types::OpeningMethod,
 }
 
+/// One group whose commit-phase identity the catalog freezes exactly.
+///
+/// Replaces `GeneratedFrozenGroup` and `GeneratedFrozenGroup`,
+/// which differed only in that the prefix also carried a natural length.
+/// `setup_natural_len` is the same `Option` the runtime
+/// `GroupOpenPhaseParams` carries, and `slot_id()` derives prefix identity from
+/// it there too.
+///
+/// This stays a frozen profile rather than compact inputs because
+/// `to_runtime_lookup_key` has no `PlannerPolicy` and drives catalog binary
+/// search: deriving the profile would make key comparison depend on expansion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRootFold {
-    pub final_group: GeneratedRootFinalGroup,
-    pub precommitted_groups: &'static [GeneratedRootPrecommittedGroup],
+pub struct GeneratedFrozenGroup {
+    pub profile: akita_types::GroupCommitPhaseParams,
+    /// Procedure the consuming fold uses to open this group.
+    pub opening_method: akita_types::OpeningMethod,
+    /// Folded-witness digit depth for this group.
+    pub num_digits_fold: u32,
+    pub setup_natural_len: Option<u64>,
+}
+
+/// Parameters for one generated fold level: the root fold or a recursive fold.
+///
+/// Replaces `GeneratedFold` and `GeneratedFold`, mirroring what
+/// step 5b did to their runtime counterparts: after the group merge above the
+/// two held the same fields, and what separates them stays a validated
+/// constraint rather than a separate type. A root carries precommitted groups
+/// and no incoming prefix; a recursive fold carries a prefix and no
+/// precommitted groups. `GeneratedFoldScheduleEntry` names both positions, so
+/// neither role is inferred from an index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedFold {
+    pub group: GeneratedGroup,
+    pub precommitted_groups: &'static [GeneratedFrozenGroup],
+    pub setup_prefix: Option<GeneratedFrozenGroup>,
     pub open_commit_matrix: GeneratedMatrix,
     pub witness_chunks: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedSetupPrefixInput {
-    pub natural_len: u64,
-    /// Exact frozen commitment identity emitted by the planner.
-    pub commitment: akita_types::GroupCommitPhaseParams,
-    /// Procedure the consuming fold uses to open this prefix.
-    pub opening_method: akita_types::OpeningMethod,
-    /// Folded-witness digit depth for this prefix.
-    pub num_digits_fold: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
-    pub opening_method: akita_types::OpeningMethod,
-    pub witness: GeneratedCommittedGroup,
-    pub num_digits_fold: u32,
     pub response_l2_sq_cap: Option<u128>,
-    pub open_commit_matrix: GeneratedMatrix,
-    pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
-    pub witness_chunks: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedTerminalFold {
-    pub geometry: GeneratedBlockGeometry,
+    pub geometry: akita_types::BlockGeometry,
     pub inner_commit_matrix: GeneratedMatrix,
     pub num_digits_inner: u32,
     pub fold_log_basis: u32,
@@ -92,8 +97,10 @@ pub struct GeneratedTerminalFold {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldScheduleEntry {
-    pub root: GeneratedRootFold,
-    pub recursive_folds: &'static [GeneratedRecursiveFold],
+    /// Layout of this row's final group: the row's own lookup key.
+    pub final_group: akita_types::PolynomialGroupLayout,
+    pub root: GeneratedFold,
+    pub recursive_folds: &'static [GeneratedFold],
     pub terminal: GeneratedTerminalFold,
 }
 
@@ -101,12 +108,12 @@ impl GeneratedFoldScheduleEntry {
     /// Build the runtime schedule lookup key represented by this generated row.
     pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
-            final_group: self.root.final_group.layout,
+            final_group: self.final_group,
             precommitteds: self
                 .root
                 .precommitted_groups
                 .iter()
-                .map(|group| group.descriptor)
+                .map(|group| group.profile)
                 .collect(),
         }
     }
@@ -160,7 +167,7 @@ pub use crate::{
     SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
-    CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    BlockGeometry, CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitMatrixParams,
     OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
@@ -203,12 +210,12 @@ pub fn generated_schedule_key_cmp(
     right: &GeneratedFoldScheduleEntry,
 ) -> std::cmp::Ordering {
     let left_main = (
-        left.root.final_group.layout.num_vars(),
-        left.root.final_group.layout.num_polynomials(),
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
     );
     let right_main = (
-        right.root.final_group.layout.num_vars(),
-        right.root.final_group.layout.num_polynomials(),
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
     );
     left_main
         .cmp(&right_main)
@@ -222,13 +229,13 @@ pub fn generated_schedule_key_cmp(
             left.root
                 .precommitted_groups
                 .iter()
-                .map(|group| precommitted_group_sort_key(&group.descriptor))
+                .map(|group| precommitted_group_sort_key(&group.profile))
                 .cmp(
                     right
                         .root
                         .precommitted_groups
                         .iter()
-                        .map(|group| precommitted_group_sort_key(&group.descriptor)),
+                        .map(|group| precommitted_group_sort_key(&group.profile)),
                 )
         })
 }
@@ -238,8 +245,8 @@ pub fn generated_schedule_key_cmp_runtime(
     runtime: &akita_types::AkitaScheduleLookupKey,
 ) -> std::cmp::Ordering {
     let left_main = (
-        generated.root.final_group.layout.num_vars(),
-        generated.root.final_group.layout.num_polynomials(),
+        generated.final_group.num_vars(),
+        generated.final_group.num_polynomials(),
     );
     let right_main = (
         runtime.final_group.num_vars(),
@@ -259,7 +266,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .root
                 .precommitted_groups
                 .iter()
-                .map(|group| &group.descriptor);
+                .map(|group| &group.profile);
             generated
                 .zip(&runtime.precommitteds)
                 .map(|(left, right)| {
@@ -302,14 +309,14 @@ fn schedule_key_eq(
     generated: &GeneratedFoldScheduleEntry,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
-    generated.root.final_group.layout == key.final_group
+    generated.final_group == key.final_group
         && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root
             .precommitted_groups
             .iter()
             .zip(&key.precommitteds)
-            .all(|(generated, layout)| precommitted_group_key_eq(&generated.descriptor, layout))
+            .all(|(generated, layout)| precommitted_group_key_eq(&generated.profile, layout))
 }
 
 fn precommitted_group_key_eq(

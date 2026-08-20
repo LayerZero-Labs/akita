@@ -130,12 +130,12 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
             let candidate = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
+                final_group: entry.final_group,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.descriptor)
+                    .map(|group| group.profile)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {

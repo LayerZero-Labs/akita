@@ -15,8 +15,8 @@ use akita_error::AkitaError;
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
-    GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix,
-    GeneratedSetupPrefixInput, GeneratedTerminalFold,
+    GeneratedFoldScheduleEntry, GeneratedFrozenGroup, GeneratedGroup, GeneratedMatrix,
+    GeneratedTerminalFold,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
@@ -65,17 +65,24 @@ fn generated_count(value: u64, name: &str) -> Result<usize, AkitaError> {
     })
 }
 
-impl GeneratedSetupPrefixInput {
+impl GeneratedFrozenGroup {
     fn expand_to_precommitted_group(
         self,
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
-        let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
-        let d_a = self.commitment.inner.matrix.ring_dimension();
+        let natural_len = generated_count(
+            self.setup_natural_len.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated setup prefix must carry its natural length".into(),
+                )
+            })?,
+            "setup-prefix natural length",
+        )?;
+        let d_a = self.profile.inner.matrix.ring_dimension();
         let committed_len = self
-            .commitment
+            .profile
             .blocks
             .live_ring_elements_per_claim
             .checked_mul(d_a)
@@ -106,7 +113,7 @@ impl GeneratedSetupPrefixInput {
             sis_modulus_profile: policy.sis_modulus_profile,
         };
         let params = GroupOpenPhaseParams::admit(
-            self.commitment,
+            self.profile,
             generated_count(u64::from(self.num_digits_fold), "setup-prefix fold digits")?,
             admission_policy,
             self.opening_method,
@@ -118,7 +125,7 @@ impl GeneratedSetupPrefixInput {
     }
 }
 
-impl GeneratedCommittedGroup {
+impl GeneratedGroup {
     /// Expand this compact fold step into the full committed
     /// [`CommittedGroupParams`] for its position in the schedule.
     ///
@@ -164,7 +171,7 @@ impl GeneratedCommittedGroup {
         input_witness_len: usize,
         num_claims: usize,
         open_commit_matrix: GeneratedMatrix,
-        setup_prefix_group: Option<GeneratedSetupPrefixInput>,
+        setup_prefix_group: Option<GeneratedFrozenGroup>,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let dimensions = CommitmentRingDims {
             inner: self.inner_commit_matrix.ring_dimension as usize,
@@ -182,9 +189,8 @@ impl GeneratedCommittedGroup {
 
         // Digit-innermost geometry keeps `M = 2^position_index_bits` at every level
         // and carries exact live `B = ceil(N / M)` separately from its Boolean domain.
-        let num_positions_per_block =
-            generated_count(self.geometry.positions_per_block, "positions per block")?;
-        let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let num_positions_per_block = self.geometry.positions_per_block;
+        let num_live_blocks = self.geometry.live_blocks;
         let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
         outer_slice_count.validate_for_commitment(fold_level, payload_mode, num_live_blocks)?;
         let block_index_bits = num_live_blocks
@@ -395,13 +401,21 @@ impl GeneratedCommittedGroup {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
                 })?;
-            if group.natural_len as usize > n_prefix {
+            let group_natural_len = generated_count(
+                group.setup_natural_len.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "generated setup prefix must carry its natural length".into(),
+                    )
+                })?,
+                "setup-prefix natural length",
+            )?;
+            if group_natural_len > n_prefix {
                 return Err(AkitaError::InvalidSetup(
                     "generated setup-prefix natural length exceeds commitment domain".into(),
                 ));
             }
             Some(akita_types::scheduled_setup_prefix(
-                group.natural_len as usize,
+                group_natural_len,
                 commitment_params,
             ))
         } else {
@@ -507,7 +521,7 @@ impl GeneratedCommittedGroup {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         opening_method: akita_types::OpeningMethod,
         main_num_polys: usize,
-        num_digits_inner: u32,
+        num_digits_inner: Option<u32>,
         num_digits_fold: u32,
         precommitted_groups: Vec<GroupOpenPhaseParams>,
         precommitted_d_width: usize,
@@ -531,7 +545,7 @@ impl GeneratedCommittedGroup {
         let log_basis_open = open_commit_matrix.log_basis;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
-        let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
+        let num_live_blocks = self.geometry.live_blocks;
         let outer_slice_count = CommitmentSliceCount::try_new(self.outer_slice_count as usize)?;
         outer_slice_count.validate_for_commitment(
             0,
@@ -552,8 +566,7 @@ impl GeneratedCommittedGroup {
                     .to_string(),
             ));
         }
-        let num_positions_per_block =
-            generated_count(self.geometry.positions_per_block, "positions per block")?;
+        let num_positions_per_block = self.geometry.positions_per_block;
 
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
@@ -578,6 +591,11 @@ impl GeneratedCommittedGroup {
             )
             .ok_or_else(|| no_layout("A"))?,
         };
+        let num_digits_inner = num_digits_inner.ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "generated multi-group root must pin its inner digit depth".into(),
+            )
+        })?;
         let num_digits_inner = usize::try_from(num_digits_inner).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated root inner digit depth does not fit the target platform".into(),
@@ -685,7 +703,7 @@ impl GeneratedCommittedGroup {
                 ring_d,
                 self.geometry
                     .live_ring_elements_per_claim
-                    .checked_mul(ring_d as u64)
+                    .checked_mul(ring_d)
                     .filter(|len| len.is_power_of_two())
                     .map_or(0, |len| len.trailing_zeros() as usize),
                 true,
@@ -762,13 +780,9 @@ impl GeneratedTerminalFold {
             ));
         }
         let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_dimension);
-        let num_positions_per_block =
-            generated_count(self.geometry.positions_per_block, "positions per block")?;
-        let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;
-        let generated_live_ring_elements = generated_count(
-            self.geometry.live_ring_elements_per_claim,
-            "live ring-element count",
-        )?;
+        let num_positions_per_block = self.geometry.positions_per_block;
+        let num_live_blocks = self.geometry.live_blocks;
+        let generated_live_ring_elements = self.geometry.live_ring_elements_per_claim;
         if num_positions_per_block == 0
             || !num_positions_per_block.is_power_of_two()
             || generated_live_ring_elements != num_live_ring_elements_per_claim
@@ -925,7 +939,7 @@ impl GeneratedFoldScheduleEntry {
     ///
     /// Returns an error when any invariant is violated.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        if self.root.final_group.layout.num_polynomials() == 0 {
+        if self.final_group.num_polynomials() == 0 {
             return Err(AkitaError::UnsupportedSchedule(
                 "generated root final group must be nonempty".to_string(),
             ));
@@ -980,7 +994,7 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.incoming_setup_prefix.map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
         let ring_challenge_config = |d| {
@@ -1022,7 +1036,7 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.incoming_setup_prefix.map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         input.commitment.blocks.live_blocks += 1;
         let ring_challenge_config = |d| {

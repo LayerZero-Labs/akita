@@ -54,38 +54,33 @@ pub(crate) fn walk_generated_schedule_entry(
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
         entry
             .root
-            .final_group
-            .commitment
+            .group
             .expand_to_multi_group_root_level_params_with_setup(
                 policy,
                 ring_challenge_config,
-                entry.root.final_group.opening_method,
+                entry.root.group.opening_method,
                 key.final_group.num_polynomials(),
-                entry.root.final_group.num_digits_inner,
-                entry.root.final_group.num_digits_fold,
+                entry.root.group.num_digits_inner,
+                entry.root.group.num_digits_fold,
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
             )?
     } else {
-        entry
-            .root
-            .final_group
-            .commitment
-            .expand_to_level_params_with_setup(
-                policy,
-                akita_types::CommitmentPayloadMode::Compressed,
-                entry.root.final_group.opening_method,
-                ring_challenge_config,
-                0,
-                Some(entry.root.final_group.num_digits_inner),
-                entry.root.final_group.num_digits_fold,
-                None,
-                expected_root_w_len,
-                key.final_group.num_polynomials(),
-                entry.root.open_commit_matrix,
-                None,
-            )?
+        entry.root.group.expand_to_level_params_with_setup(
+            policy,
+            akita_types::CommitmentPayloadMode::Compressed,
+            entry.root.group.opening_method,
+            ring_challenge_config,
+            0,
+            entry.root.group.num_digits_inner,
+            entry.root.group.num_digits_fold,
+            None,
+            expected_root_w_len,
+            key.final_group.num_polynomials(),
+            entry.root.open_commit_matrix,
+            None,
+        )?
     };
     let distributed_levels = distributed_activation_depth(
         entry.root.witness_chunks,
@@ -116,19 +111,19 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
-        let mut params = fold.witness.expand_to_level_params_with_setup(
+        let mut params = fold.group.expand_to_level_params_with_setup(
             policy,
             fold.payload_mode,
-            fold.opening_method,
+            fold.group.opening_method,
             ring_challenge_config,
             index + 1,
             None,
-            fold.num_digits_fold,
+            fold.group.num_digits_fold,
             fold.response_l2_sq_cap,
             input_witness_len,
             1,
             fold.open_commit_matrix,
-            fold.incoming_setup_prefix,
+            fold.setup_prefix,
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_chunks, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(

@@ -4,12 +4,12 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, GroupOpenPhaseParams, PrecommittedGroupAdmissionPolicy};
 
-use crate::generated::GeneratedRootPrecommittedGroup;
+use crate::generated::GeneratedFrozenGroup;
 use crate::PlannerPolicy;
 
 pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     key: &AkitaScheduleLookupKey,
-    generated_groups: &[GeneratedRootPrecommittedGroup],
+    generated_groups: &[GeneratedFrozenGroup],
     policy: &PlannerPolicy,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     log_basis_open: u32,

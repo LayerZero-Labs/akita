@@ -559,7 +559,7 @@ pub(crate) fn audit_resolved_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{GeneratedBlockGeometry, GeneratedMatrix, GeneratedTerminalFold};
+    use crate::generated::{GeneratedMatrix, GeneratedTerminalFold};
     use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
         ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
@@ -623,11 +623,7 @@ mod tests {
         .expect("candidate construction")
         .expect("exact terminal calibration");
         let generated = GeneratedTerminalFold {
-            geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: 16,
-                positions_per_block: 16,
-                live_blocks: 1,
-            },
+            geometry: akita_types::BlockGeometry::new(16, 16, 1),
             inner_commit_matrix: GeneratedMatrix {
                 ring_dimension: 64,
                 log_basis: 4,

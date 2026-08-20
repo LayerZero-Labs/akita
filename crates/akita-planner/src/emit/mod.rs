@@ -23,10 +23,8 @@ mod render;
 mod source_annotations;
 use akita_schedules::expected_catalog_identity;
 use akita_schedules::generated::{
-    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix,
-    GeneratedRecursiveFold, GeneratedRootFinalGroup, GeneratedRootFold,
-    GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
-    GeneratedTerminalFold,
+    GeneratedFold, GeneratedFoldScheduleEntry, GeneratedFrozenGroup, GeneratedGroup,
+    GeneratedMatrix, GeneratedScheduleCatalogIdentity, GeneratedTerminalFold,
 };
 pub(super) use materialize::materialized_entries_for_specs;
 pub use materialize::MaterializedEntry;
@@ -228,16 +226,15 @@ where
     Ok(mapped.into_iter().map(|(_, value)| value).collect())
 }
 
-fn geometry(p: &CommittedGroupParams) -> GeneratedBlockGeometry {
-    GeneratedBlockGeometry {
-        live_ring_elements_per_claim: p.num_live_ring_elements_per_claim as u64,
-        positions_per_block: p.num_positions_per_block as u64,
-        live_blocks: p.num_live_blocks as u64,
-    }
+fn geometry(p: &CommittedGroupParams) -> akita_types::BlockGeometry {
+    p.blocks()
 }
 
-fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
-    GeneratedCommittedGroup {
+fn committed_group(
+    p: &CommittedGroupParams,
+    num_digits_inner: Option<u32>,
+) -> GeneratedGroup {
+    GeneratedGroup {
         geometry: geometry(p),
         inner_commit_matrix: GeneratedMatrix {
             ring_dimension: p.inner_commit_matrix.ring_dimension() as u32,
@@ -248,6 +245,9 @@ fn committed_group(p: &CommittedGroupParams) -> GeneratedCommittedGroup {
             log_basis: p.log_basis_outer,
         },
         outer_slice_count: p.outer_slice_count.get() as u32,
+        num_digits_inner,
+        num_digits_fold: p.num_digits_fold as u32,
+        opening_method: p.opening_method,
     }
 }
 
@@ -258,14 +258,48 @@ fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedMa
     }
 }
 
-fn setup_prefix_slot_input(slot: &GroupOpenPhaseParams) -> GeneratedSetupPrefixInput {
-    GeneratedSetupPrefixInput {
-        natural_len: slot.setup_natural_len.expect("setup prefix group") as u64,
-        commitment: slot.profile,
+/// Freeze one group the catalog stores exactly, in either role.
+///
+/// A setup prefix carries its natural length; a precommitted group does not.
+/// That single `Option` is the whole difference the two former types encoded.
+fn frozen_group(slot: &GroupOpenPhaseParams) -> GeneratedFrozenGroup {
+    GeneratedFrozenGroup {
+        profile: slot.profile,
         // The rest of the opening plan is the consuming fold's, so it is derived
         // at expansion rather than stored here.
         opening_method: slot.opening.opening_method,
         num_digits_fold: slot.opening.num_digits_fold as u32,
+        setup_natural_len: slot.setup_natural_len.map(|len| len as u64),
+    }
+}
+
+/// Response cap of whichever security route this group's A matrix took.
+fn response_l2_sq_cap(p: &CommittedGroupParams) -> Option<u128> {
+    match p.inner_commit_matrix.security_route() {
+        akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+        akita_types::InnerCommitSecurityRoute::L2 {
+            response_l2_sq_cap, ..
+        } => Some(response_l2_sq_cap),
+    }
+}
+
+/// Project one runtime fold level into its generated form.
+///
+/// Root and recursive folds share this, exactly as they share `GeneratedFold`.
+/// `num_digits_inner` is pinned only where expansion cannot derive it.
+fn generated_fold(
+    p: &CommittedGroupParams,
+    num_digits_inner: Option<u32>,
+    precommitted_groups: &'static [GeneratedFrozenGroup],
+) -> GeneratedFold {
+    GeneratedFold {
+        group: committed_group(p, num_digits_inner),
+        precommitted_groups,
+        setup_prefix: p.setup_prefix.as_ref().map(frozen_group),
+        open_commit_matrix: open_matrix_params(&p.open_commit_matrix, p.log_basis_open),
+        witness_chunks: p.witness_chunk.num_chunks as u32,
+        payload_mode: p.payload_mode,
+        response_l2_sq_cap: response_l2_sq_cap(p),
     }
 }
 
@@ -280,37 +314,20 @@ fn generated_entry(
         .iter()
         .copied()
         .zip(&root_fold.precommitted_groups)
-        .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
-            descriptor,
+        .map(|(profile, group)| GeneratedFrozenGroup {
+            profile,
             num_digits_fold: group.opening.num_digits_fold as u32,
             opening_method: group.opening.opening_method,
+            // A precommitted group is not a setup prefix.
+            setup_natural_len: None,
         })
         .collect::<Vec<_>>();
     let recursive_folds = schedule
         .recursive_folds
         .iter()
-        .map(|step| GeneratedRecursiveFold {
-            payload_mode: step.params.payload_mode,
-            opening_method: step.params.opening_method,
-            witness: committed_group(&step.params),
-            num_digits_fold: step.params.num_digits_fold as u32,
-            response_l2_sq_cap: match step.params.inner_commit_matrix.security_route() {
-                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
-                akita_types::InnerCommitSecurityRoute::L2 {
-                    response_l2_sq_cap, ..
-                } => Some(response_l2_sq_cap),
-            },
-            open_commit_matrix: open_matrix_params(
-                &step.params.open_commit_matrix,
-                step.params.log_basis_open,
-            ),
-            incoming_setup_prefix: step
-                .params
-                .setup_prefix
-                .as_ref()
-                .map(setup_prefix_slot_input),
-            witness_chunks: step.params.witness_chunk.num_chunks as u32,
-        })
+        // A recursive fold pins no inner digit depth: expansion derives it from
+        // the witness length arriving from the level above.
+        .map(|step| generated_fold(&step.params, None, &[]))
         .collect::<Vec<_>>();
     let terminal_group = schedule
         .terminal
@@ -323,29 +340,15 @@ fn generated_entry(
         return Err("generated scalar terminal response must have exactly one group".to_string());
     }
     Ok(GeneratedFoldScheduleEntry {
-        root: GeneratedRootFold {
-            final_group: GeneratedRootFinalGroup {
-                layout: key.final_group,
-                num_digits_inner: root_params.num_digits_inner as u32,
-                num_digits_fold: root_params.num_digits_fold as u32,
-                opening_method: root_params.opening_method,
-                commitment: committed_group(root_params),
-            },
-            precommitted_groups: Box::leak(precommitted_groups.into_boxed_slice()),
-            open_commit_matrix: open_matrix_params(
-                &root_fold.open_commit_matrix,
-                root_params.log_basis_open,
-            ),
-            witness_chunks: root_fold.witness_chunk.num_chunks as u32,
-        },
+        final_group: key.final_group,
+        root: generated_fold(
+            root_params,
+            Some(root_params.num_digits_inner as u32),
+            Box::leak(precommitted_groups.into_boxed_slice()),
+        ),
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
         terminal: GeneratedTerminalFold {
-            geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: schedule.terminal.blocks.live_ring_elements_per_claim
-                    as u64,
-                positions_per_block: schedule.terminal.blocks.positions_per_block as u64,
-                live_blocks: schedule.terminal.blocks.live_blocks as u64,
-            },
+            geometry: schedule.terminal.blocks,
             inner_commit_matrix: GeneratedMatrix {
                 ring_dimension: schedule.terminal.inner.matrix.ring_dimension() as u32,
                 log_basis: schedule.terminal.inner.digits.log_basis,
@@ -385,7 +388,7 @@ fn emit_precommitted_group_key(layout: &GroupCommitPhaseParams) -> String {
     format!(
         "GroupCommitPhaseParams {{ version: GroupCommitPhaseParams::VERSION, group: {}, blocks: {}, outer_slice_count: akita_types::CommitmentSliceCount::{}, inner: {}, outer: {} }}",
         emit_key(layout.group),
-        emit_block_geometry(layout.blocks),
+        emit_geometry(layout.blocks),
         match layout.outer_slice_count {
             akita_types::CommitmentSliceCount::ONE => "ONE",
             akita_types::CommitmentSliceCount::TWO => "TWO",
@@ -418,13 +421,6 @@ fn emit_precommitted_group_key(layout: &GroupCommitPhaseParams) -> String {
     )
 }
 
-fn emit_block_geometry(blocks: akita_types::BlockGeometry) -> String {
-    format!(
-        "akita_types::BlockGeometry::new({}, {}, {})",
-        blocks.live_ring_elements_per_claim, blocks.positions_per_block, blocks.live_blocks,
-    )
-}
-
 fn emit_role_params(digits: akita_types::GadgetDigits, matrix: &str) -> String {
     format!(
         "akita_types::RoleParams::new(akita_types::GadgetDigits::new({}, {}), {})",
@@ -450,23 +446,31 @@ fn emit_profile_matrix(
     )
 }
 
-fn emit_geometry(value: GeneratedBlockGeometry) -> String {
+fn emit_geometry(value: akita_types::BlockGeometry) -> String {
     format!(
-        "GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}",
+        "BlockGeometry::new({}, {}, {})",
         value.live_ring_elements_per_claim, value.positions_per_block, value.live_blocks
     )
 }
 
-fn emit_committed_group(value: GeneratedCommittedGroup) -> String {
+fn emit_group(value: GeneratedGroup) -> String {
     format!(
-        "GeneratedCommittedGroup {{ geometry: {}, inner_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {} }}",
+        "GeneratedGroup {{ geometry: {}, inner_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_commit_matrix: GeneratedMatrix {{ ring_dimension: {}, log_basis: {} }}, outer_slice_count: {}, num_digits_inner: {}, num_digits_fold: {}, opening_method: {} }}",
         emit_geometry(value.geometry),
         value.inner_commit_matrix.ring_dimension,
         value.inner_commit_matrix.log_basis,
         value.outer_commit_matrix.ring_dimension,
         value.outer_commit_matrix.log_basis,
         value.outer_slice_count,
+        emit_optional(value.num_digits_inner),
+        value.num_digits_fold,
+        emit_opening_method(value.opening_method),
     )
+}
+
+/// Render `Option<T>` for any `T` that already prints as a Rust literal.
+fn emit_optional<T: std::fmt::Display>(value: Option<T>) -> String {
+    value.map_or_else(|| "None".to_string(), |value| format!("Some({value})"))
 }
 
 fn emit_open_matrix(value: GeneratedMatrix) -> String {
@@ -496,17 +500,78 @@ fn emit_opening_method(value: akita_types::OpeningMethod) -> String {
     }
 }
 
-fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
-    match value {
-        Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, commitment: {}, opening_method: {}, num_digits_fold: {} }})",
-            value.natural_len,
-            emit_precommitted_group_key(&value.commitment),
-            emit_opening_method(value.opening_method),
-            value.num_digits_fold,
+fn emit_frozen_group(value: &GeneratedFrozenGroup) -> String {
+    format!(
+        "GeneratedFrozenGroup {{ profile: {}, opening_method: {}, num_digits_fold: {}, setup_natural_len: {} }}",
+        emit_precommitted_group_key(&value.profile),
+        emit_opening_method(value.opening_method),
+        value.num_digits_fold,
+        emit_optional(value.setup_natural_len),
+    )
+}
+
+/// Tail fields every fold carries, in declaration order after the group list.
+fn emit_fold_tail(fold: &GeneratedFold) -> String {
+    format!(
+        "setup_prefix: {}, open_commit_matrix: {}, witness_chunks: {}, payload_mode: {}, response_l2_sq_cap: {}",
+        fold.setup_prefix.as_ref().map_or_else(
+            || "None".to_string(),
+            |prefix| format!("Some({})", emit_frozen_group(prefix)),
         ),
-        None => "None".to_string(),
+        emit_open_matrix(fold.open_commit_matrix),
+        fold.witness_chunks,
+        emit_payload_mode(fold.payload_mode),
+        emit_optional(fold.response_l2_sq_cap),
+    )
+}
+
+/// Emit one fold level. Root and recursive folds share this, exactly as they
+/// share `GeneratedFold`; the root is simply the level that carries producers.
+///
+/// A fold with no precommitted groups fits on one line, which is how every
+/// recursive fold and every scalar root was written before the merge. Only a
+/// grouped root expands, because each of its groups is preceded by a
+/// producer-source note that has to sit on its own line.
+fn emit_fold(
+    out: &mut String,
+    indent: &str,
+    label: &str,
+    fold: &GeneratedFold,
+    key: &AkitaScheduleLookupKey,
+    precommitted_producers: &[PrecommittedProducer],
+) -> Result<(), String> {
+    if fold.precommitted_groups.is_empty() {
+        writeln!(
+            out,
+            "{indent}{label}GeneratedFold {{ group: {}, precommitted_groups: &[], {} }},",
+            emit_group(fold.group),
+            emit_fold_tail(fold),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
     }
+    if precommitted_producers.len() != fold.precommitted_groups.len() {
+        return Err(format!(
+            "grouped key {key:?} carries {} producer records for {} precommitted groups",
+            precommitted_producers.len(),
+            fold.precommitted_groups.len(),
+        ));
+    }
+    writeln!(out, "{indent}{label}GeneratedFold {{").map_err(|e| e.to_string())?;
+    writeln!(out, "{indent}    group: {},", emit_group(fold.group)).map_err(|e| e.to_string())?;
+    writeln!(out, "{indent}    precommitted_groups: &[").map_err(|e| e.to_string())?;
+    for (index, group) in fold.precommitted_groups.iter().enumerate() {
+        out.push_str(&precommitted_source_note(
+            group.profile.inner.digits.log_basis,
+            group.profile.inner.digits.num_digits,
+            precommitted_producers[index].contract().class(),
+        ));
+        writeln!(out, "{indent}        {},", emit_frozen_group(group)).map_err(|e| e.to_string())?;
+    }
+    writeln!(out, "{indent}    ],").map_err(|e| e.to_string())?;
+    writeln!(out, "{indent}    {},", emit_fold_tail(fold)).map_err(|e| e.to_string())?;
+    writeln!(out, "{indent}}},").map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn emit_schedule_entry(
@@ -517,84 +582,22 @@ fn emit_schedule_entry(
 ) -> Result<(), String> {
     let entry = generated_entry(key, schedule)?;
     writeln!(out, "    GeneratedFoldScheduleEntry {{").map_err(|e| e.to_string())?;
-    writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
-    writeln!(
+    writeln!(out, "        final_group: {},", emit_key(entry.final_group))
+        .map_err(|e| e.to_string())?;
+    emit_fold(
         out,
-        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {}, opening_method: {},",
-        emit_key(entry.root.final_group.layout),
-        entry.root.final_group.num_digits_inner,
-        entry.root.final_group.num_digits_fold,
-        emit_opening_method(entry.root.final_group.opening_method),
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "                commitment: {} }},",
-        emit_committed_group(entry.root.final_group.commitment),
-    )
-    .map_err(|e| e.to_string())?;
-    if entry.root.precommitted_groups.is_empty() {
-        writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
-    } else {
-        if precommitted_producers.len() != entry.root.precommitted_groups.len() {
-            return Err(format!(
-                "grouped key {key:?} carries {} producer records for {} precommitted groups",
-                precommitted_producers.len(),
-                entry.root.precommitted_groups.len(),
-            ));
-        }
-        writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
-        for (index, group) in entry.root.precommitted_groups.iter().enumerate() {
-            out.push_str(&precommitted_source_note(
-                group.descriptor.inner.digits.log_basis,
-                group.descriptor.inner.digits.num_digits,
-                precommitted_producers[index].contract().class(),
-            ));
-            writeln!(
-                out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, opening_method: {} }},",
-                emit_precommitted_group_key(&group.descriptor),
-                group.num_digits_fold,
-                emit_opening_method(group.opening_method),
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        writeln!(out, "            ],").map_err(|e| e.to_string())?;
-    }
-    writeln!(
-        out,
-        "            open_commit_matrix: {},",
-        emit_open_matrix(entry.root.open_commit_matrix),
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(
-        out,
-        "            witness_chunks: {},",
-        entry.root.witness_chunks,
-    )
-    .map_err(|e| e.to_string())?;
-    writeln!(out, "        }},").map_err(|e| e.to_string())?;
+        "        ",
+        "root: ",
+        &entry.root,
+        key,
+        precommitted_producers,
+    )?;
     if entry.recursive_folds.is_empty() {
         writeln!(out, "        recursive_folds: &[],").map_err(|e| e.to_string())?;
     } else {
         writeln!(out, "        recursive_folds: &[").map_err(|e| e.to_string())?;
         for fold in entry.recursive_folds {
-            writeln!(
-                out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, opening_method: {}, witness: {}, num_digits_fold: {}, response_l2_sq_cap: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_chunks: {} }},",
-                emit_payload_mode(fold.payload_mode),
-                emit_opening_method(fold.opening_method),
-                emit_committed_group(fold.witness),
-                fold.num_digits_fold,
-                fold.response_l2_sq_cap.map_or_else(
-                    || "None".to_string(),
-                    |cap| format!("Some({cap})"),
-                ),
-                emit_open_matrix(fold.open_commit_matrix),
-                emit_setup_prefix(fold.incoming_setup_prefix),
-                fold.witness_chunks,
-            )
-            .map_err(|e| e.to_string())?;
+            emit_fold(out, "            ", "", fold, key, &[])?;
         }
         writeln!(out, "        ],").map_err(|e| e.to_string())?;
     }
@@ -791,12 +794,10 @@ pub(super) fn emit_family_module_from_entries(
     writeln!(out, "#[allow(unused_imports)]").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedBlockGeometry, \
-         GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedMatrix, \
-         GeneratedRecursiveFold, \
-         GeneratedRootFinalGroup, GeneratedRootFold, \
-         GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
-         GeneratedSetupPrefixInput, GeneratedTerminalFold, \
+        "use super::{{\n    BlockGeometry, ChunkedWitnessCfg, DecompositionParams, \
+         GeneratedFold, GeneratedFoldScheduleEntry, GeneratedFrozenGroup, \
+         GeneratedGroup, GeneratedMatrix, \
+         GeneratedScheduleCatalogIdentity, GeneratedTerminalFold, \
          CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, GroupCommitPhaseParams, \
          InnerCommitMatrixParams, OuterCommitMatrixParams, \
          CommitmentPayloadMode, RingDimensionScheduleMode, SelectionPolicyId, SelectiveL2ResponseModelId, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \n}};"

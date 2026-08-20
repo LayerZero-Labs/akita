@@ -193,7 +193,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             // resident, so it is provisionable at its own polynomial count even
             // when the grouped root it later feeds is not.
             for group in entry.root.precommitted_groups {
-                let profile = group.descriptor;
+                let profile = group.profile;
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
@@ -205,12 +205,12 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                 }
             }
             let key = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
+                final_group: entry.final_group,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.descriptor)
+                    .map(|group| group.profile)
                     .collect(),
             };
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {

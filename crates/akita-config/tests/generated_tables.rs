@@ -114,10 +114,10 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
         for entry in catalog.entries {
             for group in entry.root.precommitted_groups {
                 assert!(
-                    produced.contains(&group.descriptor),
+                    produced.contains(&group.profile),
                     "family {} embeds a grouped precommitted descriptor without an exact generated S producer: {:?}",
                     family.module_name,
-                    group.descriptor.group
+                    group.profile.group
                 );
             }
         }
@@ -193,11 +193,11 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
     for catalog in catalogs {
         for entry in catalog.entries {
             observed.insert((
-                entry.root.final_group.commitment.outer_slice_count,
+                entry.root.group.outer_slice_count,
                 chunks(entry.root.witness_chunks),
             ));
             for fold in entry.recursive_folds.iter().take(2) {
-                observed.insert((fold.witness.outer_slice_count, chunks(fold.witness_chunks)));
+                observed.insert((fold.group.outer_slice_count, chunks(fold.witness_chunks)));
             }
         }
     }
@@ -302,17 +302,12 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
     if !entry.recursive_folds.is_empty() {
         let mut folds = entry.recursive_folds.to_vec();
         let last = folds.last_mut().expect("copied recursive fold");
-        last.witness.inner_commit_matrix.ring_dimension = 64;
-        last.witness.outer_commit_matrix.ring_dimension = 64;
+        last.group.inner_commit_matrix.ring_dimension = 64;
+        last.group.outer_commit_matrix.ring_dimension = 64;
         last.open_commit_matrix.ring_dimension = 64;
         entry.recursive_folds = Box::leak(folds.into_boxed_slice());
     } else {
-        entry
-            .root
-            .final_group
-            .commitment
-            .inner_commit_matrix
-            .ring_dimension = 64;
+        entry.root.group.inner_commit_matrix.ring_dimension = 64;
     }
     entry.terminal.inner_commit_matrix.ring_dimension = 128;
 
@@ -342,7 +337,7 @@ fn recursive_companion_catalogs_contain_only_offloaded_schedules() {
             catalog.entries.iter().all(|entry| entry
                 .recursive_folds
                 .iter()
-                .any(|fold| fold.incoming_setup_prefix.is_some())),
+                .any(|fold| fold.setup_prefix.is_some())),
             "recursive companion family {} contains a schedule without setup offloading",
             family.module_name
         );

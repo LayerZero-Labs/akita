@@ -187,14 +187,14 @@ fn profiles_for_entry(
 ) -> Result<CommittedGroupBatchProfile, AkitaError> {
     Ok(CommittedGroupBatchProfile {
         final_group: GroupCommitPhaseParams::try_from_params(
-            entry.root.final_group.layout,
+            entry.final_group,
             &schedule.root.params,
         )?,
         precommitteds: entry
             .root
             .precommitted_groups
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.profile)
             .collect(),
     })
 }

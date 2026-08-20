@@ -235,12 +235,12 @@ fn collect_records() -> Vec<Record> {
         let policy = (family.policy)();
         for (index, entry) in table.entries.iter().enumerate() {
             let key = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
+                final_group: entry.final_group,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.descriptor)
+                    .map(|group| group.profile)
                     .collect(),
             };
             let schedule = schedule_from_entry(entry, &key, &policy, family.ring_challenge_config)
