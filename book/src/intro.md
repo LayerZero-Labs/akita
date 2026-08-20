@@ -1,33 +1,68 @@
 # Introduction
 
-Akita is a polynomial commitment scheme written in Rust. It is designed for
-applications that need to prove facts about very large tables of values without
-sending the whole table to the verifier. Its main intended integration is the
-[Jolt](https://jolt.a16zcrypto.com/) virtual machine.
+Akita is a lattice based polynomial commitment scheme, or PCS, implemented in
+Rust. It lets a prover commit to a large table and later prove an evaluation of
+the multilinear polynomial represented by that table. The verifier checks the
+proof without receiving the whole table. Akita uses transparent setup, so it
+needs no trusted ceremony. Its production parameters provide 128-bit post
+quantum security under Module-SIS.
 
-The word *polynomial* can make the job sound more abstract than it is. An
-application starts with a list of field elements. A field is a number system in
-which addition, subtraction, multiplication, and division by a nonzero value
-have consistent results. Akita treats the list as the values of a multilinear
-polynomial, commits to it, and later proves that the polynomial has a claimed
-value at a chosen point. The commitment stays the same across many opening
-claims.
+The codebase implements a standalone PCS that other proof system frameworks can
+use. Its first major integration is
+[Jolt](https://jolt.a16zcrypto.com/), a zero knowledge virtual machine, or zkVM,
+that proves the correct execution of 64-bit RISC-V programs.
 
-This chapter explains that process before introducing the implementation terms
-used by the rest of the Book.
+> **Our claim:** Akita is the first production ready lattice based polynomial
+> commitment scheme. Earlier systems such as Greyhound showed that lattice
+> commitments could be practical, though not without downsides. Akita improves
+> on that line of work and adds the implementation, validation, portability,
+> and integration work needed for deployment.
 
-> **Project status:** Akita is under active development. The repository makes
-> no promise that its public interfaces or proof format will remain compatible
-> with earlier versions. The current security process uses specifications,
-> code review, strict continuous integration, and focused tests. It is not a
-> substitute for an independent security audit.
+## Why build Akita?
 
-## The problem Akita solves
+Zero knowledge proofs have a quantum problem. Many proof systems deployed today
+commit to their data with elliptic curve cryptography. Groth16, Plonk, and
+Bulletproofs are prominent examples. Their commitments are compact and well
+understood, but a sufficiently powerful quantum computer could break the
+assumptions behind them.
 
-Suppose a prover has a large table and wants to convince a verifier that a
-calculation over that table is correct. Sending the entire table would let the
-verifier repeat the calculation, but it would also remove the main performance
-benefit of a proof system.
+Many proof systems split the work into two parts. One part checks polynomial
+identities using algebra and random challenges. These checks do not rely on the
+difficulty of an elliptic curve problem. The PCS fixes the polynomials and lets
+the verifier check them without reading every coefficient. For these systems,
+the PCS carries the elliptic curve assumption. Replacing it with a post quantum
+PCS can make the whole proof post quantum without replacing the algebraic
+protocol around it.
+
+Most post quantum proof systems in use today rely on hash functions. That path
+is well developed. It also tends to produce larger proofs and to move more data
+through the prover. Akita takes the lattice path. It uses structured lattice
+problems to build a compact commitment with no trusted setup.
+
+## Why the commitment layer matters
+
+A proof system often represents a computation as one or more large tables. The
+prover has the tables. The verifier wants confidence in a calculation over them
+without downloading the tables or repeating the work.
+
+The word *polynomial* describes how the proof system gives those tables useful
+algebraic structure. An application starts with a list of field elements. A
+field is a number system in which addition, subtraction, multiplication, and
+division by a nonzero value have consistent results. Akita treats the list as
+the values of a multilinear polynomial.
+
+A table with $2^n$ entries becomes a polynomial with $n$ variables. Each
+variable appears with degree at most one. For example, a table with eight
+entries becomes a polynomial in three variables because three bits select one
+of eight positions. The polynomial also has a value at points that are not made
+only of zeroes and ones. That larger domain lets a proof system combine many
+table checks into a small number of algebraic claims.
+
+> **Univariate commitments fit the same design.** Akita's folding machinery
+> needs tensor structure, not multilinearity itself. The coefficients of a
+> univariate polynomial can also be arranged as a tensor and folded one axis at
+> a time. The current code exposes only multilinear commitments, but the
+> protocol architecture can support a univariate interface as well.
 
 A polynomial commitment scheme gives the two parties a smaller interface:
 
@@ -40,33 +75,110 @@ A polynomial commitment scheme gives the two parties a smaller interface:
 4. The verifier checks that the claimed value is consistent with the original
    commitment.
 
-The commitment is not the data itself. It acts more like a binding handle for
-later checks. A valid opening should not let the prover change the committed
-table after learning the point.
-
-Akita supports multilinear polynomials. A table with $2^n$ entries becomes a
-polynomial with $n$ variables. Each variable appears with degree at most one.
-For example, a table with eight entries becomes a polynomial in three variables
-because three bits select one of eight positions. The polynomial is defined at
-every field point, not only at bit values. This extension beyond the original
-table is what lets a proof system combine many table checks into algebraic
-claims.
+The commitment is not the data itself. It fixes the table for later checks. A
+valid opening should not let the prover change that table after learning the
+evaluation point.
 
 The [multilinear extensions and sumcheck](./foundations/multilinear-sumcheck.md)
 chapter develops this representation and the main checking protocol from small
 examples.
 
-## What makes Akita different
+## The three commitment paths
 
-Akita uses lattice based commitments and folding. These choices affect both its
-security assumptions and the shape of its implementation.
+The choice of commitment scheme changes the security assumptions, setup, proof
+size, prover work, and verifier work of the complete proof system.
 
-### Lattice based commitments
+| Approach | Why systems use it | The post quantum question |
+| --- | --- | --- |
+| Elliptic curves and pairings | Very small proofs and fast verification | A large quantum computer can solve the underlying discrete logarithm problems. Some schemes also require a trusted setup. |
+| Hash functions | Conservative assumptions and transparent setup | Proofs often contain many hash tree paths, which increases proof size and data movement. |
+| Structured lattices | Post quantum assumptions with useful algebraic structure | Parameters, norm bounds, and optimized ring arithmetic must all agree exactly. |
+
+Akita chooses lattices for both security and performance. Akita first writes
+each field value as small signed digits. It then multiplies those digits by a
+public matrix. This structure fits the polynomial arithmetic already present in
+the proof system.
+
+This construction also changes the cost of sparse data. A hash based commitment
+usually encodes the full table and builds a hash tree over the result. The
+prover must process every position, including the zeroes. Zero digits add
+nothing to Akita's matrix product, so its sparse commitment path can skip them.
+This is especially useful for a one hot table, in which each block contains one
+value equal to one and all other values are zero. Jolt's memory checks produce
+tables of this form, and Akita provides dedicated one hot configurations for
+them.
+
+Large public matrix operations can be streamed. Fast number theoretic
+transforms can use wide CPU instructions without changing the proof.
+
+Lattices are not an isolated bet. [NIST has standardized module lattice
+systems](https://csrc.nist.gov/Projects/Post-Quantum-Cryptography) for post
+quantum key establishment and signatures. Akita does not use those standards
+and is not certified by NIST. The comparison is narrower. Structured lattice
+assumptions have moved from research into deployed cryptographic engineering,
+and Akita brings that direction to polynomial commitments.
+
+Akita follows the line of work from LaBRADOR through Greyhound and Hachi. That
+work established compact lattice proofs and practical polynomial openings.
+Greyhound and Hachi produced small proofs under Module-SIS, but their verifiers
+still did work that grew roughly with the square root of the polynomial size.
+Akita makes the fold repeatable. It reduces the opening again and again until
+the remaining claim is small enough to check directly. Akita also adds a
+complete system that another proof project can operate, profile, upgrade, and
+audit.
+
+## What production ready means here
+
+Akita treats deployability as part of the cryptographic design. A fast protocol
+is not ready for use if the verifier can panic on hostile bytes, if a schedule
+can select parameters outside the security table, or if an optimized kernel and
+its scalar version disagree.
+
+Production ready does not mean finished or frozen. Akita remains under active
+development and has not yet received an independent audit. Its interfaces and
+proof format can still change. Here, production ready means that the repository
+has generated security parameters, a separate verifier package, canonical proof
+encoding, strict rejection of malformed input, portable optimized arithmetic,
+and an end to end integration harness.
+
+The repository therefore makes the following work part of the primitive:
+
+- The planner searches for proof schedules offline. Normal verification reads
+  generated and reviewed schedule tables instead of running a search.
+- Each schedule carries the ring dimensions, decomposition ranges, response
+  bounds, and SIS parameters needed by its proof.
+- The prover and verifier bind the same configuration, setup identity, claim
+  layout, and schedule into the transcript before deriving challenges.
+- The verifier has its own dependency path and must reject malformed public
+  input with a structured error instead of a panic.
+- Portable scalar arithmetic remains available beside AVX2, AVX-512, and NEON
+  paths. Tests compare the implementations on supported hosts.
+- The prover preserves sparse inputs and streams selected matrix operations to
+  control memory beyond the polynomial itself.
+
+Current repository profiles provide one concrete result of this work.
+Representative dense, one hot, and grouped statements across the supported
+field sizes have produced Akita proof payloads of roughly 65 to 80 KB. This is
+the Akita commitment proof, not the complete proof produced by a host system.
+The measurements come from specific profiles and are not a promise for every
+application. The [profiling chapter](./usage/profiling.md) explains how the
+repository measures current configurations.
+
+Jolt is the first demanding host for these boundaries. It exercises a verifier
+inside another proof system and forces Akita to account for proof bytes,
+verification work, memory, serialization, and guest failures as one integration
+problem. The same boundaries are meant to serve other hosts.
+
+## How Akita gets a small opening proof
+
+Akita uses lattice based commitments and recursive folding. These choices
+affect both its security argument and its implementation.
+
+### Lattice binding
 
 The commitment is built from public matrices over polynomial rings. Security is
-tied to the Module Short Integer Solution assumption, usually shortened to
-Module SIS. Informally, this assumption says that it is hard to find a short,
-nonzero input that a public matrix maps to zero.
+tied to the Module-SIS assumption. Informally, this assumption says that it is
+hard to find a short, nonzero input that a public matrix maps to zero.
 
 This lattice assumption gives Akita its post quantum design goal. The goal is
 based on the absence of a known efficient quantum attack against the selected
@@ -80,7 +192,7 @@ configuration, preserve the transcript and verifier checks, and account for the
 larger proof system around the commitment scheme.
 
 The [security model](./how/security.md) explains the exact assumptions, norm
-bounds, challenge spaces, and generated tables. The [lattices and Module SIS](./foundations/lattices-sis.md)
+bounds, challenge spaces, and generated tables. The [lattices and Module-SIS](./foundations/lattices-sis.md)
 chapter introduces the mathematical terms.
 
 ### Transparent setup
@@ -114,7 +226,7 @@ configuration through setup, commitment, proving, and verification.
 
 ## The four operations
 
-The public story can be organized around four operations.
+All of this becomes four public operations.
 
 | Operation | What it receives | What it produces |
 | --- | --- | --- |
@@ -125,9 +237,9 @@ The public story can be organized around four operations.
 
 The implementation can batch several polynomials and several committed groups
 into one proof. It also chooses a fold schedule from the exact shape of the
-claim. Those details matter for integration, but they do not change the basic
-contract: commitment fixes the data, proving explains an evaluation, and
-verification checks the explanation.
+claim. Batching and scheduling make the implementation more complex. They do
+not change the contract. Commitment fixes the data, proving explains an
+evaluation, and verification checks that explanation.
 
 Start with [Quickstart and configuration](./usage/quickstart.md) if you want to
 run these operations. Read [The commitment API](./usage/commitment-api.md) for
@@ -161,9 +273,10 @@ they do not replace an argument for why the protocol checks are sufficient.
 
 ## How the repository is divided
 
-Akita uses small crates with one direction of dependency between them. The
-split keeps the verifier from pulling in prover only polynomial backends and
-keeps offline schedule search out of verification.
+Cryptographic boundaries that exist only in prose are easy to violate in code.
+Akita therefore uses small crates with one direction of dependency between
+them. The split keeps the verifier from pulling in prover only polynomial
+backends and keeps offline schedule search out of verification.
 
 At a high level:
 
