@@ -30,13 +30,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
     let opening_batch =
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
     let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
-        .map(|row| {
-            row.schedule().root.params.final_group(
-                opening_batch
-                    .root_final_group_layout()
-                    .expect("final group layout"),
-            )
-        })
+        .map(|row| row.schedule().root.params.final_group())
         .expect("batched commit layout");
 
     let polys: Vec<DensePoly<F>> = (0..total_claims)

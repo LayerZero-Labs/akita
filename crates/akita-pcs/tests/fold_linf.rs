@@ -170,11 +170,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             .schedule()
             .root
             .params
-            .final_group(
-                opening_batch
-                    .root_final_group_layout()
-                    .expect("final group layout"),
-            );
+            .final_group();
         let poly = make_onehot_poly(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);

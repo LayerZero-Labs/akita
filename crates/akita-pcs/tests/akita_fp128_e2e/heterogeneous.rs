@@ -351,7 +351,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let precommitted = schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .first()
             .expect("mixed-bound selection must resolve the one-precommit entry");
         assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
@@ -362,7 +362,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         );
         // The root itself is planned at the one-hot bound, so the two groups
         // really do disagree on their committed-source depth.
-        assert_eq!(schedule.root.params.inner.digits.num_digits, 1,);
+        assert_eq!(schedule.root.params.inner().digits.num_digits, 1,);
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");

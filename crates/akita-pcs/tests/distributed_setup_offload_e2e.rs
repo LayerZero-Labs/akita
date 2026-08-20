@@ -60,7 +60,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
         .iter()
         .map(|fold| {
             fold.params
-                .setup_prefix
+                .setup_prefix()
                 .as_ref()
                 .and_then(|slot| slot.setup_natural_len)
         })
@@ -112,10 +112,9 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
     let first_recursive = &schedule.recursive_folds[0].params;
     assert_eq!(first_recursive.witness_chunk.num_chunks, 8);
     let prefix = first_recursive
-        .setup_prefix
-        .as_ref()
+        .setup_prefix()
         .expect("W8R2 first recursive fold must consume a setup prefix");
-    let witness_a = &first_recursive.inner.matrix;
+    let witness_a = &first_recursive.inner().matrix;
     let prefix_a = &prefix.profile.inner.matrix;
     assert_eq!(
         (
@@ -178,7 +177,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
-        } = params.opening_method
+        } = params.opening_method()
         else {
             panic!("level {level} must use coefficient packing");
         };
@@ -240,7 +239,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         );
     }
     assert_eq!(
-        schedule.recursive_folds[1].params.opening_method,
+        schedule.recursive_folds[1].params.opening_method(),
         OpeningMethod::EvaluationTrace,
         "the level-2 fold must consume the packing-produced flat witness through EvaluationTrace"
     );
@@ -275,7 +274,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     assert!(matches!(
         schedule.recursive_folds[0]
             .params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .expect("level-1 setup prefix")
             .opening

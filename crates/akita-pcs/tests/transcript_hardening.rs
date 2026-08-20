@@ -58,11 +58,7 @@ fn event_stream_equality_small() {
             .schedule()
             .root
             .params
-            .final_group(
-                opening_batch
-                    .root_final_group_layout()
-                    .expect("final group layout"),
-            );
+            .final_group();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
@@ -316,11 +312,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             .schedule()
             .root
             .params
-            .final_group(
-                opening_batch
-                    .root_final_group_layout()
-                    .expect("final group layout"),
-            );
+            .final_group();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);

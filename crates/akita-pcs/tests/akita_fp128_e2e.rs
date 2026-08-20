@@ -226,7 +226,7 @@ fn fp128_dense_mc() {
         .expect("dense multi-chunk schedule")
         .into_schedule();
         assert_eq!(
-            schedule.root.params.outer_slice_count,
+            schedule.root.params.outer_slice_count(),
             akita_types::CommitmentSliceCount::EIGHT,
             "multi-chunk regression profile must pin the exact S=8 root geometry"
         );
