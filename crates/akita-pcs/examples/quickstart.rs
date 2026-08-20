@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let selection = prover_data.selection();
 
-    let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
     let proof = AkitaCommitmentScheme::<Config>::batched_prove(
         &setup,
         prover_data,
@@ -77,8 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &commit_output.committed_group,
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
-    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    AkitaCommitmentScheme::<Config>::batched_verify(
+    let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
+    akita_verifier::batched_verify::<Config, _>(
         &decoded_proof,
         &verifier_setup,
         &mut verifier_transcript,

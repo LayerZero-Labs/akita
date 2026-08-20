@@ -128,6 +128,6 @@ Use these starting points:
 | A verifier that must avoid a large direct setup scan | A supported `RecursiveCommitmentConfig<Cfg>` |
 
 The [first proof](./quickstart.md) uses `fp128::Dense`. The
-[commitment API](./commitment-api.md) develops grouped openings and prepared
+[integration guide](./integration.md) develops grouped openings and prepared
 state. The [profiling guide](./profiling.md) shows how to measure the selected
 configuration at the host's real workload size.

@@ -125,7 +125,7 @@ construction.
 ```rust
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 
-let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
 let proof = AkitaCommitmentScheme::<Config>::batched_prove(
     &setup,
     prover_data,
@@ -176,8 +176,9 @@ let verifier_claims = OpeningClaims::from_groups(vec![
 ])?;
 let statement = GroupBatchStatement::new(selection, verifier_claims)?;
 
-let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-AkitaCommitmentScheme::<Config>::batched_verify(
+let mut verifier_transcript =
+    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
+akita_verifier::batched_verify::<Config, _>(
     &decoded_proof,
     &verifier_setup,
     &mut verifier_transcript,
@@ -186,10 +187,10 @@ AkitaCommitmentScheme::<Config>::batched_verify(
 )?;
 ```
 
-The verifier creates a fresh transcript with the same domain. Akita binds the
-complete public statement before deriving proof challenges, so a change to the
-group order, point, value, commitment, configuration, or schedule causes
-verification to fail.
+The prover and verifier each create a fresh transcript for their side of the
+protocol. Akita binds the complete public statement before deriving proof
+challenges, so a change to the group order, point, value, commitment,
+configuration, or schedule causes verification to fail.
 
 ## What to change next
 
@@ -198,8 +199,8 @@ real integration will choose them from the host protocol.
 
 - Use [Choosing a configuration](./configuration.md) to select the field and
   polynomial representation.
-- Use [The commitment API](./commitment-api.md) for several polynomials,
-  several opening points, or earlier commitment groups.
+- Use [Integrating the PCS](./integration.md) for several polynomials, several
+  opening points, or earlier commitment groups.
 - Use [Verifier only integration](./verifier-only.md) when verification must
   compile without the prover backend.
 - Use [Profiling](./profiling.md) to measure a production size workload.

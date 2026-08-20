@@ -64,7 +64,7 @@ every table into a dense allocation.
 | --- | --- |
 | Run one complete proof | [Your first proof](./quickstart.md) |
 | Pick a field and input representation | [Choosing a configuration](./configuration.md) |
-| Integrate commitment, proving, and verification | [The commitment API](./commitment-api.md) |
+| Integrate commitment, proving, and verification | [Integrating the PCS](./integration.md) |
 | Carry only verification into another environment | [Verifier only integration](./verifier-only.md) |
 | Choose Cargo features | [Feature flags](./feature-flags.md) |
 | Measure time, memory, and proof size | [Profiling](./profiling.md) |
