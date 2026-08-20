@@ -84,11 +84,11 @@ pub use layout::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
-    witness_commitment_domain_len, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
-    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
-    SUPPORTED_COMMITMENT_RING_DIMS,
+    witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
+    CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpeningPlan, LevelParamsLike,
+    OpeningFamily, OpeningMethod, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
     centered_quotient_requires_i16_tail, centered_quotient_requires_i16_tail_for_field,

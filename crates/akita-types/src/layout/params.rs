@@ -48,11 +48,12 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
         ));
     }
     (d_a.trailing_zeros() as usize)
-        .checked_add(num_positions_per_block.trailing_zeros() as usize)
+        .checked_add(crate::BlockGeometry::position_index_bits_for(
+            num_positions_per_block,
+        ))
         .and_then(|bits| {
-            num_live_blocks
-                .checked_next_power_of_two()
-                .and_then(|blocks| bits.checked_add(blocks.trailing_zeros() as usize))
+            crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
+                .and_then(|blocks| bits.checked_add(blocks))
         })
         .ok_or_else(|| AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string()))
 }
@@ -397,54 +398,41 @@ impl CommittedGroupParams {
         self.num_digits_fold
     }
 
+    /// This fold's block triple.
+    ///
+    /// Step 4 makes this a stored field. Until then it is assembled on demand,
+    /// which is free: [`BlockGeometry`] is three `usize`s and `Copy`.
+    #[inline]
+    #[must_use]
+    pub fn blocks(&self) -> crate::BlockGeometry {
+        crate::BlockGeometry::new(
+            self.num_live_ring_elements_per_claim,
+            self.num_positions_per_block,
+            self.num_live_blocks,
+        )
+    }
+
     /// Number of Boolean coordinates in the block-index domain.
     #[inline]
     pub fn block_index_bits(&self) -> usize {
-        self.num_live_blocks
-            .checked_next_power_of_two()
-            .map_or(0, |capacity| capacity.trailing_zeros() as usize)
+        self.blocks().block_index_bits()
     }
 
     /// Number of Boolean coordinates in one block-position slice.
     #[inline]
     pub fn position_index_bits(&self) -> usize {
-        self.num_positions_per_block.trailing_zeros() as usize
+        self.blocks().position_index_bits()
     }
 
     /// Boolean block-index domain size (`next_power_of_two(B)`).
     #[inline]
     pub fn block_index_domain_size(&self) -> Result<usize, AkitaError> {
-        self.num_live_blocks
-            .checked_next_power_of_two()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
-            })
+        self.blocks().block_index_domain_size()
     }
 
     /// Validate the exact source/block geometry before it reaches allocation.
     pub fn validate_block_geometry(&self) -> Result<(), AkitaError> {
-        if self.num_live_ring_elements_per_claim == 0
-            || self.num_positions_per_block == 0
-            || !self.num_positions_per_block.is_power_of_two()
-            || self.num_live_blocks == 0
-        {
-            return Err(AkitaError::InvalidSetup(
-                "invalid digit-innermost block geometry".to_string(),
-            ));
-        }
-        let expected = self
-            .num_live_ring_elements_per_claim
-            .div_ceil(self.num_positions_per_block);
-        if self.num_live_blocks != expected {
-            return Err(AkitaError::InvalidSetup(format!(
-                "num_live_blocks={} does not equal ceil(num_live_ring_elements_per_claim={} / num_positions_per_block={})={expected}",
-                self.num_live_blocks,
-                self.num_live_ring_elements_per_claim,
-                self.num_positions_per_block,
-            )));
-        }
-        self.block_index_domain_size()?;
-        Ok(())
+        self.blocks().validate()
     }
 
     /// Validate the exact A/B geometry executed by one commitment request.
@@ -1217,9 +1205,9 @@ impl CommittedGroupParams {
             ));
         }
         let num_live_blocks = num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
-        num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
-            AkitaError::InvalidSetup("block-index domain size overflows usize".to_string())
-        })?;
+        crate::BlockGeometry::checked_block_index_domain_size_for(num_live_blocks).ok_or_else(
+            || AkitaError::InvalidSetup("block-index domain size overflows usize".to_string()),
+        )?;
         let inner_width = num_positions_per_block
             .checked_mul(num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;

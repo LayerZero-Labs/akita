@@ -592,14 +592,11 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn position_index_bits(&self) -> usize {
-        self.layout.num_positions_per_block.trailing_zeros() as usize
+        self.layout.blocks().position_index_bits()
     }
 
     fn block_index_bits(&self) -> usize {
-        self.layout
-            .num_live_blocks
-            .checked_next_power_of_two()
-            .map_or(0, |capacity| capacity.trailing_zeros() as usize)
+        self.layout.blocks().block_index_bits()
     }
 
     fn num_digits_inner(&self) -> usize {

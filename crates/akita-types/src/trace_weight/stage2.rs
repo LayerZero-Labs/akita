@@ -349,11 +349,10 @@ pub fn root_trace_block_opening<X: FieldCore>(
             "trace opening requires power-of-two M and positive B".to_string(),
         ));
     }
-    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
-    let block_index_bits = num_live_blocks
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?
-        .trailing_zeros() as usize;
+    let position_index_bits =
+        crate::BlockGeometry::position_index_bits_for(num_positions_per_block);
+    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
     let target = position_index_bits
         .checked_add(block_index_bits)
         .and_then(|n| n.checked_add(alpha_bits))

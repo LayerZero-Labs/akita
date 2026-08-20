@@ -1,10 +1,9 @@
 //! Committed group profiles and runtime schedule lookup identity.
 
-use crate::descriptor_bytes::{push_u32, push_usize};
+use crate::descriptor_bytes::push_usize;
 use crate::{
     CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
     InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
-    SignedDigitKernel,
 };
 use akita_field::{AkitaError, FieldCore};
 
@@ -162,6 +161,34 @@ impl CommittedGroupProfile {
         Self::from_params_fields(group, params)
     }
 
+    /// This group's block triple.
+    ///
+    /// Step 4 makes this a stored field; until then it is assembled on demand
+    /// from the three flat fields, which is free.
+    #[inline]
+    #[must_use]
+    pub fn blocks(&self) -> crate::BlockGeometry {
+        crate::BlockGeometry::new(
+            self.num_live_ring_elements_per_claim,
+            self.num_positions_per_block,
+            self.num_live_blocks,
+        )
+    }
+
+    /// The A-role gadget decomposition.
+    #[inline]
+    #[must_use]
+    pub fn inner_digits(&self) -> crate::GadgetDigits {
+        crate::GadgetDigits::new(self.log_basis_inner, self.num_digits_inner)
+    }
+
+    /// The B-role gadget decomposition.
+    #[inline]
+    #[must_use]
+    pub fn outer_digits(&self) -> crate::GadgetDigits {
+        crate::GadgetDigits::new(self.log_basis_outer, self.num_digits_outer)
+    }
+
     /// Canonical versioned bytes used for catalog and schedule-key identity.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -169,19 +196,19 @@ impl CommittedGroupProfile {
         bytes
     }
 
+    /// The block triple and both `(basis, depth)` pairs are already contiguous
+    /// here, so the atomic leaf encoders are byte-neutral. This encoder is
+    /// therefore already role-atomic: geometry, then `basis, depth, matrix`
+    /// twice, which is the shape step 4 makes structural.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
-        push_usize(bytes, self.num_live_ring_elements_per_claim);
-        push_usize(bytes, self.num_positions_per_block);
-        push_usize(bytes, self.num_live_blocks);
+        self.blocks().append_descriptor_bytes(bytes);
         self.outer_slice_count.append_descriptor_bytes(bytes);
-        push_u32(bytes, self.log_basis_inner);
-        push_usize(bytes, self.num_digits_inner);
+        self.inner_digits().append_descriptor_bytes(bytes);
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
-        push_u32(bytes, self.log_basis_outer);
-        push_usize(bytes, self.num_digits_outer);
+        self.outer_digits().append_descriptor_bytes(bytes);
         self.outer_commit_matrix.append_descriptor_bytes(bytes);
     }
 
@@ -207,16 +234,7 @@ impl CommittedGroupProfile {
                     .to_string(),
             ));
         }
-        if SignedDigitKernel::for_log_basis(self.log_basis_inner).is_none()
-            || self.num_digits_inner == 0
-            || self.num_digits_inner
-                > crate::sis::compute_num_digits_field_width(field_bits, self.log_basis_inner)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "commitment group inner basis or digit depth exceeds the supported field decomposition"
-                    .to_string(),
-            ));
-        }
+        self.inner_digits().validate(field_bits)?;
         if self.log_basis_outer == 0 || self.num_digits_outer == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout requires nonzero outer basis and digit depth".to_string(),
