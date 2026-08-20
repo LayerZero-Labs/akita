@@ -169,6 +169,22 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    feature list to `guest`. A production recursion circuit must use strict
    setup validation or bind an externally checked setup commitment.
 
+## Trusted fp128 field decode
+
+The trusted benchmark decoder keeps the byte wire format and validates every
+fp128 value canonically. It views the checked matrix payload as pairs of
+little-endian `u64` words. When the payload address is eight-byte aligned, the
+decoder reads it directly and the RISC V loop uses two aligned loads per
+field. When an outer input ABI places the same bytes at a different alignment,
+the decoder uses unaligned reads directly without a payload-sized staging
+allocation. Alignment therefore selects the load primitive; it does not decide
+whether otherwise valid wire bytes are accepted or change the memory envelope.
+
+The specialized decoder is used only by the explicitly trusted cached-matrix
+path. Strict setup decoding remains unchanged and still derives the public
+matrix from its seed. Tests sweep all eight possible payload alignments,
+exercise both load paths, and include a valid value with both limbs populated.
+
 ## Prepared terminal cache
 
 The canonical verifier setup stores field coefficients. It does not serialize

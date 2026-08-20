@@ -169,13 +169,9 @@ fn strict_host_preflight(blob: &[u8]) -> Result<Vec<u8>, String> {
     .map_err(|err| format!("prepared verifier cache build failed: {err}"))?;
     decoded
         .verifier_setup
-        .install_trusted_prepared_verifier_ntt_cache(
-            &cache,
-            decoded.schedule_selection.row_digest,
-        )
+        .install_trusted_prepared_verifier_ntt_cache(&cache, decoded.schedule_selection.row_digest)
         .map_err(|err| format!("prepared verifier cache self-check failed: {err}"))?;
-    let mut cached_transcript =
-        AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
+    let mut cached_transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let cached_statement = decoded
         .verifier_statement()
         .map_err(|err| format!("cached input statement failed: {err}"))?;

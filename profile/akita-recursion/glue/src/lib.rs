@@ -11,11 +11,6 @@
 #![allow(clippy::missing_errors_doc)]
 
 use akita_config::CommitmentConfig;
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
-use akita_field::Fp128;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -27,6 +22,12 @@ use akita_types::{
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
+
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+mod trusted_fp128;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
 /// so the host and guest don't have to negotiate compression.
@@ -604,111 +605,6 @@ where
     }
 }
 
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
-impl<const P: u128, const D: usize> AkitaJoltInputs<Fp128<P>, D>
-where
-    Fp128<P>: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>
-        + Valid,
-{
-    #[inline(never)]
-    fn deserialize_trusted_fp128_setup_matrix(
-        rest: &mut &[u8],
-        expected_num_field_elements: usize,
-    ) -> Result<FlatMatrix<Fp128<P>>, SerializationError> {
-        let encoded_num_field_elements =
-            usize::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        if encoded_num_field_elements != expected_num_field_elements {
-            return Err(SerializationError::InvalidData(
-                "flat matrix field count does not match expected setup shape".to_string(),
-            ));
-        }
-
-        let payload_len = expected_num_field_elements.checked_mul(16).ok_or_else(|| {
-            SerializationError::InvalidData(
-                "akita-jolt setup matrix payload length overflow".to_string(),
-            )
-        })?;
-        if rest.len() < payload_len {
-            return Err(SerializationError::InvalidData(format!(
-                "akita-jolt setup matrix claims {payload_len} payload bytes but only {} remain",
-                rest.len()
-            )));
-        }
-        let (payload, tail) = rest.split_at(payload_len);
-
-        #[cfg(target_arch = "riscv64")]
-        if payload.as_ptr().addr() % std::mem::align_of::<u64>() != 0 {
-            return Err(SerializationError::InvalidData(
-                "akita-jolt setup matrix payload is not aligned".to_string(),
-            ));
-        }
-
-        let mut data = Vec::new();
-        data.try_reserve_exact(expected_num_field_elements)
-            .map_err(|_| {
-                SerializationError::InvalidData("flat matrix allocation failed".to_string())
-            })?;
-        let mut words = payload.as_ptr().cast::<u64>();
-        for _ in 0..expected_num_field_elements {
-            // SAFETY: `payload_len` proves that two complete words remain for
-            // every loop iteration. The Jolt path checks eight-byte alignment
-            // above. Host tooling uses unaligned reads because Rust does not
-            // guarantee the alignment of a `Vec<u8>` allocation.
-            let (low, high) = unsafe {
-                #[cfg(target_arch = "riscv64")]
-                let pair = (words.read(), words.add(1).read());
-                #[cfg(not(target_arch = "riscv64"))]
-                let pair = (words.read_unaligned(), words.add(1).read_unaligned());
-                words = words.add(2);
-                pair
-            };
-            let canonical = (u128::from(u64::from_le(high)) << 64) | u128::from(u64::from_le(low));
-            let field = Fp128::<P>::from_canonical_u128_checked(canonical)
-                .ok_or_else(|| SerializationError::InvalidData("Fp128 out of range".to_string()))?;
-            data.push(field);
-        }
-        *rest = tail;
-        Ok(FlatMatrix::from_flat_data(data))
-    }
-
-    fn deserialize_trusted_host_setup(
-        rest: &mut &[u8],
-    ) -> Result<AkitaVerifierSetup<Fp128<P>>, SerializationError> {
-        let (seed, shared_matrix) =
-            Self::decode_seed_and_matrix_with(rest, Self::deserialize_trusted_fp128_setup_matrix)?;
-        let prefix_slots = Self::decode_prefix_slots(rest)?;
-        AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
-            ),
-            prefix_slots,
-        )
-        .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-
-    /// Decode a host-produced recursion artifact while trusting the cached
-    /// setup matrix.
-    ///
-    /// This is a benchmark/profile fast path, not a general recursion security
-    /// boundary. It still validates the blob magic, serialized structure,
-    /// field elements, and seed/matrix shape equality, but it
-    /// deliberately skips checking that the expanded setup matrix coefficients
-    /// equal the matrix derived from the seed.
-    pub fn read_trusted_host_artifact_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
-    where
-        Cfg: CommitmentConfig<Field = Fp128<P>, ExtField = Fp128<P>>,
-    {
-        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_trusted_host_setup)
-    }
-}
-
 // `akita-algebra` is pulled in only so that downstream consumers can rely on
 // `CommittedGroup<F>` having all of its trait bounds satisfied; declare it
 // here to avoid a `cargo machete` style trim.
@@ -900,38 +796,6 @@ mod tests {
         let err = AkitaJoltInputs::<TestF, TEST_D>::check_setup_matrix_bytes_available(&[], 1)
             .unwrap_err();
         assert!(err.to_string().contains("setup matrix claims"));
-    }
-
-    #[cfg(any(
-        feature = "trusted-benchmark-artifact",
-        akita_trusted_benchmark_artifact
-    ))]
-    #[test]
-    fn trusted_fp128_matrix_decoder_preserves_fields_and_rejects_noncanonical_values() {
-        let expected =
-            FlatMatrix::from_flat_data(vec![TestF::zero(), TestF::one(), TestF::from_u64(7)]);
-        let mut encoded = Vec::new();
-        expected
-            .serialize_with_mode(&mut encoded, BLOB_COMPRESS)
-            .unwrap();
-
-        let mut rest = encoded.as_slice();
-        let decoded = AkitaJoltInputs::<TestF, TEST_D>::deserialize_trusted_fp128_setup_matrix(
-            &mut rest,
-            expected.num_field_elements(),
-        )
-        .expect("trusted matrix decode");
-        assert!(rest.is_empty());
-        assert_eq!(decoded, expected);
-
-        encoded[8..24].fill(0xff);
-        let mut rest = encoded.as_slice();
-        let error = AkitaJoltInputs::<TestF, TEST_D>::deserialize_trusted_fp128_setup_matrix(
-            &mut rest,
-            expected.num_field_elements(),
-        )
-        .expect_err("noncanonical fp128 value must fail");
-        assert!(error.to_string().contains("Fp128 out of range"));
     }
 
     #[test]
