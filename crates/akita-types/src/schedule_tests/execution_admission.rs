@@ -28,7 +28,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
         .expect("level 1 prefix");
     first_prefix.opening.opening_method = packing;
     first_prefix.opening.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.witness.setup_prefix = Some(first_prefix.clone());
+    schedule.recursive_folds[0].params.witness.setup_prefix = Some(*first_prefix);
 
     append_recursive_fold(&mut schedule);
     let level2 = &mut schedule.recursive_folds[1];
@@ -41,7 +41,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
         crate::setup_prefix_precommitted_params(&level2.params.witness, natural_len)
             .expect("level 2 EvaluationTrace prefix");
     let second_prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
-    level2.params.incoming_setup_prefix = Some(second_prefix.clone());
+    level2.params.incoming_setup_prefix = Some(second_prefix);
     level2.params.witness.setup_prefix = Some(second_prefix);
     level2.params.open_commit_matrix = level2.params.witness.open_commit_matrix;
 
@@ -80,9 +80,9 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
             .as_mut()
             .unwrap();
         prefix.opening.opening_method = packing;
-        prefix.clone()
+        prefix
     };
-    changed.recursive_folds[1].params.witness.setup_prefix = Some(changed_prefix);
+    changed.recursive_folds[1].params.witness.setup_prefix = Some(*changed_prefix);
     assert_ne!(digest, crate::digest_effective_schedule(&changed));
     assert!(changed.validate_nonterminal_opening_execution(1).is_err());
 }

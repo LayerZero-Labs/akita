@@ -56,7 +56,7 @@ fn grouped_level_params() -> CommittedGroupParams {
     .expect("precommitted params");
     params.precommitted_groups = vec![GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
+        profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         opening: akita_types::GroupOpeningPlan::evaluation_trace(
             precommitted.fold_challenge_config,
             precommitted.log_basis_open,

@@ -128,16 +128,16 @@ pub fn accumulate_matrix_field_elements_for_level(
     for group in &params.precommitted_groups {
         include_matrix_field_elements(
             max_field_elements,
-            group.layout.inner.matrix.output_rank(),
+            group.profile.inner.matrix.output_rank(),
             group.inner_width(),
-            group.layout.inner.matrix.ring_dimension(),
+            group.profile.inner.matrix.ring_dimension(),
             "precommitted inner setup",
         )?;
         include_matrix_field_elements(
             max_field_elements,
-            group.layout.outer.matrix.output_rank(),
+            group.profile.outer.matrix.output_rank(),
             group.outer_width(),
-            group.layout.outer.matrix.ring_dimension(),
+            group.profile.outer.matrix.ring_dimension(),
             "precommitted outer setup",
         )?;
     }
@@ -216,12 +216,12 @@ fn accumulate_compression_matrix_field_elements_for_level(
     for group in params.precommitted_group_iter() {
         include_compression_setup(
             max_field_elements,
-            group.layout.outer.matrix.sis_modulus_profile(),
+            group.profile.outer.matrix.sis_modulus_profile(),
             group
-                .layout
+                .profile
                 .outer_slice_count
-                .logical_output_rows(group.layout.outer.matrix.output_rank())?,
-            group.layout.outer.matrix.ring_dimension(),
+                .logical_output_rows(group.profile.outer.matrix.output_rank())?,
+            group.profile.outer.matrix.ring_dimension(),
             "precommitted outer compression setup",
         )?;
     }
@@ -496,8 +496,8 @@ mod tests {
         );
         let mut prefix_params =
             crate::setup_prefix_precommitted_params(&params, 64).expect("setup prefix params");
-        let outer = prefix_params.layout.outer.matrix;
-        prefix_params.layout.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
+        let outer = prefix_params.profile.outer.matrix;
+        prefix_params.profile.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),

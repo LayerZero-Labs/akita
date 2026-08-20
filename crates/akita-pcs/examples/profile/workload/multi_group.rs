@@ -62,7 +62,7 @@ where
                     &setup.expanded,
                     backend,
                     prepared,
-                    &slot_id.layout,
+                    &slot_id.profile,
                     n_prefix,
                     slot_id.setup_natural_len.expect("setup prefix group"),
                 )

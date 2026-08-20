@@ -159,8 +159,8 @@ pub use schedule::{
     NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams,
     RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldDescriptor,
-    TerminalFoldParams, TerminalFoldStep, WitnessPartition,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    TerminalFoldParams, TerminalFoldStep, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{

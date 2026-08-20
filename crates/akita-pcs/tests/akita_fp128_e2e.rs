@@ -244,8 +244,7 @@ fn fp128_dense_mc() {
             "multi-chunk regression profile must retain sliced level-one geometry"
         );
         assert_eq!(
-            first_fold.params.witness_partition,
-            akita_types::WitnessPartition::Distributed { num_chunks: 8 },
+            first_fold.params.witness.witness_chunk.num_chunks, 8,
             "W8R2 regression profile must retain eight witness chunks"
         );
         prove_verify_dense_roundtrip::<fp128::DenseMultiChunk>(

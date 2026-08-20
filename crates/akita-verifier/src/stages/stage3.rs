@@ -365,14 +365,14 @@ mod tests {
         let commitment_params = setup_prefix_precommitted_params(&level_params, full_prefix_len)
             .expect("setup-prefix parameters");
         let id = scheduled_setup_prefix(natural_field_len, commitment_params);
-        let matrix = &id.layout.outer.matrix;
+        let matrix = &id.profile.outer.matrix;
         let payload_coefficients = CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        level_params.setup_prefix = Some(id.clone());
+        level_params.setup_prefix = Some(id);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.seed.setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {

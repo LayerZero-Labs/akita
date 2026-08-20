@@ -218,7 +218,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
     }
     let shared_d = root.open_commit_matrix.ring_dimension();
     for (group_index, group) in root.precommitted_groups.iter().enumerate() {
-        if group.descriptor != group.commitment.layout {
+        if group.descriptor != group.commitment.profile {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} descriptor disagrees with its commitment params"
             )));
@@ -226,7 +226,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
         group.descriptor.validate_frozen_precommit(
             group
                 .commitment
-                .layout
+                .profile
                 .inner
                 .matrix
                 .sis_modulus_profile()

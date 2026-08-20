@@ -3,7 +3,6 @@ use crate::{
     CommittedGroupParams, FoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
     RootFinalGroupParams, RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -33,7 +32,6 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
                 precommitted_groups: Vec::new(),
                 open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: root.d_a(),
             output_witness_len: ring_dimension,
@@ -86,7 +84,6 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
                 precommitted_groups: Vec::new(),
                 open_commit_matrix: root_params.open_commit_matrix,
                 sparse_challenge_config: root_params.fold_challenge_config,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: root_params.d_a(),
             output_witness_len: recursive_input_len,
@@ -97,7 +94,6 @@ fn rejects_recursive_shared_d_matrix_mismatch() {
                 open_commit_matrix: root_params.open_commit_matrix,
                 sparse_challenge_config: recursive_params.fold_challenge_config,
                 incoming_setup_prefix: None,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: recursive_input_len,
             output_witness_len: terminal_witness.d_a(),

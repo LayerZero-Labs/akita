@@ -158,7 +158,7 @@ fn capture_row(
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.profile"),
-                prefix_group.layout.canonical_descriptor_bytes(),
+                prefix_group.profile.canonical_descriptor_bytes(),
             );
             push(
                 records,

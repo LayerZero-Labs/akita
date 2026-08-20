@@ -708,7 +708,7 @@ mod tests {
         .expect("audited prefix B matrix");
         crate::GroupOpenPhaseParams {
             setup_natural_len: None,
-            layout: crate::GroupCommitPhaseParams {
+            profile: crate::GroupCommitPhaseParams {
                 version: crate::GroupCommitPhaseParams::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
@@ -743,7 +743,7 @@ mod tests {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
-        let matrix = &commitment_params.layout.outer.matrix;
+        let matrix = &commitment_params.profile.outer.matrix;
         let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),

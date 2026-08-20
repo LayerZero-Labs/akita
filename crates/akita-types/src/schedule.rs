@@ -43,21 +43,6 @@ pub enum NextWitnessBindingPolicy {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WitnessPartition {
-    Single,
-    Distributed { num_chunks: usize },
-}
-
-impl WitnessPartition {
-    pub fn num_chunks(&self) -> usize {
-        match self {
-            Self::Single => 1,
-            Self::Distributed { num_chunks } => *num_chunks,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootFinalGroupParams {
     pub commitment: CommittedGroupParams,
 }
@@ -74,7 +59,6 @@ pub struct RootFoldParams {
     pub precommitted_groups: Vec<RootPrecommittedGroupParams>,
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub witness_partition: WitnessPartition,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -83,7 +67,6 @@ pub struct RecursiveFoldParams {
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub incoming_setup_prefix: Option<crate::GroupOpenPhaseParams>,
-    pub witness_partition: WitnessPartition,
 }
 
 impl RecursiveFoldParams {
@@ -432,10 +415,10 @@ impl FoldSchedule {
             }
             if let Some(prefix) = &step.params.incoming_setup_prefix {
                 prefix.validate()?;
-                prefix.layout.outer_slice_count.validate_for_commitment(
+                prefix.profile.outer_slice_count.validate_for_commitment(
                     0,
                     crate::CommitmentPayloadMode::Compressed,
-                    prefix.layout.blocks.live_blocks,
+                    prefix.profile.blocks.live_blocks,
                 )?;
                 let n_prefix = prefix.n_prefix()?;
                 let natural_len = prefix.setup_natural_len.ok_or_else(|| {
@@ -537,7 +520,7 @@ impl FoldSchedule {
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                     commitment.opening.opening_method,
                     extension_degree,
-                    commitment.layout.inner.matrix.ring_dimension(),
+                    commitment.profile.inner.matrix.ring_dimension(),
                     group.descriptor.group.num_vars(),
                     true,
                 )),

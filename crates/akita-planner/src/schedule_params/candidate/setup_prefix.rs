@@ -132,7 +132,7 @@ impl SetupPrefixCandidateContext<'_> {
         else {
             return Ok(None);
         };
-        let layout = GroupCommitPhaseParams {
+        let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
             blocks: akita_types::BlockGeometry::new(
@@ -152,7 +152,7 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let params = GroupOpenPhaseParams {
             setup_natural_len: None,
-            layout,
+            profile,
             opening: akita_types::GroupOpeningPlan {
                 opening_method: self.opening.method(),
                 fold_challenge_config: self.opening.challenge_config(),
@@ -170,7 +170,7 @@ impl SetupPrefixCandidateContext<'_> {
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone())
+            &akita_types::scheduled_setup_prefix(self.n_prefix, params)
                 .slot_id()
                 .expect("setup prefix group"),
         )?;
@@ -352,8 +352,8 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             coords[0],
             coords[1],
             *score,
-            params.layout.inner.digits.log_basis,
-            params.layout.blocks.live_blocks,
+            params.profile.inner.digits.log_basis,
+            params.profile.blocks.live_blocks,
         )
     });
     let result: Arc<[GroupOpenPhaseParams]> = frontier

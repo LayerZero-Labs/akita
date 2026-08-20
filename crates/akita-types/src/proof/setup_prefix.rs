@@ -1159,7 +1159,7 @@ pub fn setup_prefix_precommitted_params(
             );
             return Ok(GroupOpenPhaseParams {
                 setup_natural_len: None,
-                layout: GroupCommitPhaseParams {
+                profile: GroupCommitPhaseParams {
                     version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     blocks: crate::BlockGeometry::new(

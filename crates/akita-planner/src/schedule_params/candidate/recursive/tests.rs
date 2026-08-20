@@ -126,5 +126,5 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         .setup_prefixes
         .iter()
         .flatten()
-        .any(|slot| { slot.layout.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
+        .any(|slot| { slot.profile.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
 }

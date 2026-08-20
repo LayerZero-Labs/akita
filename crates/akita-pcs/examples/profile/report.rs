@@ -525,7 +525,7 @@ impl PlannedGroupReport {
         setup_prefix_lengths: Option<(usize, usize)>,
         extension_degree: usize,
     ) -> Result<Self, AkitaError> {
-        let layout = params.layout;
+        let layout = params.profile;
         let role_dims = params.role_dims(shared_open.ring_dimension());
         let opening = opening_report_geometry(
             params.opening.opening_method,

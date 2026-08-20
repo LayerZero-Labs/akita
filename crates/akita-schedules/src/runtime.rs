@@ -6,7 +6,7 @@ use akita_types::{
     FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
     RecursiveFoldParams, RecursiveFoldStep, RingRole, RootFinalGroupParams, RootFoldParams,
     RootFoldStep, RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout,
     DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,
 };
 use std::sync::Arc;
@@ -670,13 +670,12 @@ pub fn materialize_candidate_schedule(
                     .iter()
                     .cloned()
                     .map(|commitment| RootPrecommittedGroupParams {
-                        descriptor: commitment.layout,
+                        descriptor: commitment.profile,
                         commitment,
                     })
                     .collect(),
                 open_commit_matrix: root_params.open_commit_matrix,
                 sparse_challenge_config: root_params.fold_challenge_config,
-                witness_partition: witness_partition(root_params.witness_chunk.num_chunks),
             },
             input_witness_len: root.input_witness_len,
             output_witness_len: root.output_witness_len,
@@ -689,8 +688,7 @@ pub fn materialize_candidate_schedule(
                     params: RecursiveFoldParams {
                         open_commit_matrix: params.open_commit_matrix,
                         sparse_challenge_config: params.fold_challenge_config,
-                        incoming_setup_prefix: params.setup_prefix.clone(),
-                        witness_partition: witness_partition(params.witness_chunk.num_chunks),
+                        incoming_setup_prefix: params.setup_prefix,
                         witness: params,
                     },
                     input_witness_len: fold.input_witness_len,
@@ -796,14 +794,6 @@ fn active_setup_field_len_for_recursive_producer(
     let layout =
         akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
     akita_types::active_setup_field_len(&producer.params.witness, &layout)
-}
-
-fn witness_partition(num_chunks: usize) -> WitnessPartition {
-    if num_chunks == 1 {
-        WitnessPartition::Single
-    } else {
-        WitnessPartition::Distributed { num_chunks }
-    }
 }
 
 /// Derive the canonical next-witness field length for a scalar planner level.

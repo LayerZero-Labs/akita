@@ -403,7 +403,7 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     certify_test_sis_bounds(&mut precommit_lp);
     let precommit = GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(
+        profile: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::new(4, 1),
             &precommit_lp,
         ),

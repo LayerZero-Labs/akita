@@ -7,8 +7,8 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].layout.inner.matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].layout.outer.matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
@@ -22,8 +22,8 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].layout.inner.matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].layout.outer.matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -64,8 +64,8 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let outer = &precommitted.layout.outer.matrix;
-    precommitted.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.profile.outer.matrix;
+    precommitted.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -98,7 +98,7 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let (mut lp, _) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
     precommitted
-        .layout
+        .profile
         .outer
         .matrix
         .sis_table_key
@@ -336,8 +336,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let inner = &precommitted.layout.inner.matrix;
-    precommitted.layout.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &precommitted.profile.inner.matrix;
+    precommitted.profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -349,8 +349,8 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.coeff_linf_bound().expect("L infinity test matrix"),
         128,
     );
-    let outer = &precommitted.layout.outer.matrix;
-    precommitted.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.profile.outer.matrix;
+    precommitted.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -472,7 +472,7 @@ fn address_oracle_precommit(
     );
     GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout,
+        profile: layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             lp.fold_challenge_config,
             lp.log_basis_open,
@@ -501,7 +501,7 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
     let precommitted_layouts = lp
         .precommitted_groups
         .iter()
-        .map(|group| group.layout.group)
+        .map(|group| group.profile.group)
         .collect::<Vec<_>>();
     let batch = OpeningClaimsLayout::from_root_groups(
         &precommitted_layouts,
@@ -553,7 +553,7 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
 fn relation_geometry_revalidates_frozen_precommitted_profiles() {
     let (mut lp, batch) = address_oracle_fixture(2);
     lp.precommitted_groups[0]
-        .layout
+        .profile
         .outer
         .matrix
         .sis_table_key

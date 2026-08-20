@@ -316,7 +316,7 @@ mod tests {
         .expect("compression-valid A-native hint");
         let commitment_params = GroupOpenPhaseParams {
             setup_natural_len: None,
-            layout: GroupCommitPhaseParams {
+            profile: GroupCommitPhaseParams {
                 version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
                 blocks: akita_types::BlockGeometry::new(1, 1, 1),

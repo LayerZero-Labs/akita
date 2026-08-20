@@ -68,7 +68,7 @@ impl NttExecutionRequirements {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
         let root = &schedule.root.params;
-        let root_num_chunks = root.witness_partition.num_chunks();
+        let root_num_chunks = root.final_group.commitment.witness_chunk.num_chunks;
         requirements.add_group_relation(0, &root.final_group.commitment, root_num_chunks)?;
         for precommitted in &root.precommitted_groups {
             requirements.add_precommitted_relation(0, &precommitted.commitment, root_num_chunks)?;
@@ -103,7 +103,7 @@ impl NttExecutionRequirements {
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
             let predecessor_level = index;
             let level = index + 1;
-            let num_chunks = step.params.witness_partition.num_chunks();
+            let num_chunks = step.params.witness.witness_chunk.num_chunks;
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
             requirements.add_group_relation(level, &step.params.witness, num_chunks)?;
             if let Some(prefix) = &step.params.incoming_setup_prefix {
@@ -300,16 +300,16 @@ impl NttExecutionRequirements {
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
-            params.layout.inner.matrix.ring_dimension(),
-            params.layout.inner.matrix.output_rank(),
-            params.layout.inner.matrix.input_width(),
-            params.layout.outer.matrix.ring_dimension(),
-            params.layout.outer.matrix.output_rank(),
-            params.layout.outer.matrix.input_width(),
+            params.profile.inner.matrix.ring_dimension(),
+            params.profile.inner.matrix.output_rank(),
+            params.profile.inner.matrix.input_width(),
+            params.profile.outer.matrix.ring_dimension(),
+            params.profile.outer.matrix.output_rank(),
+            params.profile.outer.matrix.input_width(),
             params.opening.log_basis_open,
             params.opening.num_digits_fold,
             num_chunks,
-            params.layout.inner.matrix.sis_modulus_profile(),
+            params.profile.inner.matrix.sis_modulus_profile(),
         )
     }
 
@@ -318,7 +318,7 @@ impl NttExecutionRequirements {
         level: usize,
         params: &GroupOpenPhaseParams,
     ) -> Result<(), AkitaError> {
-        let layout = &params.layout;
+        let layout = &params.profile;
         let inner_key = NttCacheKey::from_matrix_shape(
             layout.inner.matrix.ring_dimension(),
             layout.inner.matrix.output_rank(),

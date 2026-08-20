@@ -535,7 +535,7 @@ where
             &prefix_source_params,
             root_setup_prefix_len,
         )?;
-        if prefix_params.layout.inner.matrix.ring_dimension() != successor_witness.d_a() {
+        if prefix_params.profile.inner.matrix.ring_dimension() != successor_witness.d_a() {
             return Err(AkitaError::InvalidSetup(
                 "packing root setup prefix left the base row's planned commitment class".into(),
             ));
@@ -561,42 +561,42 @@ where
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            prefix_params.layout.inner.matrix.ring_dimension(),
+            prefix_params.profile.inner.matrix.ring_dimension(),
             prefix_params.opening.log_basis_open,
             &prefix_params.opening.fold_challenge_config,
             prefix_params.opening.num_digits_fold,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("packing prefix has no audited A bound".into()))?;
         let mut prefix_a_key = prefix_params
-            .layout
+            .profile
             .inner
             .matrix
             .sis_table_key()
             .ok_or_else(|| AkitaError::InvalidSetup("packing prefix requires Linf A".into()))?;
         prefix_a_key.coeff_linf_bound = prefix_a_bound;
-        prefix_params.layout.inner.matrix =
+        prefix_params.profile.inner.matrix =
             akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
                 prefix_a_key,
-                prefix_params.layout.inner.matrix.input_width(),
+                prefix_params.profile.inner.matrix.input_width(),
             )?;
         let prefix_outer_width = akita_types::CommitmentSliceGeometry::try_new(
-            prefix_params.layout.outer_slice_count,
-            prefix_params.layout.blocks.live_blocks,
+            prefix_params.profile.outer_slice_count,
+            prefix_params.profile.blocks.live_blocks,
             1,
-            prefix_params.layout.inner.matrix.output_rank(),
-            prefix_params.layout.outer.digits.num_digits,
-            prefix_params.layout.inner.matrix.ring_dimension(),
-            prefix_params.layout.outer.matrix.ring_dimension(),
+            prefix_params.profile.inner.matrix.output_rank(),
+            prefix_params.profile.outer.digits.num_digits,
+            prefix_params.profile.inner.matrix.ring_dimension(),
+            prefix_params.profile.outer.matrix.ring_dimension(),
         )?
         .physical_input_width();
-        prefix_params.layout.outer.matrix =
+        prefix_params.profile.outer.matrix =
             akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
-                prefix_params.layout.outer.matrix.sis_table_key(),
+                prefix_params.profile.outer.matrix.sis_table_key(),
                 prefix_outer_width,
             )?;
         let incoming_setup_prefix =
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
-        successor_witness.setup_prefix = Some(incoming_setup_prefix.clone());
+        successor_witness.setup_prefix = Some(incoming_setup_prefix);
         let successor_d_width = successor_witness
             .open_commit_matrix
             .input_width()
@@ -658,14 +658,14 @@ where
             })?;
             if let Some(prefix) = step.params.incoming_setup_prefix.as_mut() {
                 prefix.opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
-                let d_a = prefix.layout.inner.matrix.ring_dimension();
+                let d_a = prefix.profile.inner.matrix.ring_dimension();
                 prefix.opening.fold_challenge_config =
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;
-                step.params.incoming_setup_prefix = Some(prefix.clone());
+                step.params.incoming_setup_prefix = Some(prefix);
             }
-            step.params.witness.setup_prefix = step.params.incoming_setup_prefix.clone();
+            step.params.witness.setup_prefix = step.params.incoming_setup_prefix;
             &mut step.params.witness
         } else {
             return Err(AkitaError::InvalidSetup(

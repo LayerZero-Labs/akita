@@ -394,7 +394,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             natural_len,
         )
@@ -422,7 +422,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             natural_len,
         )
@@ -448,8 +448,8 @@ mod tests {
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let outer = &prefix_params.layout.outer.matrix;
-        prefix_params.layout.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &prefix_params.profile.outer.matrix;
+        prefix_params.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -466,7 +466,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             n_prefix,
         )

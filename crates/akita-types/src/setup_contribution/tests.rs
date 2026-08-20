@@ -101,7 +101,7 @@ fn retarget_precommitted_test_role_dims(
     group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
-    let mut layout = group.layout;
+    let mut layout = group.profile;
     let inner = &layout.inner.matrix;
     let inner_output_rank = inner.output_rank();
     layout.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
@@ -119,8 +119,8 @@ fn retarget_precommitted_test_role_dims(
     let outer = &layout.outer.matrix;
     let projected_width = inner_output_rank
         .checked_mul(layout.outer.digits.num_digits)
-        .and_then(|width| width.checked_mul(group.layout.blocks.live_blocks))
-        .and_then(|width| width.checked_mul(group.layout.group.num_polynomials()))
+        .and_then(|width| width.checked_mul(group.profile.blocks.live_blocks))
+        .and_then(|width| width.checked_mul(group.profile.group.num_polynomials()))
         .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
         .expect("test precommitted B width");
     layout.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
@@ -132,7 +132,7 @@ fn retarget_precommitted_test_role_dims(
         outer.coeff_linf_bound(),
         outer_ring_dimension,
     );
-    group.layout = layout;
+    group.profile = layout;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -262,7 +262,7 @@ fn test_inputs_for_group_sizes(
                 layout.outer.matrix = outer_commit_matrix;
                 crate::GroupOpenPhaseParams {
                     setup_natural_len: None,
-                    layout,
+                    profile: layout,
                     opening: crate::GroupOpeningPlan::evaluation_trace(
                         lp.fold_challenge_config,
                         lp.log_basis_open,

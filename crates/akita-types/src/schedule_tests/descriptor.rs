@@ -13,13 +13,13 @@ fn borrowed_schedule_descriptor_matches_materialized_schedule() {
         .final_group
         .commitment
         .precommitted_groups
-        .push(precommitted.clone());
+        .push(precommitted);
     schedule
         .root
         .params
         .precommitted_groups
         .push(RootPrecommittedGroupParams {
-            descriptor: precommitted.layout,
+            descriptor: precommitted.profile,
             commitment: precommitted,
         });
     append_recursive_fold(&mut schedule);

@@ -146,8 +146,8 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &group.commitment.layout.outer.matrix,
-            group.commitment.layout.outer_slice_count,
+            &group.commitment.profile.outer.matrix,
+            group.commitment.profile.outer_slice_count,
         )?;
     }
     record_outer(
@@ -175,8 +175,8 @@ fn record_schedule(
                 key,
                 profile,
                 field_bytes,
-                &group.layout.outer.matrix,
-                group.layout.outer_slice_count,
+                &group.profile.outer.matrix,
+                group.profile.outer_slice_count,
             )?;
         }
         record_outer(

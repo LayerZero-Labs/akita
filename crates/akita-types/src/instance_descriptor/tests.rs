@@ -3,7 +3,7 @@ use crate::{
     CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
     OpeningScheduleSelection, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
-    TerminalResponseShape, WitnessPartition,
+    TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -44,7 +44,6 @@ fn sample_schedule() -> FoldSchedule {
                 precommitted_groups: Vec::new(),
                 open_commit_matrix: committed.open_commit_matrix,
                 sparse_challenge_config: sparse,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: 256,
             output_witness_len: 256,

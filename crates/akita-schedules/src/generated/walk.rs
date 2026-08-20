@@ -338,7 +338,7 @@ fn validate_expanded_precommitted_groups(
         )));
     }
     for (expected, actual) in key.precommitteds.iter().zip(groups) {
-        if &actual.layout != expected {
+        if &actual.profile != expected {
             return Err(AkitaError::InvalidSetup(
                 "multi-group root expanded precommitted layout does not match frozen key"
                     .to_string(),

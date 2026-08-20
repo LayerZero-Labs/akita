@@ -13,7 +13,7 @@ use akita_field::AkitaError;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule, GroupCommitPhaseParams,
-    GroupOpenPhaseParams, OpenCommitMatrixParams, PolynomialGroupLayout, WitnessPartition,
+    GroupOpenPhaseParams, OpenCommitMatrixParams, PolynomialGroupLayout,
 };
 
 use crate::PlannerPolicy;
@@ -259,11 +259,11 @@ fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedOp
     }
 }
 
-fn runtime_witness_partition(p: &WitnessPartition) -> GeneratedWitnessPartition {
-    match p {
-        WitnessPartition::Single => GeneratedWitnessPartition::Single,
-        WitnessPartition::Distributed { num_chunks } => GeneratedWitnessPartition::Distributed {
-            num_chunks: *num_chunks as u32,
+fn runtime_witness_partition(num_chunks: usize) -> GeneratedWitnessPartition {
+    match num_chunks {
+        1 => GeneratedWitnessPartition::Single,
+        num_chunks => GeneratedWitnessPartition::Distributed {
+            num_chunks: num_chunks as u32,
         },
     }
 }
@@ -272,7 +272,7 @@ fn setup_prefix_slot_input(slot: &GroupOpenPhaseParams) -> GeneratedSetupPrefixI
     let group = &slot;
     GeneratedSetupPrefixInput {
         natural_len: slot.setup_natural_len.expect("setup prefix group") as u64,
-        commitment: group.layout,
+        commitment: group.profile,
         opening: group.opening,
     }
 }
@@ -317,7 +317,9 @@ fn generated_entry(
                 .incoming_setup_prefix
                 .as_ref()
                 .map(setup_prefix_slot_input),
-            witness_partition: runtime_witness_partition(&step.params.witness_partition),
+            witness_partition: runtime_witness_partition(
+                step.params.witness.witness_chunk.num_chunks,
+            ),
         })
         .collect::<Vec<_>>();
     let terminal_group = schedule
@@ -345,7 +347,9 @@ fn generated_entry(
                 &root_fold.open_commit_matrix,
                 root_params.log_basis_open,
             ),
-            witness_partition: runtime_witness_partition(&root_fold.witness_partition),
+            witness_partition: runtime_witness_partition(
+                root_fold.final_group.commitment.witness_chunk.num_chunks,
+            ),
         },
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),
         terminal: GeneratedTerminalFold {

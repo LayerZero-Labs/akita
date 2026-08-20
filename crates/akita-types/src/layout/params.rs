@@ -193,14 +193,14 @@ impl CommittedGroupParams {
         }
         for group in self.precommitted_group_iter() {
             let source = group
-                .layout
+                .profile
                 .outer_slice_count
                 .complete_source_coefficients(
-                    group.layout.outer.matrix.output_rank(),
-                    group.layout.outer.matrix.ring_dimension(),
+                    group.profile.outer.matrix.output_rank(),
+                    group.profile.outer.matrix.ring_dimension(),
                 )?;
             if crate::CompressionChainPlan::try_for_complete_source(
-                group.layout.outer.matrix.sis_modulus_profile(),
+                group.profile.outer.matrix.sis_modulus_profile(),
                 source,
             )?
             .is_none()
@@ -695,7 +695,7 @@ impl CommittedGroupParams {
     ) -> Result<OpeningClaimsLayout, AkitaError> {
         let precommitted = self
             .precommitted_group_iter()
-            .map(|group| group.layout.group)
+            .map(|group| group.profile.group)
             .collect::<Vec<_>>();
         OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
     }
@@ -726,7 +726,7 @@ impl CommittedGroupParams {
                 ));
             }
             let group_layout = opening_batch.group_layout(group_index)?;
-            if *group_layout != group_params.layout.group {
+            if *group_layout != group_params.profile.group {
                 return Err(AkitaError::InvalidSetup(
                     "precommitted group layout does not match level params".to_string(),
                 ));
@@ -849,9 +849,9 @@ impl CommittedGroupParams {
             .precommitted_group_params(group_index)
             .ok_or(AkitaError::InvalidProof)?;
         group
-            .layout
+            .profile
             .outer_slice_count
-            .logical_output_rows(group.layout.outer.matrix.output_rank())
+            .logical_output_rows(group.profile.outer.matrix.output_rank())
     }
 
     /// Group-local parameter view for folded opening work.
@@ -913,12 +913,12 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.layout.inner.matrix.output_rank())
+                .checked_add(group.profile.inner.matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             let group_b_rows = group
-                .layout
+                .profile
                 .outer_slice_count
-                .logical_output_rows(group.layout.outer.matrix.output_rank())?;
+                .logical_output_rows(group.profile.outer.matrix.output_rank())?;
             rows = rows
                 .checked_add(group_b_rows)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -967,14 +967,14 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.layout.inner.matrix.output_rank())
+                .checked_add(prior.profile.inner.matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
                 .checked_add(
                     prior
-                        .layout
+                        .profile
                         .outer_slice_count
-                        .logical_output_rows(prior.layout.outer.matrix.output_rank())?,
+                        .logical_output_rows(prior.profile.outer.matrix.output_rank())?,
                 )
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
@@ -1005,7 +1005,7 @@ impl CommittedGroupParams {
             Ok(self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
-                .layout
+                .profile
                 .inner
                 .matrix
                 .output_rank())
@@ -1025,9 +1025,9 @@ impl CommittedGroupParams {
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group
-                .layout
+                .profile
                 .outer_slice_count
-                .logical_output_rows(group.layout.outer.matrix.output_rank())
+                .logical_output_rows(group.profile.outer.matrix.output_rank())
         }
     }
 
@@ -1259,7 +1259,7 @@ impl CommittedGroupParams {
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
-            setup_prefix: self.setup_prefix.clone(),
+            setup_prefix: self.setup_prefix,
         };
         rebuilt.validate_exact_fold_plan()
     }
@@ -1320,7 +1320,7 @@ impl CommittedGroupParams {
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
-            setup_prefix: self.setup_prefix.clone(),
+            setup_prefix: self.setup_prefix,
         }
         .validate_exact_fold_plan()
     }

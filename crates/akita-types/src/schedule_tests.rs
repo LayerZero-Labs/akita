@@ -192,7 +192,7 @@ fn precommitted_group_params(
 ) -> crate::GroupOpenPhaseParams {
     crate::GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
+        profile: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
             params.log_basis_open,
@@ -221,7 +221,7 @@ fn recursive_schedule(
             .expect("setup-prefix commitment params");
         crate::scheduled_setup_prefix(natural_len, commitment_params)
     });
-    successor.setup_prefix = incoming_setup_prefix.clone();
+    successor.setup_prefix = incoming_setup_prefix;
     let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
         successor_ring_dimension,
     ));
@@ -237,7 +237,6 @@ fn recursive_schedule(
                 precommitted_groups: Vec::new(),
                 open_commit_matrix: predecessor.open_commit_matrix,
                 sparse_challenge_config: predecessor.fold_challenge_config,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: predecessor_ring_dimension,
             output_witness_len: root_handoff_len,
@@ -247,7 +246,6 @@ fn recursive_schedule(
                 open_commit_matrix: successor.open_commit_matrix,
                 sparse_challenge_config: successor.fold_challenge_config,
                 incoming_setup_prefix,
-                witness_partition: WitnessPartition::Single,
                 witness: successor,
             },
             input_witness_len: root_handoff_len,
@@ -357,7 +355,7 @@ fn schedule_rejects_setup_prefix_inside_raw_suffix() {
         crate::setup_prefix_precommitted_params(&raw.params.witness, natural_len)
             .expect("setup-prefix commitment params");
     let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
-    raw.params.incoming_setup_prefix = Some(prefix.clone());
+    raw.params.incoming_setup_prefix = Some(prefix);
     raw.params.witness.setup_prefix = Some(prefix);
 
     let validation = schedule.validate_structure();
@@ -383,7 +381,7 @@ fn schedule_rejects_setup_prefix_that_resumes_compression() {
         crate::setup_prefix_precommitted_params(&resumed.params.witness, natural_len)
             .expect("setup-prefix commitment params");
     let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
-    resumed.params.incoming_setup_prefix = Some(prefix.clone());
+    resumed.params.incoming_setup_prefix = Some(prefix);
     resumed.params.witness.setup_prefix = Some(prefix);
 
     let validation = schedule.validate_structure();
@@ -568,7 +566,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
     schedule.recursive_folds[0].params.witness = consumer.clone();
     schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
-    schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
+    schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix);
     schedule.recursive_folds[0].params.witness.setup_prefix = Some(prefix);
 
     schedule
@@ -1309,10 +1307,8 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
     changed_prefix.opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    changed.recursive_folds[0].params.witness.setup_prefix = changed.recursive_folds[0]
-        .params
-        .incoming_setup_prefix
-        .clone();
+    changed.recursive_folds[0].params.witness.setup_prefix =
+        changed.recursive_folds[0].params.incoming_setup_prefix;
     assert_ne!(
         digest,
         crate::schedule_row_digest(&profiles, &changed).expect("changed opening-method digest")
@@ -1339,8 +1335,7 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
         .witness
         .setup_prefix = changed_dimension.recursive_folds[0]
         .params
-        .incoming_setup_prefix
-        .clone();
+        .incoming_setup_prefix;
     assert_ne!(
         crate::schedule_row_digest(&profiles, &changed).expect("subring-dimension-64 digest"),
         crate::schedule_row_digest(&profiles, &changed_dimension)
@@ -1450,10 +1445,10 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
         .params
         .final_group
         .commitment
-        .precommitted_groups = vec![precommitted.clone()];
+        .precommitted_groups = vec![precommitted];
     schedule.root.params.open_commit_matrix = widened_open;
     schedule.root.params.precommitted_groups = vec![RootPrecommittedGroupParams {
-        descriptor: precommitted.layout,
+        descriptor: precommitted.profile,
         commitment: precommitted,
     }];
     schedule

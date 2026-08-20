@@ -324,7 +324,7 @@ where
             .iter()
             .zip(precommitteds)
             .any(|(params, claims_group)| {
-                params.commitment.layout != *claims_group.commitment().profile()
+                params.commitment.profile != *claims_group.commitment().profile()
             })
     {
         return Err(AkitaError::InvalidProof);

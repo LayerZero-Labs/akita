@@ -165,10 +165,10 @@ impl GroupOpeningPlan {
 /// Every group in a fold has this type: the final/new group, each precommitted
 /// group, and the setup prefix. The fold owns the shared D matrix; a group owns
 /// only its contribution of D digits, through `opening`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupOpenPhaseParams {
     /// Frozen commit-phase identity of this group.
-    pub layout: GroupCommitPhaseParams,
+    pub profile: GroupCommitPhaseParams,
     /// Opening policy owned by the fold that consumes this commitment.
     pub opening: GroupOpeningPlan,
     /// Active setup-weight support, in flat field coefficients.
@@ -204,7 +204,7 @@ impl GroupOpenPhaseParams {
         self.setup_natural_len
             .map(|natural_len| crate::SetupPrefixSlotId {
                 natural_len,
-                commitment_profile: self.layout,
+                commitment_profile: self.profile,
             })
     }
 
@@ -218,7 +218,7 @@ impl GroupOpenPhaseParams {
     /// Ring dimension used for the frozen setup-prefix commitment.
     #[must_use]
     pub fn d_setup(&self) -> usize {
-        self.layout.inner.matrix.ring_dimension()
+        self.profile.inner.matrix.ring_dimension()
     }
 
     /// Canonical bytes for deterministic planner ordering and schedule identity.
@@ -314,7 +314,7 @@ impl GroupOpenPhaseParams {
         }
 
         let params = Self {
-            layout,
+            profile: layout,
             setup_natural_len: None,
             opening: GroupOpeningPlan {
                 opening_method,
@@ -340,19 +340,19 @@ impl GroupOpenPhaseParams {
     #[must_use]
     pub fn role_dims(&self, shared_opening_ring_dimension: usize) -> CommitmentRingDims {
         CommitmentRingDims {
-            inner: self.layout.inner.matrix.ring_dimension(),
-            outer: self.layout.outer.matrix.ring_dimension(),
+            inner: self.profile.inner.matrix.ring_dimension(),
+            outer: self.profile.outer.matrix.ring_dimension(),
             opening: shared_opening_ring_dimension,
         }
     }
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        let field_bits = self.layout.inner.matrix.sis_modulus_profile().field_bits();
-        self.layout.validate(field_bits)?;
+        let field_bits = self.profile.inner.matrix.sis_modulus_profile().field_bits();
+        self.profile.validate(field_bits)?;
         if self.opening.fold_challenge_config.weight() != 0 {
             let challenge_dimension = match self.opening.opening_method {
-                OpeningMethod::EvaluationTrace => self.layout.inner.matrix.ring_dimension(),
+                OpeningMethod::EvaluationTrace => self.profile.inner.matrix.ring_dimension(),
                 OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
@@ -370,19 +370,19 @@ impl GroupOpenPhaseParams {
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
-        if self.opening.log_basis_open < self.layout.outer.digits.log_basis {
+        if self.opening.log_basis_open < self.profile.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the precommitted outer basis".to_string(),
             ));
         }
         let expected_a_width = self
-            .layout
+            .profile
             .blocks
             .positions_per_block
-            .checked_mul(self.layout.inner.digits.num_digits)
+            .checked_mul(self.profile.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
-        let inner_ring_dimension = self.layout.inner.matrix.ring_dimension();
-        let outer_ring_dimension = self.layout.outer.matrix.ring_dimension();
+        let inner_ring_dimension = self.profile.inner.matrix.ring_dimension();
+        let outer_ring_dimension = self.profile.outer.matrix.ring_dimension();
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A-native source rings do not decompose into B-native subcolumns"
@@ -390,17 +390,17 @@ impl GroupOpenPhaseParams {
             ));
         }
         let expected_b_width = crate::CommitmentSliceGeometry::try_new(
-            self.layout.outer_slice_count,
-            self.layout.blocks.live_blocks,
-            self.layout.group.num_polynomials(),
-            self.layout.inner.matrix.output_rank(),
-            self.layout.outer.digits.num_digits,
+            self.profile.outer_slice_count,
+            self.profile.blocks.live_blocks,
+            self.profile.group.num_polynomials(),
+            self.profile.inner.matrix.output_rank(),
+            self.profile.outer.digits.num_digits,
             inner_ring_dimension,
             outer_ring_dimension,
         )?
         .physical_input_width();
-        if self.layout.inner.matrix.input_width() != expected_a_width
-            || self.layout.outer.matrix.input_width() != expected_b_width
+        if self.profile.inner.matrix.input_width() != expected_a_width
+            || self.profile.outer.matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
@@ -413,13 +413,13 @@ impl GroupOpenPhaseParams {
     /// Width of this group's A matrix.
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.layout.inner.matrix.input_width()
+        self.profile.inner.matrix.input_width()
     }
 
     /// Width of this group's B matrix.
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.layout.outer.matrix.input_width()
+        self.profile.outer.matrix.input_width()
     }
 
     /// Width contribution to the consuming batch's shared D matrix
@@ -435,11 +435,11 @@ impl GroupOpenPhaseParams {
         opening_d_segment_width(
             self.opening.opening_method,
             extension_degree,
-            self.layout.inner.matrix.ring_dimension(),
+            self.profile.inner.matrix.ring_dimension(),
             opening_ring_dimension,
             self.opening.num_digits_open,
-            self.layout.blocks.live_blocks,
-            self.layout.group.num_polynomials(),
+            self.profile.blocks.live_blocks,
+            self.profile.group.num_polynomials(),
         )
     }
 
@@ -451,7 +451,7 @@ impl GroupOpenPhaseParams {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.layout.append_descriptor_bytes(bytes);
+        self.profile.append_descriptor_bytes(bytes);
         self.opening.append_descriptor_bytes(bytes);
     }
 }
@@ -584,39 +584,39 @@ impl LevelParamsLike for GroupOpenPhaseParams {
     }
 
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.layout.inner.matrix
+        &self.profile.inner.matrix
     }
 
     fn a_rows_len(&self) -> usize {
-        self.layout.inner.matrix.output_rank()
+        self.profile.inner.matrix.output_rank()
     }
 
     fn a_col_len(&self) -> usize {
-        self.layout.inner.matrix.input_width()
+        self.profile.inner.matrix.input_width()
     }
 
     fn b_rows_len(&self) -> usize {
-        self.layout.outer.matrix.output_rank()
+        self.profile.outer.matrix.output_rank()
     }
 
     fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
-        self.layout.outer_slice_count
+        self.profile.outer_slice_count
     }
 
     fn b_col_len(&self) -> usize {
-        self.layout.outer.matrix.input_width()
+        self.profile.outer.matrix.input_width()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.layout.blocks.live_ring_elements_per_claim
+        self.profile.blocks.live_ring_elements_per_claim
     }
 
     fn num_positions_per_block(&self) -> usize {
-        self.layout.blocks.positions_per_block
+        self.profile.blocks.positions_per_block
     }
 
     fn num_live_blocks(&self) -> usize {
-        self.layout.blocks.live_blocks
+        self.profile.blocks.live_blocks
     }
 
     fn fold_challenge_config(&self) -> SparseChallengeConfig {
@@ -624,19 +624,19 @@ impl LevelParamsLike for GroupOpenPhaseParams {
     }
 
     fn position_index_bits(&self) -> usize {
-        self.layout.blocks().position_index_bits()
+        self.profile.blocks().position_index_bits()
     }
 
     fn block_index_bits(&self) -> usize {
-        self.layout.blocks().block_index_bits()
+        self.profile.blocks().block_index_bits()
     }
 
     fn num_digits_inner(&self) -> usize {
-        self.layout.inner.digits.num_digits
+        self.profile.inner.digits.num_digits
     }
 
     fn num_digits_outer(&self) -> usize {
-        self.layout.outer.digits.num_digits
+        self.profile.outer.digits.num_digits
     }
 
     fn num_digits_open(&self) -> usize {
@@ -648,11 +648,11 @@ impl LevelParamsLike for GroupOpenPhaseParams {
     }
 
     fn log_basis_outer(&self) -> u32 {
-        self.layout.outer.digits.log_basis
+        self.profile.outer.digits.log_basis
     }
 
     fn log_basis_inner(&self) -> u32 {
-        self.layout.inner.digits.log_basis
+        self.profile.inner.digits.log_basis
     }
 
     fn log_basis_open(&self) -> u32 {

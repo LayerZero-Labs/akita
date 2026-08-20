@@ -397,7 +397,7 @@ impl GeneratedCommittedGroup {
                 log_basis_open,
             )?;
             let n_prefix = 1usize
-                .checked_shl(commitment_params.layout.group.num_vars() as u32)
+                .checked_shl(commitment_params.profile.group.num_vars() as u32)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
                 })?;

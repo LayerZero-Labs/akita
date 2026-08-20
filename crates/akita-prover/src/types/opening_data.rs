@@ -522,7 +522,7 @@ mod tests {
         .expect("root params");
         root.precommitted_groups.push(GroupOpenPhaseParams {
             setup_natural_len: None,
-            layout: synthetic_profile(pre_layout, &pre),
+            profile: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
                 pre.fold_challenge_config,
                 pre.log_basis_open,

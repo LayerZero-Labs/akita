@@ -541,7 +541,7 @@ fn validate_explicit_context(
             for (index, (group, profile)) in
                 params.precommitted_groups.iter().zip(profiles).enumerate()
             {
-                if group.layout != *profile {
+                if group.profile != *profile {
                     return Err(AkitaError::InvalidSetup(format!(
                         "explicit grouped root precommitted profile {index} does not match its params"
                     )));

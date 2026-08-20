@@ -504,7 +504,7 @@ where
         let root_commitment = &root.params.final_group.commitment;
         assert!(!root.params.precommitted_groups.is_empty());
         assert_eq!(
-            root.params.witness_partition.num_chunks(),
+            root_commitment.witness_chunk.num_chunks,
             TestCfg::chunked_witness_cfg().num_chunks,
             "root fold must retain the configured chunk count"
         );
@@ -518,13 +518,13 @@ where
             root_commitment,
             &opening_layout,
             &relation_geometry,
-            root.params.witness_partition.num_chunks(),
+            root_commitment.witness_chunk.num_chunks,
             akita_types::r_decomp_levels::<OneHotF>(root_commitment.log_basis_open),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(
             witness_layout.units().len(),
-            opening_layout.num_groups() * root.params.witness_partition.num_chunks(),
+            opening_layout.num_groups() * root_commitment.witness_chunk.num_chunks,
         );
     }
     let final_polys: Vec<OneHotPoly<OneHotF, u8>> = (0..final_size)

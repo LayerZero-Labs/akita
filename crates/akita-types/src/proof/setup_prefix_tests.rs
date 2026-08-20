@@ -58,14 +58,14 @@ fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
     );
     let prefix = setup_prefix_precommitted_params(&params, 128).expect("setup prefix params");
     assert_eq!(
-        prefix.layout.inner.digits.num_digits,
+        prefix.profile.inner.digits.num_digits,
         crate::sis::compute_num_digits_field_width(
             SisModulusProfileId::Q32Offset99.field_bits(),
             params.log_basis_inner,
         )
     );
     assert_ne!(
-        prefix.layout.inner.digits.num_digits,
+        prefix.profile.inner.digits.num_digits,
         params.num_digits_inner
     );
 }
@@ -186,7 +186,7 @@ fn setup_prefix_slot_identity_excludes_consuming_opening_plan() {
     let mut params = prefix_eligible_level_params();
     retarget_group_role_dims_wide(&mut params, 64, 64, 1024);
     let evaluation_trace = setup_prefix_precommitted_params(&params, 1024).expect("prefix params");
-    let mut subring_packing = evaluation_trace.clone();
+    let mut subring_packing = evaluation_trace;
     subring_packing.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
@@ -362,7 +362,7 @@ fn precommitted_group(
 ) -> GroupOpenPhaseParams {
     GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
+        profile: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
             params.log_basis_open,
@@ -460,12 +460,12 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
         .validate()
         .expect("projected B width must satisfy the precommitted contract");
     let ratio =
-        params.layout.inner.matrix.ring_dimension() / params.layout.outer.matrix.ring_dimension();
-    let expected_b_width = params.layout.blocks.live_blocks
-        * params.layout.inner.matrix.output_rank()
-        * params.layout.outer.digits.num_digits
+        params.profile.inner.matrix.ring_dimension() / params.profile.outer.matrix.ring_dimension();
+    let expected_b_width = params.profile.blocks.live_blocks
+        * params.profile.inner.matrix.output_rank()
+        * params.profile.outer.digits.num_digits
         * ratio;
-    assert_eq!(params.layout.outer.matrix.input_width(), expected_b_width);
+    assert_eq!(params.profile.outer.matrix.input_width(), expected_b_width);
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
     let scheduled = scheduled_setup_prefix(natural_len, commitment_params);
-    level_params.setup_prefix = Some(scheduled.clone());
+    level_params.setup_prefix = Some(scheduled);
     let id = scheduled.slot_id().expect("setup prefix group");
     let slot = verifier_slot_for_id(id.clone());
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());

@@ -117,7 +117,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
     layout.outer.matrix = outer_commit_matrix;
     let precommit = GroupOpenPhaseParams {
         setup_natural_len: None,
-        layout,
+        profile: layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config,
             precommit_lp.log_basis_open,
@@ -157,7 +157,11 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.log_basis_open = 3;
-    grouped.precommitted_groups[0].layout.outer.digits.log_basis = 6;
+    grouped.precommitted_groups[0]
+        .profile
+        .outer
+        .digits
+        .log_basis = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);

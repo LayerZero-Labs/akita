@@ -8,7 +8,6 @@ use akita_types::{
     CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalGroupParams, RootFoldParams,
     RootFoldStep, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition,
 };
 
 #[test]
@@ -72,7 +71,6 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
                 precommitted_groups: Vec::new(),
                 open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
-                witness_partition: WitnessPartition::Single,
             },
             input_witness_len: 256,
             output_witness_len: 64,

@@ -132,8 +132,8 @@ pub(super) fn catalog_policy_signature(
                         group.commitment.opening.opening_method,
                         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                         spec.policy.claim_ext_degree,
-                        group.commitment.layout.inner.matrix.ring_dimension(),
-                        group.commitment.layout.inner.matrix.security_route(),
+                        group.commitment.profile.inner.matrix.ring_dimension(),
+                        group.commitment.profile.inner.matrix.security_route(),
                     )?,
                 )
                 .map_err(|error| format!("write catalog policy signature: {error}"))?;
@@ -150,8 +150,8 @@ pub(super) fn catalog_policy_signature(
                     prefix.opening.opening_method,
                     akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                     spec.policy.claim_ext_degree,
-                    prefix.layout.inner.matrix.ring_dimension(),
-                    prefix.layout.inner.matrix.security_route(),
+                    prefix.profile.inner.matrix.ring_dimension(),
+                    prefix.profile.inner.matrix.security_route(),
                 )?,
             )
             .map_err(|error| format!("write catalog policy signature: {error}"))?;
