@@ -172,12 +172,9 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 profile must have at least three fold levels, got {}",
         1 + schedule.recursive_folds.len()
     );
-    for (level, params) in [
-        &schedule.root.params,
-        &schedule.recursive_folds[0].params,
-    ]
-    .into_iter()
-    .enumerate()
+    for (level, params) in [&schedule.root.params, &schedule.recursive_folds[0].params]
+        .into_iter()
+        .enumerate()
     {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
@@ -216,10 +213,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 must carry the two frozen singleton groups"
     );
     for (group_index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
-        assert_eq!(
-            group.profile.inner.matrix.ring_dimension(),
-            512
-        );
+        assert_eq!(group.profile.inner.matrix.ring_dimension(), 512);
         let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
         assert_eq!(
             group.opening.opening_method,
@@ -247,12 +241,9 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 
     // Levels 0 and 1 both use the W8R2 witness partition: 8 chunks over the two
     // leading levels.
-    for (level, params) in [
-        &schedule.root.params,
-        &schedule.recursive_folds[0].params,
-    ]
-    .into_iter()
-    .enumerate()
+    for (level, params) in [&schedule.root.params, &schedule.recursive_folds[0].params]
+        .into_iter()
+        .enumerate()
     {
         assert_eq!(
             params.witness_chunk.num_chunks, 8,
@@ -272,10 +263,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 
     // Level 0 produces the selected setup prefix and level 1 consumes it.
     assert!(
-        schedule.recursive_folds[0]
-            .params
-            .setup_prefix
-            .is_some(),
+        schedule.recursive_folds[0].params.setup_prefix.is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
     assert!(matches!(

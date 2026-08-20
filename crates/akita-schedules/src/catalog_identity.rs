@@ -17,9 +17,8 @@ use akita_types::{
 };
 
 use crate::generated::{
-    generated_schedule_key_cmp, GeneratedFold, GeneratedFrozenGroup, GeneratedGroup,
-    GeneratedFoldScheduleEntry, GeneratedMatrix, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTable,
+    generated_schedule_key_cmp, GeneratedFold, GeneratedFoldScheduleEntry, GeneratedFrozenGroup,
+    GeneratedGroup, GeneratedMatrix, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
@@ -418,13 +417,7 @@ fn validate_entry_dimensions(
         let mut previous = root;
         for (index, fold) in entry.recursive_folds.iter().enumerate() {
             let current = dimensions(fold.group, fold.open_commit_matrix.ring_dimension);
-            validate_level_dimensions(
-                mode,
-                index + 1,
-                current,
-                Some(previous),
-                entry.final_group,
-            )?;
+            validate_level_dimensions(mode, index + 1, current, Some(previous), entry.final_group)?;
             previous = current;
         }
         let terminal_d = entry.terminal.inner_commit_matrix.ring_dimension as usize;

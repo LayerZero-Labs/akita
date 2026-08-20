@@ -230,10 +230,7 @@ fn geometry(p: &CommittedGroupParams) -> akita_types::BlockGeometry {
     p.blocks()
 }
 
-fn committed_group(
-    p: &CommittedGroupParams,
-    num_digits_inner: Option<u32>,
-) -> GeneratedGroup {
+fn committed_group(p: &CommittedGroupParams, num_digits_inner: Option<u32>) -> GeneratedGroup {
     GeneratedGroup {
         geometry: geometry(p),
         inner_commit_matrix: GeneratedMatrix {
@@ -566,7 +563,8 @@ fn emit_fold(
             group.profile.inner.digits.num_digits,
             precommitted_producers[index].contract().class(),
         ));
-        writeln!(out, "{indent}        {},", emit_frozen_group(group)).map_err(|e| e.to_string())?;
+        writeln!(out, "{indent}        {},", emit_frozen_group(group))
+            .map_err(|e| e.to_string())?;
     }
     writeln!(out, "{indent}    ],").map_err(|e| e.to_string())?;
     writeln!(out, "{indent}    {},", emit_fold_tail(fold)).map_err(|e| e.to_string())?;

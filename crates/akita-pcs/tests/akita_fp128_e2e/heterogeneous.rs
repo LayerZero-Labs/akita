@@ -280,7 +280,8 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         )
         .expect("full-width dense profile");
         assert!(
-            bounded_commitment.profile.inner.digits.num_digits < full_width_profile.inner.digits.num_digits,
+            bounded_commitment.profile.inner.digits.num_digits
+                < full_width_profile.inner.digits.num_digits,
             "bounded precommit digit depth {} must be below full-width {}",
             bounded_commitment.profile.inner.digits.num_digits,
             full_width_profile.inner.digits.num_digits,
@@ -361,10 +362,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         );
         // The root itself is planned at the one-hot bound, so the two groups
         // really do disagree on their committed-source depth.
-        assert_eq!(
-            schedule.root.params.num_digits_inner,
-            1,
-        );
+        assert_eq!(schedule.root.params.num_digits_inner, 1,);
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");

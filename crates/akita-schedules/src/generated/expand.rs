@@ -24,10 +24,9 @@ use akita_types::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisTableKey,
 };
 use akita_types::{
-    validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
-    CommitmentSliceGeometry, CommittedGroupParams, CommittedSourceEncoding, DecompositionParams,
-    GroupOpenPhaseParams, InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    TerminalFoldParams,
+    validate_role_dims, CommitmentRingDims, CommitmentSliceCount, CommitmentSliceGeometry,
+    CommittedGroupParams, CommittedSourceEncoding, DecompositionParams, GroupOpenPhaseParams,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, TerminalFoldParams,
 };
 
 fn sis_key(
@@ -207,29 +206,26 @@ impl GeneratedGroup {
             return Ok(None);
         };
 
-            let commitment_params = group.expand_to_precommitted_group(
-                policy,
-                &ring_challenge_config,
-                log_basis_open,
-            )?;
-            let n_prefix = 1usize
-                .checked_shl(commitment_params.profile.group.num_vars() as u32)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
-                })?;
-            let group_natural_len = generated_count(
-                group.setup_natural_len.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "generated setup prefix must carry its natural length".into(),
-                    )
-                })?,
-                "setup-prefix natural length",
-            )?;
-            if group_natural_len > n_prefix {
-                return Err(AkitaError::InvalidSetup(
-                    "generated setup-prefix natural length exceeds commitment domain".into(),
-                ));
-            }
+        let commitment_params =
+            group.expand_to_precommitted_group(policy, &ring_challenge_config, log_basis_open)?;
+        let n_prefix = 1usize
+            .checked_shl(commitment_params.profile.group.num_vars() as u32)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
+            })?;
+        let group_natural_len = generated_count(
+            group.setup_natural_len.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated setup prefix must carry its natural length".into(),
+                )
+            })?,
+            "setup-prefix natural length",
+        )?;
+        if group_natural_len > n_prefix {
+            return Err(AkitaError::InvalidSetup(
+                "generated setup-prefix natural length exceeds commitment domain".into(),
+            ));
+        }
         Ok(Some(akita_types::scheduled_setup_prefix(
             group_natural_len,
             commitment_params,
@@ -309,9 +305,7 @@ impl GeneratedGroup {
                 num_live_blocks
                     .checked_mul(num_positions_per_block)
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "generated root group length overflow".to_string(),
-                        )
+                        AkitaError::InvalidSetup("generated root group length overflow".to_string())
                     })?,
                 self.geometry
                     .live_ring_elements_per_claim
@@ -509,9 +503,7 @@ impl GeneratedGroup {
                 )?;
                 let width = setup_prefix
                     .as_ref()
-                    .map(|prefix| {
-                        prefix.d_segment_width(policy.claim_ext_degree, dimensions.d_d())
-                    })
+                    .map(|prefix| prefix.d_segment_width(policy.claim_ext_degree, dimensions.d_d()))
                     .transpose()?
                     .unwrap_or(0);
                 (Vec::new(), width, setup_prefix)
@@ -597,7 +589,6 @@ impl GeneratedGroup {
         };
         Ok(params)
     }
-
 }
 
 impl GeneratedTerminalFold {
