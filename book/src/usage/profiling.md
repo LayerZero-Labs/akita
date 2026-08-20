@@ -35,8 +35,6 @@ dimension from the generated schedule. Recursive and multi-chunk companion
 presets inherit their base adaptive policy and resolve their own generated
 catalog keys.
 Shipped direct tables are `fp128_onehot` and `fp128_dense`.
-**fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
-`D32OneHot` preset.
 The small-field presets use larger A dimensions where they reduce setup, while
 keeping B and D at dimensions that remained competitive in measured search.
 fp32 searches A at D64 through D1024, B/D at D64 through D256, and a monotone

@@ -9,25 +9,18 @@ use akita_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, MontCoeff, NttKernelPlan,
 };
-use akita_field::{
-    CanonicalField, Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7, Prime32Offset99,
-};
+use akita_field::{CanonicalField, Fp64, Prime128OffsetA7F7, Prime32Offset99};
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
 type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
-type F128 = Prime128Offset159;
-type R128 = CyclotomicRing<F128, 32>;
-type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 32>;
-type TailN128 = CyclotomicCrtNtt<i16, 1, 32>;
 type ProductionF128 = Prime128OffsetA7F7;
 type ProductionR128D64 = CyclotomicRing<ProductionF128, 64>;
 type ProductionN128D64 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
 type ProductionTailN128D64 = CyclotomicCrtNtt<i16, 1, 64>;
 const CACHE_MAT_ROWS: usize = 8;
-const CACHE_MAT_COLS: usize = 16;
 const PRODUCTION_CACHE_MAT_COLS: usize = 128;
 
 fn sample_ring(seed: u64) -> R {
@@ -38,39 +31,6 @@ fn sample_ring(seed: u64) -> R {
         F::from_u64(x % Q32_MODULUS)
     });
     R::from_coefficients(coeffs)
-}
-
-fn sample_ring_q128m159(seed: u64) -> R128 {
-    let coeffs = std::array::from_fn(|i| {
-        let x = seed
-            .wrapping_mul(29)
-            .wrapping_add((i as u64).wrapping_mul(13));
-        let centered = (x % 257) as i64 - 128;
-        F128::from_i64(centered)
-    });
-    R128::from_coefficients(coeffs)
-}
-
-fn sample_centered_i8(seed: u64) -> [i8; 32] {
-    std::array::from_fn(|i| {
-        let x = seed
-            .wrapping_mul(43)
-            .wrapping_add((i as u64).wrapping_mul(17));
-        ((x % 256) as i16 - 128) as i8
-    })
-}
-
-fn sample_centered_i16(seed: u64) -> [i16; 32] {
-    std::array::from_fn(|i| {
-        let x = seed
-            .wrapping_mul(43)
-            .wrapping_add((i as u64).wrapping_mul(17));
-        (x % 2048) as i16 - 1024
-    })
-}
-
-fn sample_ring_q128m159_tag(seed: u64, tag: u64) -> R128 {
-    sample_ring_q128m159(seed.wrapping_mul(131).wrapping_add(tag))
 }
 
 fn sample_production_ring_q128_d64(seed: u64) -> ProductionR128D64 {
@@ -237,236 +197,9 @@ fn bench_crt_round_trip(c: &mut Criterion) {
     });
 }
 
-fn bench_ring_schoolbook_mul_q128m159(c: &mut Criterion) {
-    let lhs = sample_ring_q128m159(23);
-    let rhs = sample_ring_q128m159(41);
-    c.bench_function("ring_schoolbook_mul_d32_q128m159", |b| {
-        b.iter(|| black_box(lhs) * black_box(rhs))
-    });
-}
-
-fn bench_crt_mul_q128m159(c: &mut Criterion) {
-    let lhs = sample_ring_q128m159(23);
-    let rhs = sample_ring_q128m159(41);
-    let params = CrtNttParamSet::new(q128_primes());
-
-    c.bench_function("ring_crt_ntt_mul_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let lhs_ntt = N128::from_ring(black_box(&lhs), &params);
-            let rhs_ntt = N128::from_ring(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
-            let out: R128 = prod.to_ring(&params);
-            black_box(out)
-        })
-    });
-}
-
-fn bench_crt_mul_i8_rhs_q128m159(c: &mut Criterion) {
-    let lhs = sample_ring_q128m159(23);
-    let rhs = sample_centered_i8(41);
-    let params = CrtNttParamSet::new(q128_primes());
-
-    c.bench_function("ring_crt_ntt_mul_i8_rhs_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let lhs_ntt = N128::from_ring(black_box(&lhs), &params);
-            let rhs_ntt = N128::from_i8_with_params(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
-            let out: R128 = prod.to_ring(&params);
-            black_box(out)
-        })
-    });
-}
-
-fn bench_crt_cyclic_mul_q128m159(c: &mut Criterion) {
-    let params = CrtNttParamSet::new(q128_primes());
-    let lhs = sample_ring_q128m159(23);
-    let rhs = sample_ring_q128m159(41);
-
-    c.bench_function("ring_crt_ntt_cyclic_mul_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let lhs_ntt = N128::from_ring_cyclic(black_box(&lhs), &params);
-            let rhs_ntt = N128::from_ring_cyclic(black_box(&rhs), &params);
-            let prod = lhs_ntt.pointwise_mul(&rhs_ntt, &params);
-            let out: R128 = prod.to_ring_cyclic(&params);
-            black_box(out)
-        })
-    });
-}
-
-fn bench_crt_quotient_q128m159(c: &mut Criterion) {
-    let params = CrtNttParamSet::new(q128_primes());
-    let lhs = sample_ring_q128m159(23);
-    let rhs = sample_ring_q128m159(41);
-
-    c.bench_function("ring_crt_ntt_quotient_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let lhs_neg = N128::from_ring(black_box(&lhs), &params);
-            let rhs_neg = N128::from_ring(black_box(&rhs), &params);
-            let neg: R128 = lhs_neg.pointwise_mul(&rhs_neg, &params).to_ring(&params);
-
-            let lhs_cyc = N128::from_ring_cyclic(black_box(&lhs), &params);
-            let rhs_cyc = N128::from_ring_cyclic(black_box(&rhs), &params);
-            let cyc: R128 = lhs_cyc
-                .pointwise_mul(&rhs_cyc, &params)
-                .to_ring_cyclic(&params);
-
-            let out = R128::from_coefficients(std::array::from_fn(|i| {
-                (cyc.coefficients()[i] - neg.coefficients()[i]).half()
-            }));
-            black_box(out)
-        })
-    });
-}
-
-fn bench_crt_simd_cached_matvec_q128m159(c: &mut Criterion) {
-    let params = CrtNttParamSet::new(q128_primes());
-    let matrix: Vec<Vec<N128>> = (0..CACHE_MAT_ROWS)
-        .map(|r| {
-            (0..CACHE_MAT_COLS)
-                .map(|col| {
-                    N128::from_ring(
-                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
-                        &params,
-                    )
-                })
-                .collect()
-        })
-        .collect();
-    let vector: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|col| N128::from_ring(&sample_ring_q128m159_tag(41, col as u64), &params))
-        .collect();
-
-    c.bench_function("ring_crt_ntt_simd_cached_matvec_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let out: Vec<R128> = matrix
-                .iter()
-                .map(|row| {
-                    let mut acc = N128::zero();
-                    for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
-                        acc.add_assign_pointwise_mul(mat_entry, black_box(vec_entry), &params);
-                    }
-                    acc.to_ring(&params)
-                })
-                .collect();
-            black_box(out)
-        })
-    });
-}
-
-fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
-    let params = CrtNttParamSet::new(q128_primes());
-    let matrix: Vec<Vec<N128>> = (0..CACHE_MAT_ROWS)
-        .map(|r| {
-            (0..CACHE_MAT_COLS)
-                .map(|col| {
-                    N128::from_ring(
-                        &sample_ring_q128m159_tag(23, (r * CACHE_MAT_COLS + col) as u64),
-                        &params,
-                    )
-                })
-                .collect()
-        })
-        .collect();
-    let vector: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|col| N128::from_i8_with_params(&sample_centered_i8(41 + col as u64), &params))
-        .collect();
-
-    c.bench_function(
-        "ring_crt_ntt_simd_cached_matvec_i8_rhs_d32_q128m159_k5",
-        |b| {
-            b.iter(|| {
-                let out: Vec<R128> = matrix
-                    .iter()
-                    .map(|row| {
-                        let mut acc = N128::zero();
-                        for (mat_entry, vec_entry) in row.iter().zip(vector.iter()) {
-                            acc.add_assign_pointwise_mul(mat_entry, black_box(vec_entry), &params);
-                        }
-                        acc.to_ring(&params)
-                    })
-                    .collect();
-                black_box(out)
-            })
-        },
-    );
-}
-
-fn bench_mixed_crt_cached_matvec_i16_rhs_q128m159(c: &mut Criterion) {
-    let params = I16TailParams::new(
-        CrtNttParamSet::new(q128_primes()),
-        CrtNttParamSet::new([I16_TAIL_PRIME]),
-    );
-    let rings = (0..CACHE_MAT_ROWS * CACHE_MAT_COLS)
-        .map(|index| sample_ring_q128m159_tag(23, index as u64))
-        .collect::<Vec<_>>();
-    let wide_matrix = rings
-        .iter()
-        .map(|ring| N128::from_ring(ring, &params.wide))
-        .collect::<Vec<_>>();
-    let tail_matrix = rings
-        .iter()
-        .map(|ring| TailN128::from_ring(ring, &params.tail))
-        .collect::<Vec<_>>();
-    let rhs = (0..CACHE_MAT_COLS)
-        .map(|column| sample_centered_i16(41 + column as u64))
-        .collect::<Vec<_>>();
-
-    c.bench_function(
-        "ring_mixed_crt_ntt_cached_matvec_i16_rhs_d32_q128m159_k5_plus_i16",
-        |b| {
-            b.iter(|| {
-                black_box(
-                    mat_vec_i16_with_tail::<F128, Q128_NUM_PRIMES, 32>(
-                        &wide_matrix,
-                        &tail_matrix,
-                        CACHE_MAT_ROWS,
-                        CACHE_MAT_COLS,
-                        black_box(&rhs),
-                        &params,
-                    )
-                    .expect("mixed i16 matvec"),
-                )
-            })
-        },
-    );
-}
-
-fn bench_crt_cached_dot_components_q128m159(c: &mut Criterion) {
-    let wide_params = CrtNttParamSet::new(q128_primes());
-    let wide_matrix: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|column| N128::from_ring(&sample_ring_q128m159_tag(23, column as u64), &wide_params))
-        .collect();
-    let wide_vector: Vec<N128> = (0..CACHE_MAT_COLS)
-        .map(|column| {
-            N128::from_i8_with_params(&sample_centered_i8(41 + column as u64), &wide_params)
-        })
-        .collect();
-    let mut wide_product = N128::zero();
-    for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
-        wide_product.add_assign_pointwise_mul(matrix_entry, vector_entry, &wide_params);
-    }
-
-    c.bench_function("ring_crt_ntt_cached_dot_pointwise_d32_q128m159_k5", |b| {
-        b.iter(|| {
-            let mut accumulator = N128::zero();
-            for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
-                accumulator.add_assign_pointwise_mul(
-                    matrix_entry,
-                    black_box(vector_entry),
-                    &wide_params,
-                );
-            }
-            black_box(accumulator)
-        })
-    });
-    c.bench_function("ring_crt_ntt_reconstruct_d32_q128m159_k5", |b| {
-        b.iter(|| black_box(&wide_product).to_ring::<F128>(&wide_params))
-    });
-}
-
-fn bench_digit_lut_i8_range_q128m159(c: &mut Criterion) {
-    let params: CrtNttParamSet<i32, Q128_NUM_PRIMES, 32> = CrtNttParamSet::new(q128_primes());
-    let mut group = c.benchmark_group("digit_mont_lut_q128m159_k5");
+fn bench_digit_lut_i8_range_q128(c: &mut Criterion) {
+    let params: CrtNttParamSet<i32, Q128_NUM_PRIMES, 64> = CrtNttParamSet::new(q128_primes());
+    let mut group = c.benchmark_group("digit_mont_lut_q128_k5");
     group.bench_function("construct_l6", |b| {
         b.iter(|| DigitMontLut::new_with_digit_bound(black_box(&params), 32))
     });
@@ -647,16 +380,7 @@ criterion_group!(
     bench_ntt_i16_tail_round_trip,
     bench_fp32_decomposition,
     bench_crt_round_trip,
-    bench_ring_schoolbook_mul_q128m159,
-    bench_crt_mul_q128m159,
-    bench_crt_mul_i8_rhs_q128m159,
-    bench_crt_cyclic_mul_q128m159,
-    bench_crt_quotient_q128m159,
-    bench_crt_simd_cached_matvec_q128m159,
-    bench_crt_simd_cached_matvec_i8_rhs_q128m159,
-    bench_mixed_crt_cached_matvec_i16_rhs_q128m159,
-    bench_crt_cached_dot_components_q128m159,
-    bench_digit_lut_i8_range_q128m159,
+    bench_digit_lut_i8_range_q128,
     bench_production_crt_cached_matvec_d64_q128a7f7,
     bench_ntt_cache_construction_d64_q128a7f7
 );

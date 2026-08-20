@@ -27,7 +27,6 @@ and setup memory.
 **Paper framing (§3.5 `sec:akita-params`).** The uniform production profile uses
 **d=64** with the signed-sparse challenge family. The default direct fp128
 one-hot preset now chooses dimensions per fold from generated adaptive tables;
-**d=32** remains invalid for the A-role fold degree (`d_a ≥ 64`).
 
 **Proof-size / CI reality (committed-fold A-role SIS pricing).**
 

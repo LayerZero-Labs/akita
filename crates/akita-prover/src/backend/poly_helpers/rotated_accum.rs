@@ -1,17 +1,15 @@
-//! Rotated-challenge accumulation for decompose-fold (dense D32/D64 high-weight path).
+//! Rotated-challenge accumulation for decompose-fold (dense D64 high-weight path).
 
 use super::{extract_balanced_digit, peel_first_balanced_digit_i32, to_signed, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::CanonicalField;
 
-const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
 #[inline(always)]
 pub(crate) fn should_use_rotated_challenge<const D: usize>(challenge: &SparseChallenge) -> bool {
-    (D == 32 && challenge.positions.len() >= D32_ROTATED_CHALLENGE_MIN_WEIGHT
-        || D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
+    (D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
         && challenge.positions.len() == challenge.coeffs.len()
 }
 
