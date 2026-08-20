@@ -1,6 +1,9 @@
 # Summary
 
 [Introduction](./intro.md)
+  - [Why lattices?](./introduction/why-lattices.md)
+  - [Built for production](./introduction/built-for-production.md)
+  - [Reviewing and auditing Akita](./introduction/reviewing-akita.md)
 
 # Using Akita
 
