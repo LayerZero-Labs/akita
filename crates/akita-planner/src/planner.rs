@@ -494,8 +494,7 @@ fn root_final_group_level_params_candidate(
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-        precommitted_groups: precommitted_groups.to_vec(),
-        setup_prefix: None,
+        groups: precommitted_groups.to_vec(),
     };
 
     Ok(Some(params))

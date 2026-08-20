@@ -310,9 +310,9 @@ where
         akita_types::GroupCommitPhaseParams::try_from_params(final_descriptor.group, root_params)
             .map_err(|_| AkitaError::InvalidProof)?;
     if final_descriptor != expected_final_descriptor
-        || root_params.precommitted_groups.len() != precommitteds.len()
+        || root_params.precommitted_groups().len() != precommitteds.len()
         || root_params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
             .zip(precommitteds)
             .any(|(params, claims_group)| params.profile != *claims_group.commitment().profile())

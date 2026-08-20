@@ -164,7 +164,7 @@ fn heterogeneous_group_types() {
             .schedule()
             .clone();
         assert_eq!(
-            schedule.root.params.precommitted_groups.len(),
+            schedule.root.params.precommitted_groups().len(),
             2,
             "heterogeneous selection must resolve to the two-precommit entry"
         );
@@ -354,7 +354,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .precommitted_groups
             .first()
             .expect("mixed-bound selection must resolve the one-precommit entry");
-        assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
+        assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
         assert_eq!(
             precommitted.profile.inner.digits.num_digits,
             bounded_commitment.profile.inner.digits.num_digits,

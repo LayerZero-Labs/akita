@@ -57,7 +57,7 @@ fn grouped_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
-    params.precommitted_groups = vec![GroupOpenPhaseParams {
+    params.set_precommitted_groups(vec![GroupOpenPhaseParams {
         setup_natural_len: None,
         profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         opening: akita_types::GroupOpeningPlan::evaluation_trace(
@@ -66,7 +66,7 @@ fn grouped_level_params() -> CommittedGroupParams {
             precommitted.open.digits.num_digits,
             precommitted.num_digits_fold,
         ),
-    }];
+    }]);
     params
 }
 
@@ -302,7 +302,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
     for (params, next_witness_len) in with_prefix {
-        let prefix = params.setup_prefix.as_ref().expect("attached setup prefix");
+        let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
             prefix.opening.opening_method,
             akita_types::OpeningMethod::SubringCoefficientPacking {
@@ -561,9 +561,9 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     .expect("group-local packing candidates");
     assert!(!grouped.is_empty());
     for (params, _) in grouped {
-        assert_eq!(params.precommitted_groups.len(), 1);
+        assert_eq!(params.precommitted_groups().len(), 1);
         assert_eq!(
-            params.precommitted_groups[0].opening.opening_method,
+            params.precommitted_groups()[0].opening.opening_method,
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 128
             }
@@ -579,7 +579,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             grouped_key.final_group.num_polynomials(),
         )
         .unwrap();
-        let precommit_width = params.precommitted_groups[0]
+        let precommit_width = params.precommitted_groups()[0]
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
@@ -747,11 +747,14 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
     let mut params = grouped_level_params();
-    let prefix_params = params
-        .precommitted_groups
-        .pop()
+    let prefix_params = *params
+        .precommitted_groups()
+        .last()
         .expect("synthetic prefix params");
-    params.setup_prefix = Some(akita_types::scheduled_setup_prefix(1 << 6, prefix_params));
+    params.set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
+        1 << 6,
+        prefix_params,
+    )));
     let witness_len = 1 << 4;
     let output_witness_len = 1 << 4;
     let final_group = PolynomialGroupLayout::singleton(4);

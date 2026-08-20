@@ -182,17 +182,17 @@ fn group_batch_schedule_preserves_precommitted_order() {
         PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE
     );
     assert_eq!(main_params, *root);
-    assert_eq!(schedule.root.params.precommitted_groups.len(), 3);
+    assert_eq!(schedule.root.params.precommitted_groups().len(), 3);
     assert_eq!(
-        schedule.root.params.precommitted_groups[0].profile,
+        schedule.root.params.precommitted_groups()[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[1].profile,
+        schedule.root.params.precommitted_groups()[1].profile,
         pre_b_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[2].profile,
+        schedule.root.params.precommitted_groups()[2].profile,
         pre_c_frozen
     );
 }
@@ -330,15 +330,15 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         "final one-hot group should retain its native variable domain"
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups.len(),
+        multi_group_schedule.root.params.precommitted_groups().len(),
         2
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[0].profile,
+        multi_group_schedule.root.params.precommitted_groups()[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[1].profile,
+        multi_group_schedule.root.params.precommitted_groups()[1].profile,
         pre_b_frozen
     );
 }
@@ -492,7 +492,7 @@ where
         multi_group_schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
             .map(|group| group.profile)
             .collect::<Vec<_>>(),
@@ -502,7 +502,7 @@ where
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
         let root_commitment = &root.params;
-        assert!(!root.params.precommitted_groups.is_empty());
+        assert!(!root.params.precommitted_groups().is_empty());
         assert_eq!(
             root_commitment.witness_chunk.num_chunks,
             TestCfg::chunked_witness_cfg().num_chunks,
@@ -639,7 +639,7 @@ where
     let planned_stage3 = multi_group_schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
     let proved_stage3 = proof
         .nonterminal_folds()

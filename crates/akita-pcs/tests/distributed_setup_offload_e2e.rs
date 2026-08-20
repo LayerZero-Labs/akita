@@ -208,11 +208,17 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         }
     }
     assert_eq!(
-        schedule.root.params.precommitted_groups.len(),
+        schedule.root.params.precommitted_groups().len(),
         2,
         "W8R2 must carry the two frozen singleton groups"
     );
-    for (group_index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+    for (group_index, group) in schedule
+        .root
+        .params
+        .precommitted_groups()
+        .iter()
+        .enumerate()
+    {
         assert_eq!(group.profile.inner.matrix.ring_dimension(), 512);
         let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
         assert_eq!(
@@ -263,7 +269,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 
     // Level 0 produces the selected setup prefix and level 1 consumes it.
     assert!(
-        schedule.recursive_folds[0].params.setup_prefix.is_some(),
+        schedule.recursive_folds[0].params.setup_prefix().is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
     assert!(matches!(
@@ -295,7 +301,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "level 2 must be Direct (no Stage-3 sum-check after the activated window)"
     );
     assert!(
-        level2.setup_prefix.is_none(),
+        level2.setup_prefix().is_none(),
         "level 2 must not carry an unselected setup prefix"
     );
 }

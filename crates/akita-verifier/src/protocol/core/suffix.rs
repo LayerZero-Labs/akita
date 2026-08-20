@@ -32,7 +32,7 @@ where
     E: ExtField<F>,
 {
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
-    if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
+    if let Some(setup_prefix_id) = lp.setup_prefix() {
         let slot = setup
             .prefix_slots
             .get(&setup_prefix_id.slot_id().expect("setup prefix group"))
@@ -422,10 +422,7 @@ where
     }
     let witness_point = current_state.opening_point.clone();
 
-    let block_claims = match (
-        &current_state.setup_prefix_opening,
-        lp.setup_prefix.as_ref(),
-    ) {
+    let block_claims = match (&current_state.setup_prefix_opening, lp.setup_prefix()) {
         (Some((setup_prefix_point, setup_prefix_eval)), Some(_)) => {
             let groups = vec![
                 PolynomialGroupClaims::new(

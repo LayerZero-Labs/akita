@@ -333,7 +333,7 @@ where
         let setup_point =
             verifier.verify_stage3::<F, T>(setup, next_fold_level_params, proof, transcript)?;
         return Ok(next_fold_level_params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .map(|_| (setup_point, proof.setup_prefix_eval)));
     }

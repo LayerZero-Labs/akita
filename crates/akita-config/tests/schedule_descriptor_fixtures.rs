@@ -134,7 +134,7 @@ fn capture_row(
             .map(|profile| profile.canonical_descriptor_bytes())
             .unwrap_or_default(),
     );
-    for (index, group) in root.precommitted_groups.iter().enumerate() {
+    for (index, group) in root.precommitted_groups().iter().enumerate() {
         push(
             records,
             format!("{prefix} root.precommitted[{index}].profile"),
@@ -159,7 +159,7 @@ fn capture_row(
             format!("{prefix} recursive[{level}].fold"),
             step.params.canonical_descriptor_bytes(),
         );
-        if let Some(prefix_group) = step.params.setup_prefix.as_ref() {
+        if let Some(prefix_group) = step.params.setup_prefix() {
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.profile"),

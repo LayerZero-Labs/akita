@@ -213,7 +213,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
     let root = &schedule.root.params;
     let final_params = &root;
     let shared_d = root.open.matrix.ring_dimension();
-    for (group_index, group) in root.precommitted_groups.iter().enumerate() {
+    for (group_index, group) in root.precommitted_groups().iter().enumerate() {
         group.profile.validate_frozen_precommit(
             group
                 .profile

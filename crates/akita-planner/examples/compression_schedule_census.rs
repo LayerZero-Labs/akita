@@ -139,7 +139,7 @@ fn record_schedule(
         .map_err(|_| "field bit width conversion overflow".to_string())?
         .div_ceil(8);
     let root = &schedule.root.params;
-    for (index, group) in root.precommitted_groups.iter().enumerate() {
+    for (index, group) in root.precommitted_groups().iter().enumerate() {
         record_outer(
             stats,
             &format!("B-root-precommitted-{index}"),
@@ -204,7 +204,7 @@ fn compression_instances(schedule: &FoldSchedule) -> Result<(usize, usize), Stri
     let mut chains = schedule
         .root
         .params
-        .precommitted_groups
+        .precommitted_groups()
         .len()
         .checked_add(2)
         .ok_or_else(|| "root compression chain count overflow".to_string())?;

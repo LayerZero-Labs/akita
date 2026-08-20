@@ -13,14 +13,15 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     schedule.recursive_folds[0].params.opening_method = packing;
     schedule.recursive_folds[0].params.fold_challenge_config = production;
     schedule.recursive_folds[0].params.fold_challenge_config = production;
-    let first_prefix = schedule.recursive_folds[0]
+    let mut first_prefix = *schedule.recursive_folds[0]
         .params
-        .setup_prefix
-        .as_mut()
+        .setup_prefix()
         .expect("level 1 prefix");
     first_prefix.opening.opening_method = packing;
     first_prefix.opening.fold_challenge_config = production;
-    schedule.recursive_folds[0].params.setup_prefix = Some(*first_prefix);
+    schedule.recursive_folds[0]
+        .params
+        .set_setup_prefix(Some(first_prefix));
 
     append_recursive_fold(&mut schedule);
     let level2 = &mut schedule.recursive_folds[1];
@@ -32,7 +33,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     let commitment_params = crate::setup_prefix_precommitted_params(&level2.params, natural_len)
         .expect("level 2 EvaluationTrace prefix");
     let second_prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
-    level2.params.setup_prefix = Some(second_prefix);
+    level2.params.set_setup_prefix(Some(second_prefix));
 
     schedule
         .validate_structure()
@@ -43,7 +44,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     assert!(matches!(
         schedule.recursive_folds[0]
             .params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .unwrap()
             .opening
@@ -53,7 +54,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     assert_eq!(
         schedule.recursive_folds[1]
             .params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .unwrap()
             .opening
@@ -63,15 +64,13 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     let digest = crate::digest_effective_schedule(&schedule);
     let mut changed = schedule.clone();
     let changed_prefix = {
-        let prefix = changed.recursive_folds[1]
-            .params
-            .setup_prefix
-            .as_mut()
-            .unwrap();
+        let mut prefix = *changed.recursive_folds[1].params.setup_prefix().unwrap();
         prefix.opening.opening_method = packing;
         prefix
     };
-    changed.recursive_folds[1].params.setup_prefix = Some(*changed_prefix);
+    changed.recursive_folds[1]
+        .params
+        .set_setup_prefix(Some(changed_prefix));
     assert_ne!(digest, crate::digest_effective_schedule(&changed));
     assert!(changed.validate_nonterminal_opening_execution(1).is_err());
 }
@@ -312,9 +311,12 @@ fn prefix_at_index_zero_does_not_redefine_the_opening_family() {
     schedule.recursive_folds[0].params.opening_method = packing;
     schedule.recursive_folds[0].params.fold_challenge_config = production;
     schedule.recursive_folds[0].params.fold_challenge_config = production;
-    if let Some(prefix) = schedule.recursive_folds[0].params.setup_prefix.as_mut() {
+    if let Some(mut prefix) = schedule.recursive_folds[0].params.setup_prefix().copied() {
         prefix.opening.opening_method = packing;
         prefix.opening.fold_challenge_config = production;
+        schedule.recursive_folds[0]
+            .params
+            .set_setup_prefix(Some(prefix));
     }
     schedule
         .validate_nonterminal_opening_execution(1)
@@ -324,8 +326,15 @@ fn prefix_at_index_zero_does_not_redefine_the_opening_family() {
     // what `first` reads; the fold must still be rejected rather than having the
     // prefix silently redefine the family for the level.
     let mut inconsistent = schedule.clone();
-    if let Some(prefix) = inconsistent.recursive_folds[0].params.setup_prefix.as_mut() {
+    if let Some(mut prefix) = inconsistent.recursive_folds[0]
+        .params
+        .setup_prefix()
+        .copied()
+    {
         prefix.opening.opening_method = OpeningMethod::EvaluationTrace;
+        inconsistent.recursive_folds[0]
+            .params
+            .set_setup_prefix(Some(prefix));
     }
     assert!(
         inconsistent

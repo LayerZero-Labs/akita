@@ -95,7 +95,7 @@ impl FoldParams {
     #[inline]
     #[must_use]
     pub fn incoming_setup_prefix(&self) -> Option<&crate::GroupOpenPhaseParams> {
-        self.params.setup_prefix.as_ref()
+        self.params.setup_prefix()
     }
 
     /// Setup-contribution mode of the fold that produces this witness.
@@ -104,7 +104,7 @@ impl FoldParams {
     /// separately stored mode that could disagree with adjacency.
     #[must_use]
     pub fn predecessor_setup_contribution_mode(&self) -> SetupContributionMode {
-        if self.params.setup_prefix.is_some() {
+        if self.params.setup_prefix().is_some() {
             SetupContributionMode::Recursive
         } else {
             SetupContributionMode::Direct
@@ -343,7 +343,7 @@ impl FoldSchedule {
         let root_commitment = &self.root.params;
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
-        for group in &self.root.params.precommitted_groups {
+        for group in self.root.params.precommitted_groups() {
             group.validate()?;
         }
         if !self.root.params.payload_mode.is_compressed() {
@@ -354,7 +354,7 @@ impl FoldSchedule {
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             step.params.validate_commitment_request(index + 1, 1)?;
-            let consumes_setup_prefix = step.params.setup_prefix.is_some();
+            let consumes_setup_prefix = step.params.setup_prefix().is_some();
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
@@ -409,7 +409,7 @@ impl FoldSchedule {
                     "recursive fold witness lengths must be nonzero".to_string(),
                 ));
             }
-            if let Some(prefix) = &step.params.setup_prefix {
+            if let Some(prefix) = &step.params.setup_prefix() {
                 prefix.validate()?;
                 prefix.profile.outer_slice_count.validate_for_commitment(
                     0,
@@ -500,7 +500,7 @@ impl FoldSchedule {
         let mut root_groups: Vec<OpeningExecutionGroup> = self
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
             .map(|group| {
                 let commitment = group;
@@ -538,7 +538,7 @@ impl FoldSchedule {
             let witness = &step.params;
             let mut groups: Vec<OpeningExecutionGroup> = Vec::new();
             // An incoming setup prefix is group 0 in canonical order.
-            if let Some(prefix) = &step.params.setup_prefix {
+            if let Some(prefix) = &step.params.setup_prefix() {
                 groups.push(OpeningExecutionGroup {
                     opening_method: prefix.opening.opening_method,
                     inner_commit_matrix: &prefix.profile.inner.matrix,

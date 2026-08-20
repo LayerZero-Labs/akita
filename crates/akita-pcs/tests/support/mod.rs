@@ -548,7 +548,7 @@ where
                 AkitaError::InvalidSetup("packing setup prefix has no balanced split".into())
             })?;
         let mut prefix_source_params = successor_witness.clone();
-        prefix_source_params.setup_prefix = None;
+        prefix_source_params.set_setup_prefix(None);
         prefix_source_params.inner.digits.log_basis = root.inner.digits.log_basis;
         prefix_source_params.inner.digits.num_digits =
             akita_types::sis::compute_num_digits_field_width(
@@ -651,7 +651,7 @@ where
             )?;
         let incoming_setup_prefix =
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
-        successor_witness.setup_prefix = Some(incoming_setup_prefix);
+        successor_witness.set_setup_prefix(Some(incoming_setup_prefix));
         let successor_d_width = successor_witness
             .open
             .matrix
@@ -708,14 +708,14 @@ where
             let step = schedule.recursive_folds.first_mut().ok_or_else(|| {
                 AkitaError::InvalidSetup("early-ET test row needs a recursive fold".into())
             })?;
-            if let Some(prefix) = step.params.setup_prefix.as_mut() {
+            if let Some(mut prefix) = step.params.setup_prefix().copied() {
                 prefix.opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
                 let d_a = prefix.profile.inner.matrix.ring_dimension();
                 prefix.opening.fold_challenge_config =
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;
-                step.params.setup_prefix = Some(*prefix);
+                step.params.set_setup_prefix(Some(prefix));
             }
             &mut step.params
         } else {

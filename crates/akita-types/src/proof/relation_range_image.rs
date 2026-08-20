@@ -46,7 +46,7 @@ impl PhysicalResponsePlan {
             return Ok(None);
         };
         shape.validate()?;
-        if !params.precommitted_groups.is_empty() || plan.groups.len() != 1 {
+        if !params.precommitted_groups().is_empty() || plan.groups.len() != 1 {
             return Err(AkitaError::InvalidSetup(
                 "L2 response proofs are restricted to scalar recursive folds".into(),
             ));

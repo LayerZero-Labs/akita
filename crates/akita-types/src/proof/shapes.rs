@@ -156,7 +156,7 @@ pub fn canonical_base_field_proof_shape(
     fn stage3_shape(
         successor: Option<&CommittedGroupParams>,
     ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
-        let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+        let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
             return Ok(None);
         };
         let n_prefix = prefix.n_prefix()?;

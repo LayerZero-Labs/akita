@@ -109,7 +109,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             transcript,
         )?;
         let setup_prefix_eval = next_fold_level_params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .map(|_| proof.setup_prefix_eval)
             .ok_or_else(|| {
@@ -177,12 +177,9 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let selected_slot_id = next_fold_level_params
-        .setup_prefix
-        .as_ref()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
-        })?;
+    let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
+        AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+    })?;
     let slot = setup
         .prefix_slots
         .get(&selected_slot_id.slot_id().expect("setup prefix group"))
@@ -369,7 +366,7 @@ mod tests {
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        level_params.setup_prefix = Some(id);
+        level_params.set_setup_prefix(Some(id));
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.seed.setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {

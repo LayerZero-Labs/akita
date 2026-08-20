@@ -43,7 +43,7 @@ where
     for slot_id in schedule
         .recursive_folds
         .iter()
-        .filter_map(|fold| fold.params.setup_prefix.as_ref())
+        .filter_map(|fold| fold.params.setup_prefix())
     {
         if setup
             .prefix_slots

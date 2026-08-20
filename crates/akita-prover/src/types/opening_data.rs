@@ -529,7 +529,7 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
-        root.precommitted_groups.push(GroupOpenPhaseParams {
+        root.groups_mut().push(GroupOpenPhaseParams {
             setup_natural_len: None,
             profile: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(

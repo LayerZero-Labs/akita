@@ -292,7 +292,7 @@ fn generated_fold(
     GeneratedFold {
         group: committed_group(p, num_digits_inner),
         precommitted_groups,
-        setup_prefix: p.setup_prefix.as_ref().map(frozen_group),
+        setup_prefix: p.setup_prefix().map(frozen_group),
         open_commit_matrix: open_matrix_params(&p.open.matrix, p.open.digits.log_basis),
         witness_chunks: p.witness_chunk.num_chunks as u32,
         payload_mode: p.payload_mode,
@@ -310,7 +310,7 @@ fn generated_entry(
         .precommitteds
         .iter()
         .copied()
-        .zip(&root_fold.precommitted_groups)
+        .zip(root_fold.precommitted_groups())
         .map(|(profile, group)| GeneratedFrozenGroup {
             profile,
             num_digits_fold: group.opening.num_digits_fold as u32,

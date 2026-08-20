@@ -124,7 +124,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         ),
     };
     let mut grouped = lp;
-    grouped.precommitted_groups = vec![precommit];
+    grouped.set_precommitted_groups(vec![precommit]);
     let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
     (grouped, batch)
 }
@@ -145,7 +145,7 @@ fn fold_nonce_accepts_only_the_global_attempt_range() {
 #[test]
 fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
     let (params, _) = sample_multi_group_root_params();
-    let precommitted = &params.precommitted_groups[0];
+    let precommitted = &params.precommitted_groups()[0];
 
     assert_eq!(precommitted.opening.fold_challenge_config.weight(), 41);
     assert_eq!(precommitted.challenge_l1_mass(), 51);
@@ -155,11 +155,7 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.open.digits.log_basis = 3;
-    grouped.precommitted_groups[0]
-        .profile
-        .outer
-        .digits
-        .log_basis = 6;
+    grouped.groups_mut()[0].profile.outer.digits.log_basis = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);

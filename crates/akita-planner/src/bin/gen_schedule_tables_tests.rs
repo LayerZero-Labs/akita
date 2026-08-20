@@ -234,7 +234,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
             challenge_subring_dimension: 64,
         },
     );
-    assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
+    assert_eq!(schedule.root.params.precommitted_groups().len(), 2);
     let shared_opening_dimension = schedule
         .root
         .params
@@ -243,7 +243,13 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
         .role_dims()
         .d_d();
     let mut expected_precommit_signatures = Vec::new();
-    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+    for (index, group) in schedule
+        .root
+        .params
+        .precommitted_groups()
+        .iter()
+        .enumerate()
+    {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } = group.commitment.opening.opening_method

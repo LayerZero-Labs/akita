@@ -142,7 +142,10 @@ mod tests {
         })
         .expect("recursive schedule");
 
-        assert_eq!(schedule.schedule().root.params.precommitted_groups.len(), 2);
+        assert_eq!(
+            schedule.schedule().root.params.precommitted_groups().len(),
+            2
+        );
         assert!(schedule
             .schedule()
             .root
@@ -170,6 +173,6 @@ mod tests {
             .schedule()
             .recursive_folds
             .iter()
-            .any(|fold| fold.params.setup_prefix.is_some()));
+            .any(|fold| fold.params.setup_prefix().is_some()));
     }
 }

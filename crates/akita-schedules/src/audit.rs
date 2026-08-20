@@ -168,12 +168,12 @@ fn expected_d_width(
     )
     .map_err(|_| invalid(label, "main D width is incompatible with opening geometry"))?;
 
-    for group in &params.precommitted_groups {
+    for group in params.precommitted_groups() {
         width = width
             .checked_add(group.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "precommitted D width overflow"))?;
     }
-    if let Some(prefix) = &params.setup_prefix {
+    if let Some(prefix) = params.setup_prefix() {
         width = width
             .checked_add(prefix.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "setup-prefix D width overflow"))?;
@@ -327,7 +327,7 @@ fn audit_committed_params(
             policy.sis_modulus_profile,
             SisMatrixRole::Open,
             dims.d_d(),
-            shared_d_digit_log_basis(params.open.digits.log_basis, &params.precommitted_groups),
+            shared_d_digit_log_basis(params.open.digits.log_basis, params.precommitted_groups()),
         ),
     )
 }
@@ -505,7 +505,7 @@ pub(crate) fn audit_resolved_schedule(
     // relates two independent sources: the ordered profiles from the lookup key
     // against the expanded row.
     if profiles.final_group != expected_final_profile
-        || profiles.precommitteds.len() != final_params.precommitted_groups.len()
+        || profiles.precommitteds.len() != final_params.precommitted_groups().len()
     {
         return Err(invalid(
             "root fold",
@@ -516,7 +516,7 @@ pub(crate) fn audit_resolved_schedule(
     for (index, (profile, group)) in profiles
         .precommitteds
         .iter()
-        .zip(&final_params.precommitted_groups)
+        .zip(final_params.precommitted_groups())
         .enumerate()
     {
         if profile != &group.profile {

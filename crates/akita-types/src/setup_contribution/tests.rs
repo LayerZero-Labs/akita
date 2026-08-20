@@ -97,7 +97,7 @@ fn retarget_precommitted_test_role_dims(
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 ) {
-    let group = &mut params.precommitted_groups[group_id];
+    let group = &mut params.groups_mut()[group_id];
     group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
@@ -236,43 +236,45 @@ fn test_inputs_for_group_sizes(
     }
     lp.num_digits_fold = depth_fold;
     if group_sizes.len() > 1 {
-        lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
-            .iter()
-            .map(|&_group_size| {
-                let mut layout = crate::GroupCommitPhaseParams::from_params_unchecked_for_test(
-                    crate::PolynomialGroupLayout::new(0, 1),
-                    &lp,
-                );
-                let expected_group_b_width = lp
-                    .inner
-                    .matrix
-                    .output_rank()
-                    .checked_mul(lp.outer.digits.num_digits)
-                    .and_then(|width| width.checked_mul(layout.blocks.live_blocks))
-                    .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
-                    .expect("test precommitted B width");
-                let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-                    lp.outer.matrix.security_policy(),
-                    lp.outer.matrix.sis_table_key().table_digest,
-                    lp.outer.matrix.sis_modulus_profile(),
-                    lp.outer.matrix.output_rank(),
-                    expected_group_b_width,
-                    lp.outer.matrix.coeff_linf_bound(),
-                    lp.d_a(),
-                );
-                layout.outer.matrix = outer_commit_matrix;
-                crate::GroupOpenPhaseParams {
-                    setup_natural_len: None,
-                    profile: layout,
-                    opening: crate::GroupOpeningPlan::evaluation_trace(
-                        lp.fold_challenge_config,
-                        lp.open.digits.log_basis,
-                        lp.open.digits.num_digits,
-                        depth_fold,
-                    ),
-                }
-            })
-            .collect();
+        lp.set_precommitted_groups(
+            group_sizes[..group_sizes.len() - 1]
+                .iter()
+                .map(|&_group_size| {
+                    let mut layout = crate::GroupCommitPhaseParams::from_params_unchecked_for_test(
+                        crate::PolynomialGroupLayout::new(0, 1),
+                        &lp,
+                    );
+                    let expected_group_b_width = lp
+                        .inner
+                        .matrix
+                        .output_rank()
+                        .checked_mul(lp.outer.digits.num_digits)
+                        .and_then(|width| width.checked_mul(layout.blocks.live_blocks))
+                        .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
+                        .expect("test precommitted B width");
+                    let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+                        lp.outer.matrix.security_policy(),
+                        lp.outer.matrix.sis_table_key().table_digest,
+                        lp.outer.matrix.sis_modulus_profile(),
+                        lp.outer.matrix.output_rank(),
+                        expected_group_b_width,
+                        lp.outer.matrix.coeff_linf_bound(),
+                        lp.d_a(),
+                    );
+                    layout.outer.matrix = outer_commit_matrix;
+                    crate::GroupOpenPhaseParams {
+                        setup_natural_len: None,
+                        profile: layout,
+                        opening: crate::GroupOpeningPlan::evaluation_trace(
+                            lp.fold_challenge_config,
+                            lp.open.digits.log_basis,
+                            lp.open.digits.num_digits,
+                            depth_fold,
+                        ),
+                    }
+                })
+                .collect(),
+        );
     }
     let opening_batch =
         OpeningClaimsLayout::from_group_sizes(0, group_sizes).expect("test opening batch");

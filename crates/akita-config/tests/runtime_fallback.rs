@@ -391,7 +391,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         }
     );
     assert_eq!(
-        planned.schedule.root.params.precommitted_groups[0].profile,
+        planned.schedule.root.params.precommitted_groups()[0].profile,
         key.precommitteds[0]
     );
 }

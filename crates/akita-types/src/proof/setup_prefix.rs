@@ -1239,7 +1239,7 @@ pub fn setup_prefix_coverage_eval_len(
     source_ring_dimension: usize,
     coverage_error: &'static str,
 ) -> Result<usize, AkitaError> {
-    let Some(template) = &level_params.setup_prefix else {
+    let Some(template) = &level_params.setup_prefix() else {
         return Err(AkitaError::InvalidSetup(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));

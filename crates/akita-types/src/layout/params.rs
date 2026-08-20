@@ -130,13 +130,15 @@ pub struct CommittedGroupParams {
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `open_commit_matrix` describes the shared D matrix over all group `w_hat`
     /// segments.
-    pub precommitted_groups: Vec<GroupOpenPhaseParams>,
-    /// Derived runtime mirror of the successor-owned setup-prefix edge.
+    /// Every group this fold consumes, in canonical order: an incoming setup
+    /// prefix first when present, then the frozen precommitted groups.
     ///
-    /// [`crate::FoldParams::incoming_setup_prefix`] is authoritative;
-    /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
-    /// prover or verifier execution.
-    pub setup_prefix: Option<GroupOpenPhaseParams>,
+    /// One list rather than a `Vec` plus an inline `Option`. The `Option` cost
+    /// 376 bytes inline -- nearly half this struct -- for a group that is
+    /// already distinguishable by carrying a `setup_natural_len`, which is the
+    /// same field `slot_id()` derives prefix identity from. Canonical order is
+    /// unchanged: `precommitted_group_iter` already yielded the prefix first.
+    pub groups: Vec<GroupOpenPhaseParams>,
 }
 
 impl CommittedGroupParams {
@@ -223,7 +225,7 @@ impl CommittedGroupParams {
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
-        shared_d_digit_log_basis(self.open.digits.log_basis, &self.precommitted_groups)
+        shared_d_digit_log_basis(self.open.digits.log_basis, &self.groups)
     }
 
     /// Per-role ring dimensions derived from the three matrix objects.
@@ -306,8 +308,7 @@ impl CommittedGroupParams {
 
             num_digits_fold: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
-            precommitted_groups: Vec::new(),
-            setup_prefix: None,
+            groups: Vec::new(),
         }
     }
 
@@ -319,29 +320,73 @@ impl CommittedGroupParams {
 
     #[inline]
     pub fn precommitted_group_count(&self) -> usize {
-        self.setup_prefix
-            .as_ref()
-            .map_or(0usize, |_| 1usize)
-            .saturating_add(self.precommitted_groups.len())
+        self.groups.len()
     }
 
     #[inline]
     pub fn precommitted_group_params(&self, group_index: usize) -> Option<&GroupOpenPhaseParams> {
-        if let Some(setup_prefix) = &self.setup_prefix {
+        if let Some(setup_prefix) = self.setup_prefix() {
             if group_index == 0 {
                 return Some(setup_prefix);
             }
-            return self.precommitted_groups.get(group_index - 1);
+            return self.groups.get(group_index);
         }
-        self.precommitted_groups.get(group_index)
+        self.groups.get(group_index)
     }
 
     #[inline]
+    /// The incoming setup prefix, when this fold consumes one.
+    ///
+    /// A prefix is the group that carries a `setup_natural_len`; nothing else
+    /// does. It sits first in `groups`, which is the canonical order the
+    /// descriptor encoders already assumed.
+    #[must_use]
+    pub fn setup_prefix(&self) -> Option<&GroupOpenPhaseParams> {
+        self.groups
+            .first()
+            .filter(|group| group.setup_natural_len.is_some())
+    }
+
+    /// The frozen precommitted groups, without any incoming prefix.
+    ///
+    /// A slice, not an iterator: the prefix is always at index zero, so the
+    /// precommitted groups are a contiguous tail and every caller that indexed
+    /// or measured the old `Vec` keeps working.
+    #[must_use]
+    pub fn precommitted_groups(&self) -> &[GroupOpenPhaseParams] {
+        if self.setup_prefix().is_some() {
+            &self.groups[1..]
+        } else {
+            &self.groups
+        }
+    }
+
+    /// Mutable access to the whole group list.
+    ///
+    /// Appends land after any prefix, so the prefix-first invariant holds.
+    pub fn groups_mut(&mut self) -> &mut Vec<GroupOpenPhaseParams> {
+        &mut self.groups
+    }
+
+    /// Replace this fold's precommitted groups, keeping any incoming prefix.
+    pub fn set_precommitted_groups(&mut self, groups: Vec<GroupOpenPhaseParams>) {
+        let prefix = self.setup_prefix().copied();
+        self.groups = prefix.into_iter().chain(groups).collect();
+    }
+
+    /// Replace this fold's incoming setup prefix.
+    ///
+    /// Keeps the prefix at index zero so canonical order survives the edit.
+    pub fn set_setup_prefix(&mut self, prefix: Option<GroupOpenPhaseParams>) {
+        self.groups
+            .retain(|group| group.setup_natural_len.is_none());
+        if let Some(prefix) = prefix {
+            self.groups.insert(0, prefix);
+        }
+    }
+
     pub fn precommitted_group_iter(&self) -> impl Iterator<Item = &GroupOpenPhaseParams> {
-        self.setup_prefix
-            .as_ref()
-            .into_iter()
-            .chain(self.precommitted_groups.iter())
+        self.groups.iter()
     }
 
     /// Reject multi-group-root params at scalar-only call sites.
@@ -598,13 +643,13 @@ impl CommittedGroupParams {
             self.witness_chunk.append_descriptor_bytes(bytes);
         }
 
-        if !self.precommitted_groups.is_empty() {
-            push_usize(bytes, self.precommitted_groups.len());
-            for group in &self.precommitted_groups {
+        if !self.precommitted_groups().is_empty() {
+            push_usize(bytes, self.precommitted_groups().len());
+            for group in self.precommitted_groups() {
                 group.append_descriptor_bytes(bytes);
             }
         }
-        if let Some(setup_prefix) = &self.setup_prefix {
+        if let Some(setup_prefix) = self.setup_prefix() {
             bytes.push(1);
             setup_prefix.append_setup_prefix_descriptor_bytes(bytes);
         } else {
@@ -1360,8 +1405,7 @@ impl CommittedGroupParams {
             // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
-            precommitted_groups: self.precommitted_groups.clone(),
-            setup_prefix: self.setup_prefix,
+            groups: self.groups.clone(),
         };
         rebuilt.validate_exact_fold_plan()
     }
@@ -1437,8 +1481,7 @@ impl CommittedGroupParams {
             // The chunk layout is a property of the committed witness, sized with
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
-            precommitted_groups: self.precommitted_groups.clone(),
-            setup_prefix: self.setup_prefix,
+            groups: self.groups.clone(),
         }
         .validate_exact_fold_plan()
     }

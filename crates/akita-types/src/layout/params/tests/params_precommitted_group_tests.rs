@@ -7,8 +7,16 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner.matrix.output_rank();
     let n_b_final = lp.outer.matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups()[0]
+        .profile
+        .inner
+        .matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups()[0]
+        .profile
+        .outer
+        .matrix
+        .output_rank();
     let n_d = lp.open.matrix.output_rank();
 
     assert_eq!(
@@ -22,8 +30,16 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner.matrix.output_rank();
     let n_b_final = lp.outer.matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups()[0]
+        .profile
+        .inner
+        .matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups()[0]
+        .profile
+        .outer
+        .matrix
+        .output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -63,7 +79,7 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 #[test]
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
-    let precommitted = &mut lp.precommitted_groups[0];
+    let precommitted = &mut lp.groups_mut()[0];
     let outer = &precommitted.profile.outer.matrix;
     precommitted.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
@@ -96,7 +112,7 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
 #[test]
 fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let (mut lp, _) = sample_multi_group_root_params();
-    let precommitted = &mut lp.precommitted_groups[0];
+    let precommitted = &mut lp.groups_mut()[0];
     precommitted
         .profile
         .outer
@@ -335,7 +351,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     use akita_field::Prime128OffsetA7F7;
 
     let (mut lp, batch) = sample_multi_group_root_params();
-    let precommitted = &mut lp.precommitted_groups[0];
+    let precommitted = &mut lp.groups_mut()[0];
     let inner = &precommitted.profile.inner.matrix;
     precommitted.profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
@@ -494,12 +510,14 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
     };
     let (d_a, d_b, d_d, blocks, final_claims) = final_dims;
     let mut lp = address_oracle_group_params(d_a, d_b, d_d, blocks);
-    lp.precommitted_groups = precommitted
-        .iter()
-        .map(|&(a, b, d, blocks, claims)| address_oracle_precommit(a, b, d, blocks, claims))
-        .collect();
+    lp.set_precommitted_groups(
+        precommitted
+            .iter()
+            .map(|&(a, b, d, blocks, claims)| address_oracle_precommit(a, b, d, blocks, claims))
+            .collect(),
+    );
     let precommitted_layouts = lp
-        .precommitted_groups
+        .precommitted_groups()
         .iter()
         .map(|group| group.profile.group)
         .collect::<Vec<_>>();
@@ -514,11 +532,10 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
 #[test]
 fn relation_geometry_supports_mixed_root_opening_methods() {
     let (mut lp, batch) = address_oracle_fixture(2);
-    lp.precommitted_groups[0].opening.opening_method =
-        crate::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-    lp.precommitted_groups[0].opening.fold_challenge_config =
+    lp.groups_mut()[0].opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    lp.groups_mut()[0].opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
 
     let geometry =
@@ -552,7 +569,7 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
 #[test]
 fn relation_geometry_revalidates_frozen_precommitted_profiles() {
     let (mut lp, batch) = address_oracle_fixture(2);
-    lp.precommitted_groups[0]
+    lp.groups_mut()[0]
         .profile
         .outer
         .matrix

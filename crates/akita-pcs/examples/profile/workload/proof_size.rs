@@ -13,7 +13,7 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
         precommitteds: schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
             .map(|group| group.profile)
             .collect(),

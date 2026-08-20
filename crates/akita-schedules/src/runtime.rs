@@ -476,7 +476,7 @@ pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
     successor: Option<&CommittedGroupParams>,
 ) -> Result<usize, AkitaError> {
-    let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+    let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
         return Ok(usize::default());
     };
     let n_prefix = prefix.n_prefix()?;
@@ -666,10 +666,7 @@ pub fn materialize_candidate_schedule(
             .map(|fold| {
                 let params = Arc::unwrap_or_clone(fold.params);
                 FoldParams {
-                    params: CommittedGroupParams {
-                        setup_prefix: params.setup_prefix,
-                        ..params
-                    },
+                    params,
                     input_witness_len: fold.input_witness_len,
                     output_witness_len: fold.output_witness_len,
                 }
@@ -710,7 +707,7 @@ pub fn materialize_candidate_schedule(
     estimate.selected_offload_edges = schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
     estimate.first_direct_setup_field_len = first_direct_setup_field_len;
     Ok(PlannedFoldSchedule { schedule, estimate })
@@ -724,7 +721,7 @@ pub fn first_direct_setup_field_len_for_schedule(
     schedule.validate_structure()?;
 
     for (successor_index, successor) in schedule.recursive_folds.iter().enumerate() {
-        if successor.params.setup_prefix.is_some() {
+        if successor.params.setup_prefix().is_some() {
             continue;
         }
         return if successor_index == 0 {
@@ -757,8 +754,7 @@ fn active_setup_field_len_for_recursive_producer(
 ) -> Result<usize, AkitaError> {
     let incoming_prefix_len = producer
         .params
-        .setup_prefix
-        .as_ref()
+        .setup_prefix()
         .map(|prefix| prefix.setup_natural_len.expect("setup prefix group"));
     let layout =
         akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
@@ -773,7 +769,7 @@ pub fn planned_next_witness_len(
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<Option<usize>, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
+    if !params.precommitted_groups().is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
                 .to_string(),
@@ -788,7 +784,7 @@ pub fn planned_next_witness_len(
     }
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
-    if params.setup_prefix.is_none() {
+    if params.setup_prefix().is_none() {
         return WitnessLayout::try_scalar_live_coeff_len(
             params,
             &opening_batch,

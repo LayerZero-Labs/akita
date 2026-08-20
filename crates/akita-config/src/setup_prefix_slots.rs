@@ -42,7 +42,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         let successor_prefix = schedule
             .recursive_folds
             .get(producer_index)
-            .and_then(|fold| fold.params.setup_prefix.as_ref());
+            .and_then(|fold| fold.params.setup_prefix());
         let Some(slot_id) = successor_prefix else {
             continue;
         };
@@ -52,7 +52,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_len = producer
                 .params
-                .setup_prefix
+                .setup_prefix()
                 .as_ref()
                 .map(|slot| slot.setup_natural_len.expect("setup prefix group"));
             (

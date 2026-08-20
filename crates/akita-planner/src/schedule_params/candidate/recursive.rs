@@ -267,8 +267,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     request.policy,
                     request.fold_level,
                 ),
-                precommitted_groups: Vec::new(),
-                setup_prefix: None,
+                groups: Vec::new(),
             });
         }
         Ok(candidates)
@@ -372,8 +371,8 @@ fn attach_recursive_setup_prefix(
     extension_degree: usize,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {
-    candidate_params.setup_prefix = setup_prefix.cloned();
-    if let Some(prefix) = &candidate_params.setup_prefix {
+    candidate_params.set_setup_prefix(setup_prefix.cloned());
+    if let Some(prefix) = &candidate_params.setup_prefix() {
         let prefix_d_width =
             prefix.d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
         let total_d_width = candidate_params

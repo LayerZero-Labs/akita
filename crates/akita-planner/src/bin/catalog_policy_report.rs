@@ -124,7 +124,13 @@ pub(super) fn catalog_policy_signature(
         )
         .map_err(|error| format!("write catalog policy signature: {error}"))?;
         if level == 0 {
-            for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+            for (index, group) in schedule
+                .root
+                .params
+                .precommitted_groups()
+                .iter()
+                .enumerate()
+            {
                 write!(
                     signature,
                     ";pre{index}={}",
@@ -140,7 +146,7 @@ pub(super) fn catalog_policy_signature(
             }
         } else if let Some(prefix) = schedule.recursive_folds[level - 1]
             .params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
         {
             write!(

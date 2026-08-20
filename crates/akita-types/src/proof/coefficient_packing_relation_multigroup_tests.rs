@@ -15,7 +15,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     );
     let mut params = base.params.clone();
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
-    frozen.precommitted_groups.clear();
+    frozen.groups_mut().clear();
     frozen.inner.digits.log_basis = 9;
     let inner = frozen.inner.matrix;
     frozen.inner.matrix = InnerCommitMatrixParams::new_unchecked(
@@ -38,7 +38,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         outer.ring_dimension(),
     );
     let pre_layout = PolynomialGroupLayout::new(11, 1);
-    params.precommitted_groups = vec![GroupOpenPhaseParams {
+    params.set_precommitted_groups(vec![GroupOpenPhaseParams {
         setup_natural_len: None,
         profile: GroupCommitPhaseParams::from_params_unchecked_for_test(pre_layout, &frozen),
         opening: GroupOpeningPlan {
@@ -50,7 +50,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
             num_digits_open: params.open.digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
         },
-    }];
+    }]);
     let final_layout = PolynomialGroupLayout::new(11, 2);
     let opening_batch = OpeningClaimsLayout::from_root_groups(&[pre_layout], final_layout).unwrap();
     let relation_geometry = RelationWitnessGeometry::for_level(&params, &opening_batch, 2).unwrap();

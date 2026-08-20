@@ -701,7 +701,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     let selected_offload_edges = schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
     tracing::info!(
         label,
@@ -714,7 +714,13 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     let root_current_w_groups = root_current_w_groups(schedule, final_group);
     let root_open = &schedule.root.params.open.matrix;
-    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+    for (index, group) in schedule
+        .root
+        .params
+        .precommitted_groups()
+        .iter()
+        .enumerate()
+    {
         let layout = group.profile.group;
         let witness_field_elements =
             group_field_elements(layout.num_vars(), layout.num_polynomials());
@@ -750,7 +756,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             extension_degree,
         )?
         .emit(label, index + 1, field_bits);
-        if let Some(prefix) = &fold.params.setup_prefix {
+        if let Some(prefix) = &fold.params.setup_prefix() {
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
                 index + 1,
@@ -813,7 +819,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         let setup_prefix = schedule
             .recursive_folds
             .get(level_idx)
-            .and_then(|fold| fold.params.setup_prefix.as_ref());
+            .and_then(|fold| fold.params.setup_prefix());
         let setup_prefix_natural_field_elements = setup_prefix.map_or(0, |prefix| {
             prefix.setup_natural_len.expect("setup prefix group")
         });
@@ -970,7 +976,7 @@ fn root_current_w_groups(schedule: &FoldSchedule, final_group: PolynomialGroupLa
     let mut groups = schedule
         .root
         .params
-        .precommitted_groups
+        .precommitted_groups()
         .iter()
         .enumerate()
         .map(|(index, group)| {

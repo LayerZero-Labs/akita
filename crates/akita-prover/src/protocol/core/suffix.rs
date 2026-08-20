@@ -486,7 +486,7 @@ where
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
     let setup_slot = level_params
-        .setup_prefix
+        .setup_prefix()
         .as_ref()
         .map(|id| {
             prefix_slots

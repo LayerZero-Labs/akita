@@ -67,7 +67,7 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
         let producer_is_offloaded = schedule
             .recursive_folds
             .get(producer_index)
-            .is_some_and(|successor| successor.params.setup_prefix.is_some());
+            .is_some_and(|successor| successor.params.setup_prefix().is_some());
         if producer_is_offloaded {
             continue;
         }
@@ -78,7 +78,7 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_prefix_len = producer
                 .params
-                .setup_prefix
+                .setup_prefix()
                 .as_ref()
                 .and_then(|slot| slot.setup_natural_len);
             let layout = suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
@@ -116,7 +116,7 @@ pub fn accumulate_matrix_field_elements_for_level(
         params.open.matrix.ring_dimension(),
         "opening setup",
     )?;
-    for group in &params.precommitted_groups {
+    for group in params.precommitted_groups() {
         include_matrix_field_elements(
             max_field_elements,
             group.profile.inner.matrix.output_rank(),
@@ -133,7 +133,7 @@ pub fn accumulate_matrix_field_elements_for_level(
         )?;
     }
     accumulate_compression_matrix_field_elements_for_level(params, max_field_elements)?;
-    if let Some(slot) = &params.setup_prefix {
+    if let Some(slot) = &params.setup_prefix() {
         *max_field_elements = (*max_field_elements).max(match slot.slot_id() {
             Some(slot_id) => setup_prefix_slot_field_elements(&slot_id)?,
             None => 0,
@@ -501,11 +501,11 @@ mod tests {
         .expect("prefix compression")
         .max_setup_field_elements()
         .expect("prefix setup");
-        params.setup_prefix = Some(crate::scheduled_setup_prefix(64, prefix_params));
+        params.set_setup_prefix(Some(crate::scheduled_setup_prefix(64, prefix_params)));
 
         let mut without_prefix = 1;
         let mut final_group_only = params.clone();
-        final_group_only.setup_prefix = None;
+        final_group_only.set_setup_prefix(None);
         accumulate_compression_matrix_field_elements_for_level(
             &final_group_only,
             &mut without_prefix,

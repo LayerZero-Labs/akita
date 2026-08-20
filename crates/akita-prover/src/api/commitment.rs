@@ -525,22 +525,25 @@ fn validate_explicit_context(
             params.require_scalar_level("explicit commitment")?;
         }
         PrecommittedGroupContext::WithPrecommittedGroups(precommitteds) => {
-            if params.setup_prefix.is_some() {
+            if params.setup_prefix().is_some() {
                 return Err(AkitaError::InvalidSetup(
                     "explicit grouped root params must not contain a setup-prefix group"
                         .to_string(),
                 ));
             }
             let profiles = precommitteds.as_slice();
-            if params.precommitted_groups.len() != profiles.len() {
+            if params.precommitted_groups().len() != profiles.len() {
                 return Err(AkitaError::InvalidSetup(format!(
                     "explicit grouped root params contain {} precommitted groups, expected {}",
-                    params.precommitted_groups.len(),
+                    params.precommitted_groups().len(),
                     profiles.len(),
                 )));
             }
-            for (index, (group, profile)) in
-                params.precommitted_groups.iter().zip(profiles).enumerate()
+            for (index, (group, profile)) in params
+                .precommitted_groups()
+                .iter()
+                .zip(profiles)
+                .enumerate()
             {
                 if group.profile != *profile {
                     return Err(AkitaError::InvalidSetup(format!(

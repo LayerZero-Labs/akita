@@ -591,8 +591,11 @@ impl GeneratedGroup {
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-            precommitted_groups,
-            setup_prefix,
+            // Canonical order: an incoming prefix leads, then the frozen groups.
+            groups: setup_prefix
+                .into_iter()
+                .chain(precommitted_groups)
+                .collect(),
         };
         Ok(params)
     }
@@ -832,7 +835,7 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix().map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
         let ring_challenge_config = |d| {
@@ -874,7 +877,7 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix().map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         input.commitment.blocks.live_blocks += 1;
         let ring_challenge_config = |d| {

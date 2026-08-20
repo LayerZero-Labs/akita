@@ -75,8 +75,7 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     );
     let prefix = successor
         .params
-        .setup_prefix
-        .as_ref()
+        .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
     assert_eq!(
         prefix.source_encoding(),
@@ -147,7 +146,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             assert_eq!(row.schedule().recursive_folds.len(), 1);
             assert!(row.schedule().recursive_folds[0]
                 .params
-                .setup_prefix
+                .setup_prefix()
                 .is_some());
             assert!(
                 root.open.matrix.input_width()
@@ -169,7 +168,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let mut setup = PackingScheme::setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
                 .params
-                .setup_prefix
+                .setup_prefix()
                 .as_ref()
                 .unwrap()
                 .slot_id()

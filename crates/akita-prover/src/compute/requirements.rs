@@ -51,7 +51,7 @@ impl NttExecutionRequirements {
         let mut requirements = Self::from_prove_schedule(schedule)?;
         let root = &schedule.root.params;
         requirements.add_group_commit(0, root)?;
-        for precommitted in &root.precommitted_groups {
+        for precommitted in root.precommitted_groups() {
             requirements.add_precommitted_commit(0, precommitted)?;
         }
         Ok(requirements)
@@ -69,7 +69,7 @@ impl NttExecutionRequirements {
         let root = &schedule.root.params;
         let root_num_chunks = root.witness_chunk.num_chunks;
         requirements.add_group_relation(0, root, root_num_chunks)?;
-        for precommitted in &root.precommitted_groups {
+        for precommitted in root.precommitted_groups() {
             requirements.add_precommitted_relation(0, precommitted, root_num_chunks)?;
         }
         let root_open_extent = matrix_extent(
@@ -105,7 +105,7 @@ impl NttExecutionRequirements {
             let num_chunks = step.params.witness_chunk.num_chunks;
             requirements.add_group_commit(predecessor_level, &step.params)?;
             requirements.add_group_relation(level, &step.params, num_chunks)?;
-            if let Some(prefix) = &step.params.setup_prefix {
+            if let Some(prefix) = &step.params.setup_prefix() {
                 requirements.add_setup_prefix_commitment(
                     level,
                     &prefix.slot_id().expect("setup prefix group"),
@@ -282,7 +282,7 @@ impl NttExecutionRequirements {
             num_chunks,
             params.inner.matrix.sis_modulus_profile(),
         )?;
-        for precommitted in &params.precommitted_groups {
+        for precommitted in params.precommitted_groups() {
             self.add_precommitted_relation(level, precommitted, num_chunks)?;
         }
         Ok(())

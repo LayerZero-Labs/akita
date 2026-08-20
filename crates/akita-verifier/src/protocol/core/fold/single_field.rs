@@ -101,7 +101,7 @@ where
                         "suffix group point width mismatch: group={group_index}, \
                          groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
                         opening_batch.num_groups(),
-                        lp.setup_prefix.is_some(),
+                        lp.setup_prefix().is_some(),
                         group_protocol_point.len()
                     )));
                 }
