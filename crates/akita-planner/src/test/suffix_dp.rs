@@ -1,4 +1,4 @@
-use super::{offloaded_witness_contracts, root_witness_contracts};
+use super::offloaded_witness_contracts;
 use std::collections::VecDeque;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
@@ -226,21 +226,4 @@ fn offloaded_contraction_prices_changed_digit_basis() {
 fn offloaded_contraction_includes_full_field_setup_prefix() {
     assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
     assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
-}
-
-#[test]
-fn root_contraction_hint_handles_usize_products() {
-    let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    let params = akita_types::CommittedGroupParams::params_only(
-        akita_types::SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        4,
-        3,
-        2,
-        akita_challenges::SparseChallengeConfig::pm1_only(3),
-    );
-
-    assert!(root_witness_contracts(&policy, usize::MAX, &params, 1));
-    assert!(!root_witness_contracts(&policy, 1, &params, usize::MAX));
 }

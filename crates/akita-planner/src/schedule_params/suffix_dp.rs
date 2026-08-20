@@ -130,7 +130,6 @@ type LevelCandidate = (
 );
 
 struct GuidedLevelCandidate {
-    contractive_root: bool,
     lower_bound: CompleteObjectiveBound,
     natural_len: Option<usize>,
     candidate: LevelCandidate,
@@ -314,17 +313,6 @@ fn direct_edge_lower_bound(
     ))
 }
 
-fn root_witness_contracts(
-    policy: &PlannerPolicy,
-    input_witness_len: usize,
-    params: &CommittedGroupParams,
-    output_witness_len: usize,
-) -> bool {
-    let input_bits = (input_witness_len as u128) * u128::from(policy.decomposition.field_bits());
-    let output_bits = (output_witness_len as u128) * u128::from(params.log_basis_open);
-    output_bits < input_bits
-}
-
 fn complete_root_bound_is_strictly_worse(
     policy: &PlannerPolicy,
     lower_bound: CompleteObjectiveBound,
@@ -334,12 +322,12 @@ fn complete_root_bound_is_strictly_worse(
         crate::SelectionPolicyId::MinEstimatedProofPayload => frontier
             .by_parent_cost
             .values()
-            .flat_map(frontier::ObjectiveChoices::payload_candidates)
+            .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => frontier
             .by_parent_cost
             .values()
-            .flat_map(frontier::ObjectiveChoices::setup_candidates)
+            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
     }
 }
@@ -382,8 +370,6 @@ fn candidate_traversal(
     let mut guided = candidates
         .into_iter()
         .map(|candidate| {
-            let contracts = matches!(guide_scope, Some(GuideScope::CompleteRoot))
-                && root_witness_contracts(policy, current_witness_len, &candidate.0, candidate.1);
             let natural_len = (policy.selection_policy
                 == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload)
                 .then(|| active_setup_field_len(&candidate.0, opening_layout))
@@ -396,7 +382,6 @@ fn candidate_traversal(
                 natural_len.unwrap_or_default(),
             )?;
             Ok(GuidedLevelCandidate {
-                contractive_root: contracts,
                 lower_bound,
                 natural_len,
                 candidate,
@@ -405,13 +390,11 @@ fn candidate_traversal(
         .collect::<Result<Vec<_>, AkitaError>>()?;
     guided.sort_by_cached_key(
         |GuidedLevelCandidate {
-             contractive_root,
              lower_bound,
              candidate: (params, next_witness_len, _, _),
              ..
          }| {
             (
-                !*contractive_root,
                 *lower_bound,
                 *next_witness_len,
                 params.canonical_descriptor_bytes(),
@@ -628,7 +611,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
     let mut payload_only = BTreeMap::new();
-    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::FrozenObjectiveChoices> =
+    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices> =
         BTreeMap::new();
     let candidate_domain = candidates::CandidateDomain::prepare(ctx, state)?;
     let root_level_key = candidate_domain.root_level_key;
@@ -872,7 +855,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     }
     for (key, choices) in frontiers.projected.by_parent_cost {
         if retains_setup_projection {
-            setup_and_payload.insert(key, choices.into_frozen());
+            setup_and_payload.insert(key, choices.into_objective_choices());
         } else {
             let candidates = choices.into_payload_candidates();
             if !candidates.is_empty() {

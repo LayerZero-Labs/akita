@@ -12,7 +12,7 @@ use super::*;
 ///   fixed the setup-size objective.
 pub(crate) struct SuffixResult {
     pub(super) payload_only: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
-    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::FrozenObjectiveChoices>,
+    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices>,
 }
 
 impl SuffixResult {
@@ -20,14 +20,14 @@ impl SuffixResult {
         self.payload_only.values().flatten().chain(
             self.setup_and_payload
                 .values()
-                .flat_map(frontier::FrozenObjectiveChoices::payload_candidates),
+                .flat_map(frontier::ObjectiveChoices::payload_candidates),
         )
     }
 
     pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup_and_payload
             .values()
-            .flat_map(frontier::FrozenObjectiveChoices::setup_candidates)
+            .flat_map(frontier::ObjectiveChoices::setup_candidates)
     }
 }
 
@@ -103,7 +103,7 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-// Frozen frontier entries omit construction-only descriptors. The larger
+// Completed frontier entries omit construction-only descriptors. The larger
 // quota stayed within the former peak for the measured high pressure row.
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary

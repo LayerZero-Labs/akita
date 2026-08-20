@@ -144,21 +144,21 @@ impl ParentAdmissionClass {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ObjectiveChoices {
+pub(crate) struct ProjectedObjectiveChoices {
     setup: Vec<ProjectedCandidate>,
     payload: Vec<ProjectedCandidate>,
 }
 
-/// Completed frontier choices stripped of construction-only dominance data.
+/// Completed frontier choices stored in the exact suffix memo.
 ///
 /// Parents consume only the schedules. Dropping the cached descriptors and
 /// descriptor contexts here keeps the exact suffix memo compact.
-pub(super) struct FrozenObjectiveChoices {
+pub(super) struct ObjectiveChoices {
     setup: Vec<ScheduleCandidate>,
     payload: Vec<ScheduleCandidate>,
 }
 
-impl FrozenObjectiveChoices {
+impl ObjectiveChoices {
     pub(super) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup.iter()
     }
@@ -168,7 +168,7 @@ impl FrozenObjectiveChoices {
     }
 }
 
-impl ObjectiveChoices {
+impl ProjectedObjectiveChoices {
     pub(super) fn candidate_count(&self) -> usize {
         self.setup.len().saturating_add(self.payload.len())
     }
@@ -188,8 +188,8 @@ impl ObjectiveChoices {
             .collect()
     }
 
-    pub(super) fn into_frozen(self) -> FrozenObjectiveChoices {
-        FrozenObjectiveChoices {
+    pub(super) fn into_objective_choices(self) -> ObjectiveChoices {
+        ObjectiveChoices {
             setup: self
                 .setup
                 .into_iter()
@@ -220,14 +220,14 @@ impl ObjectiveChoices {
 
 #[derive(Default)]
 pub(super) struct ProjectedFrontier {
-    pub(super) by_parent_cost: BTreeMap<ParentObservableKey, ObjectiveChoices>,
+    pub(super) by_parent_cost: BTreeMap<ParentObservableKey, ProjectedObjectiveChoices>,
 }
 
 impl ProjectedFrontier {
     pub(super) fn candidate_count(&self) -> usize {
         self.by_parent_cost
             .values()
-            .map(ObjectiveChoices::candidate_count)
+            .map(ProjectedObjectiveChoices::candidate_count)
             .sum()
     }
 
@@ -345,7 +345,7 @@ impl ProjectedFrontier {
 fn recursive_direct_bound_is_dominated(
     candidate_admission: ParentAdmissionClass,
     lower_bound: CompleteObjectiveBound,
-    incumbents: &ObjectiveChoices,
+    incumbents: &ProjectedObjectiveChoices,
 ) -> bool {
     Projection::ALL.into_iter().all(|projection| {
         projection_bound_is_dominated(
