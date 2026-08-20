@@ -28,7 +28,7 @@ pub struct Fp64<const P: u64>(pub(crate) u64);
 
 impl<const P: u64> Fp64<P> {
     /// Fold point: smallest `k` such that `P ≤ 2^k`.
-    const BITS: u32 = 64 - P.leading_zeros();
+    pub(crate) const BITS: u32 = 64 - P.leading_zeros();
 
     /// Offset `c = 2^k − P`.
     pub const C: u64 = {
@@ -74,14 +74,14 @@ impl<const P: u64> Fp64<P> {
     };
 
     /// Mask for extracting the low `BITS` bits from a u128.
-    const MASK: u128 = if Self::BITS == 64 {
+    pub(crate) const MASK: u128 = if Self::BITS == 64 {
         u64::MAX as u128
     } else {
         (1u128 << Self::BITS) - 1
     };
 
     /// u64-width mask (only valid when BITS < 64).
-    const MASK64: u64 = if Self::BITS < 64 {
+    pub(crate) const MASK64: u64 = if Self::BITS < 64 {
         (1u64 << Self::BITS) - 1
     } else {
         u64::MAX
@@ -89,7 +89,14 @@ impl<const P: u64> Fp64<P> {
 
     /// Whether Solinas folding of a multiplication product can stay
     /// entirely in u64.  True when BITS < 64 and C·2^BITS < 2^64.
-    const FOLD_IN_U64: bool = Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
+    pub(crate) const FOLD_IN_U64: bool =
+        Self::BITS < 64 && (Self::C as u128) < (1u128 << (64 - Self::BITS));
+
+    /// Whether two Solinas folds and one final subtraction can reduce a sum
+    /// of three multiplication products. This is the exact bound needed by
+    /// the fused `FpExt2` kernel for non-residue two.
+    pub(crate) const EXT2_TWO_FUSION_SAFE: bool =
+        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
 
     /// u64 multiply by C, split into u32-wide halves so LLVM emits
     /// `umull` (32×32→64) instead of promoting to u128.
@@ -199,38 +206,11 @@ impl<const P: u64> Fp64<P> {
         reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
     }
 
-    /// Two-fold Solinas reduction for multiplication products.
-    ///
-    /// Input must be < 2^{2·BITS} (guaranteed for `a*b` where `a,b < P`).
-    /// Exactly 2 folds + conditional subtract, no loop.
-    ///
-    /// When `FOLD_IN_U64` is true the entire reduction stays in u64,
-    /// avoiding expensive u128 mask/shift on sub-word primes.
-    #[inline(always)]
-    fn reduce_product(x: u128) -> u64 {
-        if Self::FOLD_IN_U64 {
-            let lo = x as u64;
-            let hi = (x >> 64) as u64;
-            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
-            let f1 = (lo & Self::MASK64) + Self::mul_c_narrow(high);
-            let f2 = (f1 & Self::MASK64) + Self::mul_c_narrow(f1 >> Self::BITS);
-            let reduced = f2.wrapping_sub(P);
-            let borrow = reduced >> 63;
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
-        } else {
-            let f1 = (x & Self::MASK) + Self::mul_c((x >> Self::BITS) as u64);
-            let f2 = (f1 & Self::MASK) + Self::mul_c((f1 >> Self::BITS) as u64);
-            let reduced = f2.wrapping_sub(P as u128);
-            let borrow = reduced >> 127;
-            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
-        }
-    }
-
     /// Reduce a multiplication product supplied as exact low and high words.
     /// This avoids wide shifts and masks for sub-word fields even when the
     /// first Solinas fold itself needs two words.
     #[inline(always)]
-    fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
+    pub(crate) fn reduce_product_wide(lo: u64, hi: u64) -> u64 {
         if Self::FOLD_IN_U64 {
             let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
             let f1 = (lo & Self::MASK64) + Self::mul_c_narrow(high);
@@ -239,18 +219,40 @@ impl<const P: u64> Fp64<P> {
             let borrow = reduced >> 63;
             reduced.wrapping_add(borrow.wrapping_neg() & P)
         } else if Self::BITS < 64 {
-            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
-            let c_high = Self::mul_c(high);
-            let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
-            let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
-            let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
-            let fold2 = (fold1_lo & Self::MASK64) + Self::mul_c_narrow(fold1_high);
-            let reduced = fold2.wrapping_sub(P);
-            let borrow = u64::from(fold2 < P);
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
+            Self::reduce_sub_word_wide(lo, hi, 0)
         } else {
-            Self::reduce_product(lo as u128 | ((hi as u128) << 64))
+            let x = lo as u128 | ((hi as u128) << 64);
+            let f1 = (x & Self::MASK) + Self::mul_c((x >> Self::BITS) as u64);
+            let f2 = (f1 & Self::MASK) + Self::mul_c((f1 >> Self::BITS) as u64);
+            let reduced = f2.wrapping_sub(P as u128);
+            let borrow = reduced >> 127;
+            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
         }
+    }
+
+    /// Reduce a sum of up to three products for the fused `FpExt2` kernel.
+    /// The caller must establish [`Self::EXT2_TWO_FUSION_SAFE`].
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[inline(always)]
+    pub(crate) fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
+        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
+        Self::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
+    }
+
+    /// Two-fold sub-word reduction. `high_overflow` carries the portion of
+    /// `x >> BITS` above 64 bits; it is zero for one product and may be
+    /// nonzero for the fused sum of three products.
+    #[inline(always)]
+    fn reduce_sub_word_wide(lo: u64, hi: u64, high_overflow: u64) -> u64 {
+        let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
+        let c_high = Self::mul_c(high) + ((Self::C as u128 * high_overflow as u128) << 64);
+        let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
+        let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
+        let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
+        let fold2 = (fold1_lo & Self::MASK64) + Self::mul_c_narrow(fold1_high);
+        let reduced = fold2.wrapping_sub(P);
+        let borrow = u64::from(fold2 < P);
+        reduced.wrapping_add(borrow.wrapping_neg() & P)
     }
 
     #[inline(always)]

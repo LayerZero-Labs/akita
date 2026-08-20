@@ -35,7 +35,7 @@ type WideSubWordFp64 = Fp64<{ (1u64 << 63) - 259 }>;
 type WideSubWordFp64Ext2 = FpExt2<WideSubWordFp64, TwoNr>;
 type PackedWideSubWordFp64Ext2 =
     PackedFpExt2<WideSubWordFp64, TwoNr, <WideSubWordFp64 as HasPacking>::Packing>;
-type LargeOffsetFp64 = Fp64<{ (1u64 << 63) - 1_500_000_001 }>;
+type LargeOffsetFp64 = Fp64<{ (1u64 << 63) - 1_500_000_051 }>;
 type LargeOffsetFp64Ext2 = FpExt2<LargeOffsetFp64, TwoNr>;
 type PackedLargeOffsetFp64Ext2 =
     PackedFpExt2<LargeOffsetFp64, TwoNr, <LargeOffsetFp64 as HasPacking>::Packing>;
@@ -169,7 +169,7 @@ fn packed_fp_ext2_mul_wide_sub_word_fused() {
 }
 
 /// The AVX second fold multiplies only the low 32 bits of `fold1_high`.
-/// This valid large offset makes `fold1_high = 4_500_000_002` for the first
+/// This valid prime modulus makes `fold1_high = 4_500_000_152` for the first
 /// coefficient of `(P - 1, P - 1)^2`, so AVX must use the generic path.
 #[test]
 fn packed_fp_ext2_large_offset_second_fold_matches_scalar() {

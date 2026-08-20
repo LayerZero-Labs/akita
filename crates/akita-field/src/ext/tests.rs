@@ -468,7 +468,7 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
 
     let mut rng = StdRng::seed_from_u64(0xF64A);
     for _ in 0..256 {
-        // TwoNr (IS_NEG_ONE = false): c0 = p00 + 2*p11.
+        // TwoNr: c0 = p00 + 2*p11.
         let a = Ext2::<Prime64Offset59>::random(&mut rng);
         let b = Ext2::<Prime64Offset59>::random(&mut rng);
         assert_eq!(
@@ -477,7 +477,7 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
             "TwoNr accum mismatch a={a:?} b={b:?}"
         );
 
-        // NegOneNr (IS_NEG_ONE = true): c0 = p00 + p^2 - p11.
+        // NegOneNr: c0 = p00 + p^2 - p11.
         let c = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
         let d = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
         assert_eq!(

@@ -1,12 +1,27 @@
 use super::*;
 
+/// Arithmetic form of an `FpExt2` non-residue.
+///
+/// Configurations must use `Generic` unless [`FpExt2Config::non_residue`]
+/// returns exactly `-1` or `2`. Packed and delayed-reduction kernels use this
+/// value to select formulas that are valid only for those two constants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpExt2NonResidueKind {
+    /// Any non-residue without a dedicated arithmetic formula.
+    Generic,
+    /// The non-residue is exactly `-1`.
+    NegOne,
+    /// The non-residue is exactly `2`.
+    Two,
+}
+
 /// `FpExt2Config` with non-residue = -1.
 ///
 /// Valid when `p ≡ 3 (mod 4)`, i.e. -1 is a quadratic non-residue.
 pub struct NegOneNr;
 
 impl<F: FieldCore> FpExt2Config<F> for NegOneNr {
-    const IS_NEG_ONE: bool = true;
+    const NON_RESIDUE_KIND: FpExt2NonResidueKind = FpExt2NonResidueKind::NegOne;
 
     fn non_residue() -> F {
         -F::one()
@@ -21,7 +36,7 @@ impl<F: FieldCore> FpExt2Config<F> for NegOneNr {
 pub struct TwoNr;
 
 impl<F: FieldCore + FromPrimitiveInt> FpExt2Config<F> for TwoNr {
-    const IS_TWO: bool = true;
+    const NON_RESIDUE_KIND: FpExt2NonResidueKind = FpExt2NonResidueKind::Two;
 
     fn non_residue() -> F {
         F::from_u64(2)
@@ -39,17 +54,12 @@ impl<F: FieldCore + FromPrimitiveInt> FpExt2Config<F> for TwoNr {
 
 /// Parameters for an `FpExt2` quadratic extension over base field `F`.
 pub trait FpExt2Config<F: FieldCore> {
-    /// Whether the non-residue is -1.
+    /// Arithmetic form of the non-residue.
     ///
-    /// When `true`, multiplication by the non-residue is a free negation and
-    /// the Karatsuba/squaring routines can avoid a base-field multiply.
-    const IS_NEG_ONE: bool = false;
-
-    /// Whether the non-residue is exactly 2.
-    ///
-    /// Sub-word `Fp64` packings use this to fuse extension multiplication
-    /// into four raw products and two reductions.
-    const IS_TWO: bool = false;
+    /// The default keeps the generic formula. Implementations may select a
+    /// specialized kind only when [`Self::non_residue`] returns that exact
+    /// value.
+    const NON_RESIDUE_KIND: FpExt2NonResidueKind = FpExt2NonResidueKind::Generic;
 
     /// Non-residue `NR` such that `u^2 = NR`.
     fn non_residue() -> F;
@@ -61,7 +71,7 @@ pub trait FpExt2Config<F: FieldCore> {
         A: ExtensionCoeff<F>,
         B: FnOnce(F) -> A,
     {
-        if Self::IS_NEG_ONE {
+        if Self::NON_RESIDUE_KIND == FpExt2NonResidueKind::NegOne {
             from_base(F::zero()) - x
         } else {
             from_base(Self::non_residue()) * x
@@ -142,7 +152,7 @@ impl<F: FieldCore, C: FpExt2Config<F>> FpExt2<F, C> {
 
     /// Multiply a base-field element by the non-residue.
     ///
-    /// When `IS_NEG_ONE` is true this is just a negation (no multiply).
+    /// For [`FpExt2NonResidueKind::NegOne`] this is just a negation.
     #[inline(always)]
     fn mul_nr(x: F) -> F {
         C::mul_non_residue(x, |base| base)
@@ -448,7 +458,7 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasOptimizedFold for FpExt2<Fp64<P>
     /// For `r = r0 + r1·u` and `u² = NR`, multiplying `(a0, a1)` by `r` yields
     /// `(r0·a0 + NR·r1·a1, r1·a0 + r0·a1)`, i.e. the matrix
     /// `[[r0, NR·r1], [r1, r0]]`. `NR·r1` is materialized once via `mul_nr`
-    /// (a free negation for `IS_NEG_ONE`, a doubling for the `NR = 2` preset).
+    /// (a free negation for `-1`, or a doubling for `2`).
     #[inline]
     fn precompute_fold(r: Self) -> FoldMatrixFp64 {
         let r0 = r.coeffs[0];
@@ -496,37 +506,32 @@ fn fp64_accum_limbs(lo128: u128, hi_carry: u128) -> [u128; 2] {
 /// Widening `FpExt2<Fp64<P>, C>` multiplication with delayed reduction.
 ///
 /// Each coefficient is a combination of base products that can exceed 128 bits
-/// — `c0` reaches `p00 + p^2` (IS_NEG_ONE) or `p00 + 2*p11` (just under 2^130),
+/// — `c0` reaches `p00 + p^2` for `-1`, or `p00 + 2*p11` (just under 2^130),
 /// and `c1 = p01 + p10` reaches ~2^129. Forming them in a single `u128` would
 /// drop the carry into bit 128 (wrap mod 2^128), which is *not* congruent mod
 /// `p` and corrupts the delayed sum. We instead track the carry explicitly and
 /// store base-2^64 limbs via [`fp64_accum_limbs`], so summing a batch and
-/// reducing once is exact. For `IS_NEG_ONE` configs the `p^2` bias keeps `c0`
+/// reducing once is exact. For non-residue `-1`, the `p^2` bias keeps `c0`
 /// non-negative (and `p^2 == 0 (mod p)`, so it is invisible after reduction).
 #[inline(always)]
 pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     a: [Fp64<P>; 2],
     b: [Fp64<P>; 2],
 ) -> FpExt2Fp64ProductAccum {
-    if !C::IS_NEG_ONE && !C::IS_TWO {
-        // An arbitrary non-residue can make NR*p11 wider than the two-limb
-        // coefficient accumulator. Reduce this uncommon configuration first,
-        // then lift the canonical coordinates into the exact split-limb sum.
-        let product = FpExt2::<Fp64<P>, C>::new(a[0], a[1]) * FpExt2::new(b[0], b[1]);
-        return FpExt2Fp64ProductAccum([
-            product.coeffs[0].0 as u128,
-            0,
-            product.coeffs[1].0 as u128,
-            0,
-        ]);
-    }
+    let subtract_p11 = match C::NON_RESIDUE_KIND {
+        FpExt2NonResidueKind::Generic => {
+            return fp_ext2_reduced_product_accum::<P, C>(a, b);
+        }
+        FpExt2NonResidueKind::NegOne => true,
+        FpExt2NonResidueKind::Two => false,
+    };
 
     let p00: u128 = a[0].mul_wide(b[0]);
     let p11 = a[1].mul_wide(b[1]);
     let p01 = a[0].mul_wide(b[1]);
     let p10 = a[1].mul_wide(b[0]);
 
-    let [c0_lo, c0_hi] = if C::IS_NEG_ONE {
+    let [c0_lo, c0_hi] = if subtract_p11 {
         // c0 = p00 + p^2 - p11, non-negative and < 2^129.
         let modulus_sq = (P as u128) * (P as u128);
         let (sum, carry_add) = p00.overflowing_add(modulus_sq);
@@ -535,7 +540,6 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
         let hi_carry = (carry_add as u128) - (borrow as u128);
         fp64_accum_limbs(diff, hi_carry)
     } else {
-        debug_assert!(C::IS_TWO);
         // c0 = p00 + 2*p11, < 3*p^2 < 2^130 (carry in {0, 1, 2}).
         let (sum1, carry1) = p00.overflowing_add(p11);
         let (sum2, carry2) = sum1.overflowing_add(p11);
@@ -547,6 +551,23 @@ pub(crate) fn fp_ext2_mul_to_accum_fp64<const P: u64, C: FpExt2Config<Fp64<P>>>(
     let [c1_lo, c1_hi] = fp64_accum_limbs(c1_sum, c1_carry as u128);
 
     FpExt2Fp64ProductAccum([c0_lo, c0_hi, c1_lo, c1_hi])
+}
+
+#[inline(always)]
+fn fp_ext2_reduced_product_accum<const P: u64, C: FpExt2Config<Fp64<P>>>(
+    a: [Fp64<P>; 2],
+    b: [Fp64<P>; 2],
+) -> FpExt2Fp64ProductAccum {
+    // An arbitrary non-residue can make NR*p11 wider than the two-limb
+    // coefficient accumulator. Reduce this uncommon configuration first,
+    // then lift the canonical coordinates into the exact split-limb sum.
+    let product = FpExt2::<Fp64<P>, C>::new(a[0], a[1]) * FpExt2::new(b[0], b[1]);
+    FpExt2Fp64ProductAccum([
+        product.coeffs[0].0 as u128,
+        0,
+        product.coeffs[1].0 as u128,
+        0,
+    ])
 }
 
 impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>, C> {

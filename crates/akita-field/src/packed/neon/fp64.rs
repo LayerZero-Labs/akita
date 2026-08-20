@@ -9,81 +9,6 @@ pub struct PackedFp64Neon<const P: u64> {
     vals: [u64; 2],
 }
 
-impl<const P: u64> PackedFp64Neon<P> {
-    const BITS: u32 = 64 - P.leading_zeros();
-
-    const C_LO: u64 = {
-        let c = if Self::BITS == 64 {
-            0u64.wrapping_sub(P)
-        } else {
-            (1u64 << Self::BITS) - P
-        };
-        assert!(P != 0, "modulus must be nonzero");
-        assert!(P & 1 == 1, "modulus must be odd");
-        c
-    };
-
-    const MASK64: u64 = if Self::BITS < 64 {
-        (1u64 << Self::BITS) - 1
-    } else {
-        u64::MAX
-    };
-
-    const MASK_U128: u128 = if Self::BITS == 64 {
-        u64::MAX as u128
-    } else {
-        (1u128 << Self::BITS) - 1
-    };
-
-    const FOLD_IN_U64: bool =
-        Self::BITS < 64 && (Self::C_LO as u128) < (1u128 << (64 - Self::BITS));
-
-    /// Whether a coefficient containing three raw products is reduced to a
-    /// canonical value by the same two-fold reducer. Sub-word storage ensures
-    /// the three-product sum itself fits in `u128`; this bound ensures one
-    /// final conditional subtraction is sufficient after the folds.
-    const FUSE_EXT2_TWO_NR: bool =
-        Self::BITS < 64 && 3 * (Self::C_LO as u128) * (Self::C_LO as u128 + 1) < P as u128;
-
-    #[inline(always)]
-    fn mul_c_narrow(x: u64) -> u64 {
-        Self::C_LO.wrapping_mul(x)
-    }
-
-    #[inline(always)]
-    fn reduce_product(lo: u64, hi: u64) -> u64 {
-        if Self::FOLD_IN_U64 {
-            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
-            let f1 = (lo & Self::MASK64).wrapping_add(Self::mul_c_narrow(high));
-            let f2 = (f1 & Self::MASK64).wrapping_add(Self::mul_c_narrow(f1 >> Self::BITS));
-            let reduced = f2.wrapping_sub(P);
-            let borrow = reduced >> 63;
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
-        } else if Self::BITS < 64 {
-            let high = (lo >> Self::BITS) | (hi << (64 - Self::BITS));
-            let high_overflow = hi >> Self::BITS;
-            let c_high = (Self::C_LO as u128) * (high as u128)
-                + (((Self::C_LO * high_overflow) as u128) << 64);
-            let (fold1_lo, carry) = (lo & Self::MASK64).overflowing_add(c_high as u64);
-            let fold1_hi = ((c_high >> 64) as u64) + u64::from(carry);
-            let fold1_high = (fold1_lo >> Self::BITS) | (fold1_hi << (64 - Self::BITS));
-            let fold2 = (fold1_lo & Self::MASK64) + Self::mul_c_narrow(fold1_high);
-            let reduced = fold2.wrapping_sub(P);
-            let borrow = u64::from(fold2 < P);
-            reduced.wrapping_add(borrow.wrapping_neg() & P)
-        } else {
-            let x = lo as u128 | ((hi as u128) << 64);
-            let f1 =
-                (x & Self::MASK_U128) + (Self::C_LO as u128) * ((x >> Self::BITS) as u64 as u128);
-            let f2 =
-                (f1 & Self::MASK_U128) + (Self::C_LO as u128) * ((f1 >> Self::BITS) as u64 as u128);
-            let reduced = f2.wrapping_sub(P as u128);
-            let borrow = reduced >> 127;
-            reduced.wrapping_add(borrow.wrapping_neg() & (P as u128)) as u64
-        }
-    }
-}
-
 impl<const P: u64> Default for PackedFp64Neon<P> {
     #[inline]
     fn default() -> Self {
@@ -114,10 +39,10 @@ impl<const P: u64> Add for PackedFp64Neon<P> {
         let b = to_vec(rhs.vals);
         let result = unsafe {
             let p = vdupq_n_u64(P);
-            if Self::BITS == 64 {
+            if Fp64::<P>::BITS == 64 {
                 let s = vaddq_u64(a, b);
                 let overflow = vcltq_u64(s, a);
-                let folded = vaddq_u64(s, vandq_u64(overflow, vdupq_n_u64(Self::C_LO)));
+                let folded = vaddq_u64(s, vandq_u64(overflow, vdupq_n_u64(Fp64::<P>::C)));
                 let reduced = vsubq_u64(folded, p);
                 let borrow = vcltq_u64(folded, p);
                 vbslq_u64(borrow, folded, reduced)
@@ -144,7 +69,7 @@ impl<const P: u64> Sub for PackedFp64Neon<P> {
         let result = unsafe {
             let d = vsubq_u64(a, b);
             let p = vdupq_n_u64(P);
-            if Self::BITS < 64 {
+            if Fp64::<P>::BITS < 64 {
                 let underflow = vcltq_s64(vreinterpretq_s64_u64(d), vdupq_n_s64(0));
                 vbslq_u64(underflow, vaddq_u64(d, p), d)
             } else {
@@ -164,8 +89,8 @@ impl<const P: u64> Mul for PackedFp64Neon<P> {
     fn mul(self, rhs: Self) -> Self {
         let x0 = (self.vals[0] as u128) * (rhs.vals[0] as u128);
         let x1 = (self.vals[1] as u128) * (rhs.vals[1] as u128);
-        let r0 = Self::reduce_product(x0 as u64, (x0 >> 64) as u64);
-        let r1 = Self::reduce_product(x1 as u64, (x1 >> 64) as u64);
+        let r0 = Fp64::<P>::reduce_product_wide(x0 as u64, (x0 >> 64) as u64);
+        let r1 = Fp64::<P>::reduce_product_wide(x1 as u64, (x1 >> 64) as u64);
         Self { vals: [r0, r1] }
     }
 }
@@ -225,7 +150,7 @@ impl<const P: u64> PackedField for PackedFp64Neon<P> {
     where
         C: FpExt2Config<Self::Scalar>,
     {
-        if C::IS_TWO && Self::FUSE_EXT2_TWO_NR {
+        if C::NON_RESIDUE_KIND == FpExt2NonResidueKind::Two && Fp64::<P>::EXT2_TWO_FUSION_SAFE {
             let mut c0 = [0; 2];
             let mut c1 = [0; 2];
             for lane in 0..2 {
@@ -235,8 +160,8 @@ impl<const P: u64> PackedField for PackedFp64Neon<P> {
                 let p10 = (a1.vals[lane] as u128) * (b0.vals[lane] as u128);
                 let z0 = p00 + p11 + p11;
                 let z1 = p01 + p10;
-                c0[lane] = Self::reduce_product(z0 as u64, (z0 >> 64) as u64);
-                c1[lane] = Self::reduce_product(z1 as u64, (z1 >> 64) as u64);
+                c0[lane] = Fp64::<P>::reduce_three_product_sum(z0 as u64, (z0 >> 64) as u64);
+                c1[lane] = Fp64::<P>::reduce_three_product_sum(z1 as u64, (z1 >> 64) as u64);
             }
             return (Self { vals: c0 }, Self { vals: c1 });
         }

@@ -9,33 +9,6 @@ pub(crate) const FP64_WIDTH: usize = 8;
 pub struct PackedFp64Avx512<const P: u64>(pub [Fp64<P>; FP64_WIDTH]);
 
 impl<const P: u64> PackedFp64Avx512<P> {
-    const BITS: u32 = 64 - P.leading_zeros();
-
-    const C_LO: u64 = {
-        let c = if Self::BITS == 64 {
-            0u64.wrapping_sub(P)
-        } else {
-            (1u64 << Self::BITS) - P
-        };
-        assert!(P != 0, "modulus must be nonzero");
-        assert!(P & 1 == 1, "modulus must be odd");
-        c
-    };
-
-    const MASK64: u64 = if Self::BITS < 64 {
-        (1u64 << Self::BITS) - 1
-    } else {
-        u64::MAX
-    };
-
-    /// Whether both Solinas folds are provably contained in one `u64` lane.
-    const FOLD_IN_U64: bool =
-        Self::BITS < 64 && (Self::C_LO as u128) < (1u128 << (64 - Self::BITS));
-
-    const FUSE_EXT2_TWO_NR: bool = Self::BITS < 64
-        && 3 * (Self::C_LO as u128) <= u32::MAX as u128
-        && 3 * (Self::C_LO as u128) * (Self::C_LO as u128 + 1) < P as u128;
-
     #[inline(always)]
     fn to_vec(self) -> __m512i {
         unsafe { transmute(self) }
@@ -65,8 +38,8 @@ impl<const P: u64> PackedFp64Avx512<P> {
     /// Given (hi, lo) = 128-bit product, computes result ≡ (hi*2^64 + lo) mod p.
     #[inline]
     unsafe fn reduce128_vec(hi: __m512i, lo: __m512i) -> __m512i {
-        if Self::BITS < 64 {
-            if Self::FOLD_IN_U64 {
+        if Fp64::<P>::BITS < 64 {
+            if Fp64::<P>::FOLD_IN_U64 {
                 Self::reduce128_sub_word_narrow(hi, lo)
             } else {
                 Self::reduce128_sub_word_wide(hi, lo)
@@ -79,11 +52,11 @@ impl<const P: u64> PackedFp64Avx512<P> {
     /// Reduction for sub-word fields whose two folds fit in one `u64` lane.
     #[inline]
     unsafe fn reduce128_sub_word_narrow(hi: __m512i, lo: __m512i) -> __m512i {
-        let mask_k = _mm512_set1_epi64(Self::MASK64 as i64);
-        let c_vec = _mm512_set1_epi64(Self::C_LO as i64);
+        let mask_k = _mm512_set1_epi64(Fp64::<P>::MASK64 as i64);
+        let c_vec = _mm512_set1_epi64(Fp64::<P>::C as i64);
         let p_vec = _mm512_set1_epi64(P as i64);
-        let shift_k = _mm_set_epi64x(0, Self::BITS as i64);
-        let shift_64mk = _mm_set_epi64x(0, (64 - Self::BITS) as i64);
+        let shift_k = _mm_set_epi64x(0, Fp64::<P>::BITS as i64);
+        let shift_64mk = _mm_set_epi64x(0, (64 - Fp64::<P>::BITS) as i64);
 
         let lo_k = _mm512_and_si512(lo, mask_k);
         let lo_upper = _mm512_srl_epi64(lo, shift_k);
@@ -113,12 +86,12 @@ impl<const P: u64> PackedFp64Avx512<P> {
     /// high halves, then the carry is included in the second Solinas fold.
     #[inline]
     unsafe fn reduce128_sub_word_wide(hi: __m512i, lo: __m512i) -> __m512i {
-        let mask_k = _mm512_set1_epi64(Self::MASK64 as i64);
-        let c_vec = _mm512_set1_epi64(Self::C_LO as i64);
+        let mask_k = _mm512_set1_epi64(Fp64::<P>::MASK64 as i64);
+        let c_vec = _mm512_set1_epi64(Fp64::<P>::C as i64);
         let p_vec = _mm512_set1_epi64(P as i64);
         let one = _mm512_set1_epi64(1);
-        let shift_k = _mm_set_epi64x(0, Self::BITS as i64);
-        let shift_64mk = _mm_set_epi64x(0, (64 - Self::BITS) as i64);
+        let shift_k = _mm_set_epi64x(0, Fp64::<P>::BITS as i64);
+        let shift_64mk = _mm_set_epi64x(0, (64 - Fp64::<P>::BITS) as i64);
 
         let lo_k = _mm512_and_si512(lo, mask_k);
         let lo_upper = _mm512_srl_epi64(lo, shift_k);
@@ -164,7 +137,7 @@ impl<const P: u64> PackedFp64Avx512<P> {
     /// c*hi exceeding 64 bits, using native unsigned comparisons.
     #[inline]
     unsafe fn reduce128_word_sized(hi: __m512i, lo: __m512i) -> __m512i {
-        let c_vec = _mm512_set1_epi64(Self::C_LO as i64);
+        let c_vec = _mm512_set1_epi64(Fp64::<P>::C as i64);
         let p_vec = _mm512_set1_epi64(P as i64);
         let one = _mm512_set1_epi64(1);
 
@@ -229,13 +202,13 @@ impl<const P: u64> Add for PackedFp64Avx512<P> {
             let b = rhs.to_vec();
             let p = _mm512_set1_epi64(P as i64);
 
-            let result = if Self::BITS < 64 {
+            let result = if Fp64::<P>::BITS < 64 {
                 let s = _mm512_add_epi64(a, b);
                 _mm512_min_epu64(s, _mm512_sub_epi64(s, p))
             } else {
                 let s = _mm512_add_epi64(a, b);
                 let overflow = _mm512_cmplt_epu64_mask(s, a);
-                let c = _mm512_set1_epi64(Self::C_LO as i64);
+                let c = _mm512_set1_epi64(Fp64::<P>::C as i64);
                 let geq_p = _mm512_cmpge_epu64_mask(s, p);
                 let no_of = _mm512_mask_sub_epi64(s, geq_p, s, p);
                 let s_plus_c = _mm512_add_epi64(s, c);
@@ -256,7 +229,7 @@ impl<const P: u64> Sub for PackedFp64Avx512<P> {
             let b = rhs.to_vec();
             let p = _mm512_set1_epi64(P as i64);
             let d = _mm512_sub_epi64(a, b);
-            let result = if Self::BITS < 64 {
+            let result = if Fp64::<P>::BITS < 64 {
                 _mm512_min_epu64(d, _mm512_add_epi64(d, p))
             } else {
                 let underflow = _mm512_cmplt_epu64_mask(a, b);
@@ -331,7 +304,8 @@ impl<const P: u64> PackedField for PackedFp64Avx512<P> {
     where
         C: FpExt2Config<Self::Scalar>,
     {
-        if C::IS_TWO && Self::FUSE_EXT2_TWO_NR {
+        if C::NON_RESIDUE_KIND == FpExt2NonResidueKind::Two && fp64_ext2_two_avx_fusion_safe::<P>()
+        {
             unsafe {
                 let (p00_hi, p00_lo) = mul64_64_512(a0.to_vec(), b0.to_vec());
                 let (p11_hi, p11_lo) = mul64_64_512(a1.to_vec(), b1.to_vec());
