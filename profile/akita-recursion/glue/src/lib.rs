@@ -801,9 +801,9 @@ mod tests {
     #[test]
     fn previous_blob_version_is_rejected_at_the_magic_boundary() {
         let mut bytes = blob_prefix();
-        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv1");
+        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv2");
         let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes)
-            .expect_err("v1 blob must not reach payload decoding");
+            .expect_err("v2 blob must not reach payload decoding");
         assert!(error.to_string().contains("magic mismatch"));
     }
 
