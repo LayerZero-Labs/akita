@@ -1,5 +1,7 @@
 use super::*;
-use crate::{CommittedGroupParams, FoldSchedule};
+use crate::{
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningMethod, PolynomialGroupLayout,
+};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -40,6 +42,35 @@ impl ExtensionOpeningReductionShape {
             sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
     }
+}
+
+/// Derive the only accepted extension-opening reduction shape for one opening batch.
+pub fn canonical_extension_opening_reduction_shape(
+    opening_layout: &OpeningClaimsLayout,
+    extension_degree: usize,
+) -> Result<ExtensionOpeningReductionShape, AkitaError> {
+    if extension_degree <= 1 || !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "extension opening degree must be a power of two greater than one".to_string(),
+        ));
+    }
+    opening_layout.check()?;
+    let split_bits = extension_degree.trailing_zeros() as usize;
+    let num_rounds = opening_layout
+        .max_num_vars()
+        .checked_sub(split_bits)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "extension opening split exceeds the opening arity".to_string(),
+            )
+        })?;
+    let num_claims = opening_layout.num_total_polynomials();
+    let partials = extension_degree.checked_mul(num_claims).ok_or_else(|| {
+        AkitaError::InvalidSetup("extension opening partial count overflow".to_string())
+    })?;
+    Ok(ExtensionOpeningReductionShape::standard(
+        partials, num_rounds, num_claims,
+    ))
 }
 
 impl Valid for SetupProductSumcheckShape {
@@ -145,14 +176,41 @@ pub struct AkitaBatchedProofShape {
     pub terminal: TerminalLevelProofShape,
 }
 
-/// Derive the only accepted headerless proof shape for a base-field schedule.
-///
-/// This is the verifier-side owner for decoding proofs whose claim field is the
-/// base field. Proper extension fields add an extension-opening reduction shape
-/// and must use their configuration-specific derivation.
-pub fn canonical_base_field_proof_shape(
+/// Derive the only accepted headerless proof shape for a schedule and opening layout.
+pub fn canonical_proof_shape(
     schedule: &FoldSchedule,
+    root_opening_layout: &OpeningClaimsLayout,
+    extension_degree: usize,
 ) -> Result<AkitaBatchedProofShape, AkitaError> {
+    if !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "proof-shape extension degree must be a nonzero power of two".to_string(),
+        ));
+    }
+
+    fn level_extension_shape(
+        params: &CommittedGroupParams,
+        opening_layout: &OpeningClaimsLayout,
+        extension_degree: usize,
+    ) -> Result<Option<ExtensionOpeningReductionShape>, AkitaError> {
+        let first_method = params.group_params(opening_layout, 0)?.opening_method();
+        for group_index in 1..opening_layout.num_groups() {
+            if params
+                .group_params(opening_layout, group_index)?
+                .opening_method()
+                != first_method
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "one fold cannot mix opening-method families".to_string(),
+                ));
+            }
+        }
+        if extension_degree == 1 || !matches!(first_method, OpeningMethod::EvaluationTrace) {
+            return Ok(None);
+        }
+        canonical_extension_opening_reduction_shape(opening_layout, extension_degree).map(Some)
+    }
+
     fn stage3_shape(
         successor: Option<&CommittedGroupParams>,
     ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
@@ -178,6 +236,8 @@ pub fn canonical_base_field_proof_shape(
 
     fn level_shape(
         params: &CommittedGroupParams,
+        opening_layout: &OpeningClaimsLayout,
+        extension_degree: usize,
         output_witness_len: usize,
         successor: Option<&CommittedGroupParams>,
     ) -> Result<LevelProofShape, AkitaError> {
@@ -194,7 +254,11 @@ pub fn canonical_base_field_proof_shape(
             None => NextWitnessBindingShape::TerminalInnerState,
         };
         Ok(LevelProofShape {
-            extension_opening_reduction: None,
+            extension_opening_reduction: level_extension_shape(
+                params,
+                opening_layout,
+                extension_degree,
+            )?,
             opening_payload_coeffs: params
                 .opening_payload_geometry()?
                 .transmitted_coefficients(),
@@ -212,26 +276,47 @@ pub fn canonical_base_field_proof_shape(
         .map(|step| &step.params.witness);
     let root = level_shape(
         &schedule.root.params.final_group.commitment,
+        root_opening_layout,
+        extension_degree,
         schedule.root.output_witness_len,
         root_successor,
     )?;
     let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    let mut predecessor_rounds = crate::sumcheck_rounds(
+        schedule.root.params.final_group.commitment.d_a(),
+        schedule.root.output_witness_len,
+    );
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let successor = schedule
             .recursive_folds
             .get(index + 1)
             .map(|next| &next.params.witness);
+        let opening_layout = step
+            .params
+            .witness
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
         recursive_folds.push(level_shape(
             &step.params.witness,
+            &opening_layout,
+            extension_degree,
             step.output_witness_len,
             successor,
         )?);
+        predecessor_rounds =
+            crate::sumcheck_rounds(step.params.witness.d_a(), step.output_witness_len);
     }
     Ok(AkitaBatchedProofShape {
         root,
         recursive_folds,
         terminal: TerminalLevelProofShape {
-            extension_opening_reduction: None,
+            extension_opening_reduction: if extension_degree == 1 {
+                None
+            } else {
+                Some(canonical_extension_opening_reduction_shape(
+                    &OpeningClaimsLayout::new(predecessor_rounds, 1)?,
+                    extension_degree,
+                )?)
+            },
             terminal_response: schedule.terminal.params.response_shape.clone(),
         },
     })

@@ -17,7 +17,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
-    canonical_base_field_proof_shape, AkitaBatchedProof, AkitaBatchedProofShape,
+    canonical_proof_shape, AkitaBatchedProof, AkitaBatchedProofShape,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, FlatMatrix,
     GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
@@ -32,6 +32,12 @@ pub use case::AkitaJoltCase;
     akita_trusted_benchmark_artifact
 ))]
 mod trusted_fp128;
+
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+mod trusted_word_fields;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
 /// so the host and guest don't have to negotiate compression.
@@ -387,57 +393,6 @@ where
             encoded_size,
             setup_matrix_padding,
         })
-    }
-}
-
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
-impl<F, const D: usize, E> AkitaJoltInputs<F, D, E>
-where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + RandomSampling
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>
-        + Valid,
-    E: FieldCore + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
-{
-    fn deserialize_trusted_generic_host_setup(
-        rest: &mut &[u8],
-        total_blob_len: usize,
-    ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
-        let (seed, shared_matrix) =
-            Self::decode_seed_and_matrix_with(rest, total_blob_len, |rest, matrix_fields| {
-                FlatMatrix::<F>::deserialize_with_expected_shape(
-                    &mut *rest,
-                    BLOB_COMPRESS,
-                    BLOB_VALIDATE,
-                    matrix_fields,
-                    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-                )
-            })?;
-        let prefix_slots = Self::decode_prefix_slots(rest)?;
-        AkitaVerifierSetup::from_parts(
-            Arc::new(
-                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix),
-            ),
-            prefix_slots,
-        )
-        .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-
-    /// Decode a host-validated benchmark artifact without rederiving its setup matrix.
-    pub fn read_trusted_host_artifact_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
-    where
-        Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    {
-        Self::decode_from_bytes_with_setup::<Cfg>(
-            bytes,
-            Self::deserialize_trusted_generic_host_setup,
-        )
     }
 }
 
@@ -816,14 +771,17 @@ where
         )?;
         let resolved = Cfg::resolve_schedule_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        if E::EXT_DEGREE == 1 {
-            let expected_shape = canonical_base_field_proof_shape(resolved.schedule())
+        let root_opening_layout = resolved
+            .profiles()
+            .opening_layout()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let expected_shape =
+            canonical_proof_shape(resolved.schedule(), &root_opening_layout, E::EXT_DEGREE)
                 .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-            if *proof_shape != expected_shape {
-                return Err(SerializationError::InvalidData(
-                    "proof shape does not match the selected canonical schedule".to_string(),
-                ));
-            }
+        if *proof_shape != expected_shape {
+            return Err(SerializationError::InvalidData(
+                "proof shape does not match the selected canonical schedule".to_string(),
+            ));
         }
         Ok(())
     }
@@ -888,7 +846,7 @@ pub use akita_algebra as _akita_algebra_dep;
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use akita_config::proof_optimized::fp128;
+    use akita_config::proof_optimized::{fp128, fp32};
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
         CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
@@ -1156,7 +1114,12 @@ mod tests {
             &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
         )
         .expect("generated singleton row");
-        let canonical = canonical_base_field_proof_shape(row.schedule()).expect("canonical shape");
+        let canonical = canonical_proof_shape(
+            row.schedule(),
+            &row.profiles().opening_layout().expect("opening layout"),
+            1,
+        )
+        .expect("canonical shape");
 
         let mut huge = canonical.clone();
         huge.root.opening_payload_coeffs = usize::MAX;
@@ -1183,5 +1146,37 @@ mod tests {
             )
             .expect_err("noncanonical shape must fail before proof decoding");
         assert!(identity_error.to_string().contains("canonical schedule"));
+    }
+
+    #[test]
+    fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
+        type ExtCfg = fp32::OneHot;
+        type ExtF = fp32::Field;
+        type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
+
+        let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
+        let row = ExtCfg::resolve_catalog_row_for_opening(&layout)
+            .expect("generated fp32 singleton row");
+        let mut noncanonical = canonical_proof_shape(
+            row.schedule(),
+            &row.profiles().opening_layout().expect("catalog layout"),
+            <ExtE as ExtField<ExtF>>::EXT_DEGREE,
+        )
+        .expect("canonical extension shape");
+        noncanonical
+            .terminal
+            .extension_opening_reduction
+            .as_mut()
+            .expect("proper extension claims require a terminal reduction shape")
+            .partials += 1;
+
+        let error = AkitaJoltInputs::<ExtF, 2048, ExtE>::
+            validate_proof_shape_before_allocation::<ExtCfg>(
+                row.selection(),
+                &noncanonical,
+                MAX_JOLT_BLOB_BYTES as usize,
+            )
+            .expect_err("noncanonical extension shape must fail before proof decoding");
+        assert!(error.to_string().contains("canonical schedule"));
     }
 }

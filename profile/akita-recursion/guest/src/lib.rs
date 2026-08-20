@@ -59,7 +59,7 @@ macro_rules! decode_artifact {
     (strict, $input:expr, $field:ty, $cfg:ty, $d:expr) => {
         AkitaJoltInputs::<$field, $d, <$cfg as akita_config::CommitmentConfig>::ExtField>::read_from_bytes::<$cfg>($input)
     };
-    (trusted_generic, $input:expr, $field:ty, $cfg:ty, $d:expr) => {{
+    (trusted_word, $input:expr, $field:ty, $cfg:ty, $d:expr) => {{
         #[cfg(any(
             feature = "trusted-benchmark-artifact",
             akita_trusted_benchmark_artifact
@@ -69,7 +69,7 @@ macro_rules! decode_artifact {
                 $field,
                 $d,
                 <$cfg as akita_config::CommitmentConfig>::ExtField,
-            >::read_trusted_host_artifact_bytes::<$cfg>($input)
+            >::read_trusted_word_host_artifact_bytes::<$cfg>($input)
         }
         #[cfg(not(any(
             feature = "trusted-benchmark-artifact",
@@ -177,7 +177,7 @@ define_akita_guest!(
     fp32::Field,
     fp32::OneHot,
     2048,
-    trusted_generic,
+    trusted_word,
     none
 );
 define_akita_guest!(
@@ -186,7 +186,7 @@ define_akita_guest!(
     fp64::Field,
     fp64::OneHot,
     512,
-    trusted_generic,
+    trusted_word,
     none
 );
 define_akita_guest!(

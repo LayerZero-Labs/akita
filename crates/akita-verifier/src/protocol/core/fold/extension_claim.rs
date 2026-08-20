@@ -28,9 +28,8 @@ struct EorSumcheckReplay<E: FieldCore> {
 }
 
 fn eor_reduction_shape<F, E>(
-    opening_num_vars: usize,
-    partials_len: usize,
-    num_claims: usize,
+    opening_batch: &OpeningClaimsLayout,
+    reduction: &ExtensionOpeningReductionProof<E>,
 ) -> Result<EorReductionShape, AkitaError>
 where
     F: FieldCore,
@@ -38,19 +37,15 @@ where
 {
     let (split_bits, width) =
         tensor_opening_split::<F, E>().map_err(|_| AkitaError::InvalidProof)?;
-    let num_rounds = opening_num_vars
-        .checked_sub(split_bits)
-        .ok_or(AkitaError::InvalidProof)?;
-    let expected_partials = width
-        .checked_mul(num_claims)
-        .ok_or(AkitaError::InvalidProof)?;
-    if width == 1 || partials_len != expected_partials {
+    let expected = canonical_extension_opening_reduction_shape(opening_batch, width)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    if width == 1 || reduction.shape() != expected {
         return Err(AkitaError::InvalidProof);
     }
     Ok(EorReductionShape {
         split_bits,
         width,
-        num_rounds,
+        num_rounds: expected.sumcheck.len(),
     })
 }
 
@@ -100,11 +95,7 @@ where
     let Some(reduction) = extension_opening_reduction else {
         return Ok(None);
     };
-    let shape = eor_reduction_shape::<F, E>(
-        opening_batch.max_num_vars(),
-        reduction.partials.len(),
-        num_claims,
-    )?;
+    let shape = eor_reduction_shape::<F, E>(opening_batch, reduction)?;
     let mut claim_offset = 0usize;
     for (group_index, group_point) in group_points.iter().enumerate() {
         let group_layout = opening_batch.group_layout(group_index)?;
