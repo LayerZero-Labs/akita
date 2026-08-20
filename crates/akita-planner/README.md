@@ -15,7 +15,9 @@ The planner can also generate schedule values when a preset wants a table-backed
 
 ## What The Planner Optimizes
 
-Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
+Akita proofs fold the witness at the root, may fold it through more recursive
+levels, and then send the terminal witness directly. The planner chooses the
+best complete schedule under the configured selection policy.
 
 The complete schedule orders are:
 
@@ -121,7 +123,10 @@ At the root, the planner iterates over the configured `log_basis` range and over
 
 Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
-The planner fails with `UnsupportedSchedule` when no candidate contains at least two folds. Degenerate inputs are rejected instead of producing a separate proof topology.
+Root contraction is only a search ordering hint. The planner admits contractive
+and noncontractive root candidates into one suffix search and selects a complete
+schedule only with `SelectionPolicyId`. It returns `UnsupportedSchedule` only
+when no valid complete schedule exists in the audited fold domain.
 
 ## Recursive Suffix Search
 
@@ -155,9 +160,9 @@ terminal binds inner `t` and contributes no duplicate `u` bytes. This is a
 schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
-terminate only if doing so still produces the required root-plus-suffix folded
-topology. In the supported parameter ranges, schedules do not need deeper
-recursion, and the cap keeps verifier-reachable fallback work bounded.
+terminate only when the current state can feed the terminal directly. In the
+supported parameter ranges, schedules do not need deeper recursion, and the cap
+keeps planner work bounded.
 
 ## Proof-Size Accounting
 

@@ -31,10 +31,10 @@ fp128_dense_bounded [001] lookup_key                       len=24     fnv1a=d28c
 fp128_dense_bounded [001] root.final_group.profile         len=208    fnv1a=656839d2b0781d11
 fp128_dense_bounded [002] lookup_key                       len=24     fnv1a=1fdb5a2029e8d89e
 fp128_dense_bounded [002] root.final_group.profile         len=208    fnv1a=0eb978f7eb18073e
-fp128_dense_multi_chunk catalog.key_digest                 len=8      fnv1a=4c77daebca122aa4
+fp128_dense_multi_chunk catalog.key_digest                 len=8      fnv1a=015a10e3ef110cb9
 fp128_dense_multi_chunk catalog.key_count                  len=8      fnv1a=89cd31291d2aefa4
 fp128_dense_multi_chunk [000] lookup_key                   len=24     fnv1a=9d4ebdcac3c5b0d4
-fp128_dense_multi_chunk [000] root.final_group.profile     len=208    fnv1a=b5a57d259a699312
+fp128_dense_multi_chunk [000] root.final_group.profile     len=208    fnv1a=324e155b18e381a2
 fp128_onehot catalog.key_digest                            len=8      fnv1a=56a72ad90c3592d7
 fp128_onehot catalog.key_count                             len=8      fnv1a=f564bdddf7dcba38
 fp128_onehot [000] lookup_key                              len=24     fnv1a=cd72cefde2ceb448

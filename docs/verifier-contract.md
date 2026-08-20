@@ -24,11 +24,12 @@ checks challenge and full terminal L infinity or L2 cap geometry, and confirms t
 the setup field capacity. Private polynomial representations and honest-prover
 witness models are not verifier inputs.
 
-The accepted proof topology is structural: a root fold, at least one suffix
-fold, and one terminal cleartext witness. The verifier rejects empty/one-fold
-schedules and proof-shape mismatches before transcript replay. Every terminal
-uses predecessor-bound inner `t` and the `consistency | A` relation; there is no
-root-terminal fallback, final outer `u`, or terminal B/D block to validate.
+The accepted proof topology is structural: a root fold, zero or more recursive
+folds, and one terminal cleartext witness. The verifier rejects proof-shape
+mismatches before transcript replay. Every terminal uses predecessor-bound
+inner `t` and the `consistency | A` relation. The root may be that predecessor;
+there is no separate fallback proof form, final outer `u`, or terminal B/D
+block to validate.
 
 ## Rules
 

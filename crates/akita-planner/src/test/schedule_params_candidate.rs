@@ -461,10 +461,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         dimensions,
         opening,
         &[],
-        1 << 16,
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
-        false,
     )
     .expect("root packing candidates");
     assert!(!candidates.is_empty());
@@ -553,10 +551,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         dimensions,
         opening,
         &[precommit_opening],
-        1 << 16,
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
-        false,
     )
     .expect("group-local packing candidates");
     assert!(!grouped.is_empty());
@@ -598,10 +594,8 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         dimensions,
         opening,
         &[trace_precommit],
-        1 << 16,
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
-        false,
     )
     .unwrap()
     .is_empty());
@@ -666,10 +660,8 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         dimensions,
         PlannerOpeningCandidate::evaluation_trace(Dense::ring_challenge_config(256).unwrap()),
         &[],
-        1 << 14,
         Dense::inner_basis_range().0,
         Dense::opening_basis_range().0,
-        false,
     )
     .expect("standalone precommit candidates");
     let mut tensor_params = pre_candidates

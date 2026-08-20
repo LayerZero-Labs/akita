@@ -123,6 +123,21 @@ fn explicit_scalar_sweep_replaces_default_catalog_work() {
 }
 
 #[test]
+fn explicit_rows_accept_adaptive_families() {
+    let args = parse_args_from(vec![
+        "/tmp/akita-adaptive-explicit-test".into(),
+        "--final-group".into(),
+        "fp64_dense:8:1".into(),
+    ])
+    .expect("adaptive explicit family");
+
+    assert_eq!(
+        args.family_filter.as_deref(),
+        Some(&["fp64_dense".into()][..])
+    );
+}
+
+#[test]
 fn explicit_group_rejects_source_metadata() {
     assert!(parse_explicit_group("fp128_onehot:14:1:256").is_err());
 }

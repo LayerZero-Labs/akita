@@ -341,10 +341,8 @@ impl<'a> CandidateDomain<'a> {
                         work.dimensions,
                         work.opening,
                         &work.precommitted_openings,
-                        state.current_witness_len,
                         inner_lb,
                         open_lb,
-                        true,
                     )?;
                     for (params, next_witness_len) in dimension_candidates {
                         if work.purpose.allows_terminal() {
