@@ -129,6 +129,7 @@ live_specs=(
   specs/dyadic-chunk-partition.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
+  specs/generic-sumcheck-backends.md
   specs/heterogeneous-group-source-contracts.md
   specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md

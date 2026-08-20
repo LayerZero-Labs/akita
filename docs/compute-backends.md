@@ -169,6 +169,7 @@ becomes active:
 - fused inner-commit witness operations that return decomposed digits and
   recomposed rows together for device backends;
 - base-field and MLE kernels tied to concrete prover consumers;
-- stage-1/stage-2 sumcheck backend hooks;
+- the source-typed, grouped sumcheck operation defined by
+  `specs/generic-sumcheck-backends.md`;
 - deterministic true CPU/GPU hybrid scheduling;
 - Jolt/Akita adapter APIs for opening obligations.
