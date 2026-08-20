@@ -1,19 +1,20 @@
 use super::plan::CheckedEqFactoredBatch;
 use super::shared::{
-    absorb_claims_and_sample_coefficients, combine_eq_polynomials, finish_and_check_terminals,
-    gather_group_values, group_weighted_claims, invalid, previous_local_challenge,
-    validate_eq_message, validate_execution_inputs,
+    absorb_claims_and_sample_coefficients, combine_eq_polynomials, constant_eq_polynomial,
+    finish_and_check_terminals, gather_group_values, group_weighted_claims, invalid,
+    previous_local_challenge, validate_eq_message, validate_execution_inputs, EqTerminalScaling,
 };
 use super::{
     CheckedLocalRound, CheckedRoundContext, CheckedRoundRequest, GroupRoundMessage,
     SumcheckRoundExecutor,
 };
 use crate::{advance_eq_factored_claim, EqFactoredSumcheckProof};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 
-/// Result of a same-factor eq-factored executor batch.
+/// Result of a master-lifted eq-factored executor batch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EqFactoredBatchExecution<E: FieldCore> {
     /// Existing eq-factored proof container, with one combined message per round.
@@ -32,11 +33,13 @@ struct EqSharedState<E: FieldCore> {
     equality_scalar: E,
 }
 
-/// Drive a checked same-factor eq-factored batch through group executors.
+/// Drive a checked master-lifted eq-factored batch through group executors.
 ///
-/// Unequal-round groups are valid checked geometry but cannot share the current
-/// [`EqFactoredSumcheckProof`] recurrence. This function rejects such plans
-/// before it changes the transcript or starts an executor.
+/// A group with suffix offset `k` represents
+/// `eq(tau[..k], x[..k]) * F(x[k..])`. During its virtual prefix, the protocol
+/// emits the group's constant weighted input claim without starting the source
+/// executor. Once the suffix starts, the executor returns the ordinary local
+/// `q`: the lifted relation and master factor contain the same prefix scalar.
 pub fn prove_eq_factored_executor_batch<F, T, E, S>(
     plan: &CheckedEqFactoredBatch<E>,
     input_claims: &[E],
@@ -50,13 +53,17 @@ where
     E: FieldCore + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
-    plan.ensure_existing_proof_compatible()?;
     let geometry = &plan.geometry;
     validate_execution_inputs(geometry, input_claims, executors.len())?;
     let coefficients =
         absorb_claims_and_sample_coefficients(input_claims, transcript, &mut sample_challenge)?;
     let group_coefficients = gather_group_values(geometry, &coefficients)?;
-    let mut group_claims = group_weighted_claims(geometry, input_claims, &coefficients)?;
+    let group_input_claims = group_weighted_claims(geometry, input_claims, &coefficients)?;
+    let mut group_claims = Vec::new();
+    group_claims
+        .try_reserve_exact(group_input_claims.len())
+        .map_err(|_| invalid("eq-factored group claim allocation failed"))?;
+    group_claims.extend_from_slice(&group_input_claims);
     let mut shared = EqSharedState {
         claim_scale: E::one(),
         equality_scalar: E::one(),
@@ -77,10 +84,11 @@ where
         let factor_at_zero = shared.equality_scalar - factor_at_one;
 
         for (group_index, group) in geometry.groups.iter().enumerate() {
-            let local_round = group
-                .local_round(master_round)
-                .ok_or_else(|| invalid("eq-factored group does not share the master rounds"))?;
+            let Some(local_round) = group.local_round(master_round) else {
+                continue;
+            };
             let previous_challenge = previous_local_challenge(&master_point, local_round)?;
+            let master_lift_prefix = plan.group_prefix_scalar(&master_point, group_index)?;
             let executor = executors
                 .get_mut(group_index)
                 .ok_or_else(|| invalid("sumcheck executor is missing"))?;
@@ -102,6 +110,7 @@ where
                     claim_scale: shared.claim_scale,
                     factor_at_zero,
                     factor_at_one,
+                    master_lift_prefix,
                     batching_coefficients,
                 },
             })?;
@@ -112,11 +121,20 @@ where
             .try_reserve_exact(geometry.groups.len())
             .map_err(|_| invalid("eq-factored round message allocation failed"))?;
         for (group_index, group) in geometry.groups.iter().enumerate() {
-            let executor = executors
-                .get_mut(group_index)
-                .ok_or_else(|| invalid("sumcheck executor is missing"))?;
-            let GroupRoundMessage::EqFactored(polynomial) = executor.finish_round()? else {
-                return Err(invalid("eq-factored executor returned a standard message"));
+            let polynomial = if group.local_round(master_round).is_some() {
+                let executor = executors
+                    .get_mut(group_index)
+                    .ok_or_else(|| invalid("sumcheck executor is missing"))?;
+                let GroupRoundMessage::EqFactored(polynomial) = executor.finish_round()? else {
+                    return Err(invalid("eq-factored executor returned a standard message"));
+                };
+                polynomial
+            } else {
+                let input_claim = group_input_claims
+                    .get(group_index)
+                    .copied()
+                    .ok_or_else(|| invalid("eq-factored group input claim is missing"))?;
+                constant_eq_polynomial(input_claim, group.degree_bound())?
             };
             validate_eq_message(&polynomial, group.degree_bound())?;
             group_messages.push(polynomial);
@@ -158,13 +176,23 @@ where
         round_polys.push(combined);
     }
 
+    let mut group_prefix_scalars = Vec::new();
+    group_prefix_scalars
+        .try_reserve_exact(geometry.groups.len())
+        .map_err(|_| invalid("eq-factored prefix scalar allocation failed"))?;
+    for group_index in 0..geometry.groups.len() {
+        group_prefix_scalars.push(plan.group_prefix_scalar(&master_point, group_index)?);
+    }
     let terminal_claims = finish_and_check_terminals(
         geometry,
         executors,
         &coefficients,
         &group_claims,
         master_point.last().copied(),
-        Some(shared.claim_scale),
+        Some(EqTerminalScaling {
+            claim_scale: shared.claim_scale,
+            group_prefix_scalars: &group_prefix_scalars,
+        }),
     )?;
     let proof = EqFactoredSumcheckProof { round_polys };
     plan.validate_proof(&proof)?;

@@ -1,11 +1,16 @@
 //! Checked batch geometry and transcript-owned sumcheck executor shell.
 
 mod eq_factored;
+mod eq_factored_verifier;
 mod plan;
 mod shared;
 mod standard;
 
 pub use eq_factored::{prove_eq_factored_executor_batch, EqFactoredBatchExecution};
+pub use eq_factored_verifier::{
+    verify_eq_factored_executor_batch_rounds, EqFactoredBatchRoundResult,
+    EqFactoredTerminalObligation,
+};
 pub use plan::{
     CheckedEqFactoredBatch, CheckedStandardBatch, CheckedSumcheckGroup, SumcheckGroupSpec,
     SumcheckMemberShape,
@@ -13,7 +18,8 @@ pub use plan::{
 pub use standard::{prove_standard_executor_batch, StandardBatchExecution};
 
 use crate::{EqFactoredUniPoly, UniPoly};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 
 /// Checked local-round coordinates supplied by the protocol engine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +51,12 @@ pub enum CheckedRoundContext<'a, E: FieldCore> {
         factor_at_zero: E,
         /// Current equality factor evaluated at one.
         factor_at_one: E,
+        /// Equality scalar contributed by virtual master-prefix rounds.
+        ///
+        /// The lifted relation and the master factor both contain this scalar,
+        /// so the executor returns its ordinary suffix-local `q` without
+        /// multiplying by or dividing through this value.
+        master_lift_prefix: E,
         /// Batching coefficient for each member in group order.
         batching_coefficients: &'a [E],
     },

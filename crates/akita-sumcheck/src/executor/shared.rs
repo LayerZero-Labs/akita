@@ -1,7 +1,8 @@
 use super::plan::CheckedBatchGeometry;
 use super::{GroupTerminalClaims, SumcheckRoundExecutor};
 use crate::{CompressedUniPoly, EqFactoredUniPoly, UniPoly};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 
@@ -10,16 +11,24 @@ pub(super) fn validate_execution_inputs<E: FieldCore>(
     input_claims: &[E],
     executor_count: usize,
 ) -> Result<(), AkitaError> {
-    if input_claims.len() != geometry.members.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: geometry.members.len(),
-            actual: input_claims.len(),
-        });
-    }
+    validate_claim_count(geometry, input_claims)?;
     if executor_count != geometry.groups.len() {
         return Err(AkitaError::InvalidSize {
             expected: geometry.groups.len(),
             actual: executor_count,
+        });
+    }
+    Ok(())
+}
+
+pub(super) fn validate_claim_count<E: FieldCore>(
+    geometry: &CheckedBatchGeometry,
+    input_claims: &[E],
+) -> Result<(), AkitaError> {
+    if input_claims.len() != geometry.members.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: geometry.members.len(),
+            actual: input_claims.len(),
         });
     }
     Ok(())
@@ -118,7 +127,7 @@ pub(super) fn finish_and_check_terminals<E: FieldCore>(
     coefficients: &[E],
     final_group_claims: &[E],
     final_active_challenge: Option<E>,
-    eq_claim_scale: Option<E>,
+    eq_scaling: Option<EqTerminalScaling<'_, E>>,
 ) -> Result<Vec<E>, AkitaError> {
     let mut terminal_claims = Vec::new();
     terminal_claims
@@ -153,7 +162,16 @@ pub(super) fn finish_and_check_terminals<E: FieldCore>(
                 .ok_or_else(|| invalid("terminal claim member index is out of range"))?;
             *output = *terminal;
         }
-        let expected = eq_claim_scale.map_or(weighted_terminal, |scale| weighted_terminal * scale);
+        let expected = if let Some(scaling) = eq_scaling {
+            let prefix_scalar = scaling
+                .group_prefix_scalars
+                .get(group_index)
+                .copied()
+                .ok_or_else(|| invalid("eq-factored terminal prefix scalar is missing"))?;
+            weighted_terminal * prefix_scalar * scaling.claim_scale
+        } else {
+            weighted_terminal
+        };
         let final_claim = final_group_claims
             .get(group_index)
             .ok_or_else(|| invalid("final group claim is missing"))?;
@@ -164,6 +182,12 @@ pub(super) fn finish_and_check_terminals<E: FieldCore>(
         }
     }
     Ok(terminal_claims)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct EqTerminalScaling<'a, E: FieldCore> {
+    pub(super) claim_scale: E,
+    pub(super) group_prefix_scalars: &'a [E],
 }
 
 pub(super) fn combine_standard_polynomials<E: FieldCore>(
@@ -217,6 +241,26 @@ pub(super) fn combine_eq_polynomials<E: FieldCore>(
             *output += *coefficient;
         }
     }
+    Ok(EqFactoredUniPoly {
+        coeffs_except_linear_term: coefficients,
+    })
+}
+
+pub(super) fn constant_eq_polynomial<E: FieldCore>(
+    constant: E,
+    degree_bound: usize,
+) -> Result<EqFactoredUniPoly<E>, AkitaError> {
+    let stored_count = EqFactoredUniPoly::<E>::stored_coeff_count_for_degree(degree_bound);
+    check_addressable_count(stored_count, "eq-factored message coefficient count")?;
+    let mut coefficients = Vec::new();
+    coefficients
+        .try_reserve_exact(stored_count)
+        .map_err(|_| invalid("virtual eq-factored message allocation failed"))?;
+    coefficients.resize(stored_count, E::zero());
+    let constant_term = coefficients
+        .first_mut()
+        .ok_or_else(|| invalid("virtual eq-factored message cannot be empty"))?;
+    *constant_term = constant;
     Ok(EqFactoredUniPoly {
         coeffs_except_linear_term: coefficients,
     })

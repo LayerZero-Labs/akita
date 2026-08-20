@@ -20,11 +20,11 @@ changing the relation itself.
 
 This specification separates the protocol from the computation. The protocol
 driver continues to own proof shape, transcript order, batching coefficients,
-master-point suffix alignment, and verifier recurrence. Unequal-round
-eq-factored groups need a future proof format because they do not share one
-accumulated equality factor. This specification checks that geometry but does
-not assign it a transcript schedule. A source exposes a
-borrowed group view in its native representation. A backend prepares that view
+master-point suffix alignment, and verifier recurrence. Unequal round counts do
+not by themselves require a new eq-factored format. A checked master lift makes
+each shorter relation share the full master equality factor while preserving
+its Boolean sum. A source exposes a borrowed group view in its native
+representation. A backend prepares that view
 and a checked relation program into a transcript-free round executor. CPU,
 packed CPU, Metal, CUDA, and mixed-device implementations may use different
 storage and kernels behind that same boundary.
@@ -42,9 +42,10 @@ transcript labels.
 
 Build one protocol-neutral sumcheck compute hierarchy that accepts native
 witness views, supports standard front-loaded batches and eq-factored batches
-that share one equality factor, and lets CPU and accelerator backends fuse
-round work without owning protocol or transcript semantics. It also preserves
-checked unequal-round eq geometry for a later protocol design.
+whose active equality factors are known scalar multiples of one master factor,
+and lets CPU and accelerator backends fuse round work without owning protocol
+or transcript semantics. The canonical unequal-round construction is a checked
+master lift, not a new wire format.
 
 ### Invariants
 
@@ -58,22 +59,27 @@ checked unequal-round eq geometry for a later protocol design.
 4. Eq-factored linear state is derived and advanced by the protocol engine.
    A kernel receives the checked round values it needs but cannot choose or
    mutate the recurrence.
-5. A backend operation consumes a borrowed, source-typed group view. The
+5. Eq-factored messages combine only when each active linear equality factor is
+   a known scalar multiple of one master factor and the checked protocol
+   construction normalizes both the relation and its `q` consistently.
+   Unrelated factors cannot be combined merely because they have the same
+   round count or degree.
+6. A backend operation consumes a borrowed, source-typed group view. The
    public boundary does not require `Vec<E>`, a dense multilinear table, host
    residency, or a universal evaluation-table wrapper.
-6. The group operation is canonical. A singleton is a group of length one;
+7. The group operation is canonical. A singleton is a group of length one;
    there is no required default loop over singleton operations.
-7. Backends return typed errors for unsupported shapes, invalid prepared state,
+8. Backends return typed errors for unsupported shapes, invalid prepared state,
    device failures, and arithmetic overflow. Verifier-controlled input cannot
    reach a backend panic.
-8. Backend choice, source representation, packing, and scheduling do not alter
+9. Backend choice, source representation, packing, and scheduling do not alter
    proof bytes, transcript labels, accepted statements, or final claims.
-9. A generic relation program has a reference interpreter. An optimized kernel
+10. A generic relation program has a reference interpreter. An optimized kernel
    must match it over deterministic fixtures before it can replace it.
-10. Dynamic dispatch, if used, is limited to a constant number of calls per
+11. Dynamic dispatch, if used, is limited to a constant number of calls per
     active group per round. It does not occur per row, factor, table cell, or
     witness element.
-11. The protocol has no fixed maximum batch length. Callers and backends may
+12. The protocol has no fixed maximum batch length. Callers and backends may
     enforce explicit resource limits, but those limits are not transcript or
     proof-format constants.
 
@@ -102,8 +108,9 @@ checked unequal-round eq geometry for a later protocol design.
 - [ ] The standard protocol driver can prove a front-loaded batch through
   grouped round executors while producing the same proof bytes and challenges
   as the reference scalar driver on deterministic fixtures. The eq-factored
-  driver can combine same-round groups into the existing proof type and rejects
-  unequal-round execution before transcript work.
+  prover and verifier can use the existing proof type for same-round and
+  master-lifted unequal-round groups, with one compact message and one master
+  challenge per round.
 - [ ] A source trait exposes a group view through a generic associated type.
   Dense, compact integer, sparse or indexed, and externally owned views can be
   implemented without conversion to `Vec<E>`.
@@ -118,8 +125,9 @@ checked unequal-round eq geometry for a later protocol design.
 - [ ] Standard differential tests cover one, many, unequal round counts,
   non-power-of-two logical batch sizes, terminal-only instances, and tampered
   round or terminal claims. Eq-factored tests cover same-factor grouped
-  execution, terminal-only batches, unequal-round suffix derivation, and typed
-  rejection where the existing proof type cannot represent the plan.
+  execution, nonzero master-lifted suffix groups at three or more offsets,
+  terminal-only groups, virtual-prefix source isolation, exact serialization,
+  verifier replay, and typed rejection of malformed or tampered inputs.
 - [ ] A proof-session test proves that scratch and prepared resources are
   released on success and error and cannot be reused with mismatched field,
   relation, or setup identity.
@@ -141,8 +149,10 @@ sampled challenges, per-round claims, and terminal claims against the current
 scalar driver. Standard groups begin at different master rounds so the tests
 exercise suffix alignment directly. Eq-factored tests independently recompute
 the shared linear factor and scaled recurrence instead of trusting prover
-state. Separate geometry tests cover unequal-round eq suffixes and confirm that
-execution rejects them before any transcript absorb or squeeze.
+state. Unequal-round eq tests compare master-lifted execution with a dense
+multilinear reference, check master and suffix points, and prove that virtual
+prefix rounds do not start or fold the source. Malformed public geometry and
+proof shapes are rejected before any transcript absorb or squeeze.
 
 Source tests instantiate the same relation over dense extension values,
 compact signed digits, and a deliberately non-contiguous borrowed view. The
@@ -260,15 +270,31 @@ factor, supplies its checked `(l(0), l(1))` values to the round executor, and
 advances the scaled claim. The executor only computes the compact message for
 `q`. It cannot provide a competing factor state.
 
-The existing `EqFactoredSumcheckProof` can combine several executor groups only
-when every group starts at master round zero and therefore shares the same
-accumulated `l`. The engine adds those group messages and absorbs one existing
-proof message per round. A shorter suffix group starts with a different
-accumulated factor, so its compact `q` message cannot be added to the longer
-group's message. The checked plan may represent that geometry, but execution
-returns a typed unsupported-schedule error before transcript work. This
-specification does not define an in-memory frame, serializer, or verifier replay
-for unequal-round eq batches.
+The existing `EqFactoredSumcheckProof` can combine several executor groups when
+their active linear factors are known scalar multiples of one master factor and
+the protocol applies a checked normalization. Akita uses a canonical master
+lift. A suffix relation at offset `k` is represented as
+`eq(tau[..k], x[..k]) * F(x[k..])`. Summing the virtual prefix over the Boolean
+cube leaves the input claim unchanged. Before local round zero, the engine
+synthesizes the constant local `q` equal to the group's weighted input claim.
+It does not start, fold, or read the source. From local round zero onward, both
+the lifted relation and master factor contain the known prefix equality scalar,
+so the executor returns its ordinary suffix-local `q` without multiplication,
+division, or inversion. Under this convention, the accumulated prefix scalar
+lives in the engine-owned `l`, not in the transmitted `q`. A suffix-rebased
+protocol that instead uses the local `l` would need to move that scalar into
+`q`; that is a different checked transition and is not used here.
+
+The engine adds all group messages and absorbs one existing compact proof
+message before sampling one master challenge per round. The verifier validates
+all public geometry and proof shapes before transcript mutation, replays the
+front-loaded batching draws and challenges, and advances the same
+denominator-free recurrence. Its typed terminal obligations expose each local
+suffix point and multiply each local terminal value by the known prefix
+equality scalar. Unrelated active equality factors remain unsupported. This
+specification defines no group frame, serializer, or alternate transcript
+schedule. It also does not implement the separate zero-claim delayed-activation
+and suffix-rebase optimization.
 
 Formats define message encoding and verifier recurrence. They are not backend
 implementations. Adding a format requires prover and verifier logic together;
@@ -287,12 +313,15 @@ work. It records:
 - groups of instances that share source layout, relation program, local round
   count, and backend placement.
 
-An instance becomes active at its suffix offset. The final local challenge
-point is always a borrowed suffix of the master point. Terminal-only instances
-have zero local rounds and participate only in the checked terminal reduction.
-For eq-factored execution through the current proof type, all groups must have
-offset zero, unless every group is terminal-only. Logical batch length is
-independent of padding used inside a source or kernel.
+An instance's source executor becomes active at its suffix offset. The final
+local challenge point is always a borrowed suffix of the master point.
+Terminal-only instances have zero local rounds and participate only in the
+checked terminal reduction.
+For eq-factored execution, a shorter group is logically active through a
+master-lifted virtual prefix, but its source executor starts only at the suffix
+offset. Terminal-only groups use a virtual prefix for every master round and
+never start a source round. Logical batch length is independent of padding used
+inside a source or kernel.
 
 The engine combines group round messages in stable logical order. Parallel or
 device completion order cannot change claim order, error attribution, or
@@ -518,10 +547,10 @@ Work proceeds in reviewable slices:
 2. **Protocol plans and executor shell.** Add checked standard and eq-factored
    batch geometry, object-safe two-phase round control, a fake asynchronous
    executor, and transcript-order tests. Standard execution supports unequal
-   rounds. Eq-factored execution combines groups that share the full equality
-   factor into the existing proof type and rejects other checked plans before
-   transcript work. Do not define a new eq proof format or migrate a production
-   relation.
+   rounds. Eq-factored execution master-lifts shorter relations, combines their
+   normalized messages into the existing proof type, and has a protocol-owned
+   verifier replay with typed local terminal obligations. Do not define a new
+   eq proof format or migrate a production relation.
 3. **Source and reference program.** Add the source GAT, product-sum program,
    scalar interpreter, proof session, and dense plus compact fixtures.
 4. **Fused CPU pilot.** Select one current Akita sumcheck, implement a fused CPU

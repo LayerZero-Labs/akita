@@ -6,6 +6,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
 use std::sync::{Arc, Mutex};
 
+mod dense_alignment;
+
 type F = Fp64<4294967197>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +21,7 @@ enum Event {
         local_round: usize,
         previous_challenge: Option<F>,
         factor: Option<(F, F)>,
+        master_lift_prefix: Option<F>,
     },
     Finish {
         group: usize,
@@ -155,7 +158,7 @@ impl SumcheckRoundExecutor<F> for DelayedExecutor {
                 "test executor received an out-of-order local round",
             ));
         }
-        let (claim, factor) = match (&self.messages, request.context) {
+        let (claim, factor, master_lift_prefix) = match (&self.messages, request.context) {
             (
                 FakeMessages::Standard | FakeMessages::StandardFixed(_),
                 CheckedRoundContext::Standard {
@@ -166,7 +169,7 @@ impl SumcheckRoundExecutor<F> for DelayedExecutor {
                 if batching_coefficients.is_empty() {
                     return Err(invalid("test executor received no batching coefficients"));
                 }
-                (previous_claim, None)
+                (previous_claim, None, None)
             }
             (
                 FakeMessages::EqFactored(_),
@@ -174,6 +177,7 @@ impl SumcheckRoundExecutor<F> for DelayedExecutor {
                     scaled_claim,
                     factor_at_zero,
                     factor_at_one,
+                    master_lift_prefix,
                     batching_coefficients,
                     ..
                 },
@@ -181,7 +185,11 @@ impl SumcheckRoundExecutor<F> for DelayedExecutor {
                 if batching_coefficients.is_empty() {
                     return Err(invalid("test executor received no batching coefficients"));
                 }
-                (scaled_claim, Some((factor_at_zero, factor_at_one)))
+                (
+                    scaled_claim,
+                    Some((factor_at_zero, factor_at_one)),
+                    Some(master_lift_prefix),
+                )
             }
             _ => return Err(invalid("test executor received the wrong protocol format")),
         };
@@ -191,6 +199,7 @@ impl SumcheckRoundExecutor<F> for DelayedExecutor {
             local_round: request.round.local_round,
             previous_challenge: request.previous_challenge,
             factor,
+            master_lift_prefix,
         });
         self.pending = Some((request.round.master_round, claim));
         Ok(())
@@ -424,6 +433,7 @@ fn standard_executor_preserves_submission_order_recurrence_and_suffixes() {
                     local_round: 2,
                     previous_challenge: Some(f(17)),
                     factor: None,
+                    master_lift_prefix: None,
                 }
         })
         .expect("group 0 starts final round");
@@ -437,6 +447,7 @@ fn standard_executor_preserves_submission_order_recurrence_and_suffixes() {
                     local_round: 0,
                     previous_challenge: None,
                     factor: None,
+                    master_lift_prefix: None,
                 }
         })
         .expect("group 1 starts final round");
@@ -488,6 +499,7 @@ fn standard_executor_preserves_submission_order_recurrence_and_suffixes() {
         local_round: 1,
         previous_challenge: Some(f(13)),
         factor: None,
+        master_lift_prefix: None,
     }));
 }
 
@@ -518,6 +530,38 @@ fn eq_terminal(
         * (claim_scale * coefficient)
             .inverse()
             .expect("nonzero deterministic terminal scale")
+}
+
+fn eq_eval(point: &[F], evaluation_point: &[F]) -> F {
+    point
+        .iter()
+        .zip(evaluation_point)
+        .fold(F::one(), |value, (&tau, &challenge)| {
+            value * (tau * challenge + (F::one() - tau) * (F::one() - challenge))
+        })
+}
+
+fn dense_q_at(table: &[F], point: &[F]) -> F {
+    crate::multilinear_eval(table, point).expect("valid dense multilinear shape")
+}
+
+fn dense_source_messages(
+    table: &[F],
+    equality_point: &[F],
+    coefficient: F,
+    challenges: &[F],
+) -> Vec<EqFactoredUniPoly<F>> {
+    (0..equality_point.len())
+        .map(|local_round| {
+            let mut q_at_zero_point = challenges[..local_round].to_vec();
+            q_at_zero_point.push(F::zero());
+            q_at_zero_point.extend_from_slice(&equality_point[local_round + 1..]);
+            EqFactoredUniPoly::from_q_coeffs(vec![
+                coefficient * dense_q_at(table, &q_at_zero_point),
+                F::zero(),
+            ])
+        })
+        .collect()
 }
 
 #[test]
@@ -659,50 +703,349 @@ fn eq_executor_combines_same_factor_groups_before_transcript_absorb() {
         2,
         "one existing proof message is absorbed per round"
     );
+    drop(log);
+
+    let verifier_events = Arc::new(Mutex::new(Vec::new()));
+    let mut verifier_transcript =
+        RecordingTranscript::with_challenges(verifier_events, vec![f(2), f(3), f(5), f(7)]);
+    let verification = verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+        &plan,
+        &[f(31), f(37)],
+        &output.proof,
+        &mut verifier_transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .expect("same-round verifier replay succeeds");
+    assert_eq!(verification.master_point, output.master_point);
+    verification
+        .check_terminal_claims(&output.terminal_claims)
+        .expect("same-round terminals close the verifier recurrence");
 }
 
 #[test]
-fn unequal_round_eq_execution_is_rejected_before_transcript_or_executor_work() {
+fn unequal_round_eq_master_lift_matches_dense_reference_and_verifier() {
+    let equality_point = vec![f(23), f(29), f(31)];
+    let coefficients = [f(2), f(3), f(5), f(7)];
+    let challenges = [f(11), f(13), f(17)];
+    let q_tables = [
+        vec![f(2), f(3), f(5), f(7), f(11), f(13), f(17), f(19)],
+        vec![f(23), f(29), f(31), f(37)],
+        vec![f(41), f(43)],
+        vec![f(47)],
+    ];
+    let local_rounds = [3, 2, 1, 0];
+    let claims: Vec<_> = q_tables
+        .iter()
+        .zip(local_rounds)
+        .map(|(table, rounds)| dense_q_at(table, &equality_point[3 - rounds..]))
+        .collect();
     let plan = CheckedEqFactoredBatch::new(
-        vec![
-            SumcheckMemberShape::new(2, 0),
-            SumcheckMemberShape::new(1, 0),
-            SumcheckMemberShape::new(0, 0),
-        ],
+        local_rounds
+            .iter()
+            .map(|&rounds| SumcheckMemberShape::new(rounds, 1))
+            .collect(),
         vec![
             SumcheckGroupSpec::new(vec![0]),
             SumcheckGroupSpec::new(vec![1]),
             SumcheckGroupSpec::new(vec![2]),
+            SumcheckGroupSpec::new(vec![3]),
         ],
-        vec![f(23), f(29)],
+        equality_point.clone(),
     )
-    .expect("unequal-round eq geometry is valid");
-    assert_eq!(plan.member_equality_point(1).unwrap(), &[f(29)]);
-    assert_eq!(plan.member_equality_point(2).unwrap(), &[]);
+    .expect("three unequal suffix offsets are valid");
 
     let events = Arc::new(Mutex::new(Vec::new()));
+    let transcript_challenges: Vec<_> = coefficients.iter().chain(&challenges).copied().collect();
     let mut transcript =
-        RecordingTranscript::with_challenges(Arc::clone(&events), vec![F::one(); 8]);
-    let mut executors: Vec<Box<dyn SumcheckRoundExecutor<F>>> = (0..3)
-        .map(|group| {
+        RecordingTranscript::with_challenges(Arc::clone(&events), transcript_challenges.clone());
+    let terminals: Vec<_> = q_tables
+        .iter()
+        .zip(local_rounds)
+        .map(|(table, rounds)| {
+            let tau = &equality_point[3 - rounds..];
+            let point = &challenges[3 - rounds..];
+            eq_eval(tau, point) * dense_q_at(table, point)
+        })
+        .collect();
+    let mut executors: Vec<Box<dyn SumcheckRoundExecutor<F>>> = q_tables
+        .iter()
+        .zip(local_rounds)
+        .zip(coefficients)
+        .zip(&terminals)
+        .enumerate()
+        .map(|(group, (((table, rounds), coefficient), terminal))| {
+            let offset = 3 - rounds;
             Box::new(DelayedExecutor::eq_factored(
                 group,
                 Arc::clone(&events),
-                Vec::new(),
-                vec![F::one()],
+                dense_source_messages(
+                    table,
+                    &equality_point[offset..],
+                    coefficient,
+                    &challenges[offset..],
+                ),
+                vec![*terminal],
             )) as Box<dyn SumcheckRoundExecutor<F>>
         })
         .collect();
-    let error = prove_eq_factored_executor_batch::<F, _, _, _>(
+    let output = prove_eq_factored_executor_batch::<F, _, _, _>(
         &plan,
-        &[F::one(); 3],
+        &claims,
         &mut executors,
         &mut transcript,
         |transcript| transcript.challenge_scalar(b"test/challenge"),
     )
-    .expect_err("the current proof type cannot encode unequal factors");
-    assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
-    assert!(events.lock().expect("event log mutex").is_empty());
+    .expect("master-lifted unequal-round batch succeeds");
+
+    let expected_rounds: Vec<_> = (0..3)
+        .map(|master_round| {
+            let q_at_zero = q_tables
+                .iter()
+                .zip(local_rounds)
+                .zip(coefficients)
+                .zip(&claims)
+                .fold(F::zero(), |sum, (((table, rounds), coefficient), claim)| {
+                    let offset = 3 - rounds;
+                    if master_round < offset {
+                        sum + coefficient * *claim
+                    } else {
+                        let mut point = challenges[offset..master_round].to_vec();
+                        point.push(F::zero());
+                        point.extend_from_slice(&equality_point[master_round + 1..]);
+                        assert_eq!(point.len(), rounds);
+                        sum + coefficient * dense_q_at(table, &point)
+                    }
+                });
+            EqFactoredUniPoly::from_q_coeffs(vec![q_at_zero, F::zero()])
+        })
+        .collect();
+    let expected_proof = EqFactoredSumcheckProof {
+        round_polys: expected_rounds,
+    };
+    assert_eq!(
+        serialized_bytes(&output.proof),
+        serialized_bytes(&expected_proof)
+    );
+    assert_eq!(output.master_point, challenges);
+    assert_eq!(output.terminal_claims, terminals);
+    for member_index in 0..4 {
+        let offset = member_index;
+        assert_eq!(
+            plan.member_equality_point(member_index).unwrap(),
+            &equality_point[offset..]
+        );
+        assert_eq!(
+            plan.member_point(&output.master_point, member_index)
+                .unwrap(),
+            &challenges[offset..]
+        );
+    }
+
+    let log = events.lock().expect("event log mutex");
+    for (group, expected_starts) in [3, 2, 1, 0].into_iter().enumerate() {
+        assert_eq!(
+            log.iter()
+                .filter(
+                    |event| matches!(event, Event::Start { group: found, .. } if *found == group)
+                )
+                .count(),
+            expected_starts,
+            "virtual prefix rounds must not start or fold the source"
+        );
+    }
+    let first_finish_round_two = log
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                Event::Finish {
+                    master_round: 2,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    for group in 0..3 {
+        let start = log
+            .iter()
+            .position(|event| {
+                matches!(event, Event::Start { group: found, master_round: 2, .. } if *found == group)
+            })
+            .unwrap();
+        assert!(start < first_finish_round_two);
+    }
+    assert!(log.iter().any(|event| {
+        matches!(
+            event,
+            Event::Start {
+                group: 2,
+                master_round: 2,
+                local_round: 0,
+                previous_challenge: None,
+                master_lift_prefix: Some(prefix),
+                ..
+            } if *prefix == eq_eval(&equality_point[..2], &challenges[..2])
+        )
+    }));
+    drop(log);
+
+    let verifier_events = Arc::new(Mutex::new(Vec::new()));
+    let mut verifier_transcript =
+        RecordingTranscript::with_challenges(Arc::clone(&verifier_events), transcript_challenges);
+    let verification = verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+        &plan,
+        &claims,
+        &output.proof,
+        &mut verifier_transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .expect("protocol verifier replays the batch");
+    assert_eq!(verification.master_point, challenges);
+    assert_eq!(verification.batching_coefficients, coefficients);
+    verification
+        .check_terminal_claims(&terminals)
+        .expect("local terminal obligations close the recurrence");
+    for (member_index, obligation) in verification.terminal_obligations.iter().enumerate() {
+        assert_eq!(obligation.member_index, member_index);
+        assert_eq!(
+            obligation.point(&verification.master_point).unwrap(),
+            &challenges[member_index..]
+        );
+        assert_eq!(
+            obligation.prefix_equality_scalar,
+            eq_eval(&equality_point[..member_index], &challenges[..member_index])
+        );
+    }
+}
+
+#[test]
+fn two_round_virtual_prefix_keeps_accumulated_scalar_in_engine_factor() {
+    let equality_point = [f(5), f(7), f(11)];
+    let anchor_coefficient = f(3);
+    let coefficient = f(13);
+    let challenges = [f(17), f(19), f(23)];
+    let q_table = [f(29), f(31)];
+    let input_claim = dense_q_at(&q_table, &equality_point[2..]);
+    let local_terminal =
+        eq_eval(&equality_point[2..], &challenges[2..]) * dense_q_at(&q_table, &challenges[2..]);
+    let plan = CheckedEqFactoredBatch::new(
+        vec![
+            SumcheckMemberShape::new(3, 1),
+            SumcheckMemberShape::new(1, 1),
+        ],
+        vec![
+            SumcheckGroupSpec::new(vec![0]),
+            SumcheckGroupSpec::new(vec![1]),
+        ],
+        equality_point.to_vec(),
+    )
+    .unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut transcript = RecordingTranscript::with_challenges(
+        Arc::clone(&events),
+        [anchor_coefficient, coefficient]
+            .into_iter()
+            .chain(challenges)
+            .collect(),
+    );
+    let mut executors: Vec<Box<dyn SumcheckRoundExecutor<F>>> = vec![
+        Box::new(DelayedExecutor::eq_factored(
+            0,
+            Arc::clone(&events),
+            vec![EqFactoredUniPoly::from_q_coeffs(vec![F::zero(); 2]); 3],
+            vec![F::zero()],
+        )),
+        Box::new(DelayedExecutor::eq_factored(
+            1,
+            Arc::clone(&events),
+            dense_source_messages(
+                &q_table,
+                &equality_point[2..],
+                coefficient,
+                &challenges[2..],
+            ),
+            vec![local_terminal],
+        )),
+    ];
+    let output = prove_eq_factored_executor_batch::<F, _, _, _>(
+        &plan,
+        &[F::zero(), input_claim],
+        &mut executors,
+        &mut transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .expect("two-round virtual master lift succeeds");
+
+    let mut claim_scale = F::one();
+    let mut scaled_claim = coefficient * input_claim;
+    for round in 0..3 {
+        let bound = &challenges[..round];
+        let equality_scalar = eq_eval(&equality_point[..round], bound);
+        let linear_at = |x: F| {
+            equality_scalar
+                * (equality_point[round] * x + (F::one() - equality_point[round]) * (F::one() - x))
+        };
+        let l_at_zero = linear_at(F::zero());
+        let l_at_one = linear_at(F::one());
+        let s_at_zero =
+            dense_alignment::round_sum(&equality_point, &q_table, 2, coefficient, bound, F::zero());
+        let s_at_one =
+            dense_alignment::round_sum(&equality_point, &q_table, 2, coefficient, bound, F::one());
+        let current_claim = s_at_zero + s_at_one;
+        assert_eq!(scaled_claim, claim_scale * current_claim);
+
+        let q_at_zero = output.proof.round_polys[round].constant_term();
+        let q_linear = (current_claim - (l_at_zero + l_at_one) * q_at_zero)
+            * l_at_one.inverse().expect("chosen linear factor is nonzero");
+        for x in [F::zero(), F::one(), f(37)] {
+            let restored_q = q_at_zero + q_linear * x;
+            let direct_q = if round < 2 {
+                coefficient * input_claim
+            } else {
+                coefficient * dense_q_at(&q_table, &[x])
+            };
+            assert_eq!(restored_q, direct_q, "restored q differs in round {round}");
+            assert_eq!(
+                linear_at(x) * restored_q,
+                dense_alignment::round_sum(&equality_point, &q_table, 2, coefficient, bound, x,),
+                "restored s differs in round {round}"
+            );
+        }
+
+        let challenge = challenges[round];
+        let l_at_challenge = linear_at(challenge);
+        let scaled_linear = scaled_claim - claim_scale * (l_at_zero + l_at_one) * q_at_zero;
+        let next_scale = claim_scale * l_at_one;
+        let denominator_free_next =
+            next_scale * l_at_challenge * q_at_zero + l_at_challenge * challenge * scaled_linear;
+        let direct_next_claim =
+            dense_alignment::round_sum(&equality_point, &q_table, 2, coefficient, bound, challenge);
+        assert_eq!(denominator_free_next, next_scale * direct_next_claim);
+        claim_scale = next_scale;
+        scaled_claim = denominator_free_next;
+    }
+
+    let prefix_scalar = eq_eval(&equality_point[..2], &challenges[..2]);
+    assert_eq!(
+        output.proof.round_polys[2].constant_term(),
+        coefficient * q_table[0],
+        "the accumulated prefix scalar stays in engine-owned L, not transmitted q"
+    );
+    assert_ne!(prefix_scalar, F::one());
+    assert_eq!(
+        scaled_claim,
+        claim_scale * coefficient * prefix_scalar * local_terminal
+    );
+    assert_eq!(output.terminal_claims, vec![F::zero(), local_terminal]);
+
+    let log = events.lock().expect("event log mutex");
+    assert_eq!(
+        log.iter()
+            .filter(|event| matches!(event, Event::Start { group: 1, .. }))
+            .count(),
+        1,
+        "both virtual prefix rounds avoid the source"
+    );
 }
 
 #[test]
@@ -754,6 +1097,128 @@ fn all_terminal_eq_batch_uses_an_empty_existing_proof() {
             group: 0,
             final_challenge: None,
         }));
+}
+
+#[test]
+fn eq_verifier_rejects_malformed_and_tampered_inputs_without_panicking() {
+    let tau = f(7);
+    let challenge = f(3);
+    let coefficient = f(2);
+    let q_table = [f(3), f(5)];
+    let claim = dense_q_at(&q_table, &[tau]);
+    let terminal = eq_eval(&[tau], &[challenge]) * dense_q_at(&q_table, &[challenge]);
+    let plan = CheckedEqFactoredBatch::new(
+        vec![SumcheckMemberShape::new(1, 1)],
+        vec![SumcheckGroupSpec::new(vec![0])],
+        vec![tau],
+    )
+    .unwrap();
+    let proof = EqFactoredSumcheckProof {
+        round_polys: vec![EqFactoredUniPoly::from_q_coeffs(vec![
+            coefficient * q_table[0],
+            F::zero(),
+        ])],
+    };
+
+    let shape_events = Arc::new(Mutex::new(Vec::new()));
+    let mut shape_transcript = RecordingTranscript::with_challenges(
+        Arc::clone(&shape_events),
+        vec![coefficient, challenge],
+    );
+    assert_eq!(
+        verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+            &plan,
+            &[],
+            &proof,
+            &mut shape_transcript,
+            |transcript| transcript.challenge_scalar(b"test/challenge"),
+        ),
+        Err(AkitaError::InvalidSize {
+            expected: 1,
+            actual: 0,
+        })
+    );
+    assert!(shape_events.lock().expect("event log mutex").is_empty());
+
+    for malformed in [
+        EqFactoredSumcheckProof {
+            round_polys: Vec::new(),
+        },
+        EqFactoredSumcheckProof {
+            round_polys: vec![EqFactoredUniPoly {
+                coeffs_except_linear_term: vec![F::one(), F::one()],
+            }],
+        },
+    ] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut transcript =
+            RecordingTranscript::with_challenges(Arc::clone(&events), vec![coefficient, challenge]);
+        assert!(verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+            &plan,
+            &[claim],
+            &malformed,
+            &mut transcript,
+            |transcript| transcript.challenge_scalar(b"test/challenge"),
+        )
+        .is_err());
+        assert!(events.lock().expect("event log mutex").is_empty());
+    }
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut wrong_claim_transcript =
+        RecordingTranscript::with_challenges(Arc::clone(&events), vec![coefficient, challenge]);
+    let wrong_claim = verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+        &plan,
+        &[claim + F::one()],
+        &proof,
+        &mut wrong_claim_transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .unwrap();
+    assert_eq!(
+        wrong_claim.check_terminal_claims(&[terminal]),
+        Err(AkitaError::InvalidProof)
+    );
+
+    let mut tampered_proof = proof.clone();
+    tampered_proof.round_polys[0].coeffs_except_linear_term[0] += F::one();
+    let mut tampered_transcript =
+        RecordingTranscript::with_challenges(Arc::clone(&events), vec![coefficient, challenge]);
+    let tampered = verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+        &plan,
+        &[claim],
+        &tampered_proof,
+        &mut tampered_transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .unwrap();
+    assert_eq!(
+        tampered.check_terminal_claims(&[terminal]),
+        Err(AkitaError::InvalidProof)
+    );
+
+    let mut valid_transcript =
+        RecordingTranscript::with_challenges(events, vec![coefficient, challenge]);
+    let valid = verify_eq_factored_executor_batch_rounds::<F, _, _, _>(
+        &plan,
+        &[claim],
+        &proof,
+        &mut valid_transcript,
+        |transcript| transcript.challenge_scalar(b"test/challenge"),
+    )
+    .unwrap();
+    assert_eq!(
+        valid.check_terminal_claims(&[]),
+        Err(AkitaError::InvalidSize {
+            expected: 1,
+            actual: 0,
+        })
+    );
+    assert_eq!(
+        valid.check_terminal_claims(&[terminal + F::one()]),
+        Err(AkitaError::InvalidProof)
+    );
+    valid.check_terminal_claims(&[terminal]).unwrap();
 }
 
 #[test]

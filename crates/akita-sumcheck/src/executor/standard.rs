@@ -9,7 +9,8 @@ use super::{
     SumcheckRoundExecutor,
 };
 use crate::{SumcheckProof, UniPoly};
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::{labels, Transcript};
 

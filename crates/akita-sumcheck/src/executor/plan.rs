@@ -2,7 +2,8 @@ use super::shared::{
     check_addressable_count, invalid, validate_eq_message, validate_standard_message,
 };
 use crate::{EqFactoredSumcheckProof, SumcheckProof};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 
 /// Logical shape of one sumcheck member.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -76,7 +77,7 @@ impl CheckedSumcheckGroup {
         self.degree_bound
     }
 
-    /// Master-round offset at which this group becomes active.
+    /// Master-round offset at which this group's source rounds begin.
     #[must_use]
     pub const fn suffix_offset(&self) -> usize {
         self.suffix_offset
@@ -93,6 +94,7 @@ impl CheckedSumcheckGroup {
 pub(super) struct CheckedBatchGeometry {
     pub(super) members: Vec<SumcheckMemberShape>,
     pub(super) groups: Vec<CheckedSumcheckGroup>,
+    pub(super) member_groups: Vec<usize>,
     pub(super) master_rounds: usize,
 }
 
@@ -115,18 +117,18 @@ impl CheckedBatchGeometry {
             .ok_or_else(|| invalid("sumcheck batch must contain at least one member"))?;
         check_addressable_count(master_rounds, "master round count")?;
 
-        let mut assigned_members = Vec::new();
-        assigned_members
+        let mut member_groups = Vec::new();
+        member_groups
             .try_reserve_exact(members.len())
             .map_err(|_| invalid("sumcheck member assignment allocation failed"))?;
-        assigned_members.resize(members.len(), false);
+        member_groups.resize(members.len(), usize::MAX);
         let mut groups = Vec::new();
         groups
             .try_reserve_exact(group_specs.len())
             .map_err(|_| invalid("sumcheck group allocation failed"))?;
 
         let mut previous_group_first = None;
-        for spec in group_specs {
+        for (group_index, spec) in group_specs.into_iter().enumerate() {
             let Some((&first, rest)) = spec.member_indices.split_first() else {
                 return Err(invalid("sumcheck groups cannot be empty"));
             };
@@ -163,13 +165,13 @@ impl CheckedBatchGeometry {
                         "all members in a sumcheck group must have the same shape",
                     ));
                 }
-                let assigned = assigned_members
+                let assigned_group = member_groups
                     .get_mut(member_index)
                     .ok_or_else(|| invalid("sumcheck group member index is out of range"))?;
-                if *assigned {
+                if *assigned_group != usize::MAX {
                     return Err(invalid("sumcheck member appears in more than one group"));
                 }
-                *assigned = true;
+                *assigned_group = group_index;
             }
 
             groups.push(CheckedSumcheckGroup {
@@ -180,13 +182,14 @@ impl CheckedBatchGeometry {
             });
         }
 
-        if assigned_members.contains(&false) {
+        if member_groups.contains(&usize::MAX) {
             return Err(invalid("every sumcheck member must belong to one group"));
         }
 
         Ok(Self {
             members,
             groups,
+            member_groups,
             master_rounds,
         })
     }
@@ -225,6 +228,13 @@ impl CheckedBatchGeometry {
             .map(|group| group.degree_bound)
             .max()
             .ok_or_else(|| invalid("sumcheck master round has no active group"))
+    }
+
+    fn group_index_for_member(&self, member_index: usize) -> Result<usize, AkitaError> {
+        self.member_groups
+            .get(member_index)
+            .copied()
+            .ok_or_else(|| invalid("sumcheck member index is out of range"))
     }
 }
 
@@ -277,7 +287,13 @@ impl CheckedStandardBatch {
     }
 }
 
-/// Checked eq-factored batch plan whose member equality points are master suffixes.
+/// Checked eq-factored batch plan with master-lifted suffix relations.
+///
+/// A member with suffix offset `k` declares the relation
+/// `eq(master_equality_point[..k], x[..k]) * F(x[k..])`, where the local
+/// executor owns `F` and uses the suffix equality point. This checked lift is
+/// the common-factor contract. The plan cannot describe unrelated active
+/// equality factors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckedEqFactoredBatch<E: FieldCore> {
     pub(super) geometry: CheckedBatchGeometry,
@@ -285,7 +301,7 @@ pub struct CheckedEqFactoredBatch<E: FieldCore> {
 }
 
 impl<E: FieldCore> CheckedEqFactoredBatch<E> {
-    /// Validate members, groups, and the master equality point.
+    /// Validate members, groups, and their one master equality point.
     pub fn new(
         members: Vec<SumcheckMemberShape>,
         groups: Vec<SumcheckGroupSpec>,
@@ -331,9 +347,8 @@ impl<E: FieldCore> CheckedEqFactoredBatch<E> {
         self.geometry.member_suffix(master_point, member_index)
     }
 
-    /// Validate an existing eq-factored proof for a batch with one shared factor.
+    /// Validate an existing eq-factored proof for a master-lifted batch.
     pub fn validate_proof(&self, proof: &EqFactoredSumcheckProof<E>) -> Result<(), AkitaError> {
-        self.ensure_existing_proof_compatible()?;
         if proof.round_polys.len() != self.geometry.master_rounds {
             return Err(AkitaError::InvalidSize {
                 expected: self.geometry.master_rounds,
@@ -353,24 +368,40 @@ impl<E: FieldCore> CheckedEqFactoredBatch<E> {
         Ok(())
     }
 
-    pub(super) fn ensure_existing_proof_compatible(&self) -> Result<(), AkitaError> {
-        if self
-            .geometry
-            .groups
-            .iter()
-            .any(|group| group.suffix_offset != 0)
-        {
-            return Err(AkitaError::UnsupportedSchedule(
-                "unequal-round eq-factored groups require a reviewed proof format".to_owned(),
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) fn equality_coordinate(&self, master_round: usize) -> Result<E, AkitaError> {
         self.master_equality_point
             .get(master_round)
             .copied()
             .ok_or_else(|| invalid("eq-factored master round is out of range"))
+    }
+
+    pub(super) fn group_prefix_scalar(
+        &self,
+        master_point_prefix: &[E],
+        group_index: usize,
+    ) -> Result<E, AkitaError> {
+        let group = self
+            .geometry
+            .groups
+            .get(group_index)
+            .ok_or_else(|| invalid("sumcheck group index is out of range"))?;
+        let offset = group.suffix_offset;
+        let equality_prefix = self
+            .master_equality_point
+            .get(..offset)
+            .ok_or_else(|| invalid("eq-factored equality prefix is invalid"))?;
+        let challenge_prefix = master_point_prefix
+            .get(..offset)
+            .ok_or_else(|| invalid("eq-factored challenge prefix is incomplete"))?;
+        Ok(equality_prefix.iter().zip(challenge_prefix).fold(
+            E::one(),
+            |scalar, (&tau, &challenge)| {
+                scalar * (tau * challenge + (E::one() - tau) * (E::one() - challenge))
+            },
+        ))
+    }
+
+    pub(super) fn member_group_index(&self, member_index: usize) -> Result<usize, AkitaError> {
+        self.geometry.group_index_for_member(member_index)
     }
 }
