@@ -1,7 +1,8 @@
 use super::compact_digit_source::RangeImageClass;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
+use akita_error::AkitaError;
 use akita_field::unreduced::HasOptimizedFold;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
+use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_types::DigitRangePlan;
 
 /// Plan-derived child-node values for every range-image class.

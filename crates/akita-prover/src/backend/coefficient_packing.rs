@@ -1,8 +1,9 @@
 //! Shared checked construction for coefficient-packing backend kernels.
 
 use crate::compute::SubringCoefficientPackingPlan;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, ExtField, FieldCore};
+use akita_field::{ExtField, FieldCore};
 use akita_types::FpExtEncoding;
 
 fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
@@ -129,9 +130,10 @@ mod tests {
         SubringCoefficientPackingPlan,
     };
     use akita_algebra::CyclotomicRing;
+    use akita_error::AkitaError;
     use akita_field::{
-        AkitaError, CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt,
-        Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt, Prime128OffsetA7F7,
+        Prime32Offset99, Prime64Offset59,
     };
     use akita_types::{
         coefficient_packing_partials, BasisMode, FpExtEncoding,

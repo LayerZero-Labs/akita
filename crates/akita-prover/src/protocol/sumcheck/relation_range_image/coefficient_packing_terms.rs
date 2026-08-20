@@ -1,7 +1,8 @@
 //! Prover preparation of shared coefficient-packing Stage 2 terms.
 
 use super::PreparedProverLinearTerms;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_types::{CoefficientPackingGroupSemantics, SubringCoefficientPackingGeometry};
 
 /// Prepared method-specific weights and their authenticated input claim.

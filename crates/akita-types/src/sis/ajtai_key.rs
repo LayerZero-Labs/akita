@@ -6,7 +6,7 @@
 //! commit-matrix parameters does it yield". The generated SIS-floor tables it consults
 //! live in the private sibling module `super::generated_sis_table`.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::coverage::{sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
 use super::generated_sis_table::{sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST};

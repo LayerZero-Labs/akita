@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,

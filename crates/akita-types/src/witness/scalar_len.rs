@@ -1,7 +1,8 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::{
-    checked_align_up, dyadic_block_ranges, witness_unit_lengths, WitnessLayout, MAX_WITNESS_CHUNKS,
+    align_witness_offset, dyadic_block_ranges, witness_unit_lengths, WitnessLayout,
+    MAX_WITNESS_CHUNKS,
 };
 use crate::{
     CommittedGroupParams, CompressionChainPlan, OpeningClaimsLayout, RelationRowFamily,
@@ -145,7 +146,7 @@ impl WitnessLayout {
         };
 
         let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
-        cursor = checked_align_up(
+        cursor = align_witness_offset(
             cursor,
             relation_coefficient_block,
             "compression witness alignment overflow",
@@ -159,7 +160,7 @@ impl WitnessLayout {
                 .maps()
                 .get(map_index)
                 .ok_or_else(|| AkitaError::InvalidSetup("compression D map is missing".into()))?;
-            cursor = checked_align_up(
+            cursor = align_witness_offset(
                 cursor,
                 b_map.ring_dimension().max(d_map.ring_dimension()),
                 "compression layer alignment overflow",
@@ -179,7 +180,7 @@ impl WitnessLayout {
                 })?;
             }
         }
-        Ok(Some(checked_align_up(
+        Ok(Some(align_witness_offset(
             cursor,
             relation_coefficient_block,
             "compression witness suffix alignment overflow",

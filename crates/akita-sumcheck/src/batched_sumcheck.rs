@@ -9,7 +9,7 @@
 //! Adapted from Jolt's `BatchedSumcheck` implementation.
 
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;

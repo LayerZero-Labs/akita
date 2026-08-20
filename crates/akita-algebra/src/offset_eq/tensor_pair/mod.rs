@@ -5,7 +5,8 @@ pub use evaluate::eval_boolean_pair_tensor_families;
 pub use materialize::materialize_eq_tensor_left;
 
 use super::MAX_COMPACT_STRIDE_TERMS;
-use crate::{AkitaError, FieldCore};
+use crate::FieldCore;
+use akita_error::{checked, AkitaError};
 use std::sync::Arc;
 
 /// Weights carried by one affine tensor axis.
@@ -244,9 +245,7 @@ pub(super) fn checked_axis_offset(
     coordinate: usize,
     side: &'static str,
 ) -> Result<usize, AkitaError> {
-    stride
-        .checked_mul(coordinate)
-        .and_then(|offset| base.checked_add(offset))
+    checked::mul_add(stride, coordinate, base)
         .ok_or_else(|| AkitaError::InvalidInput(format!("paired tensor {side} address overflow")))
 }
 

@@ -5,9 +5,9 @@
 
 use crate::ext::{FpExt2, FpExt2Config, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend};
 use crate::unreduced::HasUnreducedOps;
-use crate::{
-    pseudo_mersenne_modulus, AkitaError, FieldCore, FromPrimitiveInt, PseudoMersenneField,
-};
+use akita_error::AkitaError;
+
+use crate::{pseudo_mersenne_modulus, FieldCore, FromPrimitiveInt, PseudoMersenneField};
 use akita_serialization::Valid;
 
 /// Lift a base-field element into an extension field.

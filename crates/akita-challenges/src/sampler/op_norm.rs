@@ -40,7 +40,7 @@
 //! only if it passes [`OpNormTable::accept_strict_parts`] (see the rejection loop in
 //! [`crate::sampler`]).
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 use super::op_norm_accumulate;
 

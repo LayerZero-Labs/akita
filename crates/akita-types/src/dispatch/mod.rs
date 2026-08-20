@@ -11,7 +11,8 @@ mod policy;
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::sis::SisModulusProfileId;
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
-use akita_field::{AkitaError, CanonicalField};
+use akita_error::AkitaError;
+use akita_field::CanonicalField;
 
 pub(crate) use policy::role_ring_dimensions_for_tier;
 pub use policy::{

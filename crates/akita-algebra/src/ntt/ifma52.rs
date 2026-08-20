@@ -1,6 +1,6 @@
 //! Canonical 50-bit NTT arithmetic for AVX-512IFMA hosts.
 
-use crate::AkitaError;
+use akita_error::AkitaError;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;

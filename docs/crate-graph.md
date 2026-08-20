@@ -13,6 +13,7 @@ orchestration lives in `akita-pcs`.
 
 | Crate | Role |
 |-------|------|
+| `akita-error` | Shared protocol error and reusable checked integer formulas |
 | `akita-field` | Field traits, prime/extension fields, FFT, parallel macros |
 | `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
@@ -33,6 +34,7 @@ orchestration lives in `akita-pcs`.
 
 ```mermaid
 graph TD
+  Error["akita-error"]
   Ser["akita-serialization"]
   Field["akita-field"]
   Witness["akita-witness"]
@@ -42,38 +44,51 @@ graph TD
   Sumcheck["akita-sumcheck"]
   Types["akita-types"]
   Planner["akita-planner"]
+  Schedules["akita-schedules"]
   Config["akita-config"]
   Verifier["akita-verifier"]
   Prover["akita-prover"]
   Setup["akita-setup"]
   Pcs["akita-pcs"]
 
+  Field --> Error
   Field --> Ser
+  Witness --> Error
   Witness --> Field
+  Algebra --> Error
   Algebra --> Field
   Algebra --> Ser
   Transcript --> Field
   Transcript --> Ser
+  Challenges --> Error
   Challenges --> Field
   Challenges --> Transcript
+  Sumcheck --> Error
   Sumcheck --> Algebra
   Sumcheck --> Field
   Sumcheck --> Ser
   Sumcheck --> Transcript
+  Types --> Error
   Types --> Algebra
   Types --> Challenges
   Types --> Field
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
+  Planner --> Error
   Planner --> Challenges
-  Planner --> Field
   Planner --> Types
+  Schedules --> Error
+  Schedules --> Challenges
+  Schedules --> Types
+  Config --> Error
   Config --> Challenges
   Config --> Field
   Config --> Planner
   Config --> Transcript
   Config --> Types
+  Config --> Schedules
+  Verifier --> Error
   Verifier --> Algebra
   Verifier --> Challenges
   Verifier --> Config
@@ -82,6 +97,7 @@ graph TD
   Verifier --> Sumcheck
   Verifier --> Transcript
   Verifier --> Types
+  Prover --> Error
   Prover --> Algebra
   Prover --> Challenges
   Prover --> Config
@@ -90,12 +106,14 @@ graph TD
   Prover --> Sumcheck
   Prover --> Transcript
   Prover --> Types
+  Setup --> Error
   Setup --> Algebra
   Setup --> Config
   Setup --> Field
   Setup --> Prover
   Setup --> Ser
   Setup --> Types
+  Pcs --> Error
   Pcs --> Algebra
   Pcs --> Challenges
   Pcs --> Config
@@ -111,20 +129,24 @@ graph TD
 
 ## Ownership Rules
 
+- `akita-error` owns `AkitaError` and the reusable exact `usize` formulas in
+  `akita_error::checked`. The formulas return `Option` and do not choose a
+  protocol error variant. Callers map failure at the boundary where its meaning
+  is known. Generic checked helpers must not be redefined in downstream crates.
 - `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
   (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
-  It depends only on `akita-field`. At the time of this graph, it is a workspace
-  member without downstream `Cargo.toml` edges; cite it from the architecture
-  chapter and polyops/sumcheck specs until prover/sumcheck depend on it explicitly.
+  It depends only on `akita-error` and `akita-field`. At the time of this graph,
+  it is a workspace member without downstream `Cargo.toml` edges; cite it from
+  the architecture chapter and polyops/sumcheck specs until prover/sumcheck
+  depend on it explicitly.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types,
   on-demand compact→`LevelParams` expansion, catalog identity validation, and
   the schedule-search DP. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
-  and `akita-field`.
+  and `akita-error`.
 - `akita-schedules` stores the tracked generated tables and their Cargo feature
   wiring. The family modules are deterministic planner output. The crate
-  depends only on `akita-types`, `akita-challenges`, and
-  `akita-field`.
+  depends only on `akita-error`, `akita-types`, and `akita-challenges`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
   policy trait. It depends on `akita-schedules`: `CommitmentConfig::resolve_catalog_row_for_key`
   delegates to strict generated-catalog resolution, which validates an opted-in

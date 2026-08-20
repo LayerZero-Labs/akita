@@ -9,7 +9,8 @@ use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
-use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
+use crate::{CanonicalField, CyclotomicRing, FieldCore};
+use akita_error::AkitaError;
 
 use super::convert::CenteredI16NttConverter;
 use super::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
