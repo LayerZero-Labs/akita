@@ -26,21 +26,28 @@ and end-to-end host integration complete the deployment system.
 
 Production readiness comes from agreement across that complete system.
 
-## Generated parameters are part of the proof
+## Generated schedules are fixed before proving
 
 An Akita fold uses concrete ring dimensions, digit decompositions, challenge
-spaces, and response bounds. Those choices determine both performance and
-security. The prover and verifier must use the same choices for the exact shape
-of the opening statement.
+spaces, and response bounds. Those choices determine security, proof shape, and
+the checks performed by the verifier. A proof must not be allowed to define
+them.
 
 The planner searches this space offline. It prices complete proof schedules,
-checks their security requirements, and emits reviewed Rust tables. Normal
-proving and verification resolve an exact row from those generated catalogs.
-They do not run the search again.
+checks their security requirements, and emits reviewed Rust tables. The
+configured prover and verifier both contain the resulting catalog. Neither
+runs the planner during normal proving or verification.
 
-This separation gives deployment two useful properties. Verification remains
-small and deterministic. Parameter changes also appear as ordinary generated
-source changes that code review and continuous integration can inspect.
+The public opening statement carries a 32-byte digest that names one row in
+that catalog. This digest is not a schedule and is not part of the proof
+payload. The verifier accepts it only when it matches a row in its own enabled
+catalog. It then reads the dimensions, bounds, and expected proof shape from
+that local row. An unknown digest is rejected, so a prover cannot supply an
+unchecked schedule.
+
+This separation keeps verification small and deterministic. Parameter changes
+also appear as ordinary generated source changes that code review and
+continuous integration can inspect.
 
 The [Configuration and planning](../how/configuration.md) chapter explains the
 catalog keys and validation path. The [Security model](../how/security.md)

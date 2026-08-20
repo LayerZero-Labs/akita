@@ -7,7 +7,7 @@ by a large prover.
 
 This chapter explains that choice in the wider commitment landscape.
 
-## The commitment carries the assumption
+## The polynomial commitment carries the assumption
 
 Many proof systems check polynomial identities using algebra and random
 challenges. Those checks do not need an elliptic curve hardness assumption. The
@@ -23,7 +23,7 @@ with Akita changes the security of the complete proof. Any additional
 computational assumptions in the host must provide their own post-quantum
 security.
 
-## Three commitment approaches
+## Three polynomial commitment approaches
 
 The main approaches make different choices about proof size, setup, and prover
 work.
