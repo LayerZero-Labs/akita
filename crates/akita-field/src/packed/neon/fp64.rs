@@ -16,6 +16,61 @@ impl<const P: u64> Default for PackedFp64Neon<P> {
     }
 }
 
+impl<const P: u64> PackedFp64Neon<P> {
+    /// Multiply and reduce one lane for a 63-bit pseudo-Mersenne modulus.
+    ///
+    /// Keeping both Solinas folds in general-purpose registers avoids the
+    /// scalar-to-NEON packing generated for the portable `u128` reducer.
+    #[inline(always)]
+    fn mul_reduce_63(lhs: u64, rhs: u64) -> u64 {
+        debug_assert_eq!(Fp64::<P>::BITS, 63);
+        let result: u64;
+        let c = Fp64::<P>::C;
+        let reduction_bias = (1u64 << 63) + c;
+
+        // For BITS = 63, P = 2^63 - C. The field invariant C(C + 1) < P
+        // guarantees that two folds leave a value below 2P:
+        //
+        //   x = r + q*2^63  ->  f1 = r + q*C
+        //   f1 = s + t*2^63 ->  f2 = s + t*C < 2P.
+        //
+        // `umulh` plus `mul` preserves the first fold's carry, which the
+        // narrow u64 reducer cannot do for a 63-bit modulus with C > 1.
+        // Adding 2^64 - P = 2^63 + C sets carry exactly when f2 >= P, so the
+        // final `csel` performs one canonical subtraction without a branch.
+        // SAFETY: the assembly has no memory or stack effects, all temporaries
+        // are declared outputs, and the function is called only for BITS = 63.
+        unsafe {
+            core::arch::asm!(
+                "umulh {high}, {lhs}, {rhs}",
+                "mul {result}, {lhs}, {rhs}",
+                "extr {quotient}, {high}, {result}, #63",
+                "and {result}, {result}, #0x7fffffffffffffff",
+                "umulh {product_hi}, {quotient}, {c}",
+                "mul {product_lo}, {quotient}, {c}",
+                "adds {result}, {result}, {product_lo}",
+                "adc {high}, {product_hi}, xzr",
+                "extr {quotient}, {high}, {result}, #63",
+                "and {result}, {result}, #0x7fffffffffffffff",
+                "madd {result}, {quotient}, {c}, {result}",
+                "adds {high}, {result}, {reduction_bias}",
+                "csel {result}, {high}, {result}, hs",
+                lhs = in(reg) lhs,
+                rhs = in(reg) rhs,
+                c = in(reg) c,
+                reduction_bias = in(reg) reduction_bias,
+                result = out(reg) result,
+                high = out(reg) _,
+                quotient = out(reg) _,
+                product_lo = out(reg) _,
+                product_hi = out(reg) _,
+                options(pure, nomem, nostack),
+            );
+        }
+        result
+    }
+}
+
 impl<const P: u64> fmt::Debug for PackedFp64Neon<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("PackedFp64Neon").field(&self.vals).finish()
@@ -68,14 +123,11 @@ impl<const P: u64> Sub for PackedFp64Neon<P> {
         let b = to_vec(rhs.vals);
         let result = unsafe {
             let d = vsubq_u64(a, b);
-            let p = vdupq_n_u64(P);
-            if Fp64::<P>::BITS < 64 {
-                let underflow = vcltq_s64(vreinterpretq_s64_u64(d), vdupq_n_s64(0));
-                vbslq_u64(underflow, vaddq_u64(d, p), d)
-            } else {
-                let underflow = vcltq_u64(a, b);
-                vaddq_u64(d, vandq_u64(underflow, p))
-            }
+            let neg_p = vdupq_n_u64(P.wrapping_neg());
+            let underflow = vcltq_u64(a, b);
+            // `d - (-P)` is `d + P` modulo 2^64. Using -P keeps the
+            // full-word correction equal to the small offset C.
+            vsubq_u64(d, vandq_u64(underflow, neg_p))
         };
         Self {
             vals: from_vec(result),
@@ -87,6 +139,14 @@ impl<const P: u64> Mul for PackedFp64Neon<P> {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: Self) -> Self {
+        if Fp64::<P>::BITS == 63 {
+            return Self {
+                vals: [
+                    Self::mul_reduce_63(self.vals[0], rhs.vals[0]),
+                    Self::mul_reduce_63(self.vals[1], rhs.vals[1]),
+                ],
+            };
+        }
         let x0 = (self.vals[0] as u128) * (rhs.vals[0] as u128);
         let x1 = (self.vals[1] as u128) * (rhs.vals[1] as u128);
         let r0 = Fp64::<P>::reduce_product_wide(x0 as u64, (x0 >> 64) as u64);

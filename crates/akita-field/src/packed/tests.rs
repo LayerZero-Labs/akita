@@ -384,6 +384,29 @@ fn packed_fp64_wide_sub_word_matches_integer_reference() {
     }
 }
 
+/// Exercise the generic 63-bit packed kernel with a second test-only prime.
+/// This guards against accidentally specializing the AArch64 reduction to the
+/// benchmark modulus `2^63 - 259`.
+#[test]
+fn packed_fp64_63b_second_offset_matches_integer_reference() {
+    const P: u64 = (1u64 << 63) - 25;
+    type PF = <Fp64<P> as HasPacking>::Packing;
+
+    let boundary = [0, 1, 2, (P - 1) / 2, P - 2, P - 1];
+    for &x in &boundary {
+        for &y in &boundary {
+            check_packed_fp64_against_integer_reference::<P, PF>(&[x; PF::WIDTH], &[y; PF::WIDTH]);
+        }
+    }
+
+    let mut rng = StdRng::seed_from_u64(0xaa63_bb63_cc63_0019);
+    for _ in 0..4096 {
+        let lhs: Vec<u64> = (0..PF::WIDTH).map(|_| rng.next_u64() % P).collect();
+        let rhs: Vec<u64> = (0..PF::WIDTH).map(|_| rng.next_u64() % P).collect();
+        check_packed_fp64_against_integer_reference::<P, PF>(&lhs, &rhs);
+    }
+}
+
 #[test]
 fn packed_fp64_64b_add_sub_mul() {
     type F = Prime64Offset59;

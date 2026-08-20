@@ -283,13 +283,10 @@ impl<const P: u64> Fp64<P> {
 
     #[inline(always)]
     fn sub_raw(a: u64, b: u64) -> u64 {
-        if Self::BITS == 64 {
-            let (diff, underflow) = a.overflowing_sub(b);
-            diff.wrapping_sub((underflow as u64).wrapping_neg() & Self::C)
-        } else {
-            let diff = a.wrapping_sub(b);
-            diff.min(diff.wrapping_add(P))
-        }
+        let (diff, underflow) = a.overflowing_sub(b);
+        // If the subtraction borrowed, subtracting -P modulo 2^64 adds P.
+        // For a full-word modulus, -P is the small pseudo-Mersenne offset C.
+        diff.wrapping_sub((underflow as u64).wrapping_neg() & P.wrapping_neg())
     }
 
     #[inline(always)]
