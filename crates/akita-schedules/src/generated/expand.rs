@@ -550,7 +550,6 @@ impl GeneratedGroup {
                 is_root,
             ),
             opening_method,
-            log_basis_open,
             inner: akita_types::RoleParams::new(
                 akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
                 inner_commit_matrix,
@@ -567,15 +566,18 @@ impl GeneratedGroup {
                     dimensions.d_b(),
                 )?,
             ),
-            open_commit_matrix: OpenCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_d,
-                d_matrix_width,
-                d_bucket,
-                dimensions.d_d(),
-            )?,
+            open: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(log_basis_open, num_digits_open),
+                OpenCommitMatrixParams::try_new(
+                    sis_policy,
+                    policy.sis_table_digest,
+                    sis_modulus_profile,
+                    n_d,
+                    d_matrix_width,
+                    d_bucket,
+                    dimensions.d_d(),
+                )?,
+            ),
 
             blocks: akita_types::BlockGeometry::new(
                 num_live_ring_elements_per_claim,
@@ -585,7 +587,6 @@ impl GeneratedGroup {
 
             outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
-            num_digits_open,
             num_digits_fold,
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
@@ -845,7 +846,7 @@ mod tests {
             .expand_to_precommitted_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                fold.open_commit_matrix.log_basis,
+                fold.open.matrix.log_basis,
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
@@ -862,8 +863,8 @@ mod tests {
             input.num_digits_fold as usize
         );
         assert_eq!(
-            expanded.opening.log_basis_open,
-            fold.open_commit_matrix.log_basis
+            expanded.opening.open.digits.log_basis,
+            fold.open.matrix.log_basis
         );
     }
 
@@ -886,7 +887,7 @@ mod tests {
             .expand_to_precommitted_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                fold.open_commit_matrix.log_basis,
+                fold.open.matrix.log_basis,
             )
             .expect_err("frozen setup-prefix profile mutation must reject");
     }

@@ -9,7 +9,7 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let n_b_final = lp.outer.matrix.output_rank();
     let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
     let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
-    let n_d = lp.open_commit_matrix.output_rank();
+    let n_d = lp.open.matrix.output_rank();
 
     assert_eq!(
         lp.relation_matrix_row_count(2).unwrap(),
@@ -377,7 +377,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         &batch,
         &relation_geometry,
         lp.witness_chunk.num_chunks,
-        crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open),
+        crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.open.digits.log_basis),
     )
     .expect("witness layout");
     assert_eq!(
@@ -414,8 +414,8 @@ fn configure_test_role_dims(lp: &mut CommittedGroupParams, d_b: usize, d_d: usiz
         outer.coeff_linf_bound(),
         d_b,
     );
-    let open = &lp.open_commit_matrix;
-    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let open = &lp.open.matrix;
+    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -475,8 +475,8 @@ fn address_oracle_precommit(
         profile: layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             lp.fold_challenge_config,
-            lp.log_basis_open,
-            lp.num_digits_open,
+            lp.open.digits.log_basis,
+            lp.open.digits.num_digits,
             lp.num_digits_fold,
         ),
     }
@@ -574,7 +574,8 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 num_chunks,
                 num_activated_levels: usize::from(num_chunks > 1),
             };
-            let quotient_depth = crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open);
+            let quotient_depth =
+                crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.open.digits.log_basis);
             let relation_geometry =
                 crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
                     .expect("relation geometry");
@@ -736,7 +737,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             }
             expected_r_dims.extend(std::iter::repeat_n(
                 lp.role_dims().d_d(),
-                lp.open_commit_matrix.output_rank(),
+                lp.open.matrix.output_rank(),
             ));
             for map_index in 0..crate::COMPRESSION_MAP_COUNT {
                 for relation_group_index in 0..group_order.len() {

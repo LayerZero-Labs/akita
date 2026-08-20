@@ -631,22 +631,22 @@ mod sis_schedule_width_audit {
             );
 
             let d_rank = min_secure_rank(
-                lp.open_commit_matrix.sis_table_key(),
+                lp.open.matrix.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis_open,
+                    lp.open.digits.log_basis,
                     lp.d_matrix_width()
                 )
             });
             assert!(
-                d_rank <= lp.open_commit_matrix.output_rank(),
+                d_rank <= lp.open.matrix.output_rank(),
                 "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                lp.log_basis_open,
+                lp.open.digits.log_basis,
                 lp.d_matrix_width(),
-                lp.open_commit_matrix.output_rank(),
+                lp.open.matrix.output_rank(),
             );
         }
     }

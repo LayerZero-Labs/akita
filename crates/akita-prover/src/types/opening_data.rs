@@ -534,8 +534,8 @@ mod tests {
             profile: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
                 pre.fold_challenge_config,
-                pre.log_basis_open,
-                pre.num_digits_open,
+                pre.open.digits.log_basis,
+                pre.open.digits.num_digits,
                 pre.num_digits_fold,
             ),
         });

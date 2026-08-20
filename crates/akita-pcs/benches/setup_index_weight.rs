@@ -114,10 +114,10 @@ fn make_case_with_shape(
         1,
         role_dims.d_b(),
     );
-    level_params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-        level_params.open_commit_matrix.security_policy(),
-        level_params.open_commit_matrix.sis_table_key().table_digest,
-        level_params.open_commit_matrix.sis_modulus_profile(),
+    level_params.open.matrix = OpenCommitMatrixParams::new_unchecked(
+        level_params.open.matrix.security_policy(),
+        level_params.open.matrix.sis_table_key().table_digest,
+        level_params.open.matrix.sis_modulus_profile(),
         n_d,
         num_claims * depth_open * num_live_blocks,
         1,

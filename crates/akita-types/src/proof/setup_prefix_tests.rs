@@ -76,7 +76,8 @@ fn active_setup_field_len_matches_packed_role_maximum() {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
     let w_a = lp.blocks.positions_per_block * lp.inner.digits.num_digits;
     let w_b = lp.outer.matrix.input_width();
-    let w_d = opening_batch.num_total_polynomials() * lp.blocks.live_blocks * lp.num_digits_open;
+    let w_d =
+        opening_batch.num_total_polynomials() * lp.blocks.live_blocks * lp.open.digits.num_digits;
     let expected_ring_slots = lp
         .inner
         .matrix
@@ -84,12 +85,7 @@ fn active_setup_field_len_matches_packed_role_maximum() {
         .checked_mul(w_a)
         .unwrap()
         .max(lp.outer.matrix.output_rank().checked_mul(w_b).unwrap())
-        .max(
-            lp.open_commit_matrix
-                .output_rank()
-                .checked_mul(w_d)
-                .unwrap(),
-        );
+        .max(lp.open.matrix.output_rank().checked_mul(w_d).unwrap());
     let geometry =
         active_setup_projection_geometry(&lp, &opening_batch).expect("projection geometry");
     assert_eq!(geometry.required(), expected_ring_slots);
@@ -264,10 +260,10 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
         * lp.inner.digits.num_digits
         * 2;
     let b_slots = lp.outer.matrix.output_rank() * lp.outer.matrix.input_width() * 2;
-    let d_slots = lp.open_commit_matrix.output_rank()
+    let d_slots = lp.open.matrix.output_rank()
         * opening_batch.num_total_polynomials()
         * lp.blocks.live_blocks
-        * lp.num_digits_open
+        * lp.open.digits.num_digits
         * 2;
     let expected_field_len = a_slots.max(b_slots).max(d_slots) * 64;
 
@@ -363,8 +359,8 @@ fn precommitted_group(
         profile: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
-            params.log_basis_open,
-            params.num_digits_open,
+            params.open.digits.log_basis,
+            params.open.digits.num_digits,
             params.num_digits_fold,
         ),
     }
@@ -417,8 +413,8 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
         expected_b_projection = expected_b_projection
             .max(group_params.b_rows_len() * b_cols * (dims.d_b() / base_ring_dimension));
     }
-    let expected_d_projection = final_params.open_commit_matrix.output_rank()
-        * final_params.open_commit_matrix.input_width()
+    let expected_d_projection = final_params.open.matrix.output_rank()
+        * final_params.open.matrix.input_width()
         * (final_params.role_dims().d_d() / base_ring_dimension);
     let expected_ring_slots = expected_a_projection
         .max(expected_b_projection)

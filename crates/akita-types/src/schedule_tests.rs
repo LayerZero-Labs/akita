@@ -173,9 +173,9 @@ fn retarget_open_dimension(
     params: &mut CommittedGroupParams,
     ring_dimension: usize,
 ) -> Result<(), AkitaError> {
-    let open = &params.open_commit_matrix;
+    let open = &params.open.matrix;
     let column_scale = open.ring_dimension() / ring_dimension;
-    params.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+    params.open.matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -196,8 +196,8 @@ fn precommitted_group_params(
         profile: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
-            params.log_basis_open,
-            params.num_digits_open,
+            params.open.digits.log_basis,
+            params.open.digits.num_digits,
             params.num_digits_fold,
         ),
     }
@@ -433,7 +433,7 @@ fn schedule_rejects_root_stage2_point_wider_than_successor() {
     let narrow_successor = committed_params_with_geometry(64, 1, 1);
     schedule.root.output_witness_len = 128;
     schedule.recursive_folds[0].input_witness_len = 128;
-    schedule.recursive_folds[0].params.open_commit_matrix = narrow_successor.open_commit_matrix;
+    schedule.recursive_folds[0].params.open.matrix = narrow_successor.open.matrix;
     schedule.recursive_folds[0].params = narrow_successor;
 
     let err = schedule
@@ -542,8 +542,8 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     producer.precommitted_groups = vec![precommitted; precommitted_group_count];
     let precommitted_d_width = one_precommitted_d_width * precommitted_group_count;
 
-    let open = &producer.open_commit_matrix;
-    producer.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+    let open = &producer.open.matrix;
+    producer.open.matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -573,7 +573,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         .expect("consumer-compatible prefix commitment");
     let prefix = crate::scheduled_setup_prefix(natural_len, commitment_params);
     schedule.recursive_folds[0].params = consumer.clone();
-    schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
+    schedule.recursive_folds[0].params.open.matrix = consumer.open.matrix;
     schedule.recursive_folds[0].params.setup_prefix = Some(prefix);
     schedule.recursive_folds[0].params.setup_prefix = Some(prefix);
 
@@ -702,12 +702,13 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let current_source_coeffs = lp
-        .open_commit_matrix
+        .open
+        .matrix
         .output_rank()
         .checked_mul(lp.role_dims().d_d())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
     let current_coeffs = crate::CompressionChainPlan::for_complete_source(
-        lp.open_commit_matrix.sis_modulus_profile(),
+        lp.open.matrix.sis_modulus_profile(),
         current_source_coeffs,
     )?
     .terminal_coefficients();
@@ -723,7 +724,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     )?
     .terminal_coefficients();
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
-    let b = 1usize << lp.log_basis_open;
+    let b = 1usize << lp.open.digits.log_basis;
 
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
@@ -886,8 +887,8 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
             opening_payload: RingVec::from_coeffs(vec![
                 F::zero();
                 crate::CompressionChainPlan::for_complete_source(
-                    lp.open_commit_matrix.sis_modulus_profile(),
-                    lp.open_commit_matrix.output_rank() * lp.role_dims().d_d(),
+                    lp.open.matrix.sis_modulus_profile(),
+                    lp.open.matrix.output_rank() * lp.role_dims().d_d(),
                 )
                 .unwrap()
                 .terminal_coefficients()
@@ -1400,7 +1401,7 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
     let extra_d_width = precommitted
         .d_segment_width(1, schedule.root.params.role_dims().d_d())
         .expect("root precommitted D width");
-    let open = schedule.root.params.open_commit_matrix;
+    let open = schedule.root.params.open.matrix;
     let widened_open = crate::sis::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
@@ -1410,9 +1411,9 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
         open.coeff_linf_bound(),
         open.ring_dimension(),
     );
-    schedule.root.params.open_commit_matrix = widened_open;
+    schedule.root.params.open.matrix = widened_open;
     schedule.root.params.precommitted_groups = vec![precommitted];
-    schedule.root.params.open_commit_matrix = widened_open;
+    schedule.root.params.open.matrix = widened_open;
     schedule.root.params.precommitted_groups = vec![precommitted];
     schedule
         .validate_structure()

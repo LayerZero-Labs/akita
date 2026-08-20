@@ -50,7 +50,7 @@ where
         root_r = layout.block_index_bits(),
         root_lb_inner = layout.inner.digits.log_basis,
         root_lb_outer = layout.outer.digits.log_basis,
-        root_lb_open = layout.log_basis_open,
+        root_lb_open = layout.open.digits.log_basis,
         "batched root split: read from runtime schedule"
     );
     Ok(layout)

@@ -74,7 +74,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
-            let d_rows = level_params.open_commit_matrix.output_rank();
+            let d_rows = level_params.open.matrix.output_rank();
             let row_families = relation_geometry.rhs_layout().row_families()?;
             let d_row_start = row_families
                 .iter()

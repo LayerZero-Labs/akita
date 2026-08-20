@@ -350,15 +350,15 @@ fn build_relation_rhs_layout(
     extension_degree: usize,
 ) -> Result<RelationRhsLayout, AkitaError> {
     let final_group_index = lp.validate_opening_batch_geometry(opening_batch)?;
-    let n_d = lp.open_commit_matrix.output_rank();
+    let n_d = lp.open.matrix.output_rank();
     let opening_plan = lp
         .payload_mode
         .is_compressed()
         .then(|| {
             compression_plan(
-                lp.open_commit_matrix.sis_modulus_profile(),
+                lp.open.matrix.sis_modulus_profile(),
                 n_d,
-                lp.open_commit_matrix.ring_dimension(),
+                lp.open.matrix.ring_dimension(),
             )
         })
         .transpose()?;

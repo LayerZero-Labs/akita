@@ -96,7 +96,7 @@ where
                 num_live_blocks = commit_params.blocks.live_blocks,
                 num_positions_per_block = commit_params.blocks.positions_per_block,
                 depth_commit = commit_params.inner.digits.num_digits,
-                depth_open = commit_params.num_digits_open,
+                depth_open = commit_params.open.digits.num_digits,
                 position_index_bits = commit_params.position_index_bits(),
                 block_index_bits = commit_params.block_index_bits(),
                 inner_width = commit_params.inner_width(),

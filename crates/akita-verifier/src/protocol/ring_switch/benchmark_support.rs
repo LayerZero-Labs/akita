@@ -102,8 +102,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         outer.coeff_linf_bound().max(1),
         role_dims.d_b(),
     );
-    let open = &level_params.open_commit_matrix;
-    level_params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let open = &level_params.open.matrix;
+    level_params.open.matrix = OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),

@@ -482,20 +482,20 @@ impl PlannedGroupReport {
             packing_quotient_width: opening.quotient_width,
             a_width: params.inner.matrix.input_width(),
             b_width: params.outer.matrix.input_width(),
-            d_width: params.open_commit_matrix.input_width(),
+            d_width: params.open.matrix.input_width(),
             n_a: params.inner.matrix.output_rank(),
             n_b,
-            n_d: params.open_commit_matrix.output_rank(),
+            n_d: params.open.matrix.output_rank(),
             b_slice_count: b_geometry.slice_count,
             physical_b_input_width: b_geometry.physical_input_width,
             logical_b_rows: b_geometry.logical_rows,
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
             log_basis_inner: params.inner.digits.log_basis,
             log_basis_outer: params.outer.digits.log_basis,
-            log_basis_open: params.log_basis_open,
+            log_basis_open: params.open.digits.log_basis,
             num_digits_inner: params.inner.digits.num_digits,
             num_digits_outer: params.outer.digits.num_digits,
-            num_digits_open: params.num_digits_open,
+            num_digits_open: params.open.digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
             challenge_l1_mass: params.challenge_l1_mass(),
             challenge_count_pm1: params.fold_challenge_config.count_pm1,
@@ -713,7 +713,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
 
     let root_current_w_groups = root_current_w_groups(schedule, final_group);
-    let root_open = &schedule.root.params.open_commit_matrix;
+    let root_open = &schedule.root.params.open.matrix;
     for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
         let layout = group.profile.group;
         let witness_field_elements =
@@ -756,7 +756,7 @@ pub(crate) fn emit_runtime_schedule_summary(
                 index + 1,
                 prefix.setup_natural_len.expect("setup prefix group"),
                 prefix,
-                &fold.params.open_commit_matrix,
+                &fold.params.open.matrix,
                 Some((
                     prefix.setup_natural_len.expect("setup prefix group"),
                     prefix.n_prefix().unwrap_or(0),
@@ -823,8 +823,8 @@ pub(crate) fn emit_runtime_schedule_summary(
         let a_output_raw_dimension = lp.inner.matrix.raw_output_dimension();
         let b_input_raw_dimension = lp.outer.matrix.raw_input_dimension();
         let b_output_raw_dimension = lp.outer.matrix.raw_output_dimension();
-        let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
-        let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
+        let d_input_raw_dimension = lp.open.matrix.raw_input_dimension();
+        let d_output_raw_dimension = lp.open.matrix.raw_output_dimension();
         let security_route = lp.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
@@ -868,10 +868,10 @@ pub(crate) fn emit_runtime_schedule_summary(
             extension_opening_reduction_bytes,
             a_width = lp.inner.matrix.input_width(),
             b_width = lp.outer.matrix.input_width(),
-            d_width = lp.open_commit_matrix.input_width(),
+            d_width = lp.open.matrix.input_width(),
             n_a = lp.inner.matrix.output_rank(),
             n_b = lp.outer.matrix.output_rank(),
-            n_d = lp.open_commit_matrix.output_rank(),
+            n_d = lp.open.matrix.output_rank(),
             b_slice_count = b_geometry.slice_count,
             physical_b_input_width = b_geometry.physical_input_width,
             logical_b_rows = b_geometry.logical_rows,
@@ -891,7 +891,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
             log_basis_inner = lp.inner.digits.log_basis,
             log_basis_outer = lp.outer.digits.log_basis,
-            log_basis_open = lp.log_basis_open,
+            log_basis_open = lp.open.digits.log_basis,
             position_index_bits = lp.position_index_bits(),
             block_index_bits = lp.block_index_bits(),
             num_live_ring_elements_per_claim = lp.blocks.live_ring_elements_per_claim,
@@ -900,9 +900,9 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_positions_per_block = lp.blocks.positions_per_block,
             num_digits_inner = lp.inner.digits.num_digits,
             num_digits_outer = lp.outer.digits.num_digits,
-            num_digits_open = lp.num_digits_open,
+            num_digits_open = lp.open.digits.num_digits,
             delta_fold = lp.num_digits_fold(),
-            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.log_basis_open),
+            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.open.digits.log_basis),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -1354,14 +1354,14 @@ pub(crate) fn print_layout(
         num_positions_per_block = layout.blocks.positions_per_block,
         num_digits_inner = layout.inner.digits.num_digits,
         num_digits_outer = layout.outer.digits.num_digits,
-        num_digits_open = layout.num_digits_open,
+        num_digits_open = layout.open.digits.num_digits,
         delta_fold = layout.num_digits_fold(),
         log_basis_inner = layout.inner.digits.log_basis,
         log_basis_outer = layout.outer.digits.log_basis,
-        log_basis_open = layout.log_basis_open,
+        log_basis_open = layout.open.digits.log_basis,
         n_a = layout.inner.matrix.output_rank(),
         n_b = layout.outer.matrix.output_rank(),
-        n_d = layout.open_commit_matrix.output_rank(),
+        n_d = layout.open.matrix.output_rank(),
         b_slice_count = b_geometry.slice_count,
         physical_b_input_width = b_geometry.physical_input_width,
         logical_b_rows = b_geometry.logical_rows,

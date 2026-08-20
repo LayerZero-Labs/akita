@@ -46,8 +46,8 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
                 challenge_subring_dimension: 64,
             },
             fold_challenge_config: params.fold_challenge_config,
-            log_basis_open: params.log_basis_open,
-            num_digits_open: params.num_digits_open,
+            log_basis_open: params.open.digits.log_basis,
+            num_digits_open: params.open.digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
         },
     }];
@@ -59,7 +59,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<F>(params.log_basis_open),
+        r_decomp_levels::<F>(params.open.digits.log_basis),
     )
     .unwrap();
     let relation_address = RelationAddressGeometry::for_relation(

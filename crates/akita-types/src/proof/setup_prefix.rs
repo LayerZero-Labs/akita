@@ -1050,7 +1050,7 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let d_physical_cols = level_params.open_commit_matrix.input_width();
+    let d_physical_cols = level_params.open.matrix.input_width();
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_params = level_params.group_params(opening_batch, group_index)?;
@@ -1072,7 +1072,7 @@ fn active_setup_projection_geometry(
     }
     crate::SetupProjectionGeometry::from_groups(
         level_params.role_dims(),
-        level_params.open_commit_matrix.output_rank(),
+        level_params.open.matrix.output_rank(),
         d_physical_cols,
         &groups,
     )
@@ -1189,8 +1189,8 @@ pub fn setup_prefix_precommitted_params(
                 },
                 opening: crate::GroupOpeningPlan::evaluation_trace(
                     prefix_params.fold_challenge_config,
-                    prefix_params.log_basis_open,
-                    prefix_params.num_digits_open,
+                    prefix_params.open.digits.log_basis,
+                    prefix_params.open.digits.num_digits,
                     prefix_params.num_digits_fold,
                 ),
             });

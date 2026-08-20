@@ -62,7 +62,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                 witness_norms: honest_policy
                     .witness_norms_for_inner_basis(root.inner.digits.log_basis, root.d_a())
                     .expect("one-hot source geometry"),
-                log_basis_response: root.log_basis_open,
+                log_basis_response: root.open.digits.log_basis,
                 challenge_config: &root.fold_challenge_config,
             })
             .expect("one-hot fold policy");
@@ -70,13 +70,13 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             root.num_digits_fold, expected_fold_digits,
             "one-hot root must retain its tight honest-fold estimate at nv={nv}"
         );
-        let mut source_basis = root.log_basis_open;
+        let mut source_basis = root.open.digits.log_basis;
         for fold in &schedule.recursive_folds {
             assert_eq!(
                 fold.params.inner.digits.log_basis, source_basis,
                 "recursive fold redecomposes its balanced-digit input at nv={nv}"
             );
-            source_basis = fold.params.log_basis_open;
+            source_basis = fold.params.open.digits.log_basis;
         }
         assert_eq!(
             schedule.terminal.inner.digits.log_basis, source_basis,
@@ -84,11 +84,11 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         );
         let within_window = root.inner.digits.log_basis <= inner_basis_max
             && root.outer.digits.log_basis <= opening_basis_max
-            && root.log_basis_open <= opening_basis_max
+            && root.open.digits.log_basis <= opening_basis_max
             && schedule.recursive_folds.iter().all(|fold| {
                 fold.params.inner.digits.log_basis <= opening_basis_max
                     && fold.params.outer.digits.log_basis <= opening_basis_max
-                    && fold.params.log_basis_open <= opening_basis_max
+                    && fold.params.open.digits.log_basis <= opening_basis_max
             })
             && schedule.terminal.inner.digits.log_basis <= opening_basis_max;
         assert!(

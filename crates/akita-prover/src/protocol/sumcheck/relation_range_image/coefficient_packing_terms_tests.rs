@@ -54,8 +54,8 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
     params.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: s,
     };
-    let opening = params.open_commit_matrix;
-    params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = params.open.matrix;
+    params.open.matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
@@ -71,7 +71,7 @@ fn fixture_for_basis(basis: BasisMode) -> Fixture {
         &opening_batch,
         &relation_geometry,
         1,
-        r_decomp_levels::<F>(params.log_basis_open),
+        r_decomp_levels::<F>(params.open.digits.log_basis),
     )
     .unwrap();
     let relation_address_geometry = RelationAddressGeometry::for_relation(
@@ -444,7 +444,7 @@ fn method_aware_relation_builder_uses_shared_packing_events_once() {
         .count();
     let expected_d_columns = fixture.opening_batch.num_total_polynomials()
         * fixture.prepared_point.num_live_blocks()
-        * fixture.params.num_digits_open
+        * fixture.params.open.digits.num_digits
         * (fixture.prepared_point.geometry().partial_base_field_width() / opening_ring_dim);
     assert_eq!(setup_e_events, expected_d_columns);
 
@@ -525,7 +525,7 @@ fn recursive_packing_phases_share_one_relation_authority() {
     assert!(d_input
         .block_sizes()
         .iter()
-        .all(|&planes| planes == fixture.params.num_digits_open));
+        .all(|&planes| planes == fixture.params.open.digits.num_digits));
 
     let RingRelationGroupOpeningView::SubringCoefficientPacking {
         geometry,

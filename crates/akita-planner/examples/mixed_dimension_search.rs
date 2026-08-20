@@ -23,7 +23,7 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
         schedule.root.params.role_dims(),
         schedule.root.params.inner.matrix.output_rank(),
         schedule.root.params.outer.matrix.output_rank(),
-        schedule.root.params.open_commit_matrix.output_rank(),
+        schedule.root.params.open.matrix.output_rank(),
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     );
@@ -34,7 +34,7 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
             fold.params.role_dims(),
             fold.params.inner.matrix.output_rank(),
             fold.params.outer.matrix.output_rank(),
-            fold.params.open_commit_matrix.output_rank(),
+            fold.params.open.matrix.output_rank(),
             fold.input_witness_len,
             fold.output_witness_len,
         );

@@ -38,7 +38,8 @@ pub(super) fn level_candidates(
                 .checked_mul(params.role_dims().d_b())
                 .ok_or_else(|| AkitaError::InvalidSetup("B output dimension overflow".into()))?,
             params
-                .open_commit_matrix
+                .open
+                .matrix
                 .output_rank()
                 .checked_mul(params.role_dims().d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,

@@ -77,7 +77,7 @@ fn recursive_shared_d_matrix_has_a_single_owner() {
     // reintroduced, these diverge and this fails.
     assert_eq!(
         fold.open_commit_matrix(),
-        &fold.params.open_commit_matrix,
+        &fold.params.open.matrix,
         "the fold accessor must not introduce a second copy"
     );
     assert_eq!(

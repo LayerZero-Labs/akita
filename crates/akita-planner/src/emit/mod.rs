@@ -293,7 +293,7 @@ fn generated_fold(
         group: committed_group(p, num_digits_inner),
         precommitted_groups,
         setup_prefix: p.setup_prefix.as_ref().map(frozen_group),
-        open_commit_matrix: open_matrix_params(&p.open_commit_matrix, p.log_basis_open),
+        open_commit_matrix: open_matrix_params(&p.open.matrix, p.open.digits.log_basis),
         witness_chunks: p.witness_chunk.num_chunks as u32,
         payload_mode: p.payload_mode,
         response_l2_sq_cap: response_l2_sq_cap(p),

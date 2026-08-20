@@ -34,13 +34,13 @@ fn compression_quotient_rows_are_included_before_evaluation_trace() {
         lp.outer.matrix.coeff_linf_bound(),
         lp.d_a(),
     );
-    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-        lp.open_commit_matrix.security_policy(),
-        lp.open_commit_matrix.sis_table_key().table_digest,
-        lp.open_commit_matrix.sis_modulus_profile(),
+    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
+        lp.open.matrix.security_policy(),
+        lp.open.matrix.sis_table_key().table_digest,
+        lp.open.matrix.sis_modulus_profile(),
         2,
-        lp.open_commit_matrix.input_width(),
-        lp.open_commit_matrix.coeff_linf_bound(),
+        lp.open.matrix.input_width(),
+        lp.open.matrix.coeff_linf_bound(),
         lp.d_a(),
     );
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");

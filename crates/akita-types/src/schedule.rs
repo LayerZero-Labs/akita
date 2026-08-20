@@ -50,7 +50,7 @@ pub enum NextWitnessBindingPolicy {
 /// compared a field with a copy of itself:
 ///
 /// - `FoldParams::open_commit_matrix` and `FoldParams::open_commit_matrix`
-///   duplicated `params.open_commit_matrix`;
+///   duplicated `params.open.matrix`;
 /// - `sparse_challenge_config` on both duplicated `params.fold_challenge_config`;
 /// - `FoldParams::precommitted_groups` duplicated
 ///   `params.precommitted_groups`, and each entry's `descriptor` duplicated its
@@ -81,7 +81,7 @@ impl FoldParams {
     #[inline]
     #[must_use]
     pub fn open_commit_matrix(&self) -> &crate::OpenCommitMatrixParams {
-        &self.params.open_commit_matrix
+        &self.params.open.matrix
     }
 
     /// Fold-challenge family for this level.
@@ -167,7 +167,7 @@ impl TerminalFoldParams {
                 ),
                 params.inner.matrix,
             ),
-            fold: crate::GadgetDigits::new(params.log_basis_open, params.num_digits_fold),
+            fold: crate::GadgetDigits::new(params.open.digits.log_basis, params.num_digits_fold),
         }
     }
 

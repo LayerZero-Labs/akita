@@ -238,19 +238,19 @@ where
 
     // D/opening geometry is level-only: standalone commitment profiles freeze
     // only the A/B matrices used to materialize the commitment.
-    if params.num_digits_open == 0 {
+    if params.open.digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero opening digit depth".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(params.log_basis_open, "for i8 opening decomposition")?;
+    validate_i8_setup_log_basis(params.open.digits.log_basis, "for i8 opening decomposition")?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
-    if params.open_commit_matrix.input_width() == 0 {
+    if params.open.matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
-            params.open_commit_matrix.input_width()
+            params.open.matrix.input_width()
         )));
     }
     // Commitment materialization uses only A and B. In particular, a

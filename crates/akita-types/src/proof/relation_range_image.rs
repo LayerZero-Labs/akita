@@ -54,7 +54,7 @@ impl PhysicalResponsePlan {
         let ring_dimension = params.d_a();
         let fold_digit_count = params.num_digits_fold();
         let fold_basis = 1usize
-            .checked_shl(params.log_basis_open)
+            .checked_shl(params.open.digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("fold basis overflow".into()))?;
         if ring_dimension == 0 || fold_digit_count == 0 {
             return Err(AkitaError::InvalidSetup(

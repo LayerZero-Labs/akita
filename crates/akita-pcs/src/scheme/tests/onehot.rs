@@ -519,7 +519,7 @@ where
             &opening_layout,
             &relation_geometry,
             root_commitment.witness_chunk.num_chunks,
-            akita_types::r_decomp_levels::<OneHotF>(root_commitment.log_basis_open),
+            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open.digits.log_basis),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(

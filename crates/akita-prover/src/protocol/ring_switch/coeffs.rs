@@ -168,10 +168,10 @@ fn trace_witness_source_moments(witness: &[i8], layout: &WitnessLayout, lp: &Com
         alignment_coeffs,
         log_basis_inner = lp.inner.digits.log_basis,
         log_basis_outer = lp.outer.digits.log_basis,
-        log_basis_open = lp.log_basis_open,
+        log_basis_open = lp.open.digits.log_basis,
         num_digits_inner = lp.inner.digits.num_digits,
         num_digits_outer = lp.outer.digits.num_digits,
-        num_digits_open = lp.num_digits_open,
+        num_digits_open = lp.open.digits.num_digits,
         num_digits_fold = lp.num_digits_fold,
         d_a = lp.role_dims().d_a(),
         d_b = lp.role_dims().d_b(),
@@ -326,7 +326,10 @@ where
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
-    validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
+    validate_i8_setup_log_basis(
+        lp.open.digits.log_basis,
+        "for i8 prover opening decomposition",
+    )?;
     let RingRelationWitness {
         groups,
         fold_grind_nonce: _,
@@ -503,10 +506,16 @@ where
             group_layout.num_polynomials(),
         )?;
     }
-    let levels = r_decomp_levels::<F>(lp.log_basis_open);
+    let levels = r_decomp_levels::<F>(lp.open.digits.log_basis);
     {
         let _span = tracing::info_span!("ring_switch_emit_r_rows").entered();
-        emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
+        emit_r_rows(
+            &mut out,
+            &witness_layout,
+            &r,
+            levels,
+            lp.open.digits.log_basis,
+        )?;
     }
     if let Some(compression) = &compression {
         let _span = tracing::info_span!("ring_switch_emit_compression").entered();
@@ -535,7 +544,7 @@ where
                 group.params.log_basis_open(),
             ]
         })
-        .fold(lp.log_basis_open, u32::max);
+        .fold(lp.open.digits.log_basis, u32::max);
     RecursiveWitnessFlat::from_witness_layout(out, &witness_layout, known_balanced_log_basis)
 }
 

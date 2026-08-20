@@ -111,9 +111,9 @@ pub fn accumulate_matrix_field_elements_for_level(
     )?;
     include_matrix_field_elements(
         max_field_elements,
-        params.open_commit_matrix.output_rank(),
+        params.open.matrix.output_rank(),
         params.d_matrix_width(),
-        params.open_commit_matrix.ring_dimension(),
+        params.open.matrix.ring_dimension(),
         "opening setup",
     )?;
     for group in &params.precommitted_groups {
@@ -218,8 +218,8 @@ fn accumulate_compression_matrix_field_elements_for_level(
     }
     include_compression_setup(
         max_field_elements,
-        params.open_commit_matrix.sis_modulus_profile(),
-        params.open_commit_matrix.output_rank(),
+        params.open.matrix.sis_modulus_profile(),
+        params.open.matrix.output_rank(),
         params.role_dims().d_d(),
         "opening compression setup",
     )
@@ -370,7 +370,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");
         let outer_source = params.outer.matrix.output_rank() * params.role_dims().d_b();
-        let opening_source = params.open_commit_matrix.output_rank() * params.role_dims().d_d();
+        let opening_source = params.open.matrix.output_rank() * params.role_dims().d_d();
         let expected = [
             CompressionChainPlan::for_complete_source(
                 params.outer.matrix.sis_modulus_profile(),
@@ -380,7 +380,7 @@ mod tests {
             .max_setup_field_elements()
             .expect("outer setup"),
             CompressionChainPlan::for_complete_source(
-                params.open_commit_matrix.sis_modulus_profile(),
+                params.open.matrix.sis_modulus_profile(),
                 opening_source,
             )
             .expect("opening compression")
@@ -409,9 +409,9 @@ mod tests {
         .expect("outer setup");
         include_matrix_field_elements(
             &mut direct,
-            params.open_commit_matrix.output_rank(),
+            params.open.matrix.output_rank(),
             params.d_matrix_width(),
-            params.open_commit_matrix.ring_dimension(),
+            params.open.matrix.ring_dimension(),
             "opening setup",
         )
         .expect("opening setup");

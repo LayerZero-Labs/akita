@@ -89,7 +89,7 @@ pub fn level_proof_bytes(
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     let v_bytes = payload_bytes(
         base_field_bits,
-        lp.open_commit_matrix.sis_modulus_profile(),
+        lp.open.matrix.sis_modulus_profile(),
         lp.opening_payload_geometry()?,
     )?;
     let next_commit_bytes = match next_witness_binding {
@@ -113,7 +113,7 @@ pub fn level_proof_bytes(
         }
     };
     let next_eval_bytes = challenge_elem_bytes;
-    let b = 1usize << lp.log_basis_open;
+    let b = 1usize << lp.open.digits.log_basis;
     let stage1_bytes = stage1_proof_bytes(
         rounds,
         b,
@@ -342,7 +342,7 @@ mod tests {
         let current_coeffs = lp.opening_payload_geometry()?.transmitted_coefficients();
         let next_commit_coeffs = next_lp.outer_payload_geometry()?.transmitted_coefficients();
         let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
-        let b = 1usize << lp.log_basis_open;
+        let b = 1usize << lp.open.digits.log_basis;
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -598,13 +598,13 @@ mod tests {
             lp.outer.matrix.coeff_linf_bound(),
             64,
         );
-        lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
-            lp.open_commit_matrix.security_policy(),
-            lp.open_commit_matrix.sis_table_key().table_digest,
-            lp.open_commit_matrix.sis_modulus_profile(),
-            lp.open_commit_matrix.output_rank(),
-            lp.open_commit_matrix.input_width() * 4,
-            lp.open_commit_matrix.coeff_linf_bound(),
+        lp.open.matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            lp.open.matrix.security_policy(),
+            lp.open.matrix.sis_table_key().table_digest,
+            lp.open.matrix.sis_modulus_profile(),
+            lp.open.matrix.output_rank(),
+            lp.open.matrix.input_width() * 4,
+            lp.open.matrix.coeff_linf_bound(),
             32,
         );
 
@@ -626,13 +626,13 @@ mod tests {
             next_lp.outer.matrix.coeff_linf_bound(),
             64,
         );
-        next_lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
-            next_lp.open_commit_matrix.security_policy(),
-            next_lp.open_commit_matrix.sis_table_key().table_digest,
-            next_lp.open_commit_matrix.sis_modulus_profile(),
-            next_lp.open_commit_matrix.output_rank(),
-            next_lp.open_commit_matrix.input_width() * 2,
-            next_lp.open_commit_matrix.coeff_linf_bound(),
+        next_lp.open.matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            next_lp.open.matrix.security_policy(),
+            next_lp.open.matrix.sis_table_key().table_digest,
+            next_lp.open.matrix.sis_modulus_profile(),
+            next_lp.open.matrix.output_rank(),
+            next_lp.open.matrix.input_width() * 2,
+            next_lp.open.matrix.coeff_linf_bound(),
             64,
         );
 

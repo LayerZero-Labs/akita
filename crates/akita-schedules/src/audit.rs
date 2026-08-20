@@ -162,7 +162,7 @@ fn expected_d_width(
         extension_degree,
         dims.d_a(),
         dims.d_d(),
-        params.num_digits_open,
+        params.open.digits.num_digits,
         params.blocks.live_blocks,
         num_claims,
     )
@@ -200,14 +200,14 @@ fn audit_committed_params(
         .map_err(|message| invalid(label, message))?;
     audit_inner_matrix(label, &params.inner.matrix, policy)?;
     audit_outer_matrix(label, &params.outer.matrix, policy)?;
-    audit_open_matrix(label, &params.open_commit_matrix, policy)?;
+    audit_open_matrix(label, &params.open.matrix, policy)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
         log_basis: params.outer.digits.log_basis,
         ..policy.decomposition
     });
     let expected_open_digits = num_digits_open(DecompositionParams {
-        log_basis: params.log_basis_open,
+        log_basis: params.open.digits.log_basis,
         ..policy.decomposition
     });
     // A generated row stores its own `num_digits_inner` and expansion replays it
@@ -227,7 +227,7 @@ fn audit_committed_params(
     if params.inner.digits.num_digits != expected_inner_digits
         || params.num_digits_fold == 0
         || params.outer.digits.num_digits != expected_outer_digits
-        || params.num_digits_open != expected_open_digits
+        || params.open.digits.num_digits != expected_open_digits
     {
         return Err(invalid(label, "digit depths are missing or noncanonical"));
     }
@@ -251,7 +251,7 @@ fn audit_committed_params(
     let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
     if params.inner.matrix.input_width() != expected_a_width
         || params.outer.matrix.input_width() != expected_b_width
-        || params.open_commit_matrix.input_width() != expected_d_width
+        || params.open.matrix.input_width() != expected_d_width
     {
         return Err(invalid(
             label,
@@ -268,7 +268,7 @@ fn audit_committed_params(
                 policy.sis_table_digest,
                 policy.sis_modulus_profile,
                 dims.d_a(),
-                params.log_basis_open,
+                params.open.digits.log_basis,
                 &params.fold_challenge_config,
                 params.num_digits_fold,
             ),
@@ -277,7 +277,7 @@ fn audit_committed_params(
             response_l2_sq_cap, ..
         } => {
             let fold_basis = 1usize
-                .checked_shl(params.log_basis_open)
+                .checked_shl(params.open.digits.log_basis)
                 .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
             let expected = selective_l2_inner_matrix(
                 policy,
@@ -321,13 +321,13 @@ fn audit_committed_params(
     )?;
     audit_bound(
         label,
-        params.open_commit_matrix.coeff_linf_bound(),
+        params.open.matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Open,
             dims.d_d(),
-            shared_d_digit_log_basis(params.log_basis_open, &params.precommitted_groups),
+            shared_d_digit_log_basis(params.open.digits.log_basis, &params.precommitted_groups),
         ),
     )
 }

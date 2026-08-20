@@ -471,7 +471,6 @@ fn root_final_group_level_params_candidate(
             true,
         ),
         opening_method: ctx.opening.method(),
-        log_basis_open,
         inner: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
             inner_commit_matrix,
@@ -480,7 +479,10 @@ fn root_final_group_level_params_candidate(
             akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
             outer_commit_matrix,
         ),
-        open_commit_matrix,
+        open: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(log_basis_open, num_digits_open),
+            open_commit_matrix,
+        ),
         blocks: akita_types::BlockGeometry::new(
             num_live_ring_elements_per_claim,
             num_positions_per_block,
@@ -488,7 +490,6 @@ fn root_final_group_level_params_candidate(
         ),
         outer_slice_count,
         fold_challenge_config: ctx.opening.challenge_config(),
-        num_digits_open,
         num_digits_fold,
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.

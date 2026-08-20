@@ -271,7 +271,7 @@ where
         tau0,
         tau1,
         b: 1usize
-            .checked_shl(lp.log_basis_open)
+            .checked_shl(lp.open.digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     }
@@ -487,7 +487,7 @@ where
     Ok(RelationMatrixEvaluator {
         relation_address_geometry,
         groups,
-        log_basis: lp.log_basis_open,
+        log_basis: lp.open.digits.log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -553,7 +553,7 @@ where
 
     let log_basis_inner = lp.inner.digits.log_basis;
     let log_basis_outer = lp.outer.digits.log_basis;
-    let log_basis_open = lp.log_basis_open;
+    let log_basis_open = lp.open.digits.log_basis;
     validate_log_basis(log_basis_inner)?;
     validate_log_basis(log_basis_outer)?;
     validate_log_basis(log_basis_open)?;

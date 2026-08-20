@@ -199,7 +199,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
             "num_live_blocks must be positive".to_string(),
         ));
     }
-    let depth_open = lp.num_digits_open;
+    let depth_open = lp.open.digits.num_digits;
     let depth_inner = lp.inner.digits.num_digits;
     let depth_outer = lp.outer.digits.num_digits;
     let RingRelationOpeningCounts {
@@ -488,7 +488,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 
     /// Validate the mandatory D-row payload shape.
     pub fn check_v_shape_for_level(&self, lp: &CommittedGroupParams) -> Result<(), AkitaError> {
-        let expected = lp.open_commit_matrix.output_rank();
+        let expected = lp.open.matrix.output_rank();
         let d_d = self.role_dims.d_d();
         let actual = if self.v.coeff_len() == 0 {
             0
@@ -602,7 +602,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         }
         // `EvaluationTrace` is a logical relation row used by Stage 2. It is
         // not materialized in the quotient witness's shared `r` tail.
-        let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
+        let r_levels = r_decomp_levels::<F>(lp.open.digits.log_basis);
         let layout = WitnessLayout::new(
             lp,
             &self.opening_batch,

@@ -42,7 +42,7 @@ impl TestSetupInputs {
         self.level_params.blocks.positions_per_block
     }
     fn depth_open(&self) -> usize {
-        self.level_params.num_digits_open
+        self.level_params.open.digits.num_digits
     }
     fn depth_commit(&self) -> usize {
         self.level_params.inner.digits.num_digits
@@ -79,8 +79,8 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
         outer.coeff_linf_bound(),
         role_dims.d_b(),
     );
-    let open = &params.open_commit_matrix;
-    params.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+    let open = &params.open.matrix;
+    params.open.matrix = crate::OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),
@@ -266,8 +266,8 @@ fn test_inputs_for_group_sizes(
                     profile: layout,
                     opening: crate::GroupOpeningPlan::evaluation_trace(
                         lp.fold_challenge_config,
-                        lp.log_basis_open,
-                        lp.num_digits_open,
+                        lp.open.digits.log_basis,
+                        lp.open.digits.num_digits,
                         depth_fold,
                     ),
                 }

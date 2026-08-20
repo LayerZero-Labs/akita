@@ -494,8 +494,15 @@ the descriptor fixtures as the oracle; only slice 4 changes what is stored.
 2. **Geometry — landed.** The three `num_live_*` / `num_positions_per_block`
    fields became `blocks: BlockGeometry`, and the `blocks()` accessor that used
    to construct one now reads storage.
-3. **Opening role.** `log_basis_open` + `num_digits_open` + `open_commit_matrix`
-   regroup the same way, keeping the shared-D ownership established in 5b.
+3. **Opening role — landed.** `log_basis_open` + `num_digits_open` +
+   `open_commit_matrix` became `open: OpenRoleParams`, keeping the shared-D
+   ownership established in 5b. `CommittedGroupParams` is now 9 fields, down
+   from 21.
+
+   The collision here is `GroupOpeningPlan`, which carries `log_basis_open` and
+   `num_digits_open` of its own and is reached as `group.opening.*`. Expect the
+   reverse pass to fire on it repeatedly across `audit.rs`, `ring_dims.rs` and
+   the profiling report.
 4. **The uniform list.** With 1–3 done, a fold's own group *is* a
    `GroupOpenPhaseParams`, so `groups` becomes real storage and
    `final_group()` / `groups()` stop being views. This is the slice that

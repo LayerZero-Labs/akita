@@ -108,8 +108,8 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         outer.coeff_linf_bound(),
         D_PROJECTED,
     );
-    let opening = &lp.open_commit_matrix;
-    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = &lp.open.matrix;
+    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
@@ -123,7 +123,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
-    let quotient_depth = r_decomp_levels::<MixedF>(lp.log_basis_open);
+    let quotient_depth = r_decomp_levels::<MixedF>(lp.open.digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
@@ -153,7 +153,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             a_row_start: 1,
             b_row_start: 1 + lp.inner.matrix.output_rank(),
         }],
-        log_basis: lp.log_basis_open,
+        log_basis: lp.open.digits.log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp,

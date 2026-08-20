@@ -22,7 +22,7 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
     let mut params = sample_params_only();
     params.inner.digits.log_basis = 2;
     params.outer.digits.log_basis = 3;
-    params.log_basis_open = 4;
+    params.open.digits.log_basis = 4;
     let params = params
         .with_decomp(8, 17, 5, 4, 3)
         .expect("distinct semantic decomposition");
@@ -38,7 +38,7 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
         "B uses outer depth"
     );
     assert_eq!(
-        params.open_commit_matrix.input_width(),
+        params.open.matrix.input_width(),
         3 * blocks,
         "D uses open depth"
     );
@@ -46,7 +46,7 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
         (
             params.inner.digits.log_basis,
             params.outer.digits.log_basis,
-            params.log_basis_open,
+            params.open.digits.log_basis,
         ),
         (2, 3, 4)
     );
@@ -118,8 +118,8 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         profile: layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config,
-            precommit_lp.log_basis_open,
-            precommit_lp.num_digits_open,
+            precommit_lp.open.digits.log_basis,
+            precommit_lp.open.digits.num_digits,
             precommit_lp.num_digits_fold,
         ),
     };
@@ -154,7 +154,7 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
 #[test]
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
-    grouped.log_basis_open = 3;
+    grouped.open.digits.log_basis = 3;
     grouped.precommitted_groups[0]
         .profile
         .outer
@@ -190,10 +190,10 @@ fn with_layout_keeps_self_ranks() {
     assert_eq!(lp.d_a(), 64);
     assert_eq!(lp.inner.digits.log_basis, layout_lp.inner.digits.log_basis);
     assert_eq!(lp.outer.digits.log_basis, layout_lp.outer.digits.log_basis);
-    assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
+    assert_eq!(lp.open.digits.log_basis, layout_lp.open.digits.log_basis);
     assert_eq!(lp.inner.matrix.output_rank(), 2);
     assert_eq!(lp.outer.matrix.output_rank(), 4);
-    assert_eq!(lp.open_commit_matrix.output_rank(), 3);
+    assert_eq!(lp.open.matrix.output_rank(), 3);
     assert_eq!(lp.blocks.live_blocks, layout_lp.blocks.live_blocks);
     assert_eq!(
         lp.blocks.positions_per_block,
@@ -208,7 +208,7 @@ fn with_layout_keeps_self_ranks() {
         lp.outer.digits.num_digits,
         layout_lp.outer.digits.num_digits
     );
-    assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
+    assert_eq!(lp.open.digits.num_digits, layout_lp.open.digits.num_digits);
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn derived_widths_match_ajtai_col_len() {
 
     assert_eq!(lp.inner_width(), lp.inner.matrix.input_width());
     assert_eq!(lp.outer_width(), lp.outer.matrix.input_width());
-    assert_eq!(lp.d_matrix_width(), lp.open_commit_matrix.input_width());
+    assert_eq!(lp.d_matrix_width(), lp.open.matrix.input_width());
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn canonical_row_offsets_match_open_coded_layout() {
         .unwrap();
     let n_a = lp.inner.matrix.output_rank();
     let n_b = lp.outer.matrix.output_rank();
-    let n_d = lp.open_commit_matrix.output_rank();
+    let n_d = lp.open.matrix.output_rank();
 
     for nc in [1usize, 2, 4] {
         let n_d_active = n_d;

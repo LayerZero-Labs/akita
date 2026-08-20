@@ -253,7 +253,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let t_sum: usize = layout.units().iter().map(|unit| unit.t_range().len()).sum();
         assert_eq!(
             e_sum,
-            lp.num_digits_open * lp.blocks.live_blocks * num_claims * D
+            lp.open.digits.num_digits * lp.blocks.live_blocks * num_claims * D
         );
         assert_eq!(
             t_sum,
@@ -413,8 +413,8 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
         ),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config,
-            precommit_lp.log_basis_open,
-            precommit_lp.num_digits_open,
+            precommit_lp.open.digits.log_basis,
+            precommit_lp.open.digits.num_digits,
             precommit_lp.num_digits_fold,
         ),
     };
@@ -452,7 +452,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
             CyclotomicRing::zero();
-            lp.open_commit_matrix.output_rank()
+            lp.open.matrix.output_rank()
         ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
@@ -465,7 +465,7 @@ fn multi_group_segment_layout_total_matches_next_w_len() {
     // With one chunk, authenticated group order gives one contiguous
     // `[z_g | e_g | t_g]` unit per group before the shared R tail.
     assert_eq!(layout.units().len(), num_groups);
-    let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
+    let quotient_depth = r_decomp_levels::<F>(lp.open.digits.log_basis);
     let quotient_coeff_len = layout
         .r_rows()
         .iter()
@@ -519,7 +519,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
         RingVec::from_coeffs(vec![F::zero(); relation_rhs_coefficients]),
         RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
             CyclotomicRing::zero();
-            lp.open_commit_matrix.output_rank()
+            lp.open.matrix.output_rank()
         ]),
         CommitmentRingDims::uniform(MULTI_GROUP_D),
     )
@@ -658,7 +658,7 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             assert_eq!(&emitted[t_range], flatten_markers(expected_t).as_slice());
         }
     }
-    let quotient_depth = r_decomp_levels::<F>(lp.log_basis_open);
+    let quotient_depth = r_decomp_levels::<F>(lp.open.digits.log_basis);
     for (row_index, row) in layout.r_rows().iter().enumerate() {
         for digit in 0..quotient_depth {
             for coefficient in 0..row.geometry().polynomial_modulus_dimension() {
@@ -695,13 +695,13 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     lp.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(64).expect("packing config");
     certify_test_sis_bounds(&mut lp);
-    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-        lp.open_commit_matrix.security_policy(),
-        lp.open_commit_matrix.sis_table_key().table_digest,
-        lp.open_commit_matrix.sis_modulus_profile(),
-        lp.open_commit_matrix.output_rank(),
+    lp.open.matrix = OpenCommitMatrixParams::new_unchecked(
+        lp.open.matrix.security_policy(),
+        lp.open.matrix.sis_table_key().table_digest,
+        lp.open.matrix.sis_modulus_profile(),
+        lp.open.matrix.output_rank(),
         8,
-        lp.open_commit_matrix.coeff_linf_bound(),
+        lp.open.matrix.coeff_linf_bound(),
         PACK_D_D,
     );
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
@@ -769,7 +769,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     assert_eq!(unit.e_geometry().coordinate_plane_count(), 2);
     assert_eq!(unit.e_geometry().physical_coefficient_width(), 128);
 
-    let depth_open = lp.num_digits_open;
+    let depth_open = lp.open.digits.num_digits;
     let blocks = lp.blocks.live_blocks;
     let role_subcolumns = packing_geometry.partial_base_field_width() / PACK_D_D;
     let source = (0..blocks * role_subcolumns * depth_open)

@@ -70,7 +70,7 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
         step.params.fold_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(step.params.log_basis_open, 4);
+    assert_eq!(step.params.open.digits.log_basis, 4);
     assert_eq!(step.params.num_digits_fold, 3);
     assert_eq!(
         step.params.inner.matrix.input_width() * step.params.inner.matrix.ring_dimension(),

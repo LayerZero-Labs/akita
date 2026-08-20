@@ -436,13 +436,13 @@ mod tests {
             challenge_subring_dimension: 64,
         };
         params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-            params.open_commit_matrix.security_policy(),
-            params.open_commit_matrix.sis_table_key().table_digest,
-            params.open_commit_matrix.sis_modulus_profile(),
-            params.open_commit_matrix.output_rank(),
+        params.open.matrix = OpenCommitMatrixParams::new_unchecked(
+            params.open.matrix.security_policy(),
+            params.open.matrix.sis_table_key().table_digest,
+            params.open.matrix.sis_modulus_profile(),
+            params.open.matrix.output_rank(),
             8,
-            params.open_commit_matrix.coeff_linf_bound(),
+            params.open.matrix.coeff_linf_bound(),
             D_D,
         );
         let batch =

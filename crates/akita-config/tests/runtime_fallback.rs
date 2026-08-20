@@ -194,8 +194,8 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     let profiles = selected.profiles().clone();
 
     let mut low_rank_d = selected.schedule().clone();
-    let matrix = &low_rank_d.root.params.open_commit_matrix;
-    low_rank_d.root.params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    let matrix = &low_rank_d.root.params.open.matrix;
+    low_rank_d.root.params.open.matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
         matrix.sis_table_key().table_digest,
         matrix.sis_modulus_profile(),

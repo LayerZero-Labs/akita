@@ -270,7 +270,7 @@ fn expected_same_point_batched_shape(
             .expect("commitment payload geometry")
             .transmitted_coefficients()
     };
-    let root_stage1 = DigitRangePlan::new(1usize << root_params.log_basis_open)
+    let root_stage1 = DigitRangePlan::new(1usize << root_params.open.digits.log_basis)
         .expect("scheduled root range basis")
         .proof_shapes_for_route(root_rounds, root_params.inner.matrix.security_route())
         .expect("scheduled root Stage 1 shape");
@@ -301,7 +301,7 @@ fn expected_same_point_batched_shape(
         let level_params = &step.params;
         let output_witness_len = step.output_witness_len;
         let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
-        let stage1 = DigitRangePlan::new(1usize << level_params.log_basis_open)
+        let stage1 = DigitRangePlan::new(1usize << level_params.open.digits.log_basis)
             .expect("scheduled range basis")
             .proof_shapes_for_route(rounds, level_params.inner.matrix.security_route())
             .expect("scheduled Stage 1 shape");

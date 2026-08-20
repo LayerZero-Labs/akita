@@ -81,7 +81,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
     {
         let fold_basis = 1usize
-            .checked_shl(terminal_lp.log_basis_open)
+            .checked_shl(terminal_lp.open.digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
         let response_l2_sq_cap = source_moment
             .and_then(|moment| moment.response_l2_sq_cap(l2_challenge.challenge_l2_sq_max()));

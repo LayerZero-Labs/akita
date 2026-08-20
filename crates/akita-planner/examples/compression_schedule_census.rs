@@ -165,7 +165,7 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.open_commit_matrix,
+        &root.open.matrix,
     )?;
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         for (group_index, group) in fold.params.precommitted_group_iter().enumerate() {
@@ -194,7 +194,7 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.open_commit_matrix,
+            &fold.params.open.matrix,
         )?;
     }
     Ok(())

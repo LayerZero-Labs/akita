@@ -81,8 +81,8 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
     packing.opening_method = akita_types::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    packing.log_basis_open = 4;
-    packing.num_digits_open = 32;
+    packing.open.digits.log_basis = 4;
+    packing.open.digits.num_digits = 32;
     assert_ne!(
         evaluation_trace.canonical_descriptor_bytes(),
         packing.canonical_descriptor_bytes()

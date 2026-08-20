@@ -579,10 +579,12 @@ where
             .ok_or(AkitaError::InvalidProof)?
             * alpha
             + E::one();
-        for (digit, gadget) in
-            gadget_row_scalars::<F>(r_decomp_levels::<F>(lp.log_basis_open), lp.log_basis_open)
-                .into_iter()
-                .enumerate()
+        for (digit, gadget) in gadget_row_scalars::<F>(
+            r_decomp_levels::<F>(lp.open.digits.log_basis),
+            lp.open.digits.log_basis,
+        )
+        .into_iter()
+        .enumerate()
         {
             weights.push(
                 witness_layout.r_coefficient_index(row_index, digit, 0, 0)?,

@@ -42,7 +42,7 @@ impl FoldSchedule {
                 .precommitted_groups
                 .iter()
                 .map(|group| (&group.profile, group)),
-            &root.params.open_commit_matrix,
+            &root.params.open.matrix,
             &root.params.fold_challenge_config,
             WitnessChunkDescriptor(root.params.witness_chunk.num_chunks),
             root.input_witness_len,
@@ -54,7 +54,7 @@ impl FoldSchedule {
                 bytes,
                 fold.params,
                 fold.payload_mode,
-                &fold.params.open_commit_matrix,
+                &fold.params.open.matrix,
                 &fold.params.fold_challenge_config,
                 fold.params.setup_prefix.as_ref(),
                 WitnessChunkDescriptor(fold.params.witness_chunk.num_chunks),
@@ -78,7 +78,7 @@ impl FoldSchedule {
                 .precommitted_groups
                 .iter()
                 .map(|group| (&group.profile, group)),
-            &self.root.params.open_commit_matrix,
+            &self.root.params.open.matrix,
             &self.root.params.fold_challenge_config,
             WitnessChunkDescriptor(self.root.params.witness_chunk.num_chunks),
             self.root.input_witness_len,
@@ -90,7 +90,7 @@ impl FoldSchedule {
                 bytes,
                 &fold.params,
                 fold.params.payload_mode,
-                &fold.params.open_commit_matrix,
+                &fold.params.open.matrix,
                 &fold.params.fold_challenge_config,
                 fold.params.setup_prefix.as_ref(),
                 WitnessChunkDescriptor(fold.params.witness_chunk.num_chunks),

@@ -364,7 +364,7 @@ where
     let rhs_layout = relation_geometry.rhs_layout();
     let row_families = rhs_layout.row_families()?;
     let num_rows = row_families.len();
-    let n_d_active = lp.open_commit_matrix.output_rank();
+    let n_d_active = lp.open.matrix.output_rank();
     let d_start = row_families
         .iter()
         .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))

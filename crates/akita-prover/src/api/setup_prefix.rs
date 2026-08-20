@@ -263,7 +263,7 @@ mod tests {
                 params.blocks.live_ring_elements_per_claim,
                 params.inner.digits.num_digits,
                 params.outer.digits.num_digits,
-                params.num_digits_open,
+                params.open.digits.num_digits,
             )
             .expect("layout rebuilt for audited inner rank");
         let outer = params.outer.matrix;

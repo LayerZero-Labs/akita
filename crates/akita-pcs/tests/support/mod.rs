@@ -119,12 +119,12 @@ fn rebuild_group_output_matrices(
         extension_degree,
         dims.d_a(),
         dims.d_d(),
-        params.num_digits_open,
+        params.open.digits.num_digits,
         params.blocks.live_blocks,
         num_claims,
     )?;
-    params.open_commit_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
-        params.open_commit_matrix.sis_table_key(),
+    params.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+        params.open.matrix.sis_table_key(),
         d_width,
     )?;
     Ok(())
@@ -156,7 +156,7 @@ impl<'a> FoldDigitInputs<'a> {
         Self {
             d_a: params.inner.matrix.ring_dimension(),
             log_basis_inner: params.inner.digits.log_basis,
-            log_basis_open: params.log_basis_open,
+            log_basis_open: params.open.digits.log_basis,
             num_digits_inner: params.inner.digits.num_digits,
             num_positions_per_block: params.blocks.positions_per_block,
             num_live_blocks: params.blocks.live_blocks,
@@ -407,26 +407,26 @@ where
             policy.sis_modulus_profile,
             akita_types::SisMatrixRole::Open,
             root_open_dimension,
-            root.log_basis_open,
+            root.open.digits.log_basis,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("root packing test has no audited D bound".into())
         })?;
-        let mut root_open_key = root.open_commit_matrix.sis_table_key();
+        let mut root_open_key = root.open.matrix.sis_table_key();
         root_open_key.ring_dimension = root_open_dimension
             .try_into()
             .map_err(|_| AkitaError::InvalidSetup("root packing D dimension exceeds u32".into()))?;
         root_open_key.coeff_linf_bound = root_open_bound;
-        root.open_commit_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+        root.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
             root_open_key,
-            root.open_commit_matrix.input_width(),
+            root.open.matrix.input_width(),
         )?;
         let required_a_bound = akita_types::sis::rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             d_a,
-            root.log_basis_open,
+            root.open.digits.log_basis,
             &root.fold_challenge_config,
             root.num_digits_fold,
         )
@@ -455,12 +455,12 @@ where
         let mut successor = successor_template;
         successor.input_witness_len = root_output_witness_len;
         let successor_witness = &mut successor.params;
-        if successor_witness.inner.digits.log_basis != root.log_basis_open
+        if successor_witness.inner.digits.log_basis != root.open.digits.log_basis
             || successor_witness.inner.digits.num_digits != 1
         {
             return Err(AkitaError::InvalidSetup(format!(
                 "packing recursive digit basis mismatch: predecessor open={}, successor inner={} with {} digits",
-                root.log_basis_open,
+                root.open.digits.log_basis,
                 successor_witness.inner.digits.log_basis,
                 successor_witness.inner.digits.num_digits,
             )));
@@ -523,7 +523,7 @@ where
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             successor_witness.d_a(),
-            successor_witness.log_basis_open,
+            successor_witness.open.digits.log_basis,
             &successor_witness.fold_challenge_config,
             successor_witness.num_digits_fold,
         )
@@ -653,18 +653,18 @@ where
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
         successor_witness.setup_prefix = Some(incoming_setup_prefix);
         let successor_d_width = successor_witness
-            .open_commit_matrix
+            .open
+            .matrix
             .input_width()
             .checked_add(
                 incoming_setup_prefix
                     .d_segment_width(Self::EXT_DEGREE, successor_witness.role_dims().d_d())?,
             )
             .ok_or_else(|| AkitaError::InvalidSetup("packing successor D width overflow".into()))?;
-        successor_witness.open_commit_matrix =
-            akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
-                successor_witness.open_commit_matrix.sis_table_key(),
-                successor_d_width,
-            )?;
+        successor_witness.open.matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
+            successor_witness.open.matrix.sis_table_key(),
+            successor_d_width,
+        )?;
         let successor_opening_batch = akita_types::suffix_opening_layout(
             root_output_witness_len,
             Some(root_setup_natural_len),

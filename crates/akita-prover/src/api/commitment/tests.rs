@@ -86,8 +86,8 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
     )
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
-    let d_key = params.open_commit_matrix.sis_table_key();
-    params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let d_key = params.open.matrix.sis_table_key();
+    params.open.matrix = OpenCommitMatrixParams::new_unchecked(
         d_key.policy,
         d_key.table_digest,
         d_key.modulus_profile,

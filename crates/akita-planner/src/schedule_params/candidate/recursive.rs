@@ -229,6 +229,7 @@ impl RecursiveCandidateContext<'_, '_> {
                     num_claims: 1,
                     num_live_blocks: core.num_live_blocks,
                     outer_slice_count,
+
                     log_basis_open: request.log_basis_open,
                     num_digits_outer: core.num_digits_open,
                     inner_output_rank: core.inner_commit_matrix.output_rank(),
@@ -240,7 +241,6 @@ impl RecursiveCandidateContext<'_, '_> {
                 payload_mode: request.payload_mode,
                 source_encoding,
                 opening_method: request.opening.method(),
-                log_basis_open: request.log_basis_open,
                 inner: akita_types::RoleParams::new(
                     akita_types::GadgetDigits::new(request.log_basis_inner, core.num_digits_inner),
                     core.inner_commit_matrix,
@@ -249,8 +249,10 @@ impl RecursiveCandidateContext<'_, '_> {
                     akita_types::GadgetDigits::new(request.log_basis_open, core.num_digits_open),
                     outer_commit_matrix,
                 ),
-                open_commit_matrix: core.open_commit_matrix,
-
+                open: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(request.log_basis_open, core.num_digits_open),
+                    core.open_commit_matrix,
+                ),
                 blocks: akita_types::BlockGeometry::new(
                     core.num_ring_elems,
                     core.num_positions_per_block,
@@ -259,7 +261,7 @@ impl RecursiveCandidateContext<'_, '_> {
 
                 outer_slice_count,
                 fold_challenge_config: request.opening.challenge_config(),
-                num_digits_open: core.num_digits_open,
+
                 num_digits_fold: core.num_digits_fold,
                 witness_chunk: crate::policy::witness_chunk_at_level(
                     request.policy,
@@ -375,14 +377,15 @@ fn attach_recursive_setup_prefix(
         let prefix_d_width =
             prefix.d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
         let total_d_width = candidate_params
-            .open_commit_matrix
+            .open
+            .matrix
             .input_width()
             .checked_add(prefix_d_width)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
             })?;
-        candidate_params.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
-            candidate_params.open_commit_matrix.sis_table_key(),
+        candidate_params.open.matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+            candidate_params.open.matrix.sis_table_key(),
             total_d_width,
         )?;
     }

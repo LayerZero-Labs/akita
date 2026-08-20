@@ -150,8 +150,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .setup_prefix
                 .is_some());
             assert!(
-                root.open_commit_matrix.input_width()
-                    < root.num_digits_open
+                root.open.matrix.input_width()
+                    < root.open.digits.num_digits
                         * root.blocks.live_blocks
                         * root.d_a().div_ceil(root.role_dims().d_d()),
                 "the fixed row must shrink the shared D input"

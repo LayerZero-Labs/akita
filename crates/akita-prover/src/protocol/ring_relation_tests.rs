@@ -34,8 +34,8 @@ fn fixture() -> (
     params.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: s,
     };
-    let opening = params.open_commit_matrix;
-    params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = params.open.matrix;
+    params.open.matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
