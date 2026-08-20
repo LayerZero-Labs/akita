@@ -455,10 +455,62 @@ Steps 1–4 change no bytes and no call sites. Step 5 is the cutover.
 | 5c | Delete `LevelParamsLike`, `group_params` and its geometry twin, the 10 single-method wrappers, `CommitInnerPlan::from_profile`, and all four borrowed views. | none | none |
 | 5d | `TerminalFoldParams` merging 3 types; move the 6 fallible admission steps into `admit`; drop the config argument from the response-cap functions. | break | regenerate |
 | 6 | Generated schema 15 → 8; drop the stored prefix `GroupOpeningPlan` and its 3 audits; one `expand_group`; delete 5 `emit_*` helpers. | none beyond step 5 | regenerate; `key_digest` moves once |
+| 7 | **Step 5b's tail, deferred.** Move a fold's own group out of `CommittedGroupParams`'s flat fields into the uniform `groups` list. Four slices, below. | none | none |
 
 Steps 5a–5d must land together. Splitting them across PRs would need temporary
 mirror fields with temporary audits, which is the thing being deleted. Split them
 into four commits for review and keep the tree compiling at each.
+
+### Step 7: the deferred 5b tail
+
+Steps 5a–5d landed the type merges, but a fold's own group is still stored as
+21 flat fields on `CommittedGroupParams`; `final_group(layout)` and `groups()`
+*materialize* a group from them rather than reading stored ones. So the
+acceptance criterion "`FoldParams::groups` is the only place a fold's groups are
+stored" is not met, and the Performance table's main structural win is only
+partly realised:
+
+| Type | Projected | Measured after step 6 |
+|---|---|---|
+| `FoldSchedule` | ~440 | 1120 |
+| `CommittedGroupParams` | ~160 | 816, its unchanged "Today" value |
+
+`FoldSchedule` shrank 11%, not 65%. Every other row of that table hit its
+projection, and this one row explains both misses, because its note is exactly
+the move that was deferred: "profile and 2 of 3 matrices move to the groups".
+
+**Why it is its own step.** The flat fields are read at 1619 sites across 147
+files, an order of magnitude more than any other step here. Bundling it into 5b
+is what let it be deferred without anyone noticing.
+
+**Slices.** Each one compiles and is committable on its own, and each shrinks
+the next. Slices 1–3 are pure field regrouping and must be byte-neutral, with
+the descriptor fixtures as the oracle; only slice 4 changes what is stored.
+
+1. **Roles.** `log_basis_inner` + `num_digits_inner` + `inner_commit_matrix`
+   become `inner: InnerRoleParams`, and the same for `outer`. ~897 sites. Go
+   straight to this shape rather than an intermediate one: it is what
+   `GroupCommitPhaseParams` and `TerminalFoldParams` already use, so there is no
+   second rename later.
+2. **Geometry.** The three `num_live_*` / `num_positions_per_block` fields become
+   `blocks: BlockGeometry`. ~611 sites. The `blocks()` accessor already builds
+   exactly this value, so it stops being a view and becomes the storage.
+3. **Opening role.** `log_basis_open` + `num_digits_open` + `open_commit_matrix`
+   regroup the same way, keeping the shared-D ownership established in 5b.
+4. **The uniform list.** With 1–3 done, a fold's own group *is* a
+   `GroupOpenPhaseParams`, so `groups` becomes real storage and
+   `final_group()` / `groups()` stop being views. This is the slice that
+   satisfies the acceptance criterion and should land the projected sizes.
+
+**Two cautions, both learned the hard way on this branch.** Verify every slice
+under the *test job's* feature set —
+`parallel,disk-persistence,schedules-default,catalog-gen,transcript-blake2b` —
+because the shorter `parallel,disk-persistence,transcript-blake2b` set cleared
+two commits that were still broken behind `schedules-default`. And do not
+blind-replace these field names: `num_digits_inner`, `inner_commit_matrix` and
+friends also exist on `GeneratedGroup` and `GeneratedTerminalFold`, and a global
+substitution silently renamed `witness_chunks` to `group_chunks` during step 6.
+Drive the rewrite off `rustc` errors instead.
 
 ### Step 0: the prerequisite
 
