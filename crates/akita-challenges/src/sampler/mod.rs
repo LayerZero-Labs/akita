@@ -13,7 +13,7 @@ mod xof;
 
 pub(crate) use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
-pub(crate) use xof::XofCursor;
+pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
 use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
@@ -29,7 +29,8 @@ use op_norm::OpNormTable;
 
 const OP_NORM_PREDICATE_SCALE: u32 = 48;
 const MAX_OP_NORM_ATTEMPTS: usize = 4096;
-const CHALLENGE_BATCH_SIZE: usize = 128;
+#[cfg(feature = "parallel")]
+const PARALLEL_SAMPLING_WORK_THRESHOLD: usize = 1 << 14;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
         let config = crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG;
@@ -73,99 +74,155 @@ static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stat
         Ok(Arc::new(table))
     });
 
-pub(crate) fn sample_challenges_from_xof_cursor(
-    cursor: &mut XofCursor,
+#[derive(Clone)]
+struct IndexedSamplingPolicy {
+    rejection: Option<OperatorNormRejection>,
+    op_norm_table: Option<Arc<OpNormTable>>,
+}
+
+impl IndexedSamplingPolicy {
+    fn new(
+        ring_d: usize,
+        cfg: &SparseChallengeConfig,
+        rejection: Option<OperatorNormRejection>,
+    ) -> Result<Self, AkitaError> {
+        let Some(rejection) = rejection else {
+            return Ok(Self {
+                rejection: None,
+                op_norm_table: None,
+            });
+        };
+        rejection
+            .validate(ring_d, cfg)
+            .map_err(|error| AkitaError::InvalidSetup(error.into()))?;
+        let table = match rejection {
+            OperatorNormRejection::D64_SELECTIVE_L2 => &*D64_SELECTIVE_L2_OP_NORM_TABLE,
+            OperatorNormRejection::D128_SELECTIVE_L2 => &*D128_SELECTIVE_L2_OP_NORM_TABLE,
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "unsupported operator-norm rejection policy".into(),
+                ));
+            }
+        };
+        let op_norm_table = Arc::clone(
+            table
+                .as_ref()
+                .map_err(|message| AkitaError::InvalidSetup((*message).into()))?,
+        );
+        Ok(Self {
+            rejection: Some(rejection),
+            op_norm_table: Some(op_norm_table),
+        })
+    }
+}
+
+struct IndexedChallengeWorker {
+    prefix: IndexedXofPrefix,
+    cursor: XofCursor,
+    scratch: SignedSparseScratch,
+    policy: IndexedSamplingPolicy,
+}
+
+impl IndexedChallengeWorker {
+    fn new(seed: &[u8], cfg: &SparseChallengeConfig, policy: &IndexedSamplingPolicy) -> Self {
+        let prefix = IndexedXofPrefix::new(seed);
+        let cursor = XofCursor::from_indexed_prefix(&prefix, 0);
+        Self {
+            prefix,
+            cursor,
+            scratch: SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2),
+            policy: policy.clone(),
+        }
+    }
+
+    fn sample(
+        &mut self,
+        coordinate_index: u64,
+        ring_d: usize,
+        cfg: &SparseChallengeConfig,
+    ) -> Result<SparseChallenge, AkitaError> {
+        self.cursor
+            .reset_indexed_prefix(&self.prefix, coordinate_index);
+        let Some(rejection) = self.policy.rejection else {
+            self.scratch
+                .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
+            return Ok(self.scratch.take_challenge());
+        };
+        let table = self.policy.op_norm_table.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("operator-norm rejection table is unavailable".into())
+        })?;
+        for _ in 0..MAX_OP_NORM_ATTEMPTS {
+            self.scratch
+                .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
+            if table.accept_strict_parts(
+                self.scratch.positions(),
+                self.scratch.coeffs(),
+                u64::from(rejection.threshold),
+            )? {
+                return Ok(self.scratch.take_challenge());
+            }
+        }
+        Err(AkitaError::InvalidInput(format!(
+            "operator-norm rejection exceeded {MAX_OP_NORM_ATTEMPTS} attempts at coordinate {coordinate_index}"
+        )))
+    }
+}
+
+pub(crate) fn sample_indexed_challenges_from_seed(
+    seed: &[u8],
     ring_d: usize,
     n: usize,
     cfg: &SparseChallengeConfig,
     rejection: Option<OperatorNormRejection>,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
-    let Some(rejection) = rejection else {
-        return SignedSparseScratch::sample_challenges(cursor, ring_d, n, cfg);
-    };
-    rejection
-        .validate(ring_d, cfg)
-        .map_err(|error| AkitaError::InvalidSetup(error.into()))?;
-    let table = match rejection {
-        OperatorNormRejection::D64_SELECTIVE_L2 => &*D64_SELECTIVE_L2_OP_NORM_TABLE,
-        OperatorNormRejection::D128_SELECTIVE_L2 => &*D128_SELECTIVE_L2_OP_NORM_TABLE,
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "unsupported operator-norm rejection policy".into(),
-            ));
-        }
-    };
-    let table = Arc::clone(
-        table
-            .as_ref()
-            .map_err(|message| AkitaError::InvalidSetup((*message).into()))?,
-    );
-    let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
-    let mut challenges = Vec::with_capacity(n);
-    for _ in 0..n {
-        let mut accepted = None;
-        for _ in 0..MAX_OP_NORM_ATTEMPTS {
-            scratch.sample(cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
-            if table.accept_strict_parts(
-                scratch.positions(),
-                scratch.coeffs(),
-                u64::from(rejection.threshold),
-            )? {
-                accepted = Some(scratch.take_challenge());
-                break;
-            }
-        }
-        challenges.push(accepted.ok_or_else(|| {
-            AkitaError::InvalidInput(format!(
-                "operator-norm rejection exceeded {MAX_OP_NORM_ATTEMPTS} attempts"
-            ))
-        })?);
+    if n == 0 {
+        return Ok(Vec::new());
     }
-    Ok(challenges)
+    u64::try_from(n - 1).map_err(|_| {
+        AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
+    })?;
+    let policy = IndexedSamplingPolicy::new(ring_d, cfg, rejection)?;
+    #[cfg(feature = "parallel")]
+    {
+        let work = n
+            .checked_mul(cfg.weight())
+            .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge work overflow".into()))?;
+        if work >= PARALLEL_SAMPLING_WORK_THRESHOLD {
+            return (0..n)
+                .into_par_iter()
+                .map_init(
+                    || IndexedChallengeWorker::new(seed, cfg, &policy),
+                    |worker, index| {
+                        let coordinate_index = u64::try_from(index).map_err(|_| {
+                            AkitaError::InvalidSetup(
+                                "sparse challenge coordinate index exceeds u64".into(),
+                            )
+                        })?;
+                        worker.sample(coordinate_index, ring_d, cfg)
+                    },
+                )
+                .collect();
+        }
+    }
+    sample_indexed_challenges_sequential(seed, ring_d, n, cfg, &policy)
 }
 
-pub(crate) fn sample_batched_challenges_from_seed(
+fn sample_indexed_challenges_sequential(
     seed: &[u8],
     ring_d: usize,
     n: usize,
     cfg: &SparseChallengeConfig,
+    policy: &IndexedSamplingPolicy,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
-    let num_batches = n.div_ceil(CHALLENGE_BATCH_SIZE);
-    let sample_batch = |batch_index: usize| {
-        let canonical_batch_index = u64::try_from(batch_index).map_err(|_| {
-            AkitaError::InvalidSetup("sparse challenge batch index exceeds u64".into())
-        })?;
-        let mut cursor = XofCursor::from_batched_seed(seed, canonical_batch_index);
-        let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
-        let start = batch_index
-            .checked_mul(CHALLENGE_BATCH_SIZE)
-            .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge batch overflow".into()))?;
-        let batch_len = n.saturating_sub(start).min(CHALLENGE_BATCH_SIZE);
-        let mut batch = Vec::with_capacity(batch_len);
-        for _ in 0..batch_len {
-            scratch.sample(&mut cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
-            batch.push(scratch.take_challenge());
-        }
-        Ok::<_, AkitaError>(batch)
-    };
-    #[cfg(feature = "parallel")]
-    {
-        const PARALLEL_THRESHOLD: usize = 1 << 14;
-        let work = n
-            .checked_mul(cfg.count_pm1.saturating_add(cfg.count_pm2))
-            .ok_or_else(|| AkitaError::InvalidSetup("sparse challenge work overflow".into()))?;
-        if num_batches > 1 && work >= PARALLEL_THRESHOLD {
-            return (0..num_batches)
-                .into_par_iter()
-                .map(sample_batch)
-                .collect::<Result<Vec<_>, _>>()
-                .map(|batches| batches.into_iter().flatten().collect());
-        }
-    }
-    (0..num_batches)
-        .map(sample_batch)
-        .collect::<Result<Vec<_>, _>>()
-        .map(|batches| batches.into_iter().flatten().collect())
+    let mut worker = IndexedChallengeWorker::new(seed, cfg, policy);
+    (0..n)
+        .map(|index| {
+            let coordinate_index = u64::try_from(index).map_err(|_| {
+                AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
+            })?;
+            worker.sample(coordinate_index, ring_d, cfg)
+        })
+        .collect()
 }
 
 /// Sample `n` sparse ring fold challenges from a transcript.
@@ -204,8 +261,7 @@ where
 
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
     let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
-    let mut cursor = XofCursor::from_seed(&seed);
-    sample_challenges_from_xof_cursor(&mut cursor, ring_d, n, cfg, None)
+    sample_indexed_challenges_from_seed(&seed, ring_d, n, cfg, None)
 }
 
 #[cfg(test)]
@@ -216,7 +272,6 @@ mod tests {
     #[test]
     fn pm1_only_matches_pm2_zero_sampler() {
         let ring_d = 128;
-        let cfg = SparseChallengeConfig::pm1_only(31);
         let seed = [7u8; 32];
         let legacy = {
             let mut cursor = XofCursor::from_seed(&seed);
@@ -226,38 +281,102 @@ mod tests {
         };
         let unified = {
             let mut cursor = XofCursor::from_seed(&seed);
-            SignedSparseScratch::sample_challenges(&mut cursor, ring_d, 1, &cfg)
-                .unwrap()
-                .pop()
-                .expect("one challenge")
+            let mut scratch = SignedSparseScratch::new(31, 0);
+            scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
+            scratch.take_challenge()
         };
         assert_eq!(legacy.positions, unified.positions);
         assert_eq!(legacy.coeffs, unified.coeffs);
     }
 
     #[test]
-    fn batched_draw_matches_canonical_substreams() {
+    fn indexed_draw_matches_individual_coordinate_streams() {
         let ring_d = 64;
         let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).unwrap();
         let seed = [11u8; 32];
-        let challenge_count = 2 * CHALLENGE_BATCH_SIZE;
-        let batch =
-            sample_batched_challenges_from_seed(&seed, ring_d, challenge_count, &cfg).unwrap();
-        let expected = (0..2)
-            .flat_map(|batch_index| {
-                let mut cursor = XofCursor::from_batched_seed(&seed, batch_index);
-                let mut scratch = SignedSparseScratch::new(cfg.count_pm1, cfg.count_pm2);
-                (0..CHALLENGE_BATCH_SIZE)
-                    .map(|_| {
-                        scratch
-                            .sample(&mut cursor, ring_d, cfg.count_pm1, cfg.count_pm2)
-                            .unwrap();
-                        scratch.take_challenge()
-                    })
-                    .collect::<Vec<_>>()
+        let challenge_count = 257;
+        let indexed =
+            sample_indexed_challenges_from_seed(&seed, ring_d, challenge_count, &cfg, None)
+                .unwrap();
+        let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let expected = (0..challenge_count)
+            .map(|index| {
+                IndexedChallengeWorker::new(&seed, &cfg, &policy)
+                    .sample(index as u64, ring_d, &cfg)
+                    .unwrap()
             })
             .collect::<Vec<_>>();
-        assert_eq!(batch, expected);
-        assert_ne!(batch[0], batch[1]);
+        assert_eq!(indexed, expected);
+        assert_ne!(indexed[0], indexed[1]);
+    }
+
+    #[test]
+    fn reprogramming_one_coordinate_leaves_every_other_coordinate_unchanged() {
+        let ring_d = 64;
+        let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).unwrap();
+        let seed = [23u8; 32];
+        let alternate_seed = [29u8; 32];
+        let mut challenges =
+            sample_indexed_challenges_from_seed(&seed, ring_d, 12, &cfg, None).unwrap();
+        let before = challenges.clone();
+        let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let mut worker = IndexedChallengeWorker::new(&alternate_seed, &cfg, &policy);
+        challenges[7] = worker.sample(7, ring_d, &cfg).unwrap();
+        assert_ne!(challenges[7], before[7]);
+        for index in (0..challenges.len()).filter(|&index| index != 7) {
+            assert_eq!(challenges[index], before[index]);
+        }
+    }
+
+    #[test]
+    fn indexed_operator_rejection_uses_independent_coordinate_streams() {
+        let seed = [31u8; 32];
+        for (ring_d, cfg, rejection) in [
+            (
+                64,
+                crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+                OperatorNormRejection::D64_SELECTIVE_L2,
+            ),
+            (
+                128,
+                crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+                OperatorNormRejection::D128_SELECTIVE_L2,
+            ),
+        ] {
+            let indexed =
+                sample_indexed_challenges_from_seed(&seed, ring_d, 8, &cfg, Some(rejection))
+                    .unwrap();
+            let policy = IndexedSamplingPolicy::new(ring_d, &cfg, Some(rejection)).unwrap();
+            let individual = (0..8)
+                .map(|index| {
+                    IndexedChallengeWorker::new(&seed, &cfg, &policy)
+                        .sample(index, ring_d, &cfg)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(indexed, individual);
+            assert!(indexed.iter().all(|challenge| {
+                challenge.positions.len() == cfg.weight()
+                    && challenge.coeffs.iter().filter(|&&c| c.abs() == 1).count() == cfg.count_pm1
+                    && challenge.coeffs.iter().filter(|&&c| c.abs() == 2).count() == cfg.count_pm2
+            }));
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn indexed_parallel_and_sequential_sampling_match() {
+        let ring_d = 64;
+        let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).unwrap();
+        let seed = [37u8; 32];
+        let challenge_count = 400;
+        let parallel =
+            sample_indexed_challenges_from_seed(&seed, ring_d, challenge_count, &cfg, None)
+                .unwrap();
+        let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let sequential =
+            sample_indexed_challenges_sequential(&seed, ring_d, challenge_count, &cfg, &policy)
+                .unwrap();
+        assert_eq!(parallel, sequential);
     }
 }

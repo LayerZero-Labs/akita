@@ -40,6 +40,13 @@ ell_i * (k_i - 1) / |S_i|.
 This is the challenge-space error before Fiat-Shamir compilation. The precise
 parameters and batching factors must be taken from the schedule being proved.
 
+The implementation exposes this coordinate structure directly. It squeezes
+one root for each fold group, then derives every claim-major block coordinate
+from an indexed random-oracle input. A coordinate fork fixes the root and all
+other coordinate answers. This is different from expanding the full vector
+through one cursor, where rewinding the cursor query would change every
+coordinate at once.
+
 ## Fiat-Shamir queries and fold nonces
 
 Fiat-Shamir replaces each verifier challenge with a random-oracle answer. The

@@ -4,7 +4,8 @@
 //! the same ring degree to bracket position-shuffle vs sign-decode cost.
 //!
 //! Each `batch_<N>` case measures one `sample_sparse_challenges(N)` call:
-//! one transcript absorb, one XOF seeding, and `N` per-challenge decodes.
+//! one transcript absorb, one group-root squeeze, and `N` indexed coordinate
+//! streams with one sparse decode each.
 //!
 //! Run with:
 //!

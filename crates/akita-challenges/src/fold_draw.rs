@@ -1,6 +1,6 @@
 //! Fold-challenge preview drawing for prover-side Fiat–Shamir grinding.
 
-use crate::sampler::{XofCursor, MAX_STACK_RING_DIM};
+use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
@@ -144,18 +144,9 @@ pub trait FoldDraw {
             absorb_buf.extend_from_slice(&rejection.domain_separator_bytes());
         }
         let seed = self.absorb_and_squeeze(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
-        let challenges = if rejection.is_none() {
-            crate::sampler::sample_batched_challenges_from_seed(&seed, ring_d, total, cfg)?
-        } else {
-            let mut cursor = XofCursor::from_seed(&seed);
-            crate::sampler::sample_challenges_from_xof_cursor(
-                &mut cursor,
-                ring_d,
-                total,
-                cfg,
-                rejection,
-            )?
-        };
+        let challenges = crate::sampler::sample_indexed_challenges_from_seed(
+            &seed, ring_d, total, cfg, rejection,
+        )?;
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }
@@ -211,6 +202,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_field::Fp64;
+    use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
+    use akita_transcript::AkitaTranscript;
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
+
+    type TestField = Fp64<4294967197>;
 
     #[derive(Default)]
     struct CapturingDraw {
@@ -222,6 +220,37 @@ mod tests {
             self.payloads.push(payload.to_vec());
             vec![7; FOLD_CHALLENGE_SEED_LEN]
         }
+    }
+
+    fn challenge_fingerprint(challenges: &Challenges) -> [u8; 32] {
+        let mut xof = Shake256::default();
+        xof.update(b"akita/indexed-fold-challenge-test-vector/v1");
+        for challenge in challenges.as_slice() {
+            xof.update(&(challenge.positions.len() as u64).to_le_bytes());
+            for &position in challenge.positions.iter() {
+                xof.update(&position.to_le_bytes());
+            }
+            xof.update(&(challenge.coeffs.len() as u64).to_le_bytes());
+            for &coefficient in challenge.coeffs.iter() {
+                xof.update(&coefficient.to_le_bytes());
+            }
+        }
+        let mut fingerprint = [0u8; 32];
+        xof.finalize_xof().read(&mut fingerprint);
+        fingerprint
+    }
+
+    fn draw_live(
+        domain: FoldChallengeDrawDomain,
+        ring_d: usize,
+        cfg: &SparseChallengeConfig,
+        rejection: Option<OperatorNormRejection>,
+    ) -> Challenges {
+        let mut transcript = AkitaTranscript::<TestField>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"indexed-fold-test-seed", &TestField::from_u64(0x417));
+        LiveFoldDraw::<TestField, _>::new(&mut transcript)
+            .draw_folding_challenges_with_rejection(domain, ring_d, 2, 3, 2, cfg, 5, rejection)
+            .unwrap()
     }
 
     #[test]
@@ -314,5 +343,87 @@ mod tests {
             )
             .unwrap();
         assert_ne!(draw_64.payloads, evaluation_trace.payloads);
+    }
+
+    #[test]
+    fn preview_and_live_indexed_draws_match_across_groups() {
+        let cfg = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let mut transcript = AkitaTranscript::<TestField>::new(DOMAIN_AKITA_PROTOCOL);
+        transcript.append_field(b"indexed-fold-test-seed", &TestField::from_u64(0x417));
+        let (preview_first, preview_second) = {
+            let mut preview = PreviewFoldDraw::new(&transcript);
+            let first = preview
+                .draw_folding_challenges(64, 0, 3, 2, &cfg, 7)
+                .unwrap();
+            let second = preview
+                .draw_folding_challenges(64, 1, 2, 2, &cfg, 7)
+                .unwrap();
+            (first, second)
+        };
+        let mut live = LiveFoldDraw::<TestField, _>::new(&mut transcript);
+        let live_first = live.draw_folding_challenges(64, 0, 3, 2, &cfg, 7).unwrap();
+        let live_second = live.draw_folding_challenges(64, 1, 2, 2, &cfg, 7).unwrap();
+        assert_eq!(preview_first, live_first);
+        assert_eq!(preview_second, live_second);
+    }
+
+    #[test]
+    fn indexed_fold_challenge_golden_vectors() {
+        let evaluation_cfg = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        let evaluation = draw_live(
+            FoldChallengeDrawDomain::EvaluationTrace,
+            64,
+            &evaluation_cfg,
+            None,
+        );
+        let packing = draw_live(
+            FoldChallengeDrawDomain::SubringCoefficientPacking {
+                challenge_subring_dimension: 64,
+            },
+            64,
+            &evaluation_cfg,
+            None,
+        );
+        let rejected_d64 = draw_live(
+            FoldChallengeDrawDomain::EvaluationTrace,
+            64,
+            &crate::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            Some(OperatorNormRejection::D64_SELECTIVE_L2),
+        );
+        let rejected_d128 = draw_live(
+            FoldChallengeDrawDomain::EvaluationTrace,
+            128,
+            &crate::D128_SELECTIVE_L2_CHALLENGE_CONFIG,
+            Some(OperatorNormRejection::D128_SELECTIVE_L2),
+        );
+
+        assert_eq!(
+            challenge_fingerprint(&evaluation),
+            [
+                12, 201, 73, 146, 123, 83, 170, 185, 43, 106, 41, 171, 113, 89, 92, 73, 113, 141,
+                255, 41, 79, 181, 246, 135, 12, 38, 124, 243, 92, 83, 239, 30,
+            ]
+        );
+        assert_eq!(
+            challenge_fingerprint(&packing),
+            [
+                162, 144, 47, 86, 110, 110, 64, 183, 42, 226, 128, 176, 215, 70, 207, 161, 17, 69,
+                167, 229, 194, 154, 31, 70, 42, 132, 131, 154, 193, 205, 225, 227,
+            ]
+        );
+        assert_eq!(
+            challenge_fingerprint(&rejected_d64),
+            [
+                92, 230, 179, 133, 86, 45, 191, 216, 149, 55, 224, 17, 19, 38, 114, 253, 174, 38,
+                185, 149, 34, 231, 209, 41, 239, 163, 39, 242, 30, 233, 40, 33,
+            ]
+        );
+        assert_eq!(
+            challenge_fingerprint(&rejected_d128),
+            [
+                223, 63, 11, 26, 25, 189, 234, 230, 103, 221, 65, 157, 240, 87, 226, 157, 108, 7,
+                128, 91, 13, 167, 91, 144, 208, 147, 240, 26, 93, 100, 226, 76,
+            ]
+        );
     }
 }

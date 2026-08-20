@@ -17,13 +17,12 @@ in all capitals.
 
 ## Review status
 
-The implementation is not ready to be treated as complete. The comprehensive
-review of PR #394 found one unresolved proof blocker and two concrete blockers
-that are now repaired.
+The comprehensive review of PR #394 found three concrete blockers. All three
+are now repaired.
 
-1. The implemented one-seed challenge vector does not provide the
-   coordinatewise forks assumed by the extraction argument. The proof needs a
-   theorem for full-vector forks, or the challenge derivation must change.
+1. The old one-cursor challenge vector did not provide the coordinatewise
+   forks assumed by the extraction argument. PR #417 keeps one group root but
+   derives each claim-major block coordinate through a separate indexed query.
 2. Recursive-prefix guided pruning could discard the suffix needed by the
    payload projection. It now requires compatible strict dominance in both
    projections and covers the crossing and proof-tie cases directly.
@@ -31,16 +30,11 @@ that are now repaired.
    regeneration. The generator now keeps that drift guard separate from stable
    revision snapshots and a checked base-to-head logical-key-union report.
 
-The remaining unchecked acceptance items below stay open until their points are
-fixed and reviewed. The record has been restored to active status for that
-work.
-
 Draft PR [#417](https://github.com/LayerZero-Labs/akita/pull/417) owns the
 concrete repair for item 1. It keeps one transcript-derived root seed per
 commitment group, but replaces the shared vector XOF with one domain-separated
 indexed query per claim-major block coordinate. The same change applies to
-`EvaluationTrace`. This spec remains active and the acceptance item remains
-unchecked until that implementation and its multi-fork accounting land.
+`EvaluationTrace`, including operator-norm-rejected draws.
 
 ### Reader guide
 
@@ -833,12 +827,12 @@ packing candidate at levels 0 or 1 in this feature.
 
 ### Forking extraction
 
-The planned transcript structure is specified normatively in
+The implemented transcript structure is specified normatively in
 [`specs/transcript-grinding.md`](transcript-grinding.md). For a fixed group root
 and the fixed shared fold-response nonce, coordinate `(claim, block)` is a
 separate indexed random-oracle query. Reprogramming it leaves every other fold
 coordinate and the live transcript state unchanged. Thus the implementation
-will supply the coordinatewise CWSS transcripts assumed below without relying
+supplies the coordinatewise CWSS transcripts below without relying
 on extraction from full-vector forks.
 
 Consider two accepting transcripts with the same pre-challenge commitments and
@@ -867,11 +861,14 @@ of `e_hat`, A binding of the folded source, range proof for all digit planes,
 and quotient checks then give the same weak-opening/MSIS reduction as the
 current fold.
 
-The implementation security note MUST account for the central accepting vector
-and one coordinatewise fork for every claim and block position, the complete
-CWSS and random-oracle forking loss, and every existing schedule error term. It
-MUST NOT claim extraction from challenge entropy alone or from two arbitrary
-full-vector forks.
+The extractor takes one central accepting vector and one coordinatewise fork
+for every claim and block position. The CWSS sum charges the support of every
+coordinate. The online random-oracle reduction separately charges group-root
+queries, indexed coordinate queries, and repeated roots caused by the shared
+fold-response nonce. Root collisions, root prequeries, sum-check errors, the
+`(2s - 1)/|E|` ring-switch error, and all A/B/D/F/H MSIS terms remain additive.
+This accounting does not claim extraction from challenge entropy alone or from
+two arbitrary full-vector forks.
 
 ### Ring-switch polynomial check
 
@@ -897,7 +894,8 @@ The final theorem statement for `SubringCoefficientPacking` MUST include:
 - the subring polynomial root bound;
 - the existing A/B/D/F/H MSIS assumptions;
 - the existing range and sum-check soundness errors; and
-- random-oracle forking loss for the complete vector of fold challenges.
+- random-oracle forking loss for the central vector and every indexed
+  coordinate fork.
 
 ## Historical EOR evidence at the commitment slicing baseline
 
@@ -1485,7 +1483,7 @@ The planner MUST keep the search bounded in the following ways.
 - [x] A nonzero extension coordinate numerator is detected by the packed
       `E[Y]` ring-switch oracle.
 - [x] The subring coefficient packing theorem adds no `1/|K|` coordinate projection term.
-- [ ] Multi-fork extraction and total soundness-error accounting are documented
+- [x] Multi-fork extraction and total soundness-error accounting are documented
       alongside the implementation.
 - [x] Malformed opening method, dimension, or coordinate counts return typed errors without
       panic or unbounded allocation.
