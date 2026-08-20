@@ -25,8 +25,6 @@ to track current behavior; update the owning book chapter instead.
 | `2026-Q3/profile-bench-coverage-matrix.md` | archived | `book/src/usage/profiling.md` | 2026-Q3 |
 | `2026-Q3/multi-group-batching-legacy.md` | historical | _(superseded API record)_ | 2026-Q3 |
 | `2026-Q3/group-local-opening-points.md` | archived | `book/src/how/architecture.md` | 2026-Q3 |
-| `2026-Q3/parameter-struct-consolidation.md` | shipped | Consolidated the commitment parameter surface: 24 inventory entries to 10 types, the generated catalog schema to 8, and a fold's groups into one list. | 2026-Q3 |
-| `2026-Q3/parameter-struct-consolidation-review.md` | historical | _(review of a rejected draft of the record above)_ | 2026-Q3 |
 | `2026-Q3/digit-range-pipeline-refactor.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |
 | `2026-Q3/full-setup-prefix-compact-tail-weights.md` | archived | `book/src/how/verifying/setup_contribution.md` | 2026-Q3 |
 | `2026-Q3/setup-product-sumcheck.md` | archived | `book/src/how/proving/sumcheck-stages.md` | 2026-Q3 |

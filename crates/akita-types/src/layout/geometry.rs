@@ -1,6 +1,6 @@
 //! Leaf geometry components shared by every commitment group.
 //!
-//! Step 2 of `specs/archive/2026-Q3/parameter-struct-consolidation.md`. These two types are the
+//! These two types are the
 //! single home for arithmetic that is currently spelled out at each site that
 //! needs it. They own no policy and no matrix identity, so they are `Copy`,
 //! const-constructible, and safe to embed in a `static` — which step 4 does when
