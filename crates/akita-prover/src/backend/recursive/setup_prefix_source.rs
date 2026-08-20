@@ -15,10 +15,9 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
     RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -447,7 +446,7 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<Vec<E>, AkitaError> {
         match source {
             RecursiveFoldView::SetupPrefix { .. } => Err(AkitaError::InvalidSetup(
                 "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
@@ -481,19 +480,6 @@ where
         let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
         <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::column_partials_batch(
             self, prepared, batch, logical_point,
-        )
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: RecursiveFoldBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        let witnesses = recursive_fold_batch_witnesses(source)?;
-        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
-        <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
-            self, prepared, batch, coeffs,
         )
     }
 }

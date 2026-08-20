@@ -4,23 +4,9 @@ use crate::compute::operation_plans::{
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::compute::plans::RingSwitchRelationRows;
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced};
-
-/// Tensor-packed root witness alternatives produced by a tensor kernel.
-///
-/// This is an Akita-owned *output* sum type: the set of protocol output
-/// alternatives is fixed, so an enum is the right model here. It is not a
-/// closed *input-source* enum, which is the pattern the open boundary forbids.
-#[derive(Debug, Clone)]
-pub enum TensorPackedWitness<E: FieldCore> {
-    /// Dense tensor-packed evaluations (universal fallback).
-    Dense(Vec<E>),
-    /// Sparse tensor-packed witness preserved when the source/backend can.
-    Sparse(SparseExtensionOpeningWitness<E>),
-}
 
 /// Outcome of a batched decompose-fold kernel invocation.
 #[derive(Debug)]
@@ -128,12 +114,12 @@ where
     where
         E: MulBaseUnreduced<F>;
 
-    /// Tensor-packed recursive witness, dense or sparse when available.
+    /// Tensor-packed recursive suffix witness.
     fn packed_witness(
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-    ) -> Result<TensorPackedWitness<E>, AkitaError>;
+    ) -> Result<Vec<E>, AkitaError>;
 }
 
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
@@ -151,17 +137,6 @@ where
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
         E: MulBaseUnreduced<F>;
-
-    /// Sparse linear combination of tensor-packed recursive witnesses.
-    ///
-    /// Returns `Ok(None)` when a sparse combination is unavailable for the whole
-    /// batch and the caller must fall back to dense materialization.
-    fn sparse_linear_combination(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: S,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;
 }
 
 /// Coefficient-packing projection over a borrowed same-shape source batch.

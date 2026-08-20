@@ -294,48 +294,6 @@ where
             .collect()
     }
 
-    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
-        polys: &[&Self],
-        coeffs: &[E],
-    ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
-        AkitaError,
-    >
-    where
-        E: ExtField<F>,
-    {
-        if polys.len() != coeffs.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: polys.len(),
-                actual: coeffs.len(),
-            });
-        }
-        let mut witnesses = Vec::with_capacity(polys.len());
-        for poly in polys {
-            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
-                return Ok(None);
-            };
-            witnesses.push(witness);
-        }
-        Ok(Some(
-            crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness::linear_combination(
-                coeffs.iter().copied().zip(witnesses.iter()),
-            )?,
-        ))
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
-        &self,
-    ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
-        AkitaError,
-    >
-    where
-        E: ExtField<F>,
-    {
-        Ok(None)
-    }
-
     #[cfg(test)]
     pub(crate) fn fold_blocks(
         &self,
@@ -511,10 +469,9 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
     RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
 
 fn padded_ring_elems_for_live_len<const D: usize>(live_coeff_len: usize) -> usize {
@@ -786,10 +743,8 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Ok(TensorPackedWitness::Dense(
-            source.tensor_packed_extension_evals()?,
-        ))
+    ) -> Result<Vec<E>, AkitaError> {
+        source.tensor_packed_extension_evals()
     }
 }
 
@@ -815,21 +770,6 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_extension_column_partials_batch(&refs, logical_point)
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: SuffixWitnessBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        let polys = source
-            .polys
-            .iter()
-            .map(|witness| witness.view::<F, D>())
-            .collect::<Result<Vec<_>, _>>()?;
-        let refs = polys.iter().collect::<Vec<_>>();
-        SuffixWitnessView::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
     }
 }
 

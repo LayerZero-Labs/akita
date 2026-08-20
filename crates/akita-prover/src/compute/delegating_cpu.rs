@@ -207,7 +207,7 @@ macro_rules! delegate_tensor_kernels {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
-            ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
+            ) -> Result<Vec<E>, AkitaError> {
                 CpuBackend::DEFAULT.packed_witness(prepared, source)
             }
         }
@@ -228,20 +228,6 @@ macro_rules! delegate_tensor_kernels {
                 E: akita_field::MulBaseUnreduced<F>,
             {
                 CpuBackend::DEFAULT.column_partials_batch(prepared, source, logical_point)
-            }
-
-            fn sparse_linear_combination(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                source: S,
-                coeffs: &[E],
-            ) -> Result<
-                Option<
-                    crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>,
-                >,
-                AkitaError,
-            > {
-                CpuBackend::DEFAULT.sparse_linear_combination(prepared, source, coeffs)
             }
         }
     };

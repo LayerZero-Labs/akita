@@ -1,7 +1,6 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    ComputeBackendSetup, RootTensorSource, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::unreduced::ReduceTo;
 use std::ops::Range;
@@ -360,47 +359,10 @@ where
                 let _s = tracing::info_span!("eor_packed_witness").entered();
                 TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
             };
-            extension_opening_term_from_packed_witness::<F, E>(
-                witness,
-                tail_point,
-                eta,
-                coefficient,
-            )
+            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
+            ExtensionOpeningReductionTerm::new(witness, factor_evals, coefficient)
         })
         .collect()
-}
-
-fn extension_opening_term_from_packed_witness<F, E>(
-    witness: TensorPackedWitness<E>,
-    tail_point: &[E],
-    eta: &[E],
-    coeff: E,
-) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    match witness {
-        TensorPackedWitness::Dense(witness_evals) => {
-            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
-        }
-        TensorPackedWitness::Sparse(witness) => {
-            let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
-            if lazy_rounds == 0 {
-                let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-                ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
-            } else {
-                ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
-                    witness,
-                    tail_point.to_vec(),
-                    eta.to_vec(),
-                    coeff,
-                    lazy_rounds,
-                )
-            }
-        }
-    }
 }
 
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =
