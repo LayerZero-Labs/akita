@@ -12,7 +12,7 @@ use super::*;
 ///   fixed the setup-size objective.
 pub(crate) struct SuffixResult {
     pub(super) payload_only: BTreeMap<ParentObservableKey, Vec<ScheduleCandidate>>,
-    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices>,
+    pub(super) setup_and_payload: BTreeMap<ParentObservableKey, frontier::FrozenObjectiveChoices>,
 }
 
 impl SuffixResult {
@@ -20,14 +20,14 @@ impl SuffixResult {
         self.payload_only.values().flatten().chain(
             self.setup_and_payload
                 .values()
-                .flat_map(frontier::ObjectiveChoices::payload_candidates),
+                .flat_map(frontier::FrozenObjectiveChoices::payload_candidates),
         )
     }
 
     pub(crate) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
         self.setup_and_payload
             .values()
-            .flat_map(frontier::ObjectiveChoices::setup_candidates)
+            .flat_map(frontier::FrozenObjectiveChoices::setup_candidates)
     }
 }
 
@@ -103,11 +103,13 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 262_144;
+// Frozen frontier entries omit construction-only descriptors, so the cache
+// can retain twice as many exact results within the former memory envelope.
+const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary
 // suffixes. Separate quotas keep that stream from evicting direct states while
 // preserving a hard bound on the completed exact-DP cache.
-const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 196_608;
+const MAX_DIRECT_SUFFIX_CACHE_ENTRIES: usize = 393_216;
 const MAX_PREFIXED_SUFFIX_CACHE_ENTRIES: usize =
     MAX_SUFFIX_SEARCH_CACHE_ENTRIES - MAX_DIRECT_SUFFIX_CACHE_ENTRIES;
 const MAX_SECOND_CHANCE_PROBES: usize = 16;

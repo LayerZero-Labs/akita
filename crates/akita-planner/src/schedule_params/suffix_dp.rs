@@ -614,7 +614,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     let retains_setup_projection =
         incoming_setup_prefix.is_some() || (level_zero_is_root && level == 0);
     let mut payload_only = BTreeMap::new();
-    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::ObjectiveChoices> =
+    let mut setup_and_payload: BTreeMap<ParentObservableKey, frontier::FrozenObjectiveChoices> =
         BTreeMap::new();
     let candidate_domain = candidates::CandidateDomain::prepare(ctx, state)?;
     let root_level_key = candidate_domain.root_level_key;
@@ -858,7 +858,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     }
     for (key, choices) in frontiers.projected.by_parent_cost {
         if retains_setup_projection {
-            setup_and_payload.insert(key, choices);
+            setup_and_payload.insert(key, choices.into_frozen());
         } else {
             let candidates = choices.into_payload_candidates();
             if !candidates.is_empty() {

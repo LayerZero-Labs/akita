@@ -149,6 +149,25 @@ pub(crate) struct ObjectiveChoices {
     payload: Vec<ProjectedCandidate>,
 }
 
+/// Completed frontier choices stripped of construction-only dominance data.
+///
+/// Parents consume only the schedules. Dropping the cached descriptors and
+/// descriptor contexts here keeps the exact suffix memo compact.
+pub(super) struct FrozenObjectiveChoices {
+    setup: Vec<ScheduleCandidate>,
+    payload: Vec<ScheduleCandidate>,
+}
+
+impl FrozenObjectiveChoices {
+    pub(super) fn setup_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.setup.iter()
+    }
+
+    pub(super) fn payload_candidates(&self) -> impl Iterator<Item = &ScheduleCandidate> {
+        self.payload.iter()
+    }
+}
+
 impl ObjectiveChoices {
     pub(super) fn candidate_count(&self) -> usize {
         self.setup.len().saturating_add(self.payload.len())
@@ -167,6 +186,21 @@ impl ObjectiveChoices {
             .into_iter()
             .map(|candidate| candidate.schedule)
             .collect()
+    }
+
+    pub(super) fn into_frozen(self) -> FrozenObjectiveChoices {
+        FrozenObjectiveChoices {
+            setup: self
+                .setup
+                .into_iter()
+                .map(|candidate| candidate.schedule)
+                .collect(),
+            payload: self
+                .payload
+                .into_iter()
+                .map(|candidate| candidate.schedule)
+                .collect(),
+        }
     }
 
     fn projected(&self, projection: Projection) -> &[ProjectedCandidate] {
