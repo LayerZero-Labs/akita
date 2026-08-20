@@ -11,10 +11,11 @@ choice needs more explanation. A contributor or reviewer should follow the
 paths below until every claim they are changing has a clear implementation and
 validation boundary.
 
-> **Current depth:** this landing page is complete. Gadget decomposition and
-> the NTT and CRT chapter are full implementation narratives. The commitment
-> and binding chapter gives a current security overview. Several other chapters
-> are still short guides and are marked as such below.
+> **Current depth:** this landing page is complete. The rings, NTT and CRT,
+> gadget decomposition, and Module-SIS chapters are full implementation
+> narratives. The commitment and binding chapter gives a current security
+> overview. Several sumcheck chapters are still short guides and are marked as
+> such below.
 
 ## What these foundations connect
 
@@ -34,7 +35,7 @@ Akita sits at the meeting point of four subjects:
    record of public inputs and proof messages. The Fiat Shamir transformation
    derives the verifier's challenges from that record, so the proof can be
    checked without a live conversation between prover and verifier.
-4. **Lattice binding.** Public matrices commit to short ring vectors. Module SIS
+4. **Lattice binding.** Public matrices commit to short ring vectors. Module-SIS
    is the hardness assumption used to argue that a prover cannot open one
    commitment in incompatible ways.
 
@@ -58,7 +59,7 @@ It starts with the object being proved and ends with the security claim.
 3. Read [Gadget decomposition](./gadget-decomposition.md) to see how one large
    coefficient becomes a list of small signed digits. That chapter includes
    concrete examples and the path into the current code.
-4. Read [Lattices and Module SIS](./lattices-sis.md) for the hard problem behind
+4. Read [Lattices and Module-SIS](./lattices-sis.md) for the hard problem behind
    the commitment.
 5. Read [Polynomial commitments and binding](./pcs-and-binding.md) to connect
    setup, commitment, opening, verification, and the security assumption.
@@ -78,14 +79,14 @@ code.
 
 | Chapter | The question it answers | Current depth |
 | --- | --- | --- |
-| [Cyclotomic rings and extension fields](./rings-and-fields.md) | What number systems does Akita use, and how does it move between coefficient and evaluation views? | Short guide. The implementation choices are named, but more examples and code correspondence are still needed. |
+| [Cyclotomic rings and extension fields](./rings-and-fields.md) | What number systems does Akita use, and how does it move between coefficient and evaluation views? | Full introduction with examples, field roles, ring arithmetic, embeddings, norms, and an implementation review map. |
 | [NTT, CRT, and fast ring arithmetic](./ntt-crt.md) | How does Akita multiply and transform ring elements efficiently across its supported prime sizes? | Current implementation narrative, including scalar, AVX2, and AVX 512 paths. |
 | [Gadget decomposition](./gadget-decomposition.md) | How does Akita replace a coefficient with bounded signed digits, and how is the exact range enforced? | Full introduction with examples, formulas, layouts, code paths, and an audit checklist. |
-| [Lattices, Module SIS, and discrete Gaussians](./lattices-sis.md) | What hard problem supports binding, and why do short vectors and norm bounds matter? | Short guide. It identifies the main assumptions and sampling tools but still needs a gradual derivation. |
+| [Lattices and Module-SIS](./lattices-sis.md) | What hard problem supports binding, and why do short vectors and norm bounds matter? | Full introduction from integer lattices through commitment collisions, generated security tables, and verifier enforcement. |
 | [Multilinear extensions and sumcheck](./multilinear-sumcheck.md) | How does a table become a polynomial, and how can a verifier check a large sum with little work? | Short guide. It still needs a complete small example and a round by round verifier view. |
 | [Equality factored sumcheck](./eq-factored-sumcheck.md) | How does Akita exploit the structure of an equality polynomial while avoiding verifier inversions? | Short implementation guide. It assumes the general sumcheck chapter. |
 | [Extension opening reduction](./extension-opening-reduction.md) | How is an opening over an extension field reduced to claims over the base field? | Short protocol guide. It still needs an end to end numerical example and a fuller code map. |
-| [Polynomial commitments and binding](./pcs-and-binding.md) | What do setup, commitment, opening, and verification promise, and how is incompatible opening tied to Module SIS? | Current security overview with implementation anchors. More introductory examples can still be added. |
+| [Polynomial commitments and binding](./pcs-and-binding.md) | What do setup, commitment, opening, and verification promise, and how is incompatible opening tied to Module-SIS? | Current security overview with implementation anchors. More introductory examples can still be added. |
 | [Glossary and notation](./glossary.md) | What do recurring Akita names and symbols mean? | Developing reference. Use it as a lookup aid, not as the first explanation of a concept. |
 | [Spec index](./spec-index.md) | Which design records are live, implemented, or retained as history? | Current maintainer index. |
 | [References](./references.md) | Where can a reader find stable external background for the ideas used here? | Developing bibliography. |

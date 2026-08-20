@@ -62,7 +62,7 @@
   - [Cyclotomic rings and extension fields](./foundations/rings-and-fields.md)
   - [NTT, CRT, and fast ring arithmetic](./foundations/ntt-crt.md)
   - [Gadget decomposition](./foundations/gadget-decomposition.md)
-  - [Lattices, Module-SIS, and discrete Gaussians](./foundations/lattices-sis.md)
+  - [Lattices and Module-SIS](./foundations/lattices-sis.md)
   - [Multilinear extensions and sum-check](./foundations/multilinear-sumcheck.md)
   - [Equality-factored sum-check](./foundations/eq-factored-sumcheck.md)
   - [Extension-opening reduction](./foundations/extension-opening-reduction.md)
