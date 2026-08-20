@@ -462,12 +462,18 @@ mod tests {
             ),
             outer_slice_count: params.outer_slice_count,
             inner: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
-                params.inner_commit_matrix,
+                akita_types::GadgetDigits::new(
+                    params.inner.digits.log_basis,
+                    params.inner.digits.num_digits,
+                ),
+                params.inner.matrix,
             ),
             outer: akita_types::RoleParams::new(
-                akita_types::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
-                params.outer_commit_matrix,
+                akita_types::GadgetDigits::new(
+                    params.outer.digits.log_basis,
+                    params.outer.digits.num_digits,
+                ),
+                params.outer.matrix,
             ),
         }
     }
@@ -486,8 +492,8 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("precommitted params");
-        let inner = &pre.inner_commit_matrix;
-        pre.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+        let inner = &pre.inner.matrix;
+        pre.inner.matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -499,8 +505,8 @@ mod tests {
             2,
             inner.ring_dimension(),
         );
-        let outer = &pre.outer_commit_matrix;
-        pre.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+        let outer = &pre.outer.matrix;
+        pre.outer.matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),

@@ -124,7 +124,7 @@ impl WitnessLayout {
                 AkitaError::InvalidSetup("relation B compression shape overflow".into())
             })?;
         let Some(b_plan) = CompressionChainPlan::try_for_complete_source(
-            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer.matrix.sis_modulus_profile(),
             b_source_coefficients,
         )?
         else {
@@ -212,8 +212,8 @@ mod tests {
         .with_decomp(4, 32, 2, 2, 2)
         .expect("scalar test params");
         if mixed_dimensions {
-            let outer = params.outer_commit_matrix;
-            params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            let outer = params.outer.matrix;
+            params.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
                 outer.security_policy(),
                 outer.sis_table_key().table_digest,
                 outer.sis_modulus_profile(),
@@ -345,8 +345,8 @@ mod tests {
             let rhs = relation_geometry.rhs_layout();
             assert_eq!(
                 crate::relation_rhs_row_count(rhs),
-                1 + params.inner_commit_matrix.output_rank()
-                    + params.outer_commit_matrix.output_rank()
+                1 + params.inner.matrix.output_rank()
+                    + params.outer.matrix.output_rank()
                     + params.open_commit_matrix.output_rank()
                     + if payload_mode.is_compressed() {
                         crate::COMPRESSION_MAP_COUNT * 2
@@ -376,7 +376,7 @@ mod tests {
             ]);
             let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
                 Default::default();
-                params.outer_commit_matrix.output_rank() * 256
+                params.outer.matrix.output_rank() * 256
             ]);
             let assembled =
                 crate::assemble_relation_rhs(rhs, &v, &u).expect("packing relation RHS assembly");
@@ -397,15 +397,15 @@ mod tests {
                     assert_eq!(
                         unit.z_range().len(),
                         params.num_positions_per_block
-                            * params.num_digits_inner
+                            * params.inner.digits.num_digits
                             * params.num_digits_fold
                             * 256
                     );
                     assert_eq!(
                         unit.t_range().len(),
                         2 * unit.num_live_blocks()
-                            * params.inner_commit_matrix.output_rank()
-                            * params.num_digits_outer
+                            * params.inner.matrix.output_rank()
+                            * params.outer.digits.num_digits
                             * 256
                     );
                 }
@@ -527,8 +527,8 @@ mod tests {
 
         for mutate in [
             |params: &mut CommittedGroupParams| params.num_positions_per_block = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_inner = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_outer = 0,
+            |params: &mut CommittedGroupParams| params.inner.digits.num_digits = 0,
+            |params: &mut CommittedGroupParams| params.outer.digits.num_digits = 0,
             |params: &mut CommittedGroupParams| params.num_digits_open = 0,
             |params: &mut CommittedGroupParams| params.num_digits_fold = 0,
         ] {
@@ -546,8 +546,8 @@ mod tests {
         }
 
         let mut zero_a_rows = params.clone();
-        let inner = zero_a_rows.inner_commit_matrix;
-        zero_a_rows.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        let inner = zero_a_rows.inner.matrix;
+        zero_a_rows.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner.sis_table_key().expect("inner SIS key").table_digest,
             inner.sis_modulus_profile(),
@@ -598,15 +598,15 @@ mod tests {
             let opening_width = extension_degree * 64;
             let expected_z = chunks
                 * params.num_positions_per_block
-                * params.num_digits_inner
+                * params.inner.digits.num_digits
                 * params.num_digits_fold
                 * dimensions.d_a();
             let expected_e =
                 claims * params.num_live_blocks * params.num_digits_open * opening_width;
             let expected_t = claims
                 * params.num_live_blocks
-                * params.inner_commit_matrix.output_rank()
-                * params.num_digits_outer
+                * params.inner.matrix.output_rank()
+                * params.outer.digits.num_digits
                 * dimensions.d_a();
             assert_eq!(
                 crate::grouped_witness_body_coefficients(
@@ -700,7 +700,7 @@ mod tests {
         ]);
         let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
             Default::default();
-            overlap.outer_commit_matrix.output_rank() * 128
+            overlap.outer.matrix.output_rank() * 128
         ]);
         assert!(crate::assemble_relation_rhs(overlap_relation.rhs_layout(), &v, &u).is_ok());
     }

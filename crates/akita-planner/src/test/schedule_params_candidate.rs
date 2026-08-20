@@ -20,12 +20,18 @@ fn synthetic_profile(
         ),
         outer_slice_count: params.outer_slice_count,
         inner: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
-            params.inner_commit_matrix,
+            akita_types::GadgetDigits::new(
+                params.inner.digits.log_basis,
+                params.inner.digits.num_digits,
+            ),
+            params.inner.matrix,
         ),
         outer: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
-            params.outer_commit_matrix,
+            akita_types::GadgetDigits::new(
+                params.outer.digits.log_basis,
+                params.outer.digits.num_digits,
+            ),
+            params.outer.matrix,
         ),
     }
 }
@@ -182,7 +188,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner.matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
@@ -191,7 +197,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner.matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -202,7 +208,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter_map(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner.matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
             .then_some(params.block_index_bits())
@@ -258,7 +264,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         assert!(matches!(
-            params.inner_commit_matrix.security_route(),
+            params.inner.matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
@@ -505,7 +511,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             }
         );
         assert!(matches!(
-            params.inner_commit_matrix.security_route(),
+            params.inner.matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
@@ -1003,8 +1009,8 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     .with_decomp(width_s, width_s * 8, 1, 2, 2)
     .unwrap();
     params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.inner_commit_matrix = raw_candidate.inner_commit_matrix;
-    params.outer_commit_matrix = raw_candidate.outer_commit_matrix;
+    params.inner.matrix = raw_candidate.inner_commit_matrix;
+    params.outer.matrix = raw_candidate.outer_commit_matrix;
     params.num_digits_fold = raw_candidate.num_digits_fold;
     assert!(params.compression_sources_supported().unwrap());
     params

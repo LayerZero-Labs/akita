@@ -266,8 +266,8 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
 
 pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
     let dims = lp.role_dims();
-    let a_ring = lp.inner_commit_matrix.ring_dimension();
-    let b_ring = lp.outer_commit_matrix.sis_table_key().ring_dimension as usize;
+    let a_ring = lp.inner.matrix.ring_dimension();
+    let b_ring = lp.outer.matrix.sis_table_key().ring_dimension as usize;
     let d_ring = lp.open_commit_matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {
         return Err(AkitaError::InvalidSetup(format!(

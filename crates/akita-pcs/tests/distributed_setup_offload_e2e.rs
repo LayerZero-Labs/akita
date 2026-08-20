@@ -115,7 +115,7 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
         .setup_prefix
         .as_ref()
         .expect("W8R2 first recursive fold must consume a setup prefix");
-    let witness_a = &first_recursive.inner_commit_matrix;
+    let witness_a = &first_recursive.inner.matrix;
     let prefix_a = &prefix.profile.inner.matrix;
     assert_eq!(
         (

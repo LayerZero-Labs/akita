@@ -73,8 +73,8 @@ fn committed_params_with_geometry(
         2,
     )
     .expect("schedule validation params");
-    let inner = params.inner_commit_matrix;
-    params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new(
+    let inner = params.inner.matrix;
+    params.inner.matrix = crate::InnerCommitMatrixParams::try_new(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -87,8 +87,8 @@ fn committed_params_with_geometry(
         inner.ring_dimension(),
     )
     .expect("audited schedule A matrix");
-    let outer = params.outer_commit_matrix;
-    params.outer_commit_matrix = crate::OuterCommitMatrixParams::try_new(
+    let outer = params.outer.matrix;
+    params.outer.matrix = crate::OuterCommitMatrixParams::try_new(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -102,21 +102,18 @@ fn committed_params_with_geometry(
 }
 
 fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: usize) {
-    let d_setup = params.inner_commit_matrix.ring_dimension();
-    let d_outer = params.outer_commit_matrix.ring_dimension();
+    let d_setup = params.inner.matrix.ring_dimension();
+    let d_outer = params.outer.matrix.ring_dimension();
     let ring_slots = n_prefix / d_setup;
     let setup_num_digits = crate::sis::compute_num_digits_field_width(
-        params
-            .inner_commit_matrix
-            .sis_modulus_profile()
-            .field_bits(),
-        params.log_basis_inner,
+        params.inner.matrix.sis_modulus_profile().field_bits(),
+        params.inner.digits.log_basis,
     );
     let required_inner_width = ring_slots
         .checked_mul(setup_num_digits)
         .expect("setup-prefix A width");
     let required_positions = required_inner_width
-        .div_ceil(params.num_digits_inner)
+        .div_ceil(params.inner.digits.num_digits)
         .next_power_of_two();
     params.num_positions_per_block = params.num_positions_per_block.max(required_positions);
     params.num_live_blocks = params
@@ -124,13 +121,14 @@ fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: 
         .div_ceil(params.num_positions_per_block);
     let inner_width = params
         .num_positions_per_block
-        .checked_mul(params.num_digits_inner)
+        .checked_mul(params.inner.digits.num_digits)
         .expect("recursive witness A width");
     let inner_key = params
-        .inner_commit_matrix
+        .inner
+        .matrix
         .sis_table_key()
         .expect("L infinity setup-prefix matrix");
-    params.inner_commit_matrix =
+    params.inner.matrix =
         crate::InnerCommitMatrixParams::try_new_with_min_rank(inner_key, inner_width)
             .expect("full-field setup-prefix A matrix");
 
@@ -138,15 +136,15 @@ fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: 
         params.outer_slice_count,
         params.num_live_blocks,
         1,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_outer,
+        params.inner.matrix.output_rank(),
+        params.outer.digits.num_digits,
         d_setup,
         d_outer,
     )
     .expect("setup-prefix slice geometry")
     .physical_input_width();
-    let outer_key = params.outer_commit_matrix.sis_table_key();
-    params.outer_commit_matrix =
+    let outer_key = params.outer.matrix.sis_table_key();
+    params.outer.matrix =
         crate::OuterCommitMatrixParams::try_new_with_min_rank(outer_key, outer_width)
             .expect("setup-prefix B matrix");
 }
@@ -155,9 +153,9 @@ fn retarget_outer_dimension(
     params: &mut CommittedGroupParams,
     ring_dimension: usize,
 ) -> Result<(), AkitaError> {
-    let outer = &params.outer_commit_matrix;
+    let outer = &params.outer.matrix;
     let column_scale = outer.ring_dimension() / ring_dimension;
-    params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+    params.outer.matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -511,8 +509,8 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     group_params.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
-    let inner = &group_params.inner_commit_matrix;
-    group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+    let inner = &group_params.inner.matrix;
+    group_params.inner.matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -524,8 +522,8 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         2,
         inner.ring_dimension(),
     );
-    let outer = &group_params.outer_commit_matrix;
-    group_params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+    let outer = &group_params.outer.matrix;
+    group_params.outer.matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -596,8 +594,8 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("committed params");
-    let inner = committed.inner_commit_matrix;
-    committed.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+    let inner = committed.inner.matrix;
+    committed.inner.matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -609,7 +607,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
         TEST_TERMINAL_A_BUCKET,
         inner.ring_dimension(),
     );
-    let expected_inner = committed.inner_commit_matrix;
+    let expected_inner = committed.inner.matrix;
 
     let (terminal, response_cap) =
         TerminalFoldParams::try_from_expanded_group(committed).expect("terminal projection");
@@ -712,12 +710,13 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     )?
     .terminal_coefficients();
     let next_commit_source_coeffs = next_lp
-        .outer_commit_matrix
+        .outer
+        .matrix
         .output_rank()
         .checked_mul(next_lp.role_dims().d_b())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
     let next_commit_coeffs = crate::CompressionChainPlan::for_complete_source(
-        next_lp.outer_commit_matrix.sis_modulus_profile(),
+        next_lp.outer.matrix.sis_modulus_profile(),
         next_commit_source_coeffs,
     )?
     .terminal_coefficients();
@@ -804,8 +803,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         lp.num_digits_fold = 2;
-        let inner = lp.inner_commit_matrix;
-        lp.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        let inner = lp.inner.matrix;
+        lp.inner.matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner
                 .sis_table_key()
@@ -898,8 +897,8 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 next_witness_binding: NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
                     F::zero();
                     crate::CompressionChainPlan::for_complete_source(
-                        next_lp.outer_commit_matrix.sis_modulus_profile(),
-                        next_lp.outer_commit_matrix.output_rank() * next_lp.role_dims().d_b(),
+                        next_lp.outer.matrix.sis_modulus_profile(),
+                        next_lp.outer.matrix.output_rank() * next_lp.role_dims().d_b(),
                     )
                     .unwrap()
                     .terminal_coefficients()
@@ -1372,8 +1371,8 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
     group_params.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group production challenge");
-    let inner = group_params.inner_commit_matrix;
-    group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+    let inner = group_params.inner.matrix;
+    group_params.inner.matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -1385,8 +1384,8 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
         2,
         inner.ring_dimension(),
     );
-    let outer = group_params.outer_commit_matrix;
-    group_params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+    let outer = group_params.outer.matrix;
+    group_params.outer.matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

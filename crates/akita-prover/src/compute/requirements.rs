@@ -229,12 +229,12 @@ impl NttExecutionRequirements {
         params: &CommittedGroupParams,
     ) -> Result<(), AkitaError> {
         let inner_key = NttCacheKey::from_matrix_shape(
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
+            params.inner.matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.inner.matrix.input_width(),
             signed_commit_domain(
-                params.inner_commit_matrix.input_width(),
-                params.log_basis_inner,
+                params.inner.matrix.input_width(),
+                params.inner.digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -242,14 +242,14 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             inner_key,
             matrix_extent(
-                params.inner_commit_matrix.output_rank(),
-                params.inner_commit_matrix.input_width(),
+                params.inner.matrix.output_rank(),
+                params.inner.matrix.input_width(),
             )?,
         )?;
         let outer_key = NttCacheKey::from_matrix_shape(
-            params.outer_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.output_rank(),
-            params.outer_commit_matrix.input_width(),
+            params.outer.matrix.ring_dimension(),
+            params.outer.matrix.output_rank(),
+            params.outer.matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
         self.add_matrix(
@@ -257,8 +257,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             outer_key,
             matrix_extent(
-                params.outer_commit_matrix.output_rank(),
-                params.outer_commit_matrix.input_width(),
+                params.outer.matrix.output_rank(),
+                params.outer.matrix.input_width(),
             )?,
         )
     }
@@ -271,16 +271,16 @@ impl NttExecutionRequirements {
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
-            params.outer_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.output_rank(),
-            params.outer_commit_matrix.input_width(),
+            params.inner.matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.inner.matrix.input_width(),
+            params.outer.matrix.ring_dimension(),
+            params.outer.matrix.output_rank(),
+            params.outer.matrix.input_width(),
             params.log_basis_open,
             params.num_digits_fold,
             num_chunks,
-            params.inner_commit_matrix.sis_modulus_profile(),
+            params.inner.matrix.sis_modulus_profile(),
         )?;
         for precommitted in &params.precommitted_groups {
             self.add_precommitted_relation(level, precommitted, num_chunks)?;
@@ -742,7 +742,7 @@ mod tests {
         assert!(complete.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::Commit
-                && entry.key.ring_d == root.inner_commit_matrix.ring_dimension()
+                && entry.key.ring_d == root.inner.matrix.ring_dimension()
         }));
         assert!(complete.entries().len() >= prove.entries().len());
     }
@@ -791,12 +791,12 @@ mod tests {
             );
 
             let expected_commit_domain =
-                signed_commit_domain(root.inner_commit_matrix.input_width(), root.log_basis_inner)
+                signed_commit_domain(root.inner.matrix.input_width(), root.inner.digits.log_basis)
                     .expect("selected exact commit domain");
             let expected_commit_key = NttCacheKey::from_matrix_shape(
-                root.inner_commit_matrix.ring_dimension(),
-                root.inner_commit_matrix.output_rank(),
-                root.inner_commit_matrix.input_width(),
+                root.inner.matrix.ring_dimension(),
+                root.inner.matrix.output_rank(),
+                root.inner.matrix.input_width(),
                 expected_commit_domain,
             )
             .expect("selected root commit key");

@@ -381,16 +381,16 @@ fn build_relation_rhs_layout(
                 role_dims,
                 opening_geometry,
                 opening_method: lp.opening_method,
-                n_a: lp.inner_commit_matrix.output_rank(),
-                physical_b_rows: lp.outer_commit_matrix.output_rank(),
+                n_a: lp.inner.matrix.output_rank(),
+                physical_b_rows: lp.outer.matrix.output_rank(),
                 outer_slice_count: lp.outer_slice_count,
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
-                lp.outer_commit_matrix.sis_modulus_profile(),
+                lp.outer.matrix.sis_modulus_profile(),
                 lp.outer_slice_count
-                    .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
+                    .logical_output_rows(lp.outer.matrix.output_rank())?,
                 role_dims.d_b(),
             )?;
             Some(RelationCompressionLayout {
@@ -423,16 +423,16 @@ fn build_relation_rhs_layout(
             extension_degree,
         )?,
         opening_method: lp.opening_method,
-        n_a: lp.inner_commit_matrix.output_rank(),
-        physical_b_rows: lp.outer_commit_matrix.output_rank(),
+        n_a: lp.inner.matrix.output_rank(),
+        physical_b_rows: lp.outer.matrix.output_rank(),
         outer_slice_count: lp.outer_slice_count,
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
-            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer.matrix.sis_modulus_profile(),
             lp.outer_slice_count
-                .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
+                .logical_output_rows(lp.outer.matrix.output_rank())?,
             final_role_dims.d_b(),
         )?);
     }

@@ -1096,8 +1096,8 @@ pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<GroupOpenPhaseParams, AkitaError> {
-    let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
-    let d_outer = prefix_params.outer_commit_matrix.ring_dimension();
+    let d_setup = prefix_params.inner.matrix.ring_dimension();
+    let d_outer = prefix_params.outer.matrix.ring_dimension();
     if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix A dimension must be a multiple of its B dimension".to_string(),
@@ -1110,10 +1110,11 @@ pub fn setup_prefix_precommitted_params(
     }
     let setup_num_digits = crate::sis::compute_num_digits_field_width(
         prefix_params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_modulus_profile()
             .field_bits(),
-        prefix_params.log_basis_inner,
+        prefix_params.inner.digits.log_basis,
     );
     let ring_slots = n_prefix / d_setup;
     let mut num_positions_per_block = 1usize;
@@ -1129,34 +1130,32 @@ pub fn setup_prefix_precommitted_params(
             prefix_params.outer_slice_count,
             num_live_blocks,
             1,
-            prefix_params.inner_commit_matrix.output_rank(),
-            prefix_params.num_digits_outer,
+            prefix_params.inner.matrix.output_rank(),
+            prefix_params.outer.digits.num_digits,
             d_setup,
             d_outer,
         )?
         .physical_input_width();
-        if inner_width <= prefix_params.inner_commit_matrix.input_width()
-            && outer_width <= prefix_params.outer_commit_matrix.input_width()
+        if inner_width <= prefix_params.inner.matrix.input_width()
+            && outer_width <= prefix_params.outer.matrix.input_width()
         {
-            if prefix_params.inner_commit_matrix.sis_table_key().is_none() {
+            if prefix_params.inner.matrix.sis_table_key().is_none() {
                 return Err(AkitaError::InvalidSetup(
                     "setup prefix cannot be derived from an L2 A security route".into(),
                 ));
             }
             let inner_commit_matrix = prefix_params
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .try_with_input_width(inner_width)?;
             let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-                prefix_params.outer_commit_matrix.security_policy(),
-                prefix_params
-                    .outer_commit_matrix
-                    .sis_table_key()
-                    .table_digest,
-                prefix_params.outer_commit_matrix.sis_modulus_profile(),
-                prefix_params.outer_commit_matrix.output_rank(),
+                prefix_params.outer.matrix.security_policy(),
+                prefix_params.outer.matrix.sis_table_key().table_digest,
+                prefix_params.outer.matrix.sis_modulus_profile(),
+                prefix_params.outer.matrix.output_rank(),
                 outer_width,
-                prefix_params.outer_commit_matrix.coeff_linf_bound(),
-                prefix_params.outer_commit_matrix.ring_dimension(),
+                prefix_params.outer.matrix.coeff_linf_bound(),
+                prefix_params.outer.matrix.ring_dimension(),
             );
             return Ok(GroupOpenPhaseParams {
                 setup_natural_len: None,
@@ -1170,13 +1169,16 @@ pub fn setup_prefix_precommitted_params(
                     ),
                     outer_slice_count: prefix_params.outer_slice_count,
                     inner: crate::RoleParams::new(
-                        crate::GadgetDigits::new(prefix_params.log_basis_inner, setup_num_digits),
+                        crate::GadgetDigits::new(
+                            prefix_params.inner.digits.log_basis,
+                            setup_num_digits,
+                        ),
                         inner_commit_matrix,
                     ),
                     outer: crate::RoleParams::new(
                         crate::GadgetDigits::new(
-                            prefix_params.log_basis_outer,
-                            prefix_params.num_digits_outer,
+                            prefix_params.outer.digits.log_basis,
+                            prefix_params.outer.digits.num_digits,
                         ),
                         outer_commit_matrix,
                     ),

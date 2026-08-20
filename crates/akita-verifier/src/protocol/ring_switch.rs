@@ -551,8 +551,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis_inner = lp.log_basis_inner;
-    let log_basis_outer = lp.log_basis_outer;
+    let log_basis_inner = lp.inner.digits.log_basis;
+    let log_basis_outer = lp.outer.digits.log_basis;
     let log_basis_open = lp.log_basis_open;
     validate_log_basis(log_basis_inner)?;
     validate_log_basis(log_basis_outer)?;
@@ -568,7 +568,7 @@ where
         });
     }
     let num_positions_per_block = lp.num_positions_per_block;
-    let n_a = lp.inner_commit_matrix.output_rank();
+    let n_a = lp.inner.matrix.output_rank();
 
     let c_alphas =
         prepare_challenge_evals::<F, E>(challenges, &alpha_pows, num_claims, lp.num_live_blocks)?;

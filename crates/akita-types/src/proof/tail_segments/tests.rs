@@ -20,22 +20,23 @@ fn test_lp() -> CommittedGroupParams {
     .with_decomp(8, 32, 2, 3, 3)
     .expect("tail segment test params");
     let key = crate::sis::SisTableKey {
-        policy: params.inner_commit_matrix.security_policy(),
+        policy: params.inner.matrix.security_policy(),
         table_digest: params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        modulus_profile: params.inner_commit_matrix.sis_modulus_profile(),
+        modulus_profile: params.inner.matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: *crate::sis::COEFF_LINF_BUCKETS
             .last()
             .expect("nonempty SIS buckets"),
     };
-    params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+    params.inner.matrix = crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
         key,
-        params.inner_commit_matrix.input_width(),
+        params.inner.matrix.input_width(),
     )
     .expect("secure terminal test matrix");
     params
@@ -239,7 +240,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
         1,
-        lp.num_digits_inner,
+        lp.inner.digits.num_digits,
         rice_low_bits,
         zigzag_w_z,
     )
@@ -413,29 +414,28 @@ fn terminal_layout_decode_rejects_oversized_group_count_before_allocation() {
 fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixParams {
     let base = test_lp();
     let key = crate::sis::SisTableKey {
-        policy: base.inner_commit_matrix.security_policy(),
+        policy: base.inner.matrix.security_policy(),
         table_digest: base
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        modulus_profile: base.inner_commit_matrix.sis_modulus_profile(),
+        modulus_profile: base.inner.matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: bucket,
     };
-    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
-        key,
-        base.inner_commit_matrix.input_width(),
-    )
-    .expect("terminal test matrix for the requested bucket")
+    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(key, base.inner.matrix.input_width())
+        .expect("terminal test matrix for the requested bucket")
 }
 
 #[test]
 fn certified_terminal_cap_applies_the_wire_representation_limit() {
     let lp = test_lp();
     let raw = crate::sis::max_response_linf_for_role_a_collision(
-        lp.inner_commit_matrix
+        lp.inner
+            .matrix
             .coeff_linf_bound()
             .expect("L infinity route"),
         crate::sis::FoldChallengeNorms::new(&lp.fold_challenge_config).l1_norm,
@@ -446,7 +446,7 @@ fn certified_terminal_cap_applies_the_wire_representation_limit() {
         "fixture must exercise the clamp; raw capacity was {raw}"
     );
     let cap = crate::sis::certified_terminal_response_linf_cap(
-        &lp.inner_commit_matrix,
+        &lp.inner.matrix,
         &lp.fold_challenge_config,
     )
     .expect("certified terminal cap");
@@ -489,7 +489,7 @@ fn terminal_cap_has_exactly_one_implementation() {
         for weight in [3usize, 6, 11] {
             let sparse = SparseChallengeConfig::pm1_only(weight);
             let mut lp = test_lp();
-            lp.inner_commit_matrix = matrix;
+            lp.inner.matrix = matrix;
             lp.fold_challenge_config = sparse;
             let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
             assert_eq!(

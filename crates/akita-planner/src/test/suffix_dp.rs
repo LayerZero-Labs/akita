@@ -112,8 +112,8 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         "successors in one parent-observable bucket must price identically"
     );
 
-    let outer = packing.outer_commit_matrix;
-    packing.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+    let outer = packing.outer.matrix;
+    packing.outer.matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

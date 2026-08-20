@@ -20,21 +20,21 @@ fn sample_layout_lp() -> CommittedGroupParams {
 #[test]
 fn distinct_semantic_depths_size_a_b_and_d_independently() {
     let mut params = sample_params_only();
-    params.log_basis_inner = 2;
-    params.log_basis_outer = 3;
+    params.inner.digits.log_basis = 2;
+    params.outer.digits.log_basis = 3;
     params.log_basis_open = 4;
     let params = params
         .with_decomp(8, 17, 5, 4, 3)
         .expect("distinct semantic decomposition");
     let blocks = 17usize.div_ceil(8);
     assert_eq!(
-        params.inner_commit_matrix.input_width(),
+        params.inner.matrix.input_width(),
         8 * 5,
         "A uses inner depth"
     );
     assert_eq!(
-        params.outer_commit_matrix.input_width(),
-        params.inner_commit_matrix.output_rank() * 4 * blocks,
+        params.outer.matrix.input_width(),
+        params.inner.matrix.output_rank() * 4 * blocks,
         "B uses outer depth"
     );
     assert_eq!(
@@ -44,8 +44,8 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
     );
     assert_eq!(
         (
-            params.log_basis_inner,
-            params.log_basis_outer,
+            params.inner.digits.log_basis,
+            params.outer.digits.log_basis,
             params.log_basis_open,
         ),
         (2, 3, 4)
@@ -61,24 +61,25 @@ fn laid_out_sample_lp() -> CommittedGroupParams {
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     const INNER_BOUND: u128 = 2;
     const OUTER_BOUND: u128 = 3;
-    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix
+    lp.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner.matrix.security_policy(),
+        lp.inner
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        lp.inner_commit_matrix.sis_modulus_profile(),
-        lp.inner_commit_matrix.output_rank(),
-        lp.inner_commit_matrix.input_width(),
+        lp.inner.matrix.sis_modulus_profile(),
+        lp.inner.matrix.output_rank(),
+        lp.inner.matrix.input_width(),
         INNER_BOUND,
         lp.d_a(),
     );
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        lp.outer_commit_matrix.security_policy(),
-        lp.outer_commit_matrix.sis_table_key().table_digest,
-        lp.outer_commit_matrix.sis_modulus_profile(),
-        lp.outer_commit_matrix.output_rank(),
-        lp.outer_commit_matrix.input_width(),
+    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer.matrix.security_policy(),
+        lp.outer.matrix.sis_table_key().table_digest,
+        lp.outer.matrix.sis_modulus_profile(),
+        lp.outer.matrix.output_rank(),
+        lp.outer.matrix.input_width(),
         OUTER_BOUND,
         lp.d_a(),
     );
@@ -99,15 +100,12 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
             .expect("precommit test challenge");
     certify_test_sis_bounds(&mut precommit_lp);
     let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        precommit_lp.outer_commit_matrix.security_policy(),
-        precommit_lp
-            .outer_commit_matrix
-            .sis_table_key()
-            .table_digest,
-        precommit_lp.outer_commit_matrix.sis_modulus_profile(),
+        precommit_lp.outer.matrix.security_policy(),
+        precommit_lp.outer.matrix.sis_table_key().table_digest,
+        precommit_lp.outer.matrix.sis_modulus_profile(),
         5,
-        precommit_lp.outer_commit_matrix.input_width(),
-        precommit_lp.outer_commit_matrix.coeff_linf_bound(),
+        precommit_lp.outer.matrix.input_width(),
+        precommit_lp.outer.matrix.coeff_linf_bound(),
         precommit_lp.d_a(),
     );
     let mut layout = GroupCommitPhaseParams::from_params_unchecked_for_test(
@@ -190,11 +188,11 @@ fn with_layout_keeps_self_ranks() {
     let lp = params.with_layout(&layout_lp).unwrap();
 
     assert_eq!(lp.d_a(), 64);
-    assert_eq!(lp.log_basis_inner, layout_lp.log_basis_inner);
-    assert_eq!(lp.log_basis_outer, layout_lp.log_basis_outer);
+    assert_eq!(lp.inner.digits.log_basis, layout_lp.inner.digits.log_basis);
+    assert_eq!(lp.outer.digits.log_basis, layout_lp.outer.digits.log_basis);
     assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
-    assert_eq!(lp.inner_commit_matrix.output_rank(), 2);
-    assert_eq!(lp.outer_commit_matrix.output_rank(), 4);
+    assert_eq!(lp.inner.matrix.output_rank(), 2);
+    assert_eq!(lp.outer.matrix.output_rank(), 4);
     assert_eq!(lp.open_commit_matrix.output_rank(), 3);
     assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
     assert_eq!(
@@ -202,8 +200,14 @@ fn with_layout_keeps_self_ranks() {
         layout_lp.num_positions_per_block
     );
     assert_eq!(lp.challenge_l1_mass(), 3);
-    assert_eq!(lp.num_digits_inner, layout_lp.num_digits_inner);
-    assert_eq!(lp.num_digits_outer, layout_lp.num_digits_outer);
+    assert_eq!(
+        lp.inner.digits.num_digits,
+        layout_lp.inner.digits.num_digits
+    );
+    assert_eq!(
+        lp.outer.digits.num_digits,
+        layout_lp.outer.digits.num_digits
+    );
     assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
 }
 
@@ -213,8 +217,8 @@ fn derived_widths_match_ajtai_col_len() {
         .with_layout(&sample_layout_lp())
         .unwrap();
 
-    assert_eq!(lp.inner_width(), lp.inner_commit_matrix.input_width());
-    assert_eq!(lp.outer_width(), lp.outer_commit_matrix.input_width());
+    assert_eq!(lp.inner_width(), lp.inner.matrix.input_width());
+    assert_eq!(lp.outer_width(), lp.outer.matrix.input_width());
     assert_eq!(lp.d_matrix_width(), lp.open_commit_matrix.input_width());
 }
 
@@ -253,8 +257,8 @@ fn canonical_row_offsets_match_open_coded_layout() {
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
-    let n_a = lp.inner_commit_matrix.output_rank();
-    let n_b = lp.outer_commit_matrix.output_rank();
+    let n_a = lp.inner.matrix.output_rank();
+    let n_b = lp.outer.matrix.output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     for nc in [1usize, 2, 4] {

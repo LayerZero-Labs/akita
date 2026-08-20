@@ -207,20 +207,19 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d);
 
     let mut low_rank_a = selected.schedule().clone();
-    let matrix = &low_rank_a.root.params.inner_commit_matrix;
+    let matrix = &low_rank_a.root.params.inner.matrix;
     let table_key = matrix
         .sis_table_key()
         .expect("root A matrix must use the L infinity route");
-    low_rank_a.root.params.inner_commit_matrix =
-        akita_types::InnerCommitMatrixParams::new_unchecked(
-            table_key.policy,
-            table_key.table_digest,
-            table_key.modulus_profile,
-            0,
-            matrix.input_width(),
-            table_key.coeff_linf_bound,
-            table_key.ring_dimension as usize,
-        );
+    low_rank_a.root.params.inner.matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+        table_key.policy,
+        table_key.table_digest,
+        table_key.modulus_profile,
+        0,
+        matrix.input_width(),
+        table_key.coeff_linf_bound,
+        table_key.ring_dimension as usize,
+    );
     assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 

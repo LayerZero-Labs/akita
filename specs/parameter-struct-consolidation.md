@@ -487,11 +487,10 @@ is what let it be deferred without anyone noticing.
 the next. Slices 1–3 are pure field regrouping and must be byte-neutral, with
 the descriptor fixtures as the oracle; only slice 4 changes what is stored.
 
-1. **Roles.** `log_basis_inner` + `num_digits_inner` + `inner_commit_matrix`
-   become `inner: InnerRoleParams`, and the same for `outer`. ~897 sites. Go
-   straight to this shape rather than an intermediate one: it is what
-   `GroupCommitPhaseParams` and `TerminalFoldParams` already use, so there is no
-   second rename later.
+1. **Roles — landed.** `log_basis_inner` + `num_digits_inner` +
+   `inner_commit_matrix` became `inner: InnerRoleParams`, and the same for
+   `outer`. This is the shape `GroupCommitPhaseParams` and `TerminalFoldParams`
+   already use, so no second rename is waiting in slice 3.
 2. **Geometry.** The three `num_live_*` / `num_positions_per_block` fields become
    `blocks: BlockGeometry`. ~611 sites. The `blocks()` accessor already builds
    exactly this value, so it stops being a view and becomes the storage.
@@ -502,24 +501,49 @@ the descriptor fixtures as the oracle; only slice 4 changes what is stored.
    `final_group()` / `groups()` stop being views. This is the slice that
    satisfies the acceptance criterion and should land the projected sizes.
 
-**Slice 1 recipe, validated to 47 remaining errors.** The read rewrite is
-mechanical and safe in bulk; the construction sites are not. In order:
+**Slice 1 is landed.** `CommittedGroupParams` now carries
+`inner: InnerRoleParams` and `outer: OuterRoleParams`, which is the shape
+`GroupCommitPhaseParams` and `TerminalFoldParams` already use. Byte-neutral, as
+slices 1-3 must be: zero movement in either descriptor fixture.
 
-1. Replace the six flat fields in `CommittedGroupParams` with
-   `pub inner: crate::InnerRoleParams` and `pub outer: crate::OuterRoleParams`.
-2. Rewrite reads across every non-generated `.rs` file, longest pattern first:
-   `.log_basis_inner` → `.inner.digits.log_basis`, `.num_digits_inner` →
-   `.inner.digits.num_digits`, `.inner_commit_matrix` → `.inner.matrix`, and
-   the three `outer` equivalents. This touches ~106 files.
-3. **Immediately undo the substring damage**: step 2 also rewrites
-   `.inner_commit_matrix_params()` into `.inner.matrix_params()`, because the
-   field name is a prefix of the accessor name. Restore
-   `.inner_commit_matrix_params(` and `.outer_commit_matrix_params(`. This is
-   31 of the errors step 2 produces.
-4. What remains is ~47 errors, almost all `E0560` struct-literal construction
-   sites where three formerly-separate fields must become one
-   `RoleParams::new(GadgetDigits::new(log_basis, num_digits), matrix)`. These
-   need hand conversion; there is no safe substitution for them.
+**The recipe, as executed.** Slices 2 and 3 are the same shape, so run them the
+same way. The order matters: step 3 undoes damage step 2 causes, so do not
+compile in between and conclude the field is used in more places than it is.
+
+1. Replace the flat fields in the struct with the grouped one.
+2. Rewrite reads across every non-generated `.rs` file, longest pattern first.
+3. Undo the three kinds of collateral damage step 2 causes, because the flat
+   names are not unique to `CommittedGroupParams`:
+   - **Accessor prefixes.** `.inner_commit_matrix` is a prefix of
+     `.inner_commit_matrix_params()`, so the accessor becomes
+     `.inner.matrix_params()`. Restore any `matrix_params(`.
+   - **Method prefixes.** `GroupOpenPhaseParams` exposes `log_basis_inner()` and
+     `num_digits_inner()` as *methods*, which become
+     `.inner.digits.log_basis()`. The trailing `()` is a reliable discriminator:
+     these are fields on `CommittedGroupParams` and methods everywhere else.
+   - **Foreign types.** `AbCommitmentCandidate`, `CommitInnerPlan`,
+     `CommitmentGeometry`, `InnerBasisSource`, `SetupPrefixSplit`,
+     `RecursiveCandidateCore`, `InnerCommitmentCandidate`,
+     `SetupContributionGroupPlan`, `GeneratedGroup`, `GeneratedTerminalFold` and
+     a profiling-report struct all have their own `log_basis_inner` /
+     `inner_commit_matrix` fields. Revert those lines. Driving this off `rustc`
+     error locations converges in one pass: collect the reported `file:line`
+     pairs and apply the reverse mapping to those lines only.
+   For slice 1 this was 66 lines, the large majority of all errors produced --
+   most of the apparent work is self-inflicted, so expect the count to fall fast.
+4. **One case no line-level rule can handle.** A line may name two different
+   types, as in
+   `params.inner_commit_matrix = raw_candidate.inner_commit_matrix;`, where the
+   receiver is a `CommittedGroupParams` and the value is a candidate that keeps
+   the flat name. Only the receiver changes. Read such lines rather than
+   substituting.
+5. What remains is the real work: struct-literal construction sites where the
+   formerly separate fields collapse into one
+   `RoleParams::new(GadgetDigits::new(log_basis, num_digits), matrix)`. Slice 1
+   had five. A balance-aware transformer handles the `name: value` form; the
+   shorthand-init form (`log_basis_inner,` with no value) has to be converted by
+   hand, and a transformer must *skip* literals that lack the full field set
+   rather than fail, because foreign structs share the names.
 
 **Two cautions, both learned the hard way on this branch.** Verify every slice
 under the *test job's* feature set —

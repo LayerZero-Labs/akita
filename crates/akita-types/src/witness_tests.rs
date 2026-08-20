@@ -60,7 +60,7 @@ fn layout_indexing_matches_digit_innermost_semantics() {
     let unit = layout.unit(0, 1).expect("unit");
     let depth_fold = lp.num_digits_fold();
     assert_ne!(
-        lp.num_digits_inner, lp.num_digits_outer,
+        lp.inner.digits.num_digits, lp.outer.digits.num_digits,
         "fixture must distinguish witness and commitment depths"
     );
     assert_eq!(unit.global_block_range(), 3..7);

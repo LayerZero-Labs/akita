@@ -138,12 +138,18 @@ impl GroupCommitPhaseParams {
             blocks: params.blocks(),
             outer_slice_count: params.outer_slice_count,
             inner: crate::RoleParams::new(
-                crate::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
-                params.inner_commit_matrix,
+                crate::GadgetDigits::new(
+                    params.inner.digits.log_basis,
+                    params.inner.digits.num_digits,
+                ),
+                params.inner.matrix,
             ),
             outer: crate::RoleParams::new(
-                crate::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
-                params.outer_commit_matrix,
+                crate::GadgetDigits::new(
+                    params.outer.digits.log_basis,
+                    params.outer.digits.num_digits,
+                ),
+                params.outer.matrix,
             ),
         }
     }

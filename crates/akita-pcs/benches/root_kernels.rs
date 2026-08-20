@@ -70,7 +70,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
         })
         .collect();
 
-    let n_a = layout.inner_commit_matrix.output_rank();
+    let n_a = layout.inner.matrix.output_rank();
     let inner_width = layout.inner_width();
 
     let mut group = c.benchmark_group("root_kernels");
@@ -81,8 +81,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&block_slices),
-                layout.num_digits_inner,
-                layout.log_basis_inner,
+                layout.inner.digits.num_digits,
+                layout.inner.digits.log_basis,
             ))
             .unwrap()
         })
@@ -95,8 +95,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                     &ntt_shared,
                     inner_width,
                     black_box(&block_slices),
-                    layout.num_digits_inner,
-                    layout.log_basis_inner,
+                    layout.inner.digits.num_digits,
+                    layout.inner.digits.log_basis,
                 ))
                 .unwrap()
             })
@@ -104,7 +104,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     );
     let mut digit_blocks: Vec<Vec<[i8; D]>> = block_slices
         .iter()
-        .map(|block| vec![[0i8; D]; block.len() * layout.num_digits_inner])
+        .map(|block| vec![[0i8; D]; block.len() * layout.inner.digits.num_digits])
         .collect();
     group.bench_function("dense_root_predecomp_digit_matvec_full_nv24_d256", |b| {
         b.iter(|| {
@@ -112,8 +112,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 decompose_rows_i8_into(
                     block,
                     digit_block,
-                    layout.num_digits_inner,
-                    layout.log_basis_inner,
+                    layout.inner.digits.num_digits,
+                    layout.inner.digits.log_basis,
                 );
             }
             let digit_block_slices: Vec<&[[i8; D]]> =
@@ -123,7 +123,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),
-                layout.log_basis_inner,
+                layout.inner.digits.log_basis,
             ))
             .unwrap()
         })

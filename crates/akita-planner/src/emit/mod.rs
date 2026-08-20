@@ -234,12 +234,12 @@ fn committed_group(p: &CommittedGroupParams, num_digits_inner: Option<u32>) -> G
     GeneratedGroup {
         geometry: geometry(p),
         inner_commit_matrix: GeneratedMatrix {
-            ring_dimension: p.inner_commit_matrix.ring_dimension() as u32,
-            log_basis: p.log_basis_inner,
+            ring_dimension: p.inner.matrix.ring_dimension() as u32,
+            log_basis: p.inner.digits.log_basis,
         },
         outer_commit_matrix: GeneratedMatrix {
-            ring_dimension: p.outer_commit_matrix.ring_dimension() as u32,
-            log_basis: p.log_basis_outer,
+            ring_dimension: p.outer.matrix.ring_dimension() as u32,
+            log_basis: p.outer.digits.log_basis,
         },
         outer_slice_count: p.outer_slice_count.get() as u32,
         num_digits_inner,
@@ -272,7 +272,7 @@ fn frozen_group(slot: &GroupOpenPhaseParams) -> GeneratedFrozenGroup {
 
 /// Response cap of whichever security route this group's A matrix took.
 fn response_l2_sq_cap(p: &CommittedGroupParams) -> Option<u128> {
-    match p.inner_commit_matrix.security_route() {
+    match p.inner.matrix.security_route() {
         akita_types::InnerCommitSecurityRoute::Linf(_) => None,
         akita_types::InnerCommitSecurityRoute::L2 {
             response_l2_sq_cap, ..
@@ -340,7 +340,7 @@ fn generated_entry(
         final_group: key.final_group,
         root: generated_fold(
             root_params,
-            Some(root_params.num_digits_inner as u32),
+            Some(root_params.inner.digits.num_digits as u32),
             Box::leak(precommitted_groups.into_boxed_slice()),
         ),
         recursive_folds: Box::leak(recursive_folds.into_boxed_slice()),

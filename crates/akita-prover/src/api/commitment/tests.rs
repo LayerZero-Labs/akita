@@ -97,8 +97,8 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         D,
     );
     let commit_only_fields = akita_types::commit_only_setup_field_elements(
-        &params.inner_commit_matrix,
-        &params.outer_commit_matrix,
+        &params.inner.matrix,
+        &params.outer.matrix,
         params.outer_slice_count,
     )
     .unwrap();
@@ -131,15 +131,15 @@ fn sliced_commit_params() -> CommittedGroupParams {
 }
 
 fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
-    let key = params.outer_commit_matrix.sis_table_key();
-    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let key = params.outer.matrix.sis_table_key();
+    params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         key.policy,
         key.table_digest,
         key.modulus_profile,
-        params.outer_commit_matrix.output_rank(),
+        params.outer.matrix.output_rank(),
         input_width,
         key.coeff_linf_bound,
-        params.outer_commit_matrix.ring_dimension(),
+        params.outer.matrix.ring_dimension(),
     );
 }
 
@@ -158,10 +158,7 @@ fn commitment_request_binds_slice_count_and_exact_b_width() {
     ));
 
     let mut wrong_width = params.clone();
-    set_outer_width(
-        &mut wrong_width,
-        params.outer_commit_matrix.input_width() + 1,
-    );
+    set_outer_width(&mut wrong_width, params.outer.matrix.input_width() + 1);
     assert!(matches!(
         wrong_width.validate_commitment_request(0, 1),
         Err(AkitaError::InvalidSetup(_))
@@ -185,8 +182,8 @@ fn commitment_request_binds_polynomial_count_in_both_directions() {
         two_polynomials.outer_slice_count,
         two_polynomials.num_live_blocks,
         2,
-        two_polynomials.inner_commit_matrix.output_rank(),
-        two_polynomials.num_digits_outer,
+        two_polynomials.inner.matrix.output_rank(),
+        two_polynomials.outer.digits.num_digits,
         two_polynomials.role_dims().d_a(),
         two_polynomials.role_dims().d_b(),
     )
@@ -425,15 +422,15 @@ fn commit_unsliced_reference(
         views,
         plan,
         params.num_live_blocks,
-        params.num_digits_outer,
-        params.log_basis_outer,
+        params.outer.digits.num_digits,
+        params.outer.digits.log_basis,
     )?;
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         akita_types::CommitmentSliceCount::ONE,
         params.num_live_blocks,
         polys.len(),
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_outer,
+        params.inner.matrix.output_rank(),
+        params.outer.digits.num_digits,
         D,
         D,
     )?;
@@ -445,7 +442,7 @@ fn commit_unsliced_reference(
     for (_, digits) in &prepared_polynomials {
         reference_b_input.extend_from_slice(digits.typed_planes::<D>()?);
     }
-    if reference_b_input.len() != params.outer_commit_matrix.input_width() {
+    if reference_b_input.len() != params.outer.matrix.input_width() {
         return Err(AkitaError::InvalidSetup(
             "unsliced reference B input width mismatch".into(),
         ));
@@ -463,16 +460,20 @@ fn commit_unsliced_reference(
         ));
     }
 
-    let n_b = params.outer_commit_matrix.output_rank();
-    let reference_b_image =
-        backend.digit_rows::<D>(prepared, n_b, &reference_b_input, params.log_basis_outer)?;
+    let n_b = params.outer.matrix.output_rank();
+    let reference_b_image = backend.digit_rows::<D>(
+        prepared,
+        n_b,
+        &reference_b_input,
+        params.outer.digits.log_basis,
+    )?;
     let production_b_image = commit_outer_slices::<F, _, D>(
         backend,
         prepared,
         n_b,
         prepared_polynomials.iter().map(|(_, digits)| digits),
         &geometry,
-        params.log_basis_outer,
+        params.outer.digits.log_basis,
     )?;
     if production_b_image != reference_b_image {
         return Err(AkitaError::InvalidSetup(
@@ -482,7 +483,7 @@ fn commit_unsliced_reference(
 
     let source = RingVec::from_ring_elems(&reference_b_image);
     let compression_plan = CompressionChainPlan::for_complete_source(
-        params.outer_commit_matrix.sis_table_key().modulus_profile,
+        params.outer.matrix.sis_table_key().modulus_profile,
         source.coeff_len(),
     )?;
     let (mut outputs, _) = execute_compression_chains(
@@ -596,15 +597,12 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
             .complete_source_coefficients(
-                sliced_params.outer_commit_matrix.output_rank(),
-                sliced_params.outer_commit_matrix.ring_dimension(),
+                sliced_params.outer.matrix.output_rank(),
+                sliced_params.outer.matrix.ring_dimension(),
             )
             .expect("complete source coefficients");
         let plan = CompressionChainPlan::for_complete_source(
-            sliced_params
-                .outer_commit_matrix
-                .sis_table_key()
-                .modulus_profile,
+            sliced_params.outer.matrix.sis_table_key().modulus_profile,
             source_coefficients,
         )
         .expect("real compression plan");
@@ -633,12 +631,18 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         ),
         outer_slice_count: params.outer_slice_count,
         inner: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
-            params.inner_commit_matrix,
+            akita_types::GadgetDigits::new(
+                params.inner.digits.log_basis,
+                params.inner.digits.num_digits,
+            ),
+            params.inner.matrix,
         ),
         outer: akita_types::RoleParams::new(
-            akita_types::GadgetDigits::new(params.log_basis_outer, params.num_digits_outer),
-            params.outer_commit_matrix,
+            akita_types::GadgetDigits::new(
+                params.outer.digits.log_basis,
+                params.outer.digits.num_digits,
+            ),
+            params.outer.matrix,
         ),
     };
     assert_eq!(

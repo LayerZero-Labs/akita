@@ -321,7 +321,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     );
     assert_eq!(
         final_commitment.rows().count(),
-        main_params.outer_commit_matrix.output_rank()
+        main_params.outer.matrix.output_rank()
     );
     assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
     assert_eq!(

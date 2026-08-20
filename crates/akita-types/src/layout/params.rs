@@ -93,15 +93,15 @@ pub struct CommittedGroupParams {
     /// Procedure used to reduce and open this group's coefficients.
     pub opening_method: OpeningMethod,
     /// Base-2 logarithm of the A/source gadget decomposition base.
-    pub log_basis_inner: u32,
+    /// A/source role: gadget decomposition and audited matrix identity.
+    pub inner: crate::InnerRoleParams,
+    /// B/outer role: gadget decomposition and audited matrix identity.
+    pub outer: crate::OuterRoleParams,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
-    pub log_basis_outer: u32,
     /// Base-2 logarithm of the D/`e_hat` gadget decomposition base.
     pub log_basis_open: u32,
     /// Inner Ajtai matrix (A): output rank `n_a`, input width `inner_width`.
-    pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Outer commitment matrix (B): output rank `n_b`, input width `outer_width`.
-    pub outer_commit_matrix: OuterCommitMatrixParams,
     /// Opening matrix (D): output rank `n_d`, input width `d_matrix_width`.
     pub open_commit_matrix: OpenCommitMatrixParams,
     /// Exact number of live source ring elements per claim (`N`).
@@ -114,9 +114,7 @@ pub struct CommittedGroupParams {
     pub outer_slice_count: crate::CommitmentSliceCount,
     pub fold_challenge_config: SparseChallengeConfig,
     /// Gadget decomposition depth for A/source coefficients.
-    pub num_digits_inner: usize,
     /// Gadget decomposition depth for B/`t_hat` values.
-    pub num_digits_outer: usize,
     /// Gadget decomposition depth for D/opening evaluations.
     pub num_digits_open: usize,
     /// Exact folded-witness digit depth selected by this schedule row.
@@ -156,10 +154,10 @@ impl CommittedGroupParams {
     pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
         let logical_rows = self
             .outer_slice_count
-            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
+            .logical_output_rows(self.outer.matrix.output_rank())?;
         crate::CommitmentPayloadGeometry::for_mode(
             self.payload_mode,
-            self.outer_commit_matrix.sis_modulus_profile(),
+            self.outer.matrix.sis_modulus_profile(),
             logical_rows,
             self.role_dims().d_b(),
         )
@@ -181,11 +179,11 @@ impl CommittedGroupParams {
             return Ok(true);
         }
         let final_outer = self.outer_slice_count.complete_source_coefficients(
-            self.outer_commit_matrix.output_rank(),
+            self.outer.matrix.output_rank(),
             self.role_dims().d_b(),
         )?;
         if crate::CompressionChainPlan::try_for_complete_source(
-            self.outer_commit_matrix.sis_modulus_profile(),
+            self.outer.matrix.sis_modulus_profile(),
             final_outer,
         )?
         .is_none()
@@ -231,8 +229,8 @@ impl CommittedGroupParams {
     #[must_use]
     pub fn role_dims(&self) -> CommitmentRingDims {
         CommitmentRingDims {
-            inner: self.inner_commit_matrix.ring_dimension(),
-            outer: self.outer_commit_matrix.ring_dimension(),
+            inner: self.inner.matrix.ring_dimension(),
+            outer: self.outer.matrix.ring_dimension(),
             opening: self.open_commit_matrix.ring_dimension(),
         }
     }
@@ -241,7 +239,7 @@ impl CommittedGroupParams {
     #[inline]
     #[must_use]
     pub fn d_a(&self) -> usize {
-        self.inner_commit_matrix.ring_dimension()
+        self.inner.matrix.ring_dimension()
     }
 
     /// Build a params-only `CommittedGroupParams` with zeroed layout fields.
@@ -262,26 +260,30 @@ impl CommittedGroupParams {
             payload_mode: crate::CommitmentPayloadMode::Compressed,
             source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
             opening_method: OpeningMethod::EvaluationTrace,
-            log_basis_inner: log_basis,
-            log_basis_outer: log_basis,
             log_basis_open: log_basis,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                sis_modulus_profile,
-                n_a,
-                0,
-                0,
-                ring_dimension,
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(log_basis, 0),
+                InnerCommitMatrixParams::new_unchecked(
+                    crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    crate::sis::SisTableDigest::CURRENT,
+                    sis_modulus_profile,
+                    n_a,
+                    0,
+                    0,
+                    ring_dimension,
+                ),
             ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                sis_modulus_profile,
-                n_b,
-                0,
-                0,
-                ring_dimension,
+            outer: crate::RoleParams::new(
+                crate::GadgetDigits::new(log_basis, 0),
+                OuterCommitMatrixParams::new_unchecked(
+                    crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    crate::sis::SisTableDigest::CURRENT,
+                    sis_modulus_profile,
+                    n_b,
+                    0,
+                    0,
+                    ring_dimension,
+                ),
             ),
             open_commit_matrix: OpenCommitMatrixParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -297,8 +299,6 @@ impl CommittedGroupParams {
             num_live_blocks: 0,
             outer_slice_count: crate::CommitmentSliceCount::ONE,
             fold_challenge_config,
-            num_digits_inner: 0,
-            num_digits_outer: 0,
             num_digits_open: 0,
             num_digits_fold: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
@@ -455,9 +455,9 @@ impl CommittedGroupParams {
         )?;
         let expected_a_width = self
             .num_positions_per_block
-            .checked_mul(self.num_digits_inner)
+            .checked_mul(self.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
-        if self.inner_commit_matrix.input_width() != expected_a_width {
+        if self.inner.matrix.input_width() != expected_a_width {
             return Err(AkitaError::InvalidSetup(
                 "commitment A matrix width disagrees with request geometry".into(),
             ));
@@ -466,25 +466,25 @@ impl CommittedGroupParams {
             self.outer_slice_count,
             self.num_live_blocks,
             num_polynomials,
-            self.inner_commit_matrix.output_rank(),
-            self.num_digits_outer,
+            self.inner.matrix.output_rank(),
+            self.outer.digits.num_digits,
             self.role_dims().d_a(),
             self.role_dims().d_b(),
         )?;
-        if self.outer_commit_matrix.input_width() != geometry.physical_input_width() {
+        if self.outer.matrix.input_width() != geometry.physical_input_width() {
             return Err(AkitaError::InvalidSetup(
                 "commitment B matrix width disagrees with sliced request geometry".into(),
             ));
         }
         if self.payload_mode.is_compressed() {
             let source_coefficients = geometry
-                .logical_output_rows(self.outer_commit_matrix.output_rank())?
+                .logical_output_rows(self.outer.matrix.output_rank())?
                 .checked_mul(self.role_dims().d_b())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("commitment B source size overflow".into())
                 })?;
             if crate::CompressionChainPlan::try_for_complete_source(
-                self.outer_commit_matrix.sis_modulus_profile(),
+                self.outer.matrix.sis_modulus_profile(),
                 source_coefficients,
             )?
             .is_none()
@@ -503,18 +503,18 @@ impl CommittedGroupParams {
             self.outer_slice_count,
             self.num_live_blocks,
             1,
-            self.inner_commit_matrix.output_rank(),
-            self.num_digits_outer,
+            self.inner.matrix.output_rank(),
+            self.outer.digits.num_digits,
             self.role_dims().d_a(),
             self.role_dims().d_b(),
         )?
         .physical_input_width();
-        self.outer_commit_matrix
+        self.outer
+            .matrix
             .input_width()
             .checked_div(one_polynomial_width)
             .filter(|count| {
-                *count != 0
-                    && self.outer_commit_matrix.input_width() == *count * one_polynomial_width
+                *count != 0 && self.outer.matrix.input_width() == *count * one_polynomial_width
             })
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
@@ -526,7 +526,7 @@ impl CommittedGroupParams {
     /// Width of inner matrix A (column count of the A-key).
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.inner_commit_matrix.input_width()
+        self.inner.matrix.input_width()
     }
 
     /// Exact live source ring elements in one claim.
@@ -570,19 +570,19 @@ impl CommittedGroupParams {
         bytes.push(payload_mode.tag());
         self.source_encoding.append_descriptor_bytes(bytes);
         self.opening_method.append_descriptor_bytes(bytes);
-        push_u32(bytes, self.log_basis_inner);
-        push_u32(bytes, self.log_basis_outer);
+        push_u32(bytes, self.inner.digits.log_basis);
+        push_u32(bytes, self.outer.digits.log_basis);
         push_u32(bytes, self.log_basis_open);
-        self.inner_commit_matrix.append_descriptor_bytes(bytes);
-        self.outer_commit_matrix.append_descriptor_bytes(bytes);
+        self.inner.matrix.append_descriptor_bytes(bytes);
+        self.outer.matrix.append_descriptor_bytes(bytes);
         self.open_commit_matrix.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
         self.outer_slice_count.append_descriptor_bytes(bytes);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
-        push_usize(bytes, self.num_digits_inner);
-        push_usize(bytes, self.num_digits_outer);
+        push_usize(bytes, self.inner.digits.num_digits);
+        push_usize(bytes, self.outer.digits.num_digits);
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.num_digits_fold);
         // Chunk binding is appended only when the level is chunked, so
@@ -610,7 +610,7 @@ impl CommittedGroupParams {
     /// Width of outer matrix B (column count of the B-key).
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.outer_commit_matrix.input_width()
+        self.outer.matrix.input_width()
     }
 
     /// Width of prover matrix D (column count of the D-key).
@@ -666,7 +666,7 @@ impl CommittedGroupParams {
     #[inline]
     pub fn b_start(&self) -> Result<usize, AkitaError> {
         self.a_start()
-            .checked_add(self.inner_commit_matrix.output_rank())
+            .checked_add(self.inner.matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
@@ -674,7 +674,8 @@ impl CommittedGroupParams {
     #[inline]
     pub fn d_start(&self, num_commitments: usize) -> Result<usize, AkitaError> {
         let b_rows = self
-            .outer_commit_matrix
+            .outer
+            .matrix
             .output_rank()
             .checked_mul(num_commitments)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -706,7 +707,7 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if self.log_basis_open < self.log_basis_outer {
+        if self.log_basis_open < self.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the level outer basis".to_string(),
             ));
@@ -844,7 +845,7 @@ impl CommittedGroupParams {
         if group_index == final_group_index {
             return self
                 .outer_slice_count
-                .logical_output_rows(self.outer_commit_matrix.output_rank());
+                .logical_output_rows(self.outer.matrix.output_rank());
         }
         let group = self
             .precommitted_group_params(group_index)
@@ -988,11 +989,11 @@ impl CommittedGroupParams {
         }
 
         let mut rows = 1usize
-            .checked_add(self.inner_commit_matrix.output_rank())
+            .checked_add(self.inner.matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         let final_b_rows = self
             .outer_slice_count
-            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
+            .logical_output_rows(self.outer.matrix.output_rank())?;
         rows = rows
             .checked_add(final_b_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -1039,12 +1040,12 @@ impl CommittedGroupParams {
 
         let mut start = self
             .a_start()
-            .checked_add(self.inner_commit_matrix.output_rank())
+            .checked_add(self.inner.matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         start = start
             .checked_add(
                 self.outer_slice_count
-                    .logical_output_rows(self.outer_commit_matrix.output_rank())?,
+                    .logical_output_rows(self.outer.matrix.output_rank())?,
             )
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
@@ -1088,7 +1089,7 @@ impl CommittedGroupParams {
         final_group_index: usize,
     ) -> Result<usize, AkitaError> {
         if group_index == final_group_index {
-            Ok(self.inner_commit_matrix.output_rank())
+            Ok(self.inner.matrix.output_rank())
         } else {
             Ok(self
                 .precommitted_group_params(group_index)
@@ -1107,7 +1108,7 @@ impl CommittedGroupParams {
     ) -> Result<usize, AkitaError> {
         if group_index == final_group_index {
             self.outer_slice_count
-                .logical_output_rows(self.outer_commit_matrix.output_rank())
+                .logical_output_rows(self.outer.matrix.output_rank())
         } else {
             let group = self
                 .precommitted_group_params(group_index)
@@ -1206,11 +1207,11 @@ impl CommittedGroupParams {
         self.require_scalar_level("relation_matrix_row_count_for")?;
         let after_a = self
             .a_start()
-            .checked_add(self.inner_commit_matrix.output_rank())
+            .checked_add(self.inner.matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         let logical_b_rows = self
             .outer_slice_count
-            .logical_output_rows(self.outer_commit_matrix.output_rank())?;
+            .logical_output_rows(self.outer.matrix.output_rank())?;
         let commitment_rows = logical_b_rows
             .checked_mul(num_commitments)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -1299,10 +1300,10 @@ impl CommittedGroupParams {
             self.outer_slice_count,
             num_live_blocks,
             1,
-            self.inner_commit_matrix.output_rank(),
+            self.inner.matrix.output_rank(),
             num_digits_outer,
-            self.inner_commit_matrix.ring_dimension(),
-            self.outer_commit_matrix.ring_dimension(),
+            self.inner.matrix.ring_dimension(),
+            self.outer.matrix.ring_dimension(),
         )?
         .physical_input_width();
         let d_matrix_width = num_digits_open
@@ -1312,18 +1313,22 @@ impl CommittedGroupParams {
             payload_mode: self.payload_mode,
             source_encoding: self.source_encoding,
             opening_method: self.opening_method,
-            log_basis_inner: self.log_basis_inner,
-            log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
-            inner_commit_matrix: self.inner_commit_matrix.try_with_input_width(inner_width)?,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                self.outer_commit_matrix.security_policy(),
-                self.outer_commit_matrix.sis_table_key().table_digest,
-                self.outer_commit_matrix.sis_modulus_profile(),
-                self.outer_commit_matrix.output_rank,
-                outer_width,
-                self.outer_commit_matrix.coeff_linf_bound(),
-                self.outer_commit_matrix.ring_dimension(),
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(self.inner.digits.log_basis, num_digits_inner),
+                self.inner.matrix.try_with_input_width(inner_width)?,
+            ),
+            outer: crate::RoleParams::new(
+                crate::GadgetDigits::new(self.outer.digits.log_basis, num_digits_outer),
+                OuterCommitMatrixParams::new_unchecked(
+                    self.outer.matrix.security_policy(),
+                    self.outer.matrix.sis_table_key().table_digest,
+                    self.outer.matrix.sis_modulus_profile(),
+                    self.outer.matrix.output_rank,
+                    outer_width,
+                    self.outer.matrix.coeff_linf_bound(),
+                    self.outer.matrix.ring_dimension(),
+                ),
             ),
             open_commit_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_commit_matrix.security_policy(),
@@ -1339,8 +1344,6 @@ impl CommittedGroupParams {
             num_live_blocks,
             outer_slice_count: self.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
-            num_digits_inner,
-            num_digits_outer,
             num_digits_open,
             num_digits_fold: self.num_digits_fold,
             // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
@@ -1371,21 +1374,34 @@ impl CommittedGroupParams {
             payload_mode: other.payload_mode,
             source_encoding: other.source_encoding,
             opening_method: other.opening_method,
-            log_basis_inner: other.log_basis_inner,
-            log_basis_outer: other.log_basis_outer,
-            log_basis_open: other.log_basis_open,
-            inner_commit_matrix: self
-                .inner_commit_matrix
-                .try_with_input_width(other.inner_commit_matrix.input_width)?,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                self.outer_commit_matrix.security_policy(),
-                self.outer_commit_matrix.sis_table_key().table_digest,
-                self.outer_commit_matrix.sis_modulus_profile(),
-                self.outer_commit_matrix.output_rank,
-                other.outer_commit_matrix.input_width,
-                self.outer_commit_matrix.coeff_linf_bound(),
-                self.outer_commit_matrix.ring_dimension(),
+
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(
+                    other.inner.digits.log_basis,
+                    other.inner.digits.num_digits,
+                ),
+                self.inner
+                    .matrix
+                    .try_with_input_width(other.inner.matrix.input_width)?,
             ),
+            outer: crate::RoleParams::new(
+                crate::GadgetDigits::new(
+                    other.outer.digits.log_basis,
+                    other.outer.digits.num_digits,
+                ),
+                OuterCommitMatrixParams::new_unchecked(
+                    self.outer.matrix.security_policy(),
+                    self.outer.matrix.sis_table_key().table_digest,
+                    self.outer.matrix.sis_modulus_profile(),
+                    self.outer.matrix.output_rank,
+                    other.outer.matrix.input_width,
+                    self.outer.matrix.coeff_linf_bound(),
+                    self.outer.matrix.ring_dimension(),
+                ),
+            ),
+
+            log_basis_open: other.log_basis_open,
+
             open_commit_matrix: OpenCommitMatrixParams::new_unchecked(
                 self.open_commit_matrix.security_policy(),
                 self.open_commit_matrix.sis_table_key().table_digest,
@@ -1400,8 +1416,7 @@ impl CommittedGroupParams {
             num_live_blocks: other.num_live_blocks,
             outer_slice_count: other.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
-            num_digits_inner: other.num_digits_inner,
-            num_digits_outer: other.num_digits_outer,
+
             num_digits_open: other.num_digits_open,
             num_digits_fold: other.num_digits_fold,
             // The chunk layout is a property of the committed witness, sized with

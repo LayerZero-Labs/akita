@@ -95,7 +95,7 @@ where
                 num_ring_elems,
                 num_live_blocks = commit_params.num_live_blocks,
                 num_positions_per_block = commit_params.num_positions_per_block,
-                depth_commit = commit_params.num_digits_inner,
+                depth_commit = commit_params.inner.digits.num_digits,
                 depth_open = commit_params.num_digits_open,
                 position_index_bits = commit_params.position_index_bits(),
                 block_index_bits = commit_params.block_index_bits(),
@@ -113,9 +113,9 @@ where
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
                 commit_params.num_live_blocks,
-                commit_params.inner_commit_matrix.output_rank(),
+                commit_params.inner.matrix.output_rank(),
             )?;
-            let n_a = commit_params.inner_commit_matrix.output_rank();
+            let n_a = commit_params.inner.matrix.output_rank();
             let blocks = (0..commit_params.num_live_blocks)
                 .map(|block| inner.block_rows::<D_A>(block, n_a))
                 .collect::<Result<Vec<_>, _>>()?;
@@ -126,26 +126,23 @@ where
                 |D_B| {
                     let decomposed_inner_rows = decompose_commit_blocks_into::<Cfg::Field, D_A, D_B>(
                         &blocks,
-                        commit_params.num_digits_outer,
-                        commit_params.log_basis_outer,
+                        commit_params.outer.digits.num_digits,
+                        commit_params.outer.digits.log_basis,
                     )?;
                     let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
                         backend,
                         prepared,
-                        commit_params.outer_commit_matrix.output_rank(),
+                        commit_params.outer.matrix.output_rank(),
                         std::iter::once(&decomposed_inner_rows),
                         &slice_geometry,
-                        commit_params.log_basis_outer,
+                        commit_params.outer.digits.log_basis,
                     )?;
                     let source = RingVec::from_ring_elems(&u);
                     if !commit_params.payload_mode.is_compressed() {
                         Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))
                     } else {
                         let plan = CompressionChainPlan::for_complete_source(
-                            commit_params
-                                .outer_commit_matrix
-                                .sis_table_key()
-                                .modulus_profile,
+                            commit_params.outer.matrix.sis_table_key().modulus_profile,
                             source.coeff_len(),
                         )?;
                         let (mut outputs, _) = execute_compression_chains(

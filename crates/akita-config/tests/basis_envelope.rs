@@ -26,18 +26,18 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         covered += 1;
         let root = &schedule.root.params;
         assert_eq!(
-            root.log_basis_inner,
+            root.inner.digits.log_basis,
             Cfg::inner_basis_range().0,
             "one-hot root must keep its canonical single-digit basis at nv={nv}"
         );
         assert_eq!(
-            root.num_digits_inner, 1,
+            root.inner.digits.num_digits, 1,
             "one-hot root must remain a single digit at nv={nv}"
         );
         let honest_policy = akita_config::honest_fold_policy_of::<Cfg>();
         let num_fold_coeffs = root
             .num_positions_per_block
-            .checked_mul(root.num_digits_inner)
+            .checked_mul(root.inner.digits.num_digits)
             .and_then(|width| width.checked_mul(root.d_a()))
             .and_then(|width| width.checked_mul(root.witness_chunk.num_chunks))
             .expect("one-hot fold width");
@@ -57,7 +57,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
                 witness_norms: honest_policy
-                    .witness_norms_for_inner_basis(root.log_basis_inner, root.d_a())
+                    .witness_norms_for_inner_basis(root.inner.digits.log_basis, root.d_a())
                     .expect("one-hot source geometry"),
                 log_basis_response: root.log_basis_open,
                 challenge_config: &root.fold_challenge_config,
@@ -70,7 +70,7 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         let mut source_basis = root.log_basis_open;
         for fold in &schedule.recursive_folds {
             assert_eq!(
-                fold.params.log_basis_inner, source_basis,
+                fold.params.inner.digits.log_basis, source_basis,
                 "recursive fold redecomposes its balanced-digit input at nv={nv}"
             );
             source_basis = fold.params.log_basis_open;
@@ -79,12 +79,12 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
             schedule.terminal.inner.digits.log_basis, source_basis,
             "terminal fold redecomposes its balanced-digit input at nv={nv}"
         );
-        let within_window = root.log_basis_inner <= inner_basis_max
-            && root.log_basis_outer <= opening_basis_max
+        let within_window = root.inner.digits.log_basis <= inner_basis_max
+            && root.outer.digits.log_basis <= opening_basis_max
             && root.log_basis_open <= opening_basis_max
             && schedule.recursive_folds.iter().all(|fold| {
-                fold.params.log_basis_inner <= opening_basis_max
-                    && fold.params.log_basis_outer <= opening_basis_max
+                fold.params.inner.digits.log_basis <= opening_basis_max
+                    && fold.params.outer.digits.log_basis <= opening_basis_max
                     && fold.params.log_basis_open <= opening_basis_max
             })
             && schedule.terminal.inner.digits.log_basis <= opening_basis_max;

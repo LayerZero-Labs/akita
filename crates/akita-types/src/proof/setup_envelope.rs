@@ -97,16 +97,16 @@ pub fn accumulate_matrix_field_elements_for_level(
 ) -> Result<(), AkitaError> {
     include_matrix_field_elements(
         max_field_elements,
-        params.inner_commit_matrix.output_rank(),
+        params.inner.matrix.output_rank(),
         params.inner_width(),
-        params.inner_commit_matrix.ring_dimension(),
+        params.inner.matrix.ring_dimension(),
         "inner setup",
     )?;
     include_matrix_field_elements(
         max_field_elements,
-        params.outer_commit_matrix.output_rank(),
+        params.outer.matrix.output_rank(),
         params.outer_width(),
-        params.outer_commit_matrix.ring_dimension(),
+        params.outer.matrix.ring_dimension(),
         "outer setup",
     )?;
     include_matrix_field_elements(
@@ -197,10 +197,10 @@ fn accumulate_compression_matrix_field_elements_for_level(
     }
     include_compression_setup(
         max_field_elements,
-        params.outer_commit_matrix.sis_modulus_profile(),
+        params.outer.matrix.sis_modulus_profile(),
         params
             .outer_slice_count
-            .logical_output_rows(params.outer_commit_matrix.output_rank())?,
+            .logical_output_rows(params.outer.matrix.output_rank())?,
         params.role_dims().d_b(),
         "outer compression setup",
     )?;
@@ -327,12 +327,12 @@ mod tests {
         let params = params.with_decomp(1, 4, 1, 1, 1).expect("params");
 
         let expected_compression = CompressionChainPlan::for_complete_source(
-            params.outer_commit_matrix.sis_modulus_profile(),
+            params.outer.matrix.sis_modulus_profile(),
             params
                 .outer_slice_count
                 .complete_source_coefficients(
-                    params.outer_commit_matrix.output_rank(),
-                    params.outer_commit_matrix.ring_dimension(),
+                    params.outer.matrix.output_rank(),
+                    params.outer.matrix.ring_dimension(),
                 )
                 .expect("complete sliced B source"),
         )
@@ -340,14 +340,14 @@ mod tests {
         .max_setup_field_elements()
         .expect("sliced compression setup");
         let sliced = commit_only_setup_field_elements(
-            &params.inner_commit_matrix,
-            &params.outer_commit_matrix,
+            &params.inner.matrix,
+            &params.outer.matrix,
             params.outer_slice_count,
         )
         .expect("sliced commit envelope");
         let unsliced = commit_only_setup_field_elements(
-            &params.inner_commit_matrix,
-            &params.outer_commit_matrix,
+            &params.inner.matrix,
+            &params.outer.matrix,
             CommitmentSliceCount::ONE,
         )
         .expect("unsliced commit envelope");
@@ -369,11 +369,11 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");
-        let outer_source = params.outer_commit_matrix.output_rank() * params.role_dims().d_b();
+        let outer_source = params.outer.matrix.output_rank() * params.role_dims().d_b();
         let opening_source = params.open_commit_matrix.output_rank() * params.role_dims().d_d();
         let expected = [
             CompressionChainPlan::for_complete_source(
-                params.outer_commit_matrix.sis_modulus_profile(),
+                params.outer.matrix.sis_modulus_profile(),
                 outer_source,
             )
             .expect("outer compression")
@@ -393,17 +393,17 @@ mod tests {
         let mut direct = 1;
         include_matrix_field_elements(
             &mut direct,
-            params.inner_commit_matrix.output_rank(),
+            params.inner.matrix.output_rank(),
             params.inner_width(),
-            params.inner_commit_matrix.ring_dimension(),
+            params.inner.matrix.ring_dimension(),
             "inner setup",
         )
         .expect("inner setup");
         include_matrix_field_elements(
             &mut direct,
-            params.outer_commit_matrix.output_rank(),
+            params.outer.matrix.output_rank(),
             params.outer_width(),
-            params.outer_commit_matrix.ring_dimension(),
+            params.outer.matrix.ring_dimension(),
             "outer setup",
         )
         .expect("outer setup");
@@ -442,25 +442,22 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("params");
         let setup_num_digits = crate::sis::compute_num_digits_field_width(
-            params
-                .inner_commit_matrix
-                .sis_modulus_profile()
-                .field_bits(),
-            params.log_basis_inner,
+            params.inner.matrix.sis_modulus_profile().field_bits(),
+            params.inner.digits.log_basis,
         );
-        params.num_digits_inner = setup_num_digits;
+        params.inner.digits.num_digits = setup_num_digits;
         params.num_positions_per_block = 1;
         params.num_live_blocks = 1;
-        let inner = params.inner_commit_matrix;
+        let inner = params.inner.matrix;
         let inner_key = inner
             .sis_table_key()
             .expect("L infinity setup-prefix matrix");
-        params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        params.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner_key.table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
-            params.num_positions_per_block * params.num_digits_inner,
+            params.num_positions_per_block * params.inner.digits.num_digits,
             inner_key.coeff_linf_bound,
             inner.ring_dimension(),
         );
@@ -468,15 +465,15 @@ mod tests {
             params.outer_slice_count,
             1,
             1,
-            params.inner_commit_matrix.output_rank(),
-            params.num_digits_outer,
-            params.inner_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.outer.digits.num_digits,
+            params.inner.matrix.ring_dimension(),
+            params.outer.matrix.ring_dimension(),
         )
         .expect("setup-prefix slice geometry")
         .physical_input_width();
-        let outer = params.outer_commit_matrix;
-        params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+        let outer = params.outer.matrix;
+        params.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),

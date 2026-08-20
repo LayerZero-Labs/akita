@@ -65,7 +65,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .iter()
             .find(|step| {
                 matches!(
-                    step.params.inner_commit_matrix.security_route(),
+                    step.params.inner.matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             })
@@ -86,7 +86,7 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             response_l2_sq_cap,
             norm_proof_shape,
             ..
-        } = l2_step.params.inner_commit_matrix.security_route()
+        } = l2_step.params.inner.matrix.security_route()
         else {
             unreachable!("selected route checked above")
         };

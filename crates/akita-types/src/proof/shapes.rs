@@ -186,7 +186,7 @@ pub fn canonical_base_field_proof_shape(
             AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
         })?;
         let (stage1_stages, stage1_norm) = DigitRangePlan::new(basis)?
-            .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())?;
+            .proof_shapes_for_route(rounds, params.inner.matrix.security_route())?;
         let next_witness_binding = match successor {
             Some(next) => NextWitnessBindingShape::OuterPayload {
                 coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),

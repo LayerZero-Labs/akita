@@ -142,12 +142,12 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
             context: "commit params",
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
-            log_basis_inner: params.log_basis_inner,
-            num_digits_inner: params.num_digits_inner,
-            inner_matrix: &params.inner_commit_matrix,
-            log_basis_outer: params.log_basis_outer,
-            num_digits_outer: params.num_digits_outer,
-            outer_matrix: &params.outer_commit_matrix,
+            log_basis_inner: params.inner.digits.log_basis,
+            num_digits_inner: params.inner.digits.num_digits,
+            inner_matrix: &params.inner.matrix,
+            log_basis_outer: params.outer.digits.log_basis,
+            num_digits_outer: params.outer.digits.num_digits,
+            outer_matrix: &params.outer.matrix,
             outer_slice_count: params.outer_slice_count,
         }
     }
@@ -229,7 +229,7 @@ where
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.num_digits_inner == 0 || params.num_digits_outer == 0 {
+    if params.inner.digits.num_digits == 0 || params.outer.digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero A/B digit depths".to_string(),
         ));

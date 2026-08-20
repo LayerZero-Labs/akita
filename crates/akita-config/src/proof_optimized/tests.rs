@@ -57,16 +57,14 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     let (step, table_key, response_cap) = schedule
         .recursive_folds
         .iter()
-        .find_map(
-            |step| match step.params.inner_commit_matrix.security_route() {
-                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
-                akita_types::InnerCommitSecurityRoute::L2 {
-                    table_key,
-                    response_l2_sq_cap,
-                    ..
-                } => Some((step, table_key, response_l2_sq_cap)),
-            },
-        )
+        .find_map(|step| match step.params.inner.matrix.security_route() {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+            akita_types::InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                ..
+            } => Some((step, table_key, response_l2_sq_cap)),
+        })
         .expect("shipped fp128 row must retain one L2 route");
     assert_eq!(
         step.params.fold_challenge_config,
@@ -75,15 +73,14 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     assert_eq!(step.params.log_basis_open, 4);
     assert_eq!(step.params.num_digits_fold, 3);
     assert_eq!(
-        step.params.inner_commit_matrix.input_width()
-            * step.params.inner_commit_matrix.ring_dimension(),
+        step.params.inner.matrix.input_width() * step.params.inner.matrix.ring_dimension(),
         65_536,
     );
     assert_eq!(
-        step.params.inner_commit_matrix.output_rank(),
+        step.params.inner.matrix.output_rank(),
         akita_types::sis::min_secure_l2_rank(
             table_key,
-            step.params.inner_commit_matrix.input_width() as u64,
+            step.params.inner.matrix.input_width() as u64,
         )
         .expect("shipped L2 geometry must have an audited rank")
     );
@@ -131,7 +128,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         .expect("generated fp64 schedule")
         .into_schedule();
     assert!(schedule.recursive_folds.iter().any(|step| matches!(
-        step.params.inner_commit_matrix.security_route(),
+        step.params.inner.matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     )));
     let terminal = &schedule.terminal;
@@ -220,7 +217,7 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                 .into_schedule();
             schedule.recursive_folds.iter().any(|step| {
                 matches!(
-                    step.params.inner_commit_matrix.security_route(),
+                    step.params.inner.matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             }) || matches!(

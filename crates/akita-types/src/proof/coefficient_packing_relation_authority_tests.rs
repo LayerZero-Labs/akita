@@ -158,8 +158,8 @@ fn alpha_and_role_dimensions_are_bound_by_the_shared_plan() {
     );
 
     let mut unsupported = fixture.params.clone();
-    let inner = unsupported.inner_commit_matrix;
-    unsupported.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = unsupported.inner.matrix;
+    unsupported.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().unwrap().table_digest,
         inner.sis_modulus_profile(),

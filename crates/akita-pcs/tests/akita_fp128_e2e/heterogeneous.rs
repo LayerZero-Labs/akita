@@ -362,7 +362,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         );
         // The root itself is planned at the one-hot bound, so the two groups
         // really do disagree on their committed-source depth.
-        assert_eq!(schedule.root.params.num_digits_inner, 1,);
+        assert_eq!(schedule.root.params.inner.digits.num_digits, 1,);
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");

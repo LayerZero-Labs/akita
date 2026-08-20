@@ -229,8 +229,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .expanded
                         .shared_matrix()
                         .ring_view::<D_A>(
-                            root.inner_commit_matrix.output_rank(),
-                            root.inner_commit_matrix.input_width(),
+                            root.inner.matrix.output_rank(),
+                            root.inner.matrix.input_width(),
                         )
                         .unwrap();
                     let mut source_digits = Vec::new();
@@ -243,13 +243,13 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                                 coefficients.try_into().unwrap(),
                             )
                             .balanced_decompose_pow2_i8(
-                                root.num_digits_inner,
-                                root.log_basis_inner,
+                                root.inner.digits.num_digits,
+                                root.inner.digits.log_basis,
                             ),
                         );
                     }
                     let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
-                    let output_rank = root.inner_commit_matrix.output_rank();
+                    let output_rank = root.inner.matrix.output_rank();
                     assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
                     for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
                         let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(

@@ -36,7 +36,7 @@ struct TestSetupInputs {
 }
 impl TestSetupInputs {
     fn n_a(&self) -> usize {
-        self.level_params.inner_commit_matrix.output_rank()
+        self.level_params.inner.matrix.output_rank()
     }
     fn num_positions_per_block(&self) -> usize {
         self.level_params.num_positions_per_block
@@ -45,7 +45,7 @@ impl TestSetupInputs {
         self.level_params.num_digits_open
     }
     fn depth_commit(&self) -> usize {
-        self.level_params.num_digits_inner
+        self.level_params.inner.digits.num_digits
     }
     fn depth_fold(&self) -> Result<usize, AkitaError> {
         Ok(self.level_params.num_digits_fold())
@@ -56,8 +56,8 @@ fn test_scalar(value: u128) -> F {
 }
 
 fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: CommitmentRingDims) {
-    let inner = &params.inner_commit_matrix;
-    params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+    let inner = &params.inner.matrix;
+    params.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -69,8 +69,8 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
         inner.coeff_linf_bound().expect("L infinity test matrix"),
         role_dims.d_a(),
     );
-    let outer = &params.outer_commit_matrix;
-    params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    let outer = &params.outer.matrix;
+    params.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -201,8 +201,8 @@ fn test_inputs_for_group_sizes(
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_live_blocks))
         .expect("test B width");
-    if lp.outer_commit_matrix.input_width() < expected_b_width {
-        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    if lp.outer.matrix.input_width() < expected_b_width {
+        lp.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
@@ -212,24 +212,24 @@ fn test_inputs_for_group_sizes(
             TEST_D,
         );
     }
-    if lp.inner_commit_matrix.coeff_linf_bound() == Some(0) {
-        lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+    if lp.inner.matrix.coeff_linf_bound() == Some(0) {
+        lp.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_a,
-            lp.inner_commit_matrix.input_width(),
+            lp.inner.matrix.input_width(),
             2,
             TEST_D,
         );
     }
-    if lp.outer_commit_matrix.coeff_linf_bound() == 0 {
-        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    if lp.outer.matrix.coeff_linf_bound() == 0 {
+        lp.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_b,
-            lp.outer_commit_matrix.input_width(),
+            lp.outer.matrix.input_width(),
             3,
             TEST_D,
         );
@@ -244,19 +244,20 @@ fn test_inputs_for_group_sizes(
                     &lp,
                 );
                 let expected_group_b_width = lp
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .output_rank()
-                    .checked_mul(lp.num_digits_outer)
+                    .checked_mul(lp.outer.digits.num_digits)
                     .and_then(|width| width.checked_mul(layout.blocks.live_blocks))
                     .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
                     .expect("test precommitted B width");
                 let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-                    lp.outer_commit_matrix.security_policy(),
-                    lp.outer_commit_matrix.sis_table_key().table_digest,
-                    lp.outer_commit_matrix.sis_modulus_profile(),
-                    lp.outer_commit_matrix.output_rank(),
+                    lp.outer.matrix.security_policy(),
+                    lp.outer.matrix.sis_table_key().table_digest,
+                    lp.outer.matrix.sis_modulus_profile(),
+                    lp.outer.matrix.output_rank(),
                     expected_group_b_width,
-                    lp.outer_commit_matrix.coeff_linf_bound(),
+                    lp.outer.matrix.coeff_linf_bound(),
                     lp.d_a(),
                 );
                 layout.outer.matrix = outer_commit_matrix;
@@ -680,8 +681,8 @@ fn structured_weight_fixture_with_slices(
         role_dims.d_b(),
     )
     .unwrap();
-    let outer = &inputs.level_params.outer_commit_matrix;
-    inputs.level_params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+    let outer = &inputs.level_params.outer.matrix;
+    inputs.level_params.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

@@ -161,8 +161,11 @@ impl TerminalFoldParams {
             input_witness_len: 0,
             blocks: params.blocks(),
             inner: crate::RoleParams::new(
-                crate::GadgetDigits::new(params.log_basis_inner, params.num_digits_inner),
-                params.inner_commit_matrix,
+                crate::GadgetDigits::new(
+                    params.inner.digits.log_basis,
+                    params.inner.digits.num_digits,
+                ),
+                params.inner.matrix,
             ),
             fold: crate::GadgetDigits::new(params.log_basis_open, params.num_digits_fold),
         }
@@ -180,7 +183,8 @@ impl TerminalFoldParams {
         let cap_config =
             crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
-        let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
+        let witness =
+            crate::sis::FoldWitnessNorms::bounded(params.inner.digits.log_basis, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
             params.num_live_blocks,
             1,
@@ -518,7 +522,7 @@ impl FoldSchedule {
             .collect();
         root_groups.push(OpeningExecutionGroup {
             opening_method: root_final.opening_method,
-            inner_commit_matrix: &root_final.inner_commit_matrix,
+            inner_commit_matrix: &root_final.inner.matrix,
             fold_challenge_config: &root_final.fold_challenge_config,
             source_encoding: root_final.source_encoding,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
@@ -545,7 +549,7 @@ impl FoldSchedule {
             }
             groups.push(OpeningExecutionGroup {
                 opening_method: witness.opening_method,
-                inner_commit_matrix: &witness.inner_commit_matrix,
+                inner_commit_matrix: &witness.inner.matrix,
                 fold_challenge_config: &witness.fold_challenge_config,
                 source_encoding: witness.source_encoding,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(

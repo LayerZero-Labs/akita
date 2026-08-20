@@ -198,12 +198,12 @@ fn audit_committed_params(
         .fold_challenge_config
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    audit_inner_matrix(label, &params.inner_commit_matrix, policy)?;
-    audit_outer_matrix(label, &params.outer_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.inner.matrix, policy)?;
+    audit_outer_matrix(label, &params.outer.matrix, policy)?;
     audit_open_matrix(label, &params.open_commit_matrix, policy)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
-        log_basis: params.log_basis_outer,
+        log_basis: params.outer.digits.log_basis,
         ..policy.decomposition
     });
     let expected_open_digits = num_digits_open(DecompositionParams {
@@ -219,14 +219,14 @@ fn audit_committed_params(
     // under a possibly different producer bound and are not covered here.
     let expected_inner_digits = num_digits_inner(
         DecompositionParams {
-            log_basis: params.log_basis_inner,
+            log_basis: params.inner.digits.log_basis,
             ..policy.decomposition
         },
         fold_level == 0,
     );
-    if params.num_digits_inner != expected_inner_digits
+    if params.inner.digits.num_digits != expected_inner_digits
         || params.num_digits_fold == 0
-        || params.num_digits_outer != expected_outer_digits
+        || params.outer.digits.num_digits != expected_outer_digits
         || params.num_digits_open != expected_open_digits
     {
         return Err(invalid(label, "digit depths are missing or noncanonical"));
@@ -235,21 +235,21 @@ fn audit_committed_params(
     let dims = params.role_dims();
     let expected_a_width = params
         .num_positions_per_block
-        .checked_mul(params.num_digits_inner)
+        .checked_mul(params.inner.digits.num_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
     let expected_b_width = CommitmentSliceGeometry::try_new(
         params.outer_slice_count,
         params.num_live_blocks,
         num_claims,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_outer,
+        params.inner.matrix.output_rank(),
+        params.outer.digits.num_digits,
         dims.d_a(),
         dims.d_b(),
     )?
     .physical_input_width();
     let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
-    if params.inner_commit_matrix.input_width() != expected_a_width
-        || params.outer_commit_matrix.input_width() != expected_b_width
+    if params.inner.matrix.input_width() != expected_a_width
+        || params.outer.matrix.input_width() != expected_b_width
         || params.open_commit_matrix.input_width() != expected_d_width
     {
         return Err(invalid(
@@ -258,7 +258,7 @@ fn audit_committed_params(
         ));
     }
 
-    match params.inner_commit_matrix.security_route() {
+    match params.inner.matrix.security_route() {
         InnerCommitSecurityRoute::Linf(key) => audit_bound(
             label,
             key.coeff_linf_bound,
@@ -299,7 +299,7 @@ fn audit_committed_params(
                     "L2 route is not admitted by the frozen suffix response cap",
                 )
             })?;
-            if params.inner_commit_matrix != expected {
+            if params.inner.matrix != expected {
                 return Err(invalid(
                     label,
                     "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
@@ -309,13 +309,13 @@ fn audit_committed_params(
     }
     audit_bound(
         label,
-        params.outer_commit_matrix.coeff_linf_bound(),
+        params.outer.matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
             dims.d_b(),
-            params.log_basis_outer,
+            params.outer.digits.log_basis,
         ),
     )?;
     audit_bound(
@@ -485,7 +485,7 @@ pub(crate) fn audit_resolved_schedule(
     let root = &schedule.root.params;
     let final_params = &root;
     if !matches!(
-        final_params.inner_commit_matrix.security_route(),
+        final_params.inner.matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)
     ) {
         return Err(invalid(

@@ -15,8 +15,8 @@ fn sample_schedule() -> FoldSchedule {
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
-    let inner = committed.inner_commit_matrix;
-    committed.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = committed.inner.matrix;
+    committed.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -309,8 +309,8 @@ fn terminal_sparse_sampler_changes_plan_binding() {
 fn role_local_ring_dimension_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    let matrix = &second.root.params.inner_commit_matrix;
-    second.root.params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let matrix = &second.root.params.inner.matrix;
+    second.root.params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
         matrix
             .sis_table_key()

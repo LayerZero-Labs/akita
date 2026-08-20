@@ -41,7 +41,7 @@ impl PhysicalResponsePlan {
         let InnerCommitSecurityRoute::L2 {
             norm_proof_shape: shape,
             ..
-        } = params.inner_commit_matrix.security_route()
+        } = params.inner.matrix.security_route()
         else {
             return Ok(None);
         };

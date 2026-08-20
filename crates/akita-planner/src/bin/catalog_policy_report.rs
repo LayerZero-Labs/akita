@@ -119,7 +119,7 @@ pub(super) fn catalog_policy_signature(
                 params.source_encoding,
                 spec.policy.claim_ext_degree,
                 params.d_a(),
-                params.inner_commit_matrix.security_route(),
+                params.inner.matrix.security_route(),
             )?,
         )
         .map_err(|error| format!("write catalog policy signature: {error}"))?;

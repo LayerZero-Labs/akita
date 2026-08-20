@@ -98,8 +98,8 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     )
     .with_decomp(4, 8, 1, 1, 1)
     .unwrap();
-    let outer = &lp.outer_commit_matrix;
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &lp.outer.matrix;
+    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -151,7 +151,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             num_claims: 1,
             depth_fold,
             a_row_start: 1,
-            b_row_start: 1 + lp.inner_commit_matrix.output_rank(),
+            b_row_start: 1 + lp.inner.matrix.output_rank(),
         }],
         log_basis: lp.log_basis_open,
         eq_tau1,

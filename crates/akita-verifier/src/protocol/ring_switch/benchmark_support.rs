@@ -82,8 +82,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         DEPTH_OPEN,
         DEPTH_OPEN,
     )?;
-    let inner = &level_params.inner_commit_matrix;
-    level_params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &level_params.inner.matrix;
+    level_params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -92,8 +92,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         inner.coeff_linf_bound().max(1),
         role_dims.d_a(),
     );
-    let outer = &level_params.outer_commit_matrix;
-    level_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &level_params.outer.matrix;
+    level_params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

@@ -5,8 +5,8 @@ use crate::{dyadic_block_ranges, WitnessLayout};
 #[test]
 fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
-    let n_a_final = lp.inner_commit_matrix.output_rank();
-    let n_b_final = lp.outer_commit_matrix.output_rank();
+    let n_a_final = lp.inner.matrix.output_rank();
+    let n_b_final = lp.outer.matrix.output_rank();
     let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
     let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
@@ -20,8 +20,8 @@ fn multi_group_m_row_count_matches_canonical_layout() {
 #[test]
 fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
-    let n_a_final = lp.inner_commit_matrix.output_rank();
-    let n_b_final = lp.outer_commit_matrix.output_rank();
+    let n_a_final = lp.inner.matrix.output_rank();
+    let n_b_final = lp.outer.matrix.output_rank();
     let n_a_pre = lp.precommitted_groups[0].profile.inner.matrix.output_rank();
     let n_b_pre = lp.precommitted_groups[0].profile.outer.matrix.output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
@@ -404,8 +404,8 @@ fn configure_test_role_dims(lp: &mut CommittedGroupParams, d_b: usize, d_d: usiz
     let d_a = lp.d_a();
     assert!(d_a.is_multiple_of(d_b));
     assert!(d_a.is_multiple_of(d_d));
-    let outer = &lp.outer_commit_matrix;
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &lp.outer.matrix;
+    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -456,8 +456,8 @@ fn address_oracle_precommit(
 ) -> GroupOpenPhaseParams {
     let mut lp = address_oracle_group_params(d_a, d_b, d_d, blocks);
     certify_test_sis_bounds(&mut lp);
-    let outer = &lp.outer_commit_matrix;
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &lp.outer.matrix;
+    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

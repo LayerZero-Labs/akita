@@ -1105,23 +1105,26 @@ mod tests {
                         )
                         .unwrap();
                     let inner = inner_group.pop().expect("singleton commit result");
-                    let n_a = lp.inner_commit_matrix.output_rank();
+                    let n_a = lp.inner.matrix.output_rank();
                     let blocks = (0..lp.num_live_blocks)
                         .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
                         .collect::<Vec<_>>();
-                    let digits =
-                        akita_prover::kernels::linear::decompose_commit_blocks_into::<
-                            TestF,
-                            TEST_D,
-                            TEST_D,
-                        >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
-                        .unwrap();
+                    let digits = akita_prover::kernels::linear::decompose_commit_blocks_into::<
+                        TestF,
+                        TEST_D,
+                        TEST_D,
+                    >(
+                        &blocks,
+                        lp.outer.digits.num_digits,
+                        lp.outer.digits.log_basis,
+                    )
+                    .unwrap();
                     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
                         lp.outer_slice_count,
                         lp.num_live_blocks,
                         1,
                         n_a,
-                        lp.num_digits_outer,
+                        lp.outer.digits.num_digits,
                         TEST_D,
                         TEST_D,
                     )
@@ -1140,9 +1143,9 @@ mod tests {
                     CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
-                            lp.outer_commit_matrix.output_rank(),
+                            lp.outer.matrix.output_rank(),
                             &slice_digits,
-                            lp.log_basis_outer,
+                            lp.outer.digits.log_basis,
                         )
                         .unwrap()
                 };

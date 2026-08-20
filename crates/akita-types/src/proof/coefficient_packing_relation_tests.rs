@@ -62,8 +62,8 @@ where
     params.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: s,
     };
-    let outer = params.outer_commit_matrix;
-    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = params.outer.matrix;
+    params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -810,7 +810,7 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     assert_eq!(
         z_terms,
         fixture.params.num_positions_per_block
-            * fixture.params.num_digits_inner
+            * fixture.params.inner.digits.num_digits
             * fixture.params.num_digits_fold()
     );
     for term in semantics.stage2_terms().terms() {
@@ -1224,7 +1224,7 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
 
     for mutate in [
         |params: &mut CommittedGroupParams| params.log_basis_open = 128,
-        |params: &mut CommittedGroupParams| params.log_basis_inner = 128,
+        |params: &mut CommittedGroupParams| params.inner.digits.log_basis = 128,
     ] {
         let mut malformed = fixture.params.clone();
         mutate(&mut malformed);
@@ -1289,8 +1289,8 @@ fn structured_stage2_terms_match_independent_dense_tables() {
         fixture.params.log_basis_open,
     );
     let witness_gadget = gadget_row_scalars::<F4>(
-        fixture.params.num_digits_inner,
-        fixture.params.log_basis_inner,
+        fixture.params.inner.digits.num_digits,
+        fixture.params.inner.digits.log_basis,
     );
     let fold_gadget = gadget_row_scalars::<F4>(
         fixture.params.num_digits_fold,
@@ -1371,7 +1371,7 @@ fn structured_stage2_terms_match_independent_dense_tables() {
                             .z_coefficient_index(
                                 geometry.a_ring_dimension(),
                                 fixture.params.num_positions_per_block,
-                                fixture.params.num_digits_inner,
+                                fixture.params.inner.digits.num_digits,
                                 fixture.params.num_digits_fold,
                                 position,
                                 witness_digit,

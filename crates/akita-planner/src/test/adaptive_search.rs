@@ -436,7 +436,7 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     .expect("shipped fp128 selective L2 schedule");
     assert!(selected.schedule.recursive_folds.iter().any(|step| {
         matches!(
-            step.params.inner_commit_matrix.security_route(),
+            step.params.inner.matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )
     }));

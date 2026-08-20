@@ -156,7 +156,7 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.outer_commit_matrix,
+        &root.outer.matrix,
         root.outer_slice_count,
     )?;
     record_open(
@@ -185,7 +185,7 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.outer_commit_matrix,
+            &fold.params.outer.matrix,
             fold.params.outer_slice_count,
         )?;
         record_open(

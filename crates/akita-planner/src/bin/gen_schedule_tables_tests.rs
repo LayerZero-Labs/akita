@@ -250,7 +250,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
         else {
             panic!("packing root must use packing for every precommitted group");
         };
-        let d_a = group.commitment.layout.inner_commit_matrix.ring_dimension();
+        let d_a = group.commitment.layout.inner.matrix.ring_dimension();
         let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
             spec.policy.claim_ext_degree,
             d_a,

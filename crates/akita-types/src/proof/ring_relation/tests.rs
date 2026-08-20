@@ -30,24 +30,25 @@ fn relation_layout(
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix
+    lp.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner.matrix.security_policy(),
+        lp.inner
+            .matrix
             .sis_table_key()
             .expect("test matrix is L infinity")
             .table_digest,
-        lp.inner_commit_matrix.sis_modulus_profile(),
-        lp.inner_commit_matrix.output_rank(),
-        lp.inner_commit_matrix.input_width(),
+        lp.inner.matrix.sis_modulus_profile(),
+        lp.inner.matrix.output_rank(),
+        lp.inner.matrix.input_width(),
         2,
         lp.d_a(),
     );
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        lp.outer_commit_matrix.security_policy(),
-        lp.outer_commit_matrix.sis_table_key().table_digest,
-        lp.outer_commit_matrix.sis_modulus_profile(),
-        lp.outer_commit_matrix.output_rank(),
-        lp.outer_commit_matrix.input_width(),
+    lp.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer.matrix.security_policy(),
+        lp.outer.matrix.sis_table_key().table_digest,
+        lp.outer.matrix.sis_modulus_profile(),
+        lp.outer.matrix.output_rank(),
+        lp.outer.matrix.input_width(),
         3,
         lp.d_a(),
     );
@@ -256,8 +257,8 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         );
         assert_eq!(
             t_sum,
-            lp.num_digits_outer
-                * lp.inner_commit_matrix.output_rank()
+            lp.outer.digits.num_digits
+                * lp.inner.matrix.output_rank()
                 * lp.num_live_blocks
                 * num_claims
                 * D
@@ -265,7 +266,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         for unit in layout.units() {
             assert_eq!(
                 unit.z_range().len(),
-                lp.num_positions_per_block * lp.num_digits_inner * lp.num_digits_fold() * D
+                lp.num_positions_per_block * lp.inner.digits.num_digits * lp.num_digits_fold() * D
             );
         }
 

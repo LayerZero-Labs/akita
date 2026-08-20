@@ -241,8 +241,8 @@ mod tests {
             2,
         )
         .expect("level params");
-        let inner = params.inner_commit_matrix;
-        params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        let inner = params.inner.matrix;
+        params.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: inner.security_policy(),
                 table_digest: inner
@@ -261,13 +261,13 @@ mod tests {
             .with_decomp(
                 params.num_positions_per_block,
                 params.num_live_ring_elements_per_claim,
-                params.num_digits_inner,
-                params.num_digits_outer,
+                params.inner.digits.num_digits,
+                params.outer.digits.num_digits,
                 params.num_digits_open,
             )
             .expect("layout rebuilt for audited inner rank");
-        let outer = params.outer_commit_matrix;
-        params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        let outer = params.outer.matrix;
+        params.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: outer.security_policy(),
                 table_digest: outer.sis_table_key().table_digest,
@@ -284,21 +284,23 @@ mod tests {
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         let a_fields = level_params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .output_rank()
-            .checked_mul(level_params.inner_commit_matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.inner_commit_matrix.ring_dimension()))
+            .checked_mul(level_params.inner.matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.inner.matrix.ring_dimension()))
             .expect("A setup capacity");
         let b_fields = level_params
-            .outer_commit_matrix
+            .outer
+            .matrix
             .output_rank()
-            .checked_mul(level_params.outer_commit_matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.outer_commit_matrix.ring_dimension()))
+            .checked_mul(level_params.outer.matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.outer.matrix.ring_dimension()))
             .expect("B setup capacity");
-        let compression_source = level_params.outer_commit_matrix.output_rank()
-            * level_params.outer_commit_matrix.ring_dimension();
+        let compression_source =
+            level_params.outer.matrix.output_rank() * level_params.outer.matrix.ring_dimension();
         let compression_fields = CompressionChainPlan::for_complete_source(
-            level_params.outer_commit_matrix.sis_modulus_profile(),
+            level_params.outer.matrix.sis_modulus_profile(),
             compression_source,
         )
         .expect("compression plan")

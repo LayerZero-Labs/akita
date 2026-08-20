@@ -436,7 +436,7 @@ impl PlannedGroupReport {
         let role_dims = params.role_dims();
         let opening =
             opening_report_geometry(params.opening_method, extension_degree, role_dims.d_a())?;
-        let security_route = params.inner_commit_matrix.security_route();
+        let security_route = params.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -453,14 +453,14 @@ impl PlannedGroupReport {
         let (public_num_vars, public_num_polynomials) = public_group
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
-        let n_b = params.outer_commit_matrix.output_rank();
+        let n_b = params.outer.matrix.output_rank();
         let b_geometry = b_slice_report_geometry(
             params.payload_mode,
             params.outer_slice_count,
             n_b,
-            params.outer_commit_matrix.input_width(),
+            params.outer.matrix.input_width(),
             role_dims.d_b(),
-            params.outer_commit_matrix.sis_modulus_profile(),
+            params.outer.matrix.sis_modulus_profile(),
         )?;
         Ok(Self {
             group,
@@ -479,21 +479,21 @@ impl PlannedGroupReport {
             packing_factor: opening.packing_factor,
             packing_partial_width: opening.partial_width,
             packing_quotient_width: opening.quotient_width,
-            a_width: params.inner_commit_matrix.input_width(),
-            b_width: params.outer_commit_matrix.input_width(),
+            a_width: params.inner.matrix.input_width(),
+            b_width: params.outer.matrix.input_width(),
             d_width: params.open_commit_matrix.input_width(),
-            n_a: params.inner_commit_matrix.output_rank(),
+            n_a: params.inner.matrix.output_rank(),
             n_b,
             n_d: params.open_commit_matrix.output_rank(),
             b_slice_count: b_geometry.slice_count,
             physical_b_input_width: b_geometry.physical_input_width,
             logical_b_rows: b_geometry.logical_rows,
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
-            log_basis_inner: params.log_basis_inner,
-            log_basis_outer: params.log_basis_outer,
+            log_basis_inner: params.inner.digits.log_basis,
+            log_basis_outer: params.outer.digits.log_basis,
             log_basis_open: params.log_basis_open,
-            num_digits_inner: params.num_digits_inner,
-            num_digits_outer: params.num_digits_outer,
+            num_digits_inner: params.inner.digits.num_digits,
+            num_digits_outer: params.outer.digits.num_digits,
             num_digits_open: params.num_digits_open,
             num_digits_fold: params.num_digits_fold(),
             challenge_l1_mass: params.challenge_l1_mass(),
@@ -814,13 +814,13 @@ pub(crate) fn emit_runtime_schedule_summary(
         });
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
-        let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
-        let a_output_raw_dimension = lp.inner_commit_matrix.raw_output_dimension();
-        let b_input_raw_dimension = lp.outer_commit_matrix.raw_input_dimension();
-        let b_output_raw_dimension = lp.outer_commit_matrix.raw_output_dimension();
+        let a_input_raw_dimension = lp.inner.matrix.raw_input_dimension();
+        let a_output_raw_dimension = lp.inner.matrix.raw_output_dimension();
+        let b_input_raw_dimension = lp.outer.matrix.raw_input_dimension();
+        let b_output_raw_dimension = lp.outer.matrix.raw_output_dimension();
         let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
         let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
-        let security_route = lp.inner_commit_matrix.security_route();
+        let security_route = lp.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -837,10 +837,10 @@ pub(crate) fn emit_runtime_schedule_summary(
         let b_geometry = b_slice_report_geometry(
             lp.payload_mode,
             lp.outer_slice_count,
-            lp.outer_commit_matrix.output_rank(),
-            lp.outer_commit_matrix.input_width(),
+            lp.outer.matrix.output_rank(),
+            lp.outer.matrix.input_width(),
             role_dims.d_b(),
-            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer.matrix.sis_modulus_profile(),
         )?;
         tracing::info!(
             label,
@@ -861,11 +861,11 @@ pub(crate) fn emit_runtime_schedule_summary(
             packing_quotient_width = ?opening.quotient_width,
             extension_opening_reduction_present = extension_opening_reduction_bytes != 0,
             extension_opening_reduction_bytes,
-            a_width = lp.inner_commit_matrix.input_width(),
-            b_width = lp.outer_commit_matrix.input_width(),
+            a_width = lp.inner.matrix.input_width(),
+            b_width = lp.outer.matrix.input_width(),
             d_width = lp.open_commit_matrix.input_width(),
-            n_a = lp.inner_commit_matrix.output_rank(),
-            n_b = lp.outer_commit_matrix.output_rank(),
+            n_a = lp.inner.matrix.output_rank(),
+            n_b = lp.outer.matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
             b_slice_count = b_geometry.slice_count,
             physical_b_input_width = b_geometry.physical_input_width,
@@ -884,8 +884,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             challenge_count_pm1 = lp.fold_challenge_config.count_pm1,
             challenge_count_pm2 = lp.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
-            log_basis_inner = lp.log_basis_inner,
-            log_basis_outer = lp.log_basis_outer,
+            log_basis_inner = lp.inner.digits.log_basis,
+            log_basis_outer = lp.outer.digits.log_basis,
             log_basis_open = lp.log_basis_open,
             position_index_bits = lp.position_index_bits(),
             block_index_bits = lp.block_index_bits(),
@@ -893,8 +893,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_live_blocks = lp.num_live_blocks,
             block_index_domain_size = lp.block_index_domain_size().unwrap_or(0),
             num_positions_per_block = lp.num_positions_per_block,
-            num_digits_inner = lp.num_digits_inner,
-            num_digits_outer = lp.num_digits_outer,
+            num_digits_inner = lp.inner.digits.num_digits,
+            num_digits_outer = lp.outer.digits.num_digits,
             num_digits_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(),
             num_digits_quotient = compute_num_digits_field_width(field_bits, lp.log_basis_open),
@@ -1335,10 +1335,10 @@ pub(crate) fn print_layout(
     let b_geometry = b_slice_report_geometry(
         layout.payload_mode,
         layout.outer_slice_count,
-        layout.outer_commit_matrix.output_rank(),
-        layout.outer_commit_matrix.input_width(),
-        layout.outer_commit_matrix.ring_dimension(),
-        layout.outer_commit_matrix.sis_modulus_profile(),
+        layout.outer.matrix.output_rank(),
+        layout.outer.matrix.input_width(),
+        layout.outer.matrix.ring_dimension(),
+        layout.outer.matrix.sis_modulus_profile(),
     )?;
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
@@ -1347,15 +1347,15 @@ pub(crate) fn print_layout(
         num_live_blocks = layout.num_live_blocks,
         block_index_domain_size = layout.block_index_domain_size().unwrap_or(0),
         num_positions_per_block = layout.num_positions_per_block,
-        num_digits_inner = layout.num_digits_inner,
-        num_digits_outer = layout.num_digits_outer,
+        num_digits_inner = layout.inner.digits.num_digits,
+        num_digits_outer = layout.outer.digits.num_digits,
         num_digits_open = layout.num_digits_open,
         delta_fold = layout.num_digits_fold(),
-        log_basis_inner = layout.log_basis_inner,
-        log_basis_outer = layout.log_basis_outer,
+        log_basis_inner = layout.inner.digits.log_basis,
+        log_basis_outer = layout.outer.digits.log_basis,
         log_basis_open = layout.log_basis_open,
-        n_a = layout.inner_commit_matrix.output_rank(),
-        n_b = layout.outer_commit_matrix.output_rank(),
+        n_a = layout.inner.matrix.output_rank(),
+        n_b = layout.outer.matrix.output_rank(),
         n_d = layout.open_commit_matrix.output_rank(),
         b_slice_count = b_geometry.slice_count,
         physical_b_input_width = b_geometry.physical_input_width,

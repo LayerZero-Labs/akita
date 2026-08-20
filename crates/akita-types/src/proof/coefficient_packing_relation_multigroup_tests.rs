@@ -16,9 +16,9 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     let mut params = base.params.clone();
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
     frozen.precommitted_groups.clear();
-    frozen.log_basis_inner = 9;
-    let inner = frozen.inner_commit_matrix;
-    frozen.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    frozen.inner.digits.log_basis = 9;
+    let inner = frozen.inner.matrix;
+    frozen.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().unwrap().table_digest,
         inner.sis_modulus_profile(),
@@ -27,8 +27,8 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         2,
         inner.ring_dimension(),
     );
-    let outer = frozen.outer_commit_matrix;
-    frozen.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = frozen.outer.matrix;
+    frozen.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
