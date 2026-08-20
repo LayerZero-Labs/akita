@@ -7,5 +7,14 @@ evn = "evn"
 thm = "thm"
 Thm = "Thm"
 
+[default.extend-identifiers]
+# Git SHAs cited in design records. Hex is not prose.
+"74c17ba4f" = "74c17ba4f"
+
 [files]
-extend-exclude = ["book/mermaid.min.js"]
+extend-exclude = [
+  "book/mermaid.min.js",
+  # Golden descriptor-byte fixtures: every line ends in a hex digest, and hex
+  # happens to spell things like `ba` and `caf`. There is no prose here to check.
+  "crates/akita-config/tests/fixtures/*.txt",
+]

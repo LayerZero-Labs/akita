@@ -817,19 +817,20 @@ mod tests {
                 .expect("audited prefix B matrix");
                 let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = GroupOpenPhaseParams {
-                    layout: GroupCommitPhaseParams {
+                    setup_natural_len: None,
+                    profile: GroupCommitPhaseParams {
                         version: GroupCommitPhaseParams::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        num_live_ring_elements_per_claim: 1,
-                        num_positions_per_block: 1,
-                        num_live_blocks: 1,
+                        blocks: akita_types::BlockGeometry::new(1, 1, 1),
                         outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                        log_basis_inner: 1,
-                        num_digits_inner: 1,
-                        inner_commit_matrix,
-                        log_basis_outer: 1,
-                        num_digits_outer: 1,
-                        outer_commit_matrix,
+                        inner: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(1, 1),
+                            inner_commit_matrix,
+                        ),
+                        outer: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(1, 1),
+                            outer_commit_matrix,
+                        ),
                     },
                     opening: akita_types::GroupOpeningPlan::evaluation_trace(
                         akita_challenges::SparseChallengeConfig::pm1_only(0),
@@ -838,13 +839,12 @@ mod tests {
                         1,
                     ),
                 };
-                let id = scheduled_setup_prefix(1, commitment_params.clone()).slot_id();
+                let id = scheduled_setup_prefix(1, commitment_params)
+                    .slot_id()
+                    .expect("setup prefix group");
                 let compression_plan = CompressionChainPlan::for_complete_source(
-                    commitment_params
-                        .layout
-                        .outer_commit_matrix
-                        .sis_modulus_profile(),
-                    commitment_params.layout.outer_commit_matrix.output_rank() * TEST_D,
+                    commitment_params.profile.outer.matrix.sis_modulus_profile(),
+                    commitment_params.profile.outer.matrix.output_rank() * TEST_D,
                 )
                 .expect("compression plan");
                 let compression_stages = compression_plan
@@ -1088,8 +1088,6 @@ mod tests {
                 .schedule()
                 .root
                 .params
-                .final_group
-                .commitment
                 .clone();
                 let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
