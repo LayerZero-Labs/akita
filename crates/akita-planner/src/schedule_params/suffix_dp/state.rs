@@ -103,8 +103,8 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-// Frozen frontier entries omit construction-only descriptors, so the cache
-// can retain twice as many exact results within the former memory envelope.
+// Frozen frontier entries omit construction-only descriptors. The larger
+// quota stayed within the former peak for the measured high pressure row.
 const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary
 // suffixes. Separate quotas keep that stream from evicting direct states while

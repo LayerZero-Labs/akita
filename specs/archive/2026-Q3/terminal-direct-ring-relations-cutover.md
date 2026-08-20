@@ -15,21 +15,20 @@
 Every supported proof schedule has exactly this topology:
 
 ```text
-root Fold | zero or more suffix Folds | terminal cleartext witness
+root Fold | one or more suffix Folds | terminal cleartext witness
 ```
 
 Runtime schedules encode this topology structurally as `folds` plus one
 `terminal` witness shape and byte budget. Compact generated catalogs contain
 only folds; expansion derives the terminal from the final fold. The terminal
 has no commitment parameters and is not a step variant or generated marker.
-The root fold may bind the terminal state directly. Inputs for which no audited
-root and terminal topology exists return `AkitaError::UnsupportedSchedule`.
-The prover emits no proof for those inputs.
+Inputs for which the planner cannot produce at least two shrinking folds return
+`AkitaError::UnsupportedSchedule`; the prover emits no proof.
 
 Consequently:
 
 - there is no zero-fold or root-direct proof;
-- a root fold may feed the terminal without a recursive fold;
+- there is no one-fold root-terminal proof;
 - every terminal has a predecessor that binds its canonical inner `t` state;
 - the terminal relation has no outer `u`, B block, D block, quotient, or
   relation sumcheck.
@@ -50,23 +49,7 @@ terminal: TerminalLevelProof
 
 The proof stream carries no root-shape or per-step enum. Headerless decoding
 derives the exact root, recursive, and terminal shapes from the validated
-schedule. A supported proof contains at least the root fold and the terminal.
-
-## Offline planner selection
-
-The planner separates candidate validity from cost. One search admits every
-audited root fold, including roots whose encoded output is not smaller than the
-input. Root contraction can guide traversal order, but it does not determine
-feasibility and it is not a selection objective. Contractive and
-noncontractive roots share the same suffix memo and frontier. The planner
-selects the final complete schedule only with the configured
-`SelectionPolicyId` comparator.
-
-One failed ring dimension does not fail an adaptive request. A dimension that
-cannot reduce any root variables contributes no candidates, and the search
-continues with the other dimensions. The planner returns
-`AkitaError::UnsupportedSchedule` only when the search finds no valid complete
-topology or when a hard setup limit excludes every topology.
+schedule. A supported proof contains at least the root and one suffix fold.
 
 An intermediate edge uses one of two bindings:
 
@@ -109,9 +92,9 @@ consistency | A
 
 The former `WithoutDBlock = consistency | A | B` layout retained B because the
 terminal accepted outer `u = B * decompose(t)` as public state. The folded-only
-topology guarantees a predecessor, and the final nonterminal edge binds
+topology guarantees a predecessor, and the final recursive edge now binds
 canonical inner `t` directly. Consequently the terminal has no outer `u`, and
-its B rows disappear together with the root-direct proof mode.
+its B rows disappear together with root-direct/root-terminal proof modes.
 
 Extension-opening reduction remains independent. Revealing terminal `z`, `e`,
 and `t` does not reveal the pre-reduction polynomial table, so its partials and
@@ -145,10 +128,8 @@ must reject any schedule/proof disagreement before replay.
 - the direct terminal checker owns reduced A-relation and trace semantics.
 - the existing extension-opening verifier owns EOR semantics.
 
-Callers must use these primitives directly. Do not add root or terminal
-wrappers, shape aliases, a runtime scheduler, or a second row layout
-implementation. The offline planner search uses the same candidate builder,
-schedule type, and validators for every root candidate.
+Callers must use these primitives directly. Do not add root/terminal wrappers,
+shape aliases, fallback schedulers, or a second row-layout implementation.
 
 ## Security and verifier safety
 
@@ -159,21 +140,14 @@ schedule type, and validators for every root candidate.
   check is sound only because the accepted public state changes from `u` to the
   predecessor-bound `t`.
 - The prover must not pad or enlarge a polynomial merely to manufacture a
-  supported schedule. An input smaller than every audited root fold remains
-  unsupported.
+  supported schedule. Unsupported degenerate inputs fail during planning.
 - Commitment parameters require a nonzero D width because every supported root
   now executes a fold.
 
 ## Validation requirements
 
 - generated catalog regeneration and drift agreement, including agreement on
-  `UnsupportedSchedule` for keys outside the audited fold domain;
-- scalar and grouped regressions in which the only complete schedule has a
-  root output that is not smaller than its input;
-- a regression in which contractive and noncontractive complete schedules are
-  both valid and the configured policy selects the noncontractive winner;
-- root candidate enumeration order does not change the selected schedule;
-- recursive progress and offloaded edge contraction remain enforced;
+  `UnsupportedSchedule` for omitted keys;
 - direct-terminal versus former quotient semantics across supported role
   dimensions;
 - transcript tamper tests for terminal `t`, `e`, `z`, the opening target, and

@@ -150,7 +150,7 @@ fn valid_small_scalar_root_has_a_schedule() {
                 schedule
                     .estimate
                     .estimated_proof_payload_bytes()
-                    .expect("fallback proof size")
+                    .expect("selected proof size")
                     > cleartext_source_bytes,
                 "planner totality must not depend on beating cleartext transmission"
             );
@@ -158,7 +158,7 @@ fn valid_small_scalar_root_has_a_schedule() {
         schedule
             .schedule
             .validate_structure()
-            .expect("the fallback schedule must pass structural validation");
+            .expect("the selected schedule must pass structural validation");
     }
 }
 
@@ -220,5 +220,5 @@ fn valid_small_grouped_root_has_a_schedule() {
     schedule
         .schedule
         .validate_structure()
-        .expect("the grouped fallback schedule must pass structural validation");
+        .expect("the grouped schedule must pass structural validation");
 }
