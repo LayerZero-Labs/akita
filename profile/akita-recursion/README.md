@@ -19,11 +19,11 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
 
-## Quick start (`nv=32`, adaptive OneHot — canonical target)
+## Quick start (`nv=32`, recursive multi-group OneHot — canonical target)
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
-crate pins, `2509bdcea9bb...`). The first prove run downloads a ~30 GB
+crate pins, `f823a9f854f0...`). The first prove run downloads a ~30 GB
 Dory PCS setup table to `~/Library/Caches/dory/dory_38.urs` (~85 s on
 first run, instant on subsequent).
 
@@ -42,7 +42,7 @@ AKITA_NUM_VARS=32 \
     ./target/release/akita-recursion-artifact
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
-#    Start with trace-only (no Jolt prover) when measuring a new adaptive
+#    Start with trace-only (no Jolt prover) when measuring the recursive
 #    schedule. Confirm the trace fits the current `max_trace_length = 4 G`
 #    before running the full prover (see "Open follow-ups" below).
 #    `--trace-output /dev/null` keeps the raw trace bytes off disk while
@@ -54,7 +54,7 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Expected output shape (rerun `--trace-only` for current adaptive numbers):
+Expected output shape (rerun `--trace-only` for current recursive numbers):
 
 ```
 "deserialize_input": … (dominated by expanded verifier-setup decode)
@@ -71,11 +71,11 @@ that lives inside the blob; the proof itself is a tiny fraction.
 
 The full pipeline (Dory preprocessing → Jolt prove → Jolt verify) runs
 end-to-end at arities where the trace fits under `max_trace_length = 4 G`.
-Start with `AKITA_NUM_VARS=20`, measure it with `--trace-only`, and then remove
+Start with `AKITA_NUM_VARS=32`, measure it with `--trace-only`, and then remove
 `--trace-only` once the trace bound is confirmed:
 
 ```bash
-AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
+AKITA_NUM_VARS=32 ./target/release/akita-recursion-artifact
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     AKITA_RECURSION_LOG=info ./target/release/akita-recursion-host \
     --input target/akita_recursion_inputs.bin
@@ -114,7 +114,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 | Variable                  | Default                                  | Effect                                  |
 | ------------------------- | ---------------------------------------- | --------------------------------------- |
-| `AKITA_NUM_VARS`          | `20`                                     | Polynomial arity for the prover.        |
+| `AKITA_NUM_VARS`          | `32`                                     | Polynomial arity for the prover.        |
 | `AKITA_RECURSION_BLOB`    | `target/akita_recursion_inputs.bin`      | Output path for the blob (`artifact`).  |
 | `AKITA_RECURSION_LOG`     | `info`                                   | `tracing-subscriber` filter (`host`).   |
 | `ZEROOS_GUEST_RUSTFLAGS`  | unset                                    | Pass `-Zunstable-options` when Rust requires it for Jolt's custom `riscv64imac-zero-linux-musl` target. |
@@ -132,12 +132,12 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## How it works
 
-1. **`artifact`** runs `AkitaCommitmentScheme::<fp128::OneHot>` →
-   `setup_prover` → `commit` → `batched_prove` over a synthetic OneHot
-   polynomial, sanity-verifies on the host, and serializes
-   `(transcript_domain, num_vars, opening_point, opening, commitment,
-   verifier_setup, proof_shape, proof)` into a single blob via
-   [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
+1. **`artifact`** runs the recursive companion of `fp128::OneHot` →
+   `setup_prover` → two base-config precommits → a recursive-config
+   two-polynomial final commit → `batched_prove` over synthetic OneHot
+   polynomials. It sanity-verifies on the host and serializes the three
+   ordered commitment groups, verifier setup, proof shape, and proof into
+   one blob via [`AkitaJoltInputs::write_to_bytes`](glue/src/lib.rs).
 2. **`host`** loads the blob, compiles the guest to
    `riscv64imac-zero-linux-musl` via the Jolt CLI, runs Jolt's
    preprocess/prove/verify (or just the trace under `--trace-only`),
@@ -167,11 +167,18 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## Adaptive dimension pin and historical D64 measurements
 
-The artifact, host, and guest share a fixed source-view dimension `D = 256`, the
-adaptive preset's root envelope. The generated `nv=20` and `nv=32` scalar rows both use
-A=D256 at the root and may transition to smaller per-level dimensions. The
-artifact rejects any requested arity whose selected root A dimension does not
-match this Jolt monomorphization.
+The artifact, host, and guest share a fixed source-view dimension `D = 512`.
+The planner-generated recursive `nv=32` row has a `(32, 2)` final group,
+two `(16, 1)` precommitted groups, and uses A=D512 at the root. It may
+transition to smaller per-level dimensions. The artifact rejects any requested
+arity whose selected root A dimension does not match this Jolt
+monomorphization.
+
+In this profile, recursive setup means the first recursive edge carries one
+setup-prefix opening into the successor fold. The successor verifies the setup
+contribution together with its witness group. This is distinct from the direct
+profile, where setup is consumed locally and no setup claim is carried to the
+successor.
 
 Historical D64 measurements remain useful context, but they do not describe
 the current adaptive binary. D32 is not a valid A-role fold degree (`d_a ≥ 64`),

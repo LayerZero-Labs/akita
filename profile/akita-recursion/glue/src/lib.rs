@@ -11,6 +11,11 @@
 #![allow(clippy::missing_errors_doc)]
 
 use akita_config::CommitmentConfig;
+#[cfg(any(
+    feature = "trusted-benchmark-artifact",
+    akita_trusted_benchmark_artifact
+))]
+use akita_field::Fp128;
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -38,9 +43,11 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv2";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv3";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
+const MAX_BLOB_GROUPS: usize = 16;
+const MAX_BLOB_OPENINGS_PER_GROUP: usize = 16;
 
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
     if rest.is_empty() {
@@ -50,6 +57,17 @@ fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
         "akita-jolt blob has {} trailing bytes",
         rest.len()
     )))
+}
+
+/// One ordered commitment group carried in a multi-group verifier statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AkitaJoltOpeningGroup<F: FieldCore> {
+    /// Opening point for this group.
+    pub opening_point: Vec<F>,
+    /// Claimed evaluations, one per polynomial in this group.
+    pub openings: Vec<F>,
+    /// Commitment and its frozen algebraic profile.
+    pub commitment: CommittedGroup<F>,
 }
 
 /// Bundled verifier inputs that travel from the host to the Jolt guest.
@@ -65,11 +83,13 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub num_vars: u64,
     /// Opening point in the multilinear basis.
     pub opening_point: Vec<F>,
-    /// Claimed opening value at `opening_point`.
-    pub opening: F,
+    /// Claimed opening values for the final/new group.
+    pub openings: Vec<F>,
+    /// Earlier commitment groups in transcript order.
+    pub precommitted_groups: Vec<AkitaJoltOpeningGroup<F>>,
     /// Exact generated schedule row accepted for this opening batch.
     pub schedule_selection: OpeningScheduleSelection,
-    /// Single committed-poly group: one ring commitment per (poly, point) pair.
+    /// Final/new committed-poly group.
     pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
@@ -82,28 +102,30 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
 }
 
 impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
-    /// Build the singleton verifier claim represented by this blob.
-    ///
-    /// The recursion profile currently ships exactly one opening for one
-    /// commitment. Keeping this projection here prevents host and guest replay
-    /// from growing independent claim-shaping code.
-    pub fn verifier_statement<'a>(
-        &'a self,
-        openings: &'a [F; 1],
-    ) -> Result<GroupBatchStatement<'a, F, F>, AkitaError> {
+    /// Build the ordered verifier claim represented by this blob.
+    pub fn verifier_statement<'a>(&'a self) -> Result<GroupBatchStatement<'a, F, F>, AkitaError> {
         let num_vars = usize::try_from(self.num_vars).map_err(|_| {
             AkitaError::InvalidInput("recursion blob num_vars does not fit usize".to_string())
         })?;
         if num_vars != self.opening_point.len() {
             return Err(AkitaError::InvalidInput(
-                "singleton recursion opening point does not cover all variables".to_string(),
+                "final recursion opening point does not cover all variables".to_string(),
             ));
         }
-        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            self.opening_point.clone(),
-            openings.to_vec(),
+        let mut groups = Vec::with_capacity(self.precommitted_groups.len() + 1);
+        for group in &self.precommitted_groups {
+            groups.push(PolynomialGroupClaims::new(
+                group.opening_point.as_slice(),
+                group.openings.clone(),
+                &group.commitment,
+            )?);
+        }
+        groups.push(PolynomialGroupClaims::new(
+            self.opening_point.as_slice(),
+            self.openings.clone(),
             &self.commitment,
-        )?])?;
+        )?);
+        let claims = OpeningClaims::from_groups(groups)?;
         GroupBatchStatement::new(self.schedule_selection, claims)
     }
 
@@ -167,8 +189,20 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening_point
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        self.opening
+        self.openings
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        (self.precommitted_groups.len() as u64).serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        for group in &self.precommitted_groups {
+            group
+                .opening_point
+                .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+            group
+                .openings
+                .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+            group
+                .commitment
+                .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        }
         self.schedule_selection
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
@@ -188,7 +222,17 @@ where
             + self.transcript_domain.serialized_size(BLOB_COMPRESS)
             + self.num_vars.serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
-            + self.opening.serialized_size(BLOB_COMPRESS)
+            + self.openings.serialized_size(BLOB_COMPRESS)
+            + self
+                .precommitted_groups
+                .iter()
+                .map(|group| {
+                    group.opening_point.serialized_size(BLOB_COMPRESS)
+                        + group.openings.serialized_size(BLOB_COMPRESS)
+                        + group.commitment.serialized_size(BLOB_COMPRESS)
+                })
+                .sum::<usize>()
+            + (self.precommitted_groups.len() as u64).serialized_size(BLOB_COMPRESS)
             + self.schedule_selection.serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
@@ -278,6 +322,57 @@ where
         Ok(point)
     }
 
+    fn decode_field_vec(
+        rest: &mut &[u8],
+        max_len: usize,
+        context: &'static str,
+    ) -> Result<Vec<F>, SerializationError> {
+        let len = Self::decode_capped_len(rest, max_len)?;
+        let payload_len = Self::encoded_field_payload_len(len)?;
+        Self::ensure_remaining(rest, payload_len, context)?;
+        let mut values = Vec::with_capacity(len);
+        for _ in 0..len {
+            values.push(F::deserialize_with_mode(
+                &mut *rest,
+                BLOB_COMPRESS,
+                BLOB_VALIDATE,
+                &(),
+            )?);
+        }
+        Ok(values)
+    }
+
+    fn decode_opening_group(
+        rest: &mut &[u8],
+    ) -> Result<AkitaJoltOpeningGroup<F>, SerializationError> {
+        let opening_point = Self::decode_field_vec(
+            rest,
+            MAX_BLOB_NUM_VARS,
+            "akita-jolt precommitted opening point",
+        )?;
+        let openings = Self::decode_field_vec(
+            rest,
+            MAX_BLOB_OPENINGS_PER_GROUP,
+            "akita-jolt precommitted openings",
+        )?;
+        if openings.is_empty() {
+            return Err(SerializationError::InvalidData(
+                "akita-jolt precommitted opening group is empty".to_string(),
+            ));
+        }
+        let commitment = CommittedGroup::<F>::deserialize_with_mode(
+            &mut *rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
+        )?;
+        Ok(AkitaJoltOpeningGroup {
+            opening_point,
+            openings,
+            commitment,
+        })
+    }
+
     fn setup_matrix_encoded_len(matrix_fields: usize) -> Result<usize, SerializationError> {
         let header_len = 0usize.serialized_size(BLOB_COMPRESS);
         let payload_len = Self::encoded_field_payload_len(matrix_fields)?;
@@ -302,8 +397,9 @@ where
         Ok(())
     }
 
-    fn decode_seed_and_matrix(
+    fn decode_seed_and_matrix_with(
         rest: &mut &[u8],
+        decode_matrix: impl FnOnce(&mut &[u8], usize) -> Result<FlatMatrix<F>, SerializationError>,
     ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
         let seed = AkitaSetupDescriptor::deserialize_with_mode(
             &mut *rest,
@@ -319,13 +415,7 @@ where
             });
         }
         Self::check_setup_matrix_bytes_available(rest, matrix_fields)?;
-        let shared_matrix = FlatMatrix::<F>::deserialize_with_expected_shape(
-            &mut *rest,
-            BLOB_COMPRESS,
-            BLOB_VALIDATE,
-            seed.num_field_elements,
-            MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-        )?;
+        let shared_matrix = decode_matrix(rest, seed.num_field_elements)?;
         Ok((seed, shared_matrix))
     }
 
@@ -378,7 +468,21 @@ where
         let num_vars = Self::decode_capped_len(&mut rest, MAX_BLOB_NUM_VARS)?;
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
-        let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let openings = Self::decode_field_vec(
+            &mut rest,
+            MAX_BLOB_OPENINGS_PER_GROUP,
+            "akita-jolt final openings",
+        )?;
+        if openings.is_empty() {
+            return Err(SerializationError::InvalidData(
+                "akita-jolt final opening group is empty".to_string(),
+            ));
+        }
+        let precommitted_count = Self::decode_capped_len(&mut rest, MAX_BLOB_GROUPS)?;
+        let mut precommitted_groups = Vec::with_capacity(precommitted_count);
+        for _ in 0..precommitted_count {
+            precommitted_groups.push(Self::decode_opening_group(&mut rest)?);
+        }
         let schedule_selection = OpeningScheduleSelection::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
@@ -410,17 +514,22 @@ where
             &proof_shape,
         )?;
         reject_trailing_bytes(rest)?;
-        Ok(Self {
+        let inputs = Self {
             transcript_domain,
             num_vars: num_vars as u64,
             opening_point,
-            opening,
+            openings,
+            precommitted_groups,
             schedule_selection,
             commitment,
             verifier_setup,
             proof_shape,
             proof,
-        })
+        };
+        inputs
+            .verifier_statement()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        Ok(inputs)
     }
 
     fn validate_proof_shape_before_allocation<Cfg>(
@@ -461,7 +570,16 @@ where
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
     ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
-        let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+        let (seed, shared_matrix) =
+            Self::decode_seed_and_matrix_with(rest, |rest, matrix_fields| {
+                FlatMatrix::<F>::deserialize_with_expected_shape(
+                    &mut *rest,
+                    BLOB_COMPRESS,
+                    BLOB_VALIDATE,
+                    matrix_fields,
+                    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+                )
+            })?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
         AkitaVerifierSetup::from_parts(
             Arc::new(AkitaExpandedSetup::from_verified_parts(
@@ -490,19 +608,81 @@ where
     feature = "trusted-benchmark-artifact",
     akita_trusted_benchmark_artifact
 ))]
-impl<F, const D: usize> AkitaJoltInputs<F, D>
+impl<const P: u128, const D: usize> AkitaJoltInputs<Fp128<P>, D>
 where
-    F: FieldCore
+    Fp128<P>: FieldCore
         + CanonicalField
         + FromPrimitiveInt
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
 {
+    #[inline(never)]
+    fn deserialize_trusted_fp128_setup_matrix(
+        rest: &mut &[u8],
+        expected_num_field_elements: usize,
+    ) -> Result<FlatMatrix<Fp128<P>>, SerializationError> {
+        let encoded_num_field_elements =
+            usize::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        if encoded_num_field_elements != expected_num_field_elements {
+            return Err(SerializationError::InvalidData(
+                "flat matrix field count does not match expected setup shape".to_string(),
+            ));
+        }
+
+        let payload_len = expected_num_field_elements.checked_mul(16).ok_or_else(|| {
+            SerializationError::InvalidData(
+                "akita-jolt setup matrix payload length overflow".to_string(),
+            )
+        })?;
+        if rest.len() < payload_len {
+            return Err(SerializationError::InvalidData(format!(
+                "akita-jolt setup matrix claims {payload_len} payload bytes but only {} remain",
+                rest.len()
+            )));
+        }
+        let (payload, tail) = rest.split_at(payload_len);
+
+        #[cfg(target_arch = "riscv64")]
+        if payload.as_ptr().addr() % std::mem::align_of::<u64>() != 0 {
+            return Err(SerializationError::InvalidData(
+                "akita-jolt setup matrix payload is not aligned".to_string(),
+            ));
+        }
+
+        let mut data = Vec::new();
+        data.try_reserve_exact(expected_num_field_elements)
+            .map_err(|_| {
+                SerializationError::InvalidData("flat matrix allocation failed".to_string())
+            })?;
+        let mut words = payload.as_ptr().cast::<u64>();
+        for _ in 0..expected_num_field_elements {
+            // SAFETY: `payload_len` proves that two complete words remain for
+            // every loop iteration. The Jolt path checks eight-byte alignment
+            // above. Host tooling uses unaligned reads because Rust does not
+            // guarantee the alignment of a `Vec<u8>` allocation.
+            let (low, high) = unsafe {
+                #[cfg(target_arch = "riscv64")]
+                let pair = (words.read(), words.add(1).read());
+                #[cfg(not(target_arch = "riscv64"))]
+                let pair = (words.read_unaligned(), words.add(1).read_unaligned());
+                words = words.add(2);
+                pair
+            };
+            let canonical = (u128::from(u64::from_le(high)) << 64) | u128::from(u64::from_le(low));
+            let field = Fp128::<P>::from_canonical_u128_checked(canonical)
+                .ok_or_else(|| SerializationError::InvalidData("Fp128 out of range".to_string()))?;
+            data.push(field);
+        }
+        *rest = tail;
+        Ok(FlatMatrix::from_flat_data(data))
+    }
+
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
-    ) -> Result<AkitaVerifierSetup<F>, SerializationError> {
-        let (seed, shared_matrix) = Self::decode_seed_and_matrix(rest)?;
+    ) -> Result<AkitaVerifierSetup<Fp128<P>>, SerializationError> {
+        let (seed, shared_matrix) =
+            Self::decode_seed_and_matrix_with(rest, Self::deserialize_trusted_fp128_setup_matrix)?;
         let prefix_slots = Self::decode_prefix_slots(rest)?;
         AkitaVerifierSetup::from_parts(
             Arc::new(
@@ -523,7 +703,7 @@ where
     /// equal the matrix derived from the seed.
     pub fn read_trusted_host_artifact_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
     where
-        Cfg: CommitmentConfig<Field = F, ExtField = F>,
+        Cfg: CommitmentConfig<Field = Fp128<P>, ExtField = Fp128<P>>,
     {
         Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_trusted_host_setup)
     }
@@ -720,6 +900,38 @@ mod tests {
         let err = AkitaJoltInputs::<TestF, TEST_D>::check_setup_matrix_bytes_available(&[], 1)
             .unwrap_err();
         assert!(err.to_string().contains("setup matrix claims"));
+    }
+
+    #[cfg(any(
+        feature = "trusted-benchmark-artifact",
+        akita_trusted_benchmark_artifact
+    ))]
+    #[test]
+    fn trusted_fp128_matrix_decoder_preserves_fields_and_rejects_noncanonical_values() {
+        let expected =
+            FlatMatrix::from_flat_data(vec![TestF::zero(), TestF::one(), TestF::from_u64(7)]);
+        let mut encoded = Vec::new();
+        expected
+            .serialize_with_mode(&mut encoded, BLOB_COMPRESS)
+            .unwrap();
+
+        let mut rest = encoded.as_slice();
+        let decoded = AkitaJoltInputs::<TestF, TEST_D>::deserialize_trusted_fp128_setup_matrix(
+            &mut rest,
+            expected.num_field_elements(),
+        )
+        .expect("trusted matrix decode");
+        assert!(rest.is_empty());
+        assert_eq!(decoded, expected);
+
+        encoded[8..24].fill(0xff);
+        let mut rest = encoded.as_slice();
+        let error = AkitaJoltInputs::<TestF, TEST_D>::deserialize_trusted_fp128_setup_matrix(
+            &mut rest,
+            expected.num_field_elements(),
+        )
+        .expect_err("noncanonical fp128 value must fail");
+        assert!(error.to_string().contains("Fp128 out of range"));
     }
 
     #[test]

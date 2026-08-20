@@ -19,6 +19,7 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
+use akita_config::RecursiveCommitmentConfig;
 use akita_field::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
@@ -28,9 +29,9 @@ use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
-type Cfg = fp128::OneHot;
+type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 /// Concrete ring view used by the recursion artifact's fixed input schema.
-const SOURCE_VIEW_D: usize = 256;
+const SOURCE_VIEW_D: usize = 512;
 
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
@@ -94,8 +95,6 @@ fn akita_verify(input: &[u8]) -> u32 {
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     end_cycle_tracking("transcript_init");
 
-    let openings = [decoded.opening];
-
     // We call `batched_verify` directly (rather than the public
     // `AkitaCommitmentScheme::<Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
@@ -105,7 +104,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     // surface is `<Cfg>`-generic and routes every policy through `Cfg`
     // internally — no closures to thread through.
     start_cycle_tracking("akita_verify");
-    let statement = match decoded.verifier_statement(&openings) {
+    let statement = match decoded.verifier_statement() {
         Ok(statement) => statement,
         Err(_) => {
             end_cycle_tracking("akita_verify");

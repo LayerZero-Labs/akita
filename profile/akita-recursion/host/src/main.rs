@@ -18,6 +18,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use akita_config::proof_optimized::fp128;
+use akita_config::RecursiveCommitmentConfig;
 use akita_recursion_glue::{AkitaJoltInputs, MAX_JOLT_BLOB_BYTES};
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
@@ -28,9 +29,9 @@ use tracing_subscriber::EnvFilter;
 
 const TRUSTED_BENCHMARK_ARTIFACT_ENV: &str = "AKITA_RECURSION_TRUSTED_BENCHMARK_ARTIFACT";
 type F = fp128::Field;
-type Cfg = fp128::OneHot;
+type Cfg = RecursiveCommitmentConfig<fp128::OneHot>;
 /// Concrete ring view used by the recursion artifact's fixed input schema.
-const SOURCE_VIEW_D: usize = 256;
+const SOURCE_VIEW_D: usize = 512;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -94,7 +95,7 @@ fn load_blob(input: &Path) -> Result<Vec<u8>, String> {
             return Err(format!(
                 "verifier-input blob not found at `{}`.\n\
                      Generate one first with `akita-recursion-artifact`. For example:\n\n\
-                         AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact\n\n\
+                         AKITA_NUM_VARS=32 ./target/release/akita-recursion-artifact\n\n\
                      or, for a different blob path / arity:\n\n\
                          AKITA_NUM_VARS=32 AKITA_RECURSION_BLOB={} \\\n\
                              ./target/release/akita-recursion-artifact",
@@ -141,9 +142,8 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
     let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(blob)
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    let openings = [decoded.opening];
     let statement = decoded
-        .verifier_statement(&openings)
+        .verifier_statement()
         .map_err(|err| format!("strict input statement failed: {err}"))?;
     batched_verify::<Cfg, _>(
         &decoded.proof,
