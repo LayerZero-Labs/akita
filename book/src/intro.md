@@ -37,11 +37,10 @@ therefore protect the complete proof without replacing every other protocol in
 the system.
 
 Hash-based commitments provide one post-quantum path. They are well developed,
-but they tend to produce larger proofs. Standard hash-based provers also use
-additional memory that grows linearly with the polynomial size to store encoded
-data and a hash tree. Akita takes the lattice path. It uses structured lattice
-problems to obtain post-quantum security, compact proofs, and a commitment
-operation that can preserve sparse inputs.
+but they tend to produce larger proofs and require more prover memory. Akita
+takes the lattice path. It uses structured lattice problems to obtain
+post-quantum security, compact proofs, and a commitment operation that can
+preserve sparse inputs.
 
 ## What a polynomial commitment proves
 
