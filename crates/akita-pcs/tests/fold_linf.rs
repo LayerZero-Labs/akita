@@ -163,16 +163,18 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let num_vars = FOLD_LINF_E2E_NV;
-        let layout = OneHotCfg::resolve_catalog_row_for_opening(
-            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
-        )
-        .expect("layout")
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+            .expect("layout")
+            .schedule()
+            .root
+            .params
+            .final_group(
+                opening_batch
+                    .root_final_group_layout()
+                    .expect("final group layout"),
+            );
         let poly = make_onehot_poly(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);

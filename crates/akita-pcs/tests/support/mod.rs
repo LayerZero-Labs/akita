@@ -130,18 +130,68 @@ fn rebuild_group_output_matrices(
     Ok(())
 }
 
+/// Exactly the fields universal fold sizing reads.
+///
+/// Both a fold's own `CommittedGroupParams` and a standalone
+/// `GroupOpenPhaseParams` can supply these, and neither of them needs a
+/// `PolynomialGroupLayout` to do it. Naming the inputs is what lets the two
+/// callers keep the types they actually hold: routing a fold through
+/// `final_group_scalar` to reach a group would impose that helper's
+/// power-of-two source-length rule on a synthetic successor whose live ring
+/// element count is not a power of two.
+struct FoldDigitInputs<'a> {
+    d_a: usize,
+    log_basis_inner: u32,
+    log_basis_open: u32,
+    num_digits_inner: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    num_live_ring_elements_per_claim: usize,
+    opening_method: akita_types::OpeningMethod,
+    fold_challenge_config: &'a akita_challenges::SparseChallengeConfig,
+}
+
+impl<'a> FoldDigitInputs<'a> {
+    fn of_fold(params: &'a akita_types::CommittedGroupParams) -> Self {
+        Self {
+            d_a: params.inner_commit_matrix.ring_dimension(),
+            log_basis_inner: params.log_basis_inner,
+            log_basis_open: params.log_basis_open,
+            num_digits_inner: params.num_digits_inner,
+            num_positions_per_block: params.num_positions_per_block,
+            num_live_blocks: params.num_live_blocks,
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            opening_method: params.opening_method,
+            fold_challenge_config: &params.fold_challenge_config,
+        }
+    }
+
+    fn of_group(params: &'a akita_types::GroupOpenPhaseParams) -> Self {
+        Self {
+            d_a: params.profile.inner.matrix.ring_dimension(),
+            log_basis_inner: params.profile.inner.digits.log_basis,
+            log_basis_open: params.opening.log_basis_open,
+            num_digits_inner: params.profile.inner.digits.num_digits,
+            num_positions_per_block: params.profile.blocks.positions_per_block,
+            num_live_blocks: params.profile.blocks.live_blocks,
+            num_live_ring_elements_per_claim: params.profile.blocks.live_ring_elements_per_claim,
+            opening_method: params.opening.opening_method,
+            fold_challenge_config: &params.opening.fold_challenge_config,
+        }
+    }
+}
+
 fn universal_fold_digit_depth(
-    params: &akita_types::GroupOpenPhaseParams,
+    params: FoldDigitInputs<'_>,
     field_bits: u32,
     num_claims: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
-    let d_a = params.inner_commit_matrix_params().ring_dimension();
-    let witness_norms = FoldWitnessNorms::bounded(params.log_basis_inner(), d_a);
-    let challenge_config = params.fold_challenge_config();
+    let d_a = params.d_a;
+    let witness_norms = FoldWitnessNorms::bounded(params.log_basis_inner, d_a);
     let width_s = params
-        .num_positions_per_block()
-        .checked_mul(params.num_digits_inner())
+        .num_positions_per_block
+        .checked_mul(params.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("synthetic fold width overflow".into()))?;
     let num_fold_coeffs = width_s
         .checked_mul(d_a)
@@ -149,21 +199,21 @@ fn universal_fold_digit_depth(
         .ok_or_else(|| AkitaError::InvalidSetup("synthetic fold response overflow".into()))?;
     BalancedSignedDigitFoldPolicy::universal(field_bits).num_digits_fold(HonestFoldSizingQuery {
         ring_dimension: d_a,
-        challenge_dimension: match params.opening_method() {
+        challenge_dimension: match params.opening_method {
             akita_types::OpeningMethod::EvaluationTrace => d_a,
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => challenge_subring_dimension,
         },
         num_claims,
-        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim(),
-        num_live_blocks: params.num_live_blocks(),
-        num_positions_per_block: params.num_positions_per_block(),
+        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+        num_live_blocks: params.num_live_blocks,
+        num_positions_per_block: params.num_positions_per_block,
         num_chunks,
         num_fold_coeffs,
         witness_norms,
-        log_basis_response: params.log_basis_open(),
-        challenge_config: &challenge_config,
+        log_basis_response: params.log_basis_open,
+        challenge_config: params.fold_challenge_config,
     })
 }
 
@@ -446,11 +496,8 @@ where
         successor_witness.num_live_blocks = successor_witness
             .num_live_ring_elements_per_claim
             .div_ceil(successor_witness.num_positions_per_block);
-        let successor_group = successor_witness
-            .final_group_scalar()
-            .expect("scalar final group");
         successor_witness.num_digits_fold = universal_fold_digit_depth(
-            &successor_group,
+            FoldDigitInputs::of_fold(successor_witness),
             policy.decomposition.field_bits(),
             1,
             successor_witness.witness_chunk.num_chunks,
@@ -552,7 +599,7 @@ where
                     )
                 })?;
         prefix_params.opening.num_digits_fold = universal_fold_digit_depth(
-            &prefix_params,
+            FoldDigitInputs::of_group(&prefix_params),
             policy.decomposition.field_bits(),
             1,
             successor_witness.witness_chunk.num_chunks,

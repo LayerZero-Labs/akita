@@ -280,10 +280,10 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         )
         .expect("full-width dense profile");
         assert!(
-            bounded_commitment.profile.num_digits_inner < full_width_profile.num_digits_inner,
+            bounded_commitment.profile.inner.digits.num_digits < full_width_profile.inner.digits.num_digits,
             "bounded precommit digit depth {} must be below full-width {}",
-            bounded_commitment.profile.num_digits_inner,
-            full_width_profile.num_digits_inner,
+            bounded_commitment.profile.inner.digits.num_digits,
+            full_width_profile.inner.digits.num_digits,
         );
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)
@@ -355,14 +355,14 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .expect("mixed-bound selection must resolve the one-precommit entry");
         assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
         assert_eq!(
-            precommitted.commitment.layout.num_digits_inner,
-            bounded_commitment.profile.num_digits_inner,
+            precommitted.profile.inner.digits.num_digits,
+            bounded_commitment.profile.inner.digits.num_digits,
             "the resolved row must carry the bounded producer's own digit depth"
         );
         // The root itself is planned at the one-hot bound, so the two groups
         // really do disagree on their committed-source depth.
         assert_eq!(
-            schedule.root.params.final_group.commitment.num_digits_inner,
+            schedule.root.params.num_digits_inner,
             1,
         );
 
@@ -666,8 +666,8 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         )
         .expect("bounded profile");
         let (_, representable) = akita_types::sis::checked_balanced_digit_representable_bounds(
-            profile.log_basis_inner,
-            profile.num_digits_inner,
+            profile.inner.digits.log_basis,
+            profile.inner.digits.num_digits,
         );
         assert!(
             representable.expect("shipped geometry fits u128") > positive_bound,

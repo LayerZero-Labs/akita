@@ -25,7 +25,9 @@ use crate::CommitmentConfig;
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
 /// inputs (e.g. `OneHotPoly`) so the `num_positions_per_block` / `num_live_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
-/// callers always go through `Cfg::resolve_catalog_row_for_opening(&opening_batch).map(|row| row.schedule().root.params.final_group.commitment.clone())`
+/// callers always go through
+/// `Cfg::resolve_catalog_row_for_opening(&opening_batch)` and ask the resolved
+/// root for its final group.
 /// instead.
 ///
 /// # Errors

@@ -760,7 +760,7 @@ mod sealed {
 /// forcing it into this generic would reintroduce exactly the `Option`-shaped
 /// tag that the parameter-consolidation plan rejects. What the three roles share
 /// is the audit code, which they already do:
-/// [`audit_commit_matrix_fields`] and [`min_rank_commit_matrix_fields`] serve all
+/// `audit_commit_matrix_fields` and `min_rank_commit_matrix_fields` serve all
 /// three.
 pub trait LinfMatrixRole: sealed::Sealed {
     /// The protocol role this marker stands for.

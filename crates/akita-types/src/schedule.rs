@@ -494,7 +494,9 @@ impl FoldSchedule {
             .map(|group| {
                 let commitment = group;
                 OpeningExecutionGroup {
-                    params: *commitment,
+                    opening_method: commitment.opening.opening_method,
+                    inner_commit_matrix: &commitment.profile.inner.matrix,
+                    fold_challenge_config: &commitment.opening.fold_challenge_config,
                     // Precommitted groups are canonical by admission.
                     source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
@@ -508,7 +510,9 @@ impl FoldSchedule {
             })
             .collect();
         root_groups.push(OpeningExecutionGroup {
-            params: root_final.final_group_scalar()?,
+            opening_method: root_final.opening_method,
+            inner_commit_matrix: &root_final.inner_commit_matrix,
+            fold_challenge_config: &root_final.fold_challenge_config,
             source_encoding: root_final.source_encoding,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                 root_final.opening_method,
@@ -525,13 +529,17 @@ impl FoldSchedule {
             // An incoming setup prefix is group 0 in canonical order.
             if let Some(prefix) = &step.params.setup_prefix {
                 groups.push(OpeningExecutionGroup {
-                    params: *prefix,
+                    opening_method: prefix.opening.opening_method,
+                    inner_commit_matrix: &prefix.profile.inner.matrix,
+                    fold_challenge_config: &prefix.opening.fold_challenge_config,
                     source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
                     expected_source_encoding: None,
                 });
             }
             groups.push(OpeningExecutionGroup {
-                params: witness.final_group_scalar()?,
+                opening_method: witness.opening_method,
+                inner_commit_matrix: &witness.inner_commit_matrix,
+                fold_challenge_config: &witness.fold_challenge_config,
                 source_encoding: witness.source_encoding,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
                     witness.opening_method,
@@ -555,11 +563,24 @@ impl FoldSchedule {
 /// must have used.
 ///
 /// Formerly a borrowed view over `&dyn LevelParamsLike`, needed because a fold's
-/// final group and a precommitted group had different types. Both are
-/// `GroupOpenPhaseParams` now, and it is `Copy`, so this carries values.
+/// final group and a precommitted group had different types. Rather than replace
+/// the trait object with a group, this names the three things admission actually
+/// reads, so a fold and a standalone group can each supply them from what they
+/// already hold.
 #[derive(Clone, Copy)]
-struct OpeningExecutionGroup {
-    params: crate::GroupOpenPhaseParams,
+struct OpeningExecutionGroup<'a> {
+    /// What admission reads off the group itself.
+    ///
+    /// Carried directly rather than as a whole group, for the same reason
+    /// `source_encoding` is: a fold's own new witness has no
+    /// `PolynomialGroupLayout` of its own, so handing this check a group would
+    /// mean inventing one. `final_group_scalar` is the natural way to invent it
+    /// and it rejects any fold whose live-ring-element count times `d_a` is not
+    /// a power of two — true of every multi-chunk fold, and never a condition
+    /// this admission check meant to impose.
+    opening_method: OpeningMethod,
+    inner_commit_matrix: &'a crate::InnerCommitMatrixParams,
+    fold_challenge_config: &'a akita_challenges::SparseChallengeConfig,
     /// Encoding the committing fold actually used for this group.
     ///
     /// Carried explicitly rather than read from `params`: a group's own
@@ -573,7 +594,7 @@ struct OpeningExecutionGroup {
 fn validate_level_opening_execution(
     absolute_level: usize,
     extension_degree: usize,
-    groups: &[OpeningExecutionGroup],
+    groups: &[OpeningExecutionGroup<'_>],
 ) -> Result<(), AkitaError> {
     // Which group is `first` does not affect the accept/reject outcome. The
     // family taken from it is checked against *every* group below, so for a
@@ -586,7 +607,7 @@ fn validate_level_opening_execution(
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
     let packing_family = matches!(
-        first.params.opening_method(),
+        first.opening_method,
         OpeningMethod::SubringCoefficientPacking { .. }
     );
     let packing_required = absolute_level <= 1;
@@ -602,7 +623,7 @@ fn validate_level_opening_execution(
     }
     if groups.iter().any(|group| {
         matches!(
-            group.params.opening_method(),
+            group.opening_method,
             OpeningMethod::SubringCoefficientPacking { .. }
         ) != packing_family
     }) {
@@ -611,7 +632,7 @@ fn validate_level_opening_execution(
         ));
     }
     for group in groups {
-        let opening_method = group.params.opening_method();
+        let opening_method = group.opening_method;
         match (opening_method, group.source_encoding) {
             (
                 OpeningMethod::EvaluationTrace,
@@ -661,13 +682,13 @@ fn validate_level_opening_execution(
                 "coefficient-packing challenge subring is not in the production ladder".into(),
             )
         })?;
-        let matrix = group.params.inner_commit_matrix_params();
+        let matrix = group.inner_commit_matrix;
         if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
             return Err(AkitaError::InvalidSetup(
                 "coefficient packing requires the L-infinity A security route".into(),
             ));
         }
-        if group.params.fold_challenge_config() != expected {
+        if *group.fold_challenge_config != expected {
             return Err(AkitaError::InvalidSetup(
                 "coefficient packing requires its audited production challenge family".into(),
             ));

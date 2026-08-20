@@ -396,7 +396,7 @@ impl CommittedGroupParams {
     /// This fold's block triple.
     ///
     /// Step 4 makes this a stored field. Until then it is assembled on demand,
-    /// which is free: [`BlockGeometry`] is three `usize`s and `Copy`.
+    /// which is free: [`crate::BlockGeometry`] is three `usize`s and `Copy`.
     #[inline]
     #[must_use]
     pub fn blocks(&self) -> crate::BlockGeometry {
