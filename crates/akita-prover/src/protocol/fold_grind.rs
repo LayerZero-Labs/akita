@@ -652,7 +652,8 @@ mod tests {
             &mut draw,
             &params.final_group(akita_types::PolynomialGroupLayout::singleton(
                 params
-                    .num_live_ring_elements_per_claim
+                    .blocks
+                    .live_ring_elements_per_claim
                     .next_power_of_two()
                     .trailing_zeros() as usize,
             )),
@@ -711,7 +712,8 @@ mod tests {
                 &mut draw,
                 &params.final_group(akita_types::PolynomialGroupLayout::singleton(
                     params
-                        .num_live_ring_elements_per_claim
+                        .blocks
+                        .live_ring_elements_per_claim
                         .next_power_of_two()
                         .trailing_zeros() as usize,
                 )),

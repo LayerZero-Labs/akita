@@ -102,7 +102,7 @@ fn rebuild_group_output_matrices(
     let dims = params.role_dims();
     let outer_width = akita_types::CommitmentSliceGeometry::try_new(
         params.outer_slice_count,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         num_claims,
         params.inner.matrix.output_rank(),
         params.outer.digits.num_digits,
@@ -120,7 +120,7 @@ fn rebuild_group_output_matrices(
         dims.d_a(),
         dims.d_d(),
         params.num_digits_open,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         num_claims,
     )?;
     params.open_commit_matrix = akita_types::OpenCommitMatrixParams::try_new_with_min_rank(
@@ -158,9 +158,9 @@ impl<'a> FoldDigitInputs<'a> {
             log_basis_inner: params.inner.digits.log_basis,
             log_basis_open: params.log_basis_open,
             num_digits_inner: params.inner.digits.num_digits,
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            num_positions_per_block: params.blocks.positions_per_block,
+            num_live_blocks: params.blocks.live_blocks,
+            num_live_ring_elements_per_claim: params.blocks.live_ring_elements_per_claim,
             opening_method: params.opening_method,
             fold_challenge_config: &params.fold_challenge_config,
         }
@@ -477,7 +477,7 @@ where
                         "successor packing subring is not in the production ladder".into(),
                     )
                 })?;
-        successor_witness.num_live_ring_elements_per_claim =
+        successor_witness.blocks.live_ring_elements_per_claim =
             root_output_witness_len.div_ceil(successor_witness.d_a());
 
         let root_setup_natural_len = akita_types::active_setup_field_len(root, &opening_batch)?;
@@ -492,10 +492,11 @@ where
                     "packing setup prefix does not align to the successor A ring".into(),
                 )
             })?;
-        successor_witness.num_positions_per_block = prefix_ring_slots.next_power_of_two();
-        successor_witness.num_live_blocks = successor_witness
-            .num_live_ring_elements_per_claim
-            .div_ceil(successor_witness.num_positions_per_block);
+        successor_witness.blocks.positions_per_block = prefix_ring_slots.next_power_of_two();
+        successor_witness.blocks.live_blocks = successor_witness
+            .blocks
+            .live_ring_elements_per_claim
+            .div_ceil(successor_witness.blocks.positions_per_block);
         successor_witness.num_digits_fold = universal_fold_digit_depth(
             FoldDigitInputs::of_fold(successor_witness),
             policy.decomposition.field_bits(),
@@ -503,7 +504,8 @@ where
             successor_witness.witness_chunk.num_chunks,
         )?;
         let successor_a_width = successor_witness
-            .num_positions_per_block
+            .blocks
+            .positions_per_block
             .checked_mul(successor_witness.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("packing successor A width overflow".into()))?;
         let mut successor_a_key =

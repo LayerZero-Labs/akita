@@ -71,7 +71,7 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
 /// Derive the trace-weight layout for the `e_hat` digit segment.
 ///
 /// `num_trace_blocks` is the logical number of folded opening blocks addressed
-/// by the trace term. Recursive singleton folds use `lp.num_live_blocks`; batched
+/// by the trace term. Recursive singleton folds use `lp.blocks.live_blocks`; batched
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &CommittedGroupParams,
@@ -393,7 +393,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        num_live_blocks: lp.num_live_blocks,
+        num_live_blocks: lp.blocks.live_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,

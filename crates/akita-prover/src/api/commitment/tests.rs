@@ -180,7 +180,7 @@ fn commitment_request_binds_polynomial_count_in_both_directions() {
     let mut two_polynomials = one_polynomial.clone();
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         two_polynomials.outer_slice_count,
-        two_polynomials.num_live_blocks,
+        two_polynomials.blocks.live_blocks,
         2,
         two_polynomials.inner.matrix.output_rank(),
         two_polynomials.outer.digits.num_digits,
@@ -421,13 +421,13 @@ fn commit_unsliced_reference(
         prepared,
         views,
         plan,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         params.outer.digits.num_digits,
         params.outer.digits.log_basis,
     )?;
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         akita_types::CommitmentSliceCount::ONE,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         polys.len(),
         params.inner.matrix.output_rank(),
         params.outer.digits.num_digits,
@@ -624,11 +624,13 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     let profile = |params: &CommittedGroupParams| GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
         group,
+
         blocks: akita_types::BlockGeometry::new(
-            params.num_live_ring_elements_per_claim,
-            params.num_positions_per_block,
-            params.num_live_blocks,
+            params.blocks.live_ring_elements_per_claim,
+            params.blocks.positions_per_block,
+            params.blocks.live_blocks,
         ),
+
         outer_slice_count: params.outer_slice_count,
         inner: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(

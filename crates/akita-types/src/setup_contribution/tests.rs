@@ -39,7 +39,7 @@ impl TestSetupInputs {
         self.level_params.inner.matrix.output_rank()
     }
     fn num_positions_per_block(&self) -> usize {
-        self.level_params.num_positions_per_block
+        self.level_params.blocks.positions_per_block
     }
     fn depth_open(&self) -> usize {
         self.level_params.num_digits_open

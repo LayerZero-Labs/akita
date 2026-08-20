@@ -93,8 +93,8 @@ where
             let num_ring_elems = committed_coeff_len / D_A;
             tracing::debug!(
                 num_ring_elems,
-                num_live_blocks = commit_params.num_live_blocks,
-                num_positions_per_block = commit_params.num_positions_per_block,
+                num_live_blocks = commit_params.blocks.live_blocks,
+                num_positions_per_block = commit_params.blocks.positions_per_block,
                 depth_commit = commit_params.inner.digits.num_digits,
                 depth_open = commit_params.num_digits_open,
                 position_index_bits = commit_params.position_index_bits(),
@@ -112,11 +112,11 @@ where
                 .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
-                commit_params.num_live_blocks,
+                commit_params.blocks.live_blocks,
                 commit_params.inner.matrix.output_rank(),
             )?;
             let n_a = commit_params.inner.matrix.output_rank();
-            let blocks = (0..commit_params.num_live_blocks)
+            let blocks = (0..commit_params.blocks.live_blocks)
                 .map(|block| inner.block_rows::<D_A>(block, n_a))
                 .collect::<Result<Vec<_>, _>>()?;
             dispatch_for_field!(

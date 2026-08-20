@@ -491,9 +491,9 @@ the descriptor fixtures as the oracle; only slice 4 changes what is stored.
    `inner_commit_matrix` became `inner: InnerRoleParams`, and the same for
    `outer`. This is the shape `GroupCommitPhaseParams` and `TerminalFoldParams`
    already use, so no second rename is waiting in slice 3.
-2. **Geometry.** The three `num_live_*` / `num_positions_per_block` fields become
-   `blocks: BlockGeometry`. ~611 sites. The `blocks()` accessor already builds
-   exactly this value, so it stops being a view and becomes the storage.
+2. **Geometry — landed.** The three `num_live_*` / `num_positions_per_block`
+   fields became `blocks: BlockGeometry`, and the `blocks()` accessor that used
+   to construct one now reads storage.
 3. **Opening role.** `log_basis_open` + `num_digits_open` + `open_commit_matrix`
    regroup the same way, keeping the shared-D ownership established in 5b.
 4. **The uniform list.** With 1–3 done, a fold's own group *is* a
@@ -537,6 +537,31 @@ compile in between and conclude the field is used in more places than it is.
    receiver is a `CommittedGroupParams` and the value is a candidate that keeps
    the flat name. Only the receiver changes. Read such lines rather than
    substituting.
+6. **Slice 2 added three hazards slice 1 did not have**, all from the same
+   cause: `blocks` is a *shared* field name, so both directions of the rewrite
+   can be wrong.
+   - **Locals, not fields.** `let num_live_blocks = ...` followed by
+     `(0..num_live_blocks)` gets rewritten into `(0..blocks.live_blocks)`. A
+     read rewrite must not touch a bare identifier that is a local binding.
+   - **Struct definitions.** A literal transformer will happily rewrite a
+     `struct` *declaration* whose fields share the names, producing
+     `blocks: BlockGeometry::new(usize, usize, usize)`. Skip any block that is a
+     declaration rather than a literal.
+   - **One name, two types, one function apart.** In the pcs test support module
+     `params` is a `CommittedGroupParams` inside `of_fold` and a local
+     `FoldDigitInputs` inside `universal_fold_digit_depth`. File-wide edits
+     cannot be right; scope them per function.
+   The reliable tool for the tail is a *forward* line-targeted pass keyed on the
+   error text, applying the rewrite only where the reported type is one that
+   owns the grouped field (`CommittedGroupParams`, `GroupCommitPhaseParams`,
+   `TerminalFoldParams`). That converged slice 2's last 16 lines in one pass
+   after hand edits had stalled.
+7. **Do not let a bulk transformer and a bulk reverter both run in a loop.**
+   They oscillate: the transformer's context window sees a neighbouring literal
+   of the owning type and re-converts what the reverter just undid. Discriminate
+   on a field unique to the owner -- `payload_mode` for `CommittedGroupParams`,
+   `version` for `GroupCommitPhaseParams` -- or hand-fix the last few.
+
 5. What remains is the real work: struct-literal construction sites where the
    formerly separate fields collapse into one
    `RoleParams::new(GadgetDigits::new(log_basis, num_digits), matrix)`. Slice 1

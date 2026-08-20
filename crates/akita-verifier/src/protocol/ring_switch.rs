@@ -557,7 +557,7 @@ where
     validate_log_basis(log_basis_inner)?;
     validate_log_basis(log_basis_outer)?;
     validate_log_basis(log_basis_open)?;
-    let num_live_blocks = lp.num_live_blocks;
+    let num_live_blocks = lp.blocks.live_blocks;
     let total_blocks = num_live_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -567,11 +567,15 @@ where
             actual: challenges.len(),
         });
     }
-    let num_positions_per_block = lp.num_positions_per_block;
+    let num_positions_per_block = lp.blocks.positions_per_block;
     let n_a = lp.inner.matrix.output_rank();
 
-    let c_alphas =
-        prepare_challenge_evals::<F, E>(challenges, &alpha_pows, num_claims, lp.num_live_blocks)?;
+    let c_alphas = prepare_challenge_evals::<F, E>(
+        challenges,
+        &alpha_pows,
+        num_claims,
+        lp.blocks.live_blocks,
+    )?;
     let opening_a_evals = match ring_multiplier_point {
         Some(point) => (0..num_positions_per_block)
             .map(|idx| point.eval_position_at::<E>(idx, &alpha_pows))

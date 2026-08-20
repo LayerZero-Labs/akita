@@ -1090,7 +1090,7 @@ mod tests {
                 .root
                 .params
                 .clone();
-                let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
+                let num_coeffs = lp.blocks.live_blocks * lp.blocks.positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
@@ -1106,7 +1106,7 @@ mod tests {
                         .unwrap();
                     let inner = inner_group.pop().expect("singleton commit result");
                     let n_a = lp.inner.matrix.output_rank();
-                    let blocks = (0..lp.num_live_blocks)
+                    let blocks = (0..lp.blocks.live_blocks)
                         .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
                         .collect::<Vec<_>>();
                     let digits = akita_prover::kernels::linear::decompose_commit_blocks_into::<
@@ -1121,7 +1121,7 @@ mod tests {
                     .unwrap();
                     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
                         lp.outer_slice_count,
-                        lp.num_live_blocks,
+                        lp.blocks.live_blocks,
                         1,
                         n_a,
                         lp.outer.digits.num_digits,

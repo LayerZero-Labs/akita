@@ -446,8 +446,8 @@ mod tests {
             params.inner.digits.log_basis,
         );
         params.inner.digits.num_digits = setup_num_digits;
-        params.num_positions_per_block = 1;
-        params.num_live_blocks = 1;
+        params.blocks.positions_per_block = 1;
+        params.blocks.live_blocks = 1;
         let inner = params.inner.matrix;
         let inner_key = inner
             .sis_table_key()
@@ -457,7 +457,7 @@ mod tests {
             inner_key.table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
-            params.num_positions_per_block * params.inner.digits.num_digits,
+            params.blocks.positions_per_block * params.inner.digits.num_digits,
             inner_key.coeff_linf_bound,
             inner.ring_dimension(),
         );

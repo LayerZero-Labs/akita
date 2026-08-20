@@ -578,8 +578,8 @@ where
                 poly,
                 &final_point,
                 main_params.d_a(),
-                main_params.num_positions_per_block,
-                main_params.num_live_blocks,
+                main_params.blocks.positions_per_block,
+                main_params.blocks.live_blocks,
             )
         })
         .collect();
@@ -808,7 +808,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const BATCH_SIZE: usize = 2;
 
     let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
-    let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
+    let total_field = (layout.blocks.live_blocks * layout.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     let total_chunks = total_field / BENCH_ONEHOT_K;
@@ -828,8 +828,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 poly,
                 &point,
                 layout.d_a(),
-                layout.num_positions_per_block,
-                layout.num_live_blocks,
+                layout.blocks.positions_per_block,
+                layout.blocks.live_blocks,
             )
         })
         .collect();

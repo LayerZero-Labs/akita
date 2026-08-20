@@ -342,11 +342,13 @@ fn deserialize_committed_group_profile<R: Read>(
     Ok(GroupCommitPhaseParams {
         version,
         group,
+
         blocks: crate::BlockGeometry::new(
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
         ),
+
         outer_slice_count,
         inner: crate::RoleParams::new(
             crate::GadgetDigits::new(log_basis_inner, num_digits_inner),
@@ -1162,11 +1164,13 @@ pub fn setup_prefix_precommitted_params(
                 profile: GroupCommitPhaseParams {
                     version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+
                     blocks: crate::BlockGeometry::new(
                         ring_slots,
                         num_positions_per_block,
                         num_live_blocks,
                     ),
+
                     outer_slice_count: prefix_params.outer_slice_count,
                     inner: crate::RoleParams::new(
                         crate::GadgetDigits::new(

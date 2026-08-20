@@ -152,7 +152,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             assert!(
                 root.open_commit_matrix.input_width()
                     < root.num_digits_open
-                        * root.num_live_blocks
+                        * root.blocks.live_blocks
                         * root.d_a().div_ceil(root.role_dims().d_d()),
                 "the fixed row must shrink the shared D input"
             );
@@ -236,7 +236,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     let mut source_digits = Vec::new();
                     for coefficients in evaluations
                         .chunks_exact(D_A)
-                        .take(root.num_positions_per_block)
+                        .take(root.blocks.positions_per_block)
                     {
                         source_digits.extend(
                             CyclotomicRing::<PackingField, D_A>::from_coefficients(
@@ -250,7 +250,7 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                     }
                     let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
                     let output_rank = root.inner.matrix.output_rank();
-                    assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
+                    assert_eq!(hint_rows.len(), output_rank * root.blocks.live_blocks);
                     for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
                         let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
                             CyclotomicRing::zero(),

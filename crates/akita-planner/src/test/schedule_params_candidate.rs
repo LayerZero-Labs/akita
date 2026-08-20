@@ -13,11 +13,8 @@ fn synthetic_profile(
     GroupCommitPhaseParams {
         version: GroupCommitPhaseParams::VERSION,
         group,
-        blocks: akita_types::BlockGeometry::new(
-            params.num_live_ring_elements_per_claim,
-            params.num_positions_per_block,
-            params.num_live_blocks,
-        ),
+        blocks: params.blocks,
+
         outer_slice_count: params.outer_slice_count,
         inner: akita_types::RoleParams::new(
             akita_types::GadgetDigits::new(
@@ -275,7 +272,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
                 dimensions.d_a(),
                 dimensions.d_d(),
                 params.num_digits_open,
-                params.num_live_blocks,
+                params.blocks.live_blocks,
                 1,
             )
             .unwrap()
@@ -323,7 +320,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             params.d_a(),
             d_d,
             params.num_digits_open,
-            params.num_live_blocks,
+            params.blocks.live_blocks,
             1,
         )
         .unwrap();
@@ -522,7 +519,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 dimensions.d_a(),
                 dimensions.d_d(),
                 params.num_digits_open,
-                params.num_live_blocks,
+                params.blocks.live_blocks,
                 key.final_group.num_polynomials(),
             )
             .unwrap()
@@ -578,7 +575,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             params.d_a(),
             d_d,
             params.num_digits_open,
-            params.num_live_blocks,
+            params.blocks.live_blocks,
             grouped_key.final_group.num_polynomials(),
         )
         .unwrap();
@@ -852,9 +849,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count,
             witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
@@ -896,9 +895,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
@@ -927,9 +928,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
@@ -969,9 +972,11 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
         num_claims,
+
         num_live_ring_elements_per_claim: 64,
-        num_live_blocks: 8,
         num_positions_per_block: 8,
+        num_live_blocks: 8,
+
         num_chunks: 1,
         outer_slice_count: akita_types::CommitmentSliceCount::ONE,
         witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),

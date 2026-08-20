@@ -60,8 +60,8 @@ fn fold_challenge_config() -> SparseChallengeConfig {
 
 fn opening_point(lp: &CommittedGroupParams) -> RingOpeningPoint<F> {
     RingOpeningPoint {
-        position_weights: vec![F::zero(); lp.num_positions_per_block],
-        live_block_weights: vec![F::zero(); lp.num_live_blocks],
+        position_weights: vec![F::zero(); lp.blocks.positions_per_block],
+        live_block_weights: vec![F::zero(); lp.blocks.live_blocks],
     }
 }
 
@@ -82,7 +82,7 @@ fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
 }
 
 fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
-    let total = lp.num_live_blocks * num_claims;
+    let total = lp.blocks.live_blocks * num_claims;
     Challenges::from_sparse(
         vec![
             SparseChallenge {
@@ -91,7 +91,7 @@ fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
             };
             total
         ],
-        lp.num_live_blocks,
+        lp.blocks.live_blocks,
         num_claims,
     )
     .expect("challenges")
@@ -99,7 +99,7 @@ fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
 
 fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
     let config = lp.fold_challenge_config;
-    let sparse = (0..lp.num_live_blocks * num_claims)
+    let sparse = (0..lp.blocks.live_blocks * num_claims)
         .map(|_| SparseChallenge {
             positions: (0..config.weight())
                 .map(|position| position as u32)
@@ -110,7 +110,7 @@ fn packing_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenge
                 .collect(),
         })
         .collect();
-    Challenges::from_sparse(sparse, lp.num_live_blocks, num_claims).expect("packing challenges")
+    Challenges::from_sparse(sparse, lp.blocks.live_blocks, num_claims).expect("packing challenges")
 }
 
 fn evaluation_trace_openings(
@@ -228,7 +228,7 @@ fn resolve_single_chunk_matches_legacy_offsets() {
     // The shared r tail follows the unit's compact z, e, and t ranges.
     assert_eq!(resolved.r_range().start, unit.t_range().end);
     assert_eq!(unit.global_block_start(), 0);
-    assert_eq!(unit.num_live_blocks(), lp.num_live_blocks);
+    assert_eq!(unit.num_live_blocks(), lp.blocks.live_blocks);
 }
 
 #[test]
@@ -246,27 +246,30 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
             .segment_layout(&lp, None)
             .expect("layout");
         assert_eq!(layout.num_chunks_for_group(0), w);
-        let blocks_per_chunk = lp.num_live_blocks / w;
+        let blocks_per_chunk = lp.blocks.live_blocks / w;
 
         // Partitioned e/t lengths sum to the single-machine totals; z replicated.
         let e_sum: usize = layout.units().iter().map(|unit| unit.e_range().len()).sum();
         let t_sum: usize = layout.units().iter().map(|unit| unit.t_range().len()).sum();
         assert_eq!(
             e_sum,
-            lp.num_digits_open * lp.num_live_blocks * num_claims * D
+            lp.num_digits_open * lp.blocks.live_blocks * num_claims * D
         );
         assert_eq!(
             t_sum,
             lp.outer.digits.num_digits
                 * lp.inner.matrix.output_rank()
-                * lp.num_live_blocks
+                * lp.blocks.live_blocks
                 * num_claims
                 * D
         );
         for unit in layout.units() {
             assert_eq!(
                 unit.z_range().len(),
-                lp.num_positions_per_block * lp.inner.digits.num_digits * lp.num_digits_fold() * D
+                lp.blocks.positions_per_block
+                    * lp.inner.digits.num_digits
+                    * lp.num_digits_fold()
+                    * D
             );
         }
 
@@ -283,7 +286,7 @@ fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         // Block windows tile [0, num_live_blocks).
         assert_eq!(
             layout.units().last().unwrap().global_block_start() + blocks_per_chunk,
-            lp.num_live_blocks
+            lp.blocks.live_blocks
         );
     }
 }
@@ -710,9 +713,9 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
                 positions: Vec::new().into(),
                 coeffs: Vec::new().into(),
             };
-            lp.num_live_blocks
+            lp.blocks.live_blocks
         ],
-        lp.num_live_blocks,
+        lp.blocks.live_blocks,
         1,
     )
     .expect("structurally valid zero shell");
@@ -728,9 +731,9 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
                     .chain((1..config.weight()).map(|_| 1))
                     .collect(),
             };
-            lp.num_live_blocks
+            lp.blocks.live_blocks
         ],
-        lp.num_live_blocks,
+        lp.blocks.live_blocks,
         1,
     )
     .expect("structurally valid wrong shell");
@@ -767,7 +770,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     assert_eq!(unit.e_geometry().physical_coefficient_width(), 128);
 
     let depth_open = lp.num_digits_open;
-    let blocks = lp.num_live_blocks;
+    let blocks = lp.blocks.live_blocks;
     let role_subcolumns = packing_geometry.partial_base_field_width() / PACK_D_D;
     let source = (0..blocks * role_subcolumns * depth_open)
         .map(|index| marker::<PACK_D_D>(700 + index))

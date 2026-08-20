@@ -38,7 +38,7 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 /// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
 /// [`akita_challenges::Challenges`] set with
-/// `lp.num_live_blocks`/`num_total_polynomials`.
+/// `lp.blocks.live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///

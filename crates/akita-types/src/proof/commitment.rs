@@ -445,11 +445,13 @@ where
         let descriptor = GroupCommitPhaseParams {
             version,
             group,
+
             blocks: crate::BlockGeometry::new(
                 num_live_ring_elements_per_claim,
                 num_positions_per_block,
                 num_live_blocks,
             ),
+
             outer_slice_count,
             inner: crate::RoleParams::new(
                 crate::GadgetDigits::new(log_basis_inner, num_digits_inner),

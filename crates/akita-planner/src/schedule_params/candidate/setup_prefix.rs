@@ -102,8 +102,9 @@ impl SetupPrefixCandidateContext<'_> {
             dimensions: self.dimensions,
             num_claims: 1,
             num_live_ring_elements_per_claim: self.ring_slots,
-            num_live_blocks: split.num_live_blocks,
             num_positions_per_block: split.num_positions_per_block,
+            num_live_blocks: split.num_live_blocks,
+
             num_chunks: self.num_chunks,
             witness_norms: FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
             log_basis_open: self.log_basis_open,
@@ -136,11 +137,13 @@ impl SetupPrefixCandidateContext<'_> {
         let profile = GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
+
             blocks: akita_types::BlockGeometry::new(
                 self.ring_slots,
                 split.num_positions_per_block,
                 split.num_live_blocks,
             ),
+
             outer_slice_count,
             inner: akita_types::RoleParams::new(
                 akita_types::GadgetDigits::new(split.log_basis_inner, split.num_digits_inner),

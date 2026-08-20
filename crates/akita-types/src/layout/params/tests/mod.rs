@@ -169,9 +169,9 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 fn with_decomp_derives_exact_live_block_geometry() {
     let lp = sample_params_only().with_decomp(8, 17, 2, 2, 2).unwrap();
 
-    assert_eq!(lp.num_live_ring_elements_per_claim, 17);
-    assert_eq!(lp.num_positions_per_block, 8);
-    assert_eq!(lp.num_live_blocks, 3);
+    assert_eq!(lp.blocks.live_ring_elements_per_claim, 17);
+    assert_eq!(lp.blocks.positions_per_block, 8);
+    assert_eq!(lp.blocks.live_blocks, 3);
     assert_eq!(lp.position_index_bits(), 3);
     assert_eq!(lp.block_index_bits(), 2);
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);
@@ -194,10 +194,10 @@ fn with_layout_keeps_self_ranks() {
     assert_eq!(lp.inner.matrix.output_rank(), 2);
     assert_eq!(lp.outer.matrix.output_rank(), 4);
     assert_eq!(lp.open_commit_matrix.output_rank(), 3);
-    assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
+    assert_eq!(lp.blocks.live_blocks, layout_lp.blocks.live_blocks);
     assert_eq!(
-        lp.num_positions_per_block,
-        layout_lp.num_positions_per_block
+        lp.blocks.positions_per_block,
+        layout_lp.blocks.positions_per_block
     );
     assert_eq!(lp.challenge_l1_mass(), 3);
     assert_eq!(

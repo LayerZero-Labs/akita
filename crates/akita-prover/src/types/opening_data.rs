@@ -455,11 +455,13 @@ mod tests {
         GroupCommitPhaseParams {
             version: GroupCommitPhaseParams::VERSION,
             group,
+
             blocks: akita_types::BlockGeometry::new(
-                params.num_live_ring_elements_per_claim,
-                params.num_positions_per_block,
-                params.num_live_blocks,
+                params.blocks.live_ring_elements_per_claim,
+                params.blocks.positions_per_block,
+                params.blocks.live_blocks,
             ),
+
             outer_slice_count: params.outer_slice_count,
             inner: akita_types::RoleParams::new(
                 akita_types::GadgetDigits::new(

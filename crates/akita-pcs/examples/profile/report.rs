@@ -315,6 +315,7 @@ struct PlannedGroupReport {
     num_live_ring_elements_per_claim: usize,
     num_live_blocks: usize,
     num_positions_per_block: usize,
+
     block_index_domain_size: usize,
     security_route: akita_types::InnerCommitSecurityRoute,
     response_l2_sq_cap: Option<u128>,
@@ -500,9 +501,11 @@ impl PlannedGroupReport {
             challenge_count_pm1: params.fold_challenge_config.count_pm1,
             challenge_count_pm2: params.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_live_blocks: params.num_live_blocks,
-            num_positions_per_block: params.num_positions_per_block,
+
+            num_live_ring_elements_per_claim: params.blocks.live_ring_elements_per_claim,
+            num_positions_per_block: params.blocks.positions_per_block,
+            num_live_blocks: params.blocks.live_blocks,
+
             block_index_domain_size: params.block_index_domain_size().unwrap_or(0),
             security_route,
             response_l2_sq_cap,
@@ -602,9 +605,11 @@ impl PlannedGroupReport {
             challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
             challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold,
+
             num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
-            num_live_blocks: layout.blocks.live_blocks,
             num_positions_per_block: layout.blocks.positions_per_block,
+            num_live_blocks: layout.blocks.live_blocks,
+
             block_index_domain_size: layout
                 .blocks
                 .live_blocks
@@ -889,10 +894,10 @@ pub(crate) fn emit_runtime_schedule_summary(
             log_basis_open = lp.log_basis_open,
             position_index_bits = lp.position_index_bits(),
             block_index_bits = lp.block_index_bits(),
-            num_live_ring_elements_per_claim = lp.num_live_ring_elements_per_claim,
-            num_live_blocks = lp.num_live_blocks,
+            num_live_ring_elements_per_claim = lp.blocks.live_ring_elements_per_claim,
+            num_live_blocks = lp.blocks.live_blocks,
             block_index_domain_size = lp.block_index_domain_size().unwrap_or(0),
-            num_positions_per_block = lp.num_positions_per_block,
+            num_positions_per_block = lp.blocks.positions_per_block,
             num_digits_inner = lp.inner.digits.num_digits,
             num_digits_outer = lp.outer.digits.num_digits,
             num_digits_open = lp.num_digits_open,
@@ -1343,10 +1348,10 @@ pub(crate) fn print_layout(
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
-        num_live_ring_elements_per_claim = layout.num_live_ring_elements_per_claim,
-        num_live_blocks = layout.num_live_blocks,
+        num_live_ring_elements_per_claim = layout.blocks.live_ring_elements_per_claim,
+        num_live_blocks = layout.blocks.live_blocks,
         block_index_domain_size = layout.block_index_domain_size().unwrap_or(0),
-        num_positions_per_block = layout.num_positions_per_block,
+        num_positions_per_block = layout.blocks.positions_per_block,
         num_digits_inner = layout.inner.digits.num_digits,
         num_digits_outer = layout.outer.digits.num_digits,
         num_digits_open = layout.num_digits_open,

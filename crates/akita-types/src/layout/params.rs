@@ -105,11 +105,10 @@ pub struct CommittedGroupParams {
     /// Opening matrix (D): output rank `n_d`, input width `d_matrix_width`.
     pub open_commit_matrix: OpenCommitMatrixParams,
     /// Exact number of live source ring elements per claim (`N`).
-    pub num_live_ring_elements_per_claim: usize,
+    /// Exact `(N, M, B)` block split of this group's source.
+    pub blocks: crate::BlockGeometry,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
-    pub num_positions_per_block: usize,
     /// Exact number of live blocks (`B = ceil(N / M)`).
-    pub num_live_blocks: usize,
     /// Number of logical B inputs committed through one physical B matrix.
     pub outer_slice_count: crate::CommitmentSliceCount,
     pub fold_challenge_config: SparseChallengeConfig,
@@ -294,9 +293,9 @@ impl CommittedGroupParams {
                 0,
                 ring_dimension,
             ),
-            num_live_ring_elements_per_claim: 0,
-            num_positions_per_block: 0,
-            num_live_blocks: 0,
+
+            blocks: crate::BlockGeometry::new(0, 0, 0),
+
             outer_slice_count: crate::CommitmentSliceCount::ONE,
             fold_challenge_config,
             num_digits_open: 0,
@@ -402,9 +401,9 @@ impl CommittedGroupParams {
     #[must_use]
     pub fn blocks(&self) -> crate::BlockGeometry {
         crate::BlockGeometry::new(
-            self.num_live_ring_elements_per_claim,
-            self.num_positions_per_block,
-            self.num_live_blocks,
+            self.blocks.live_ring_elements_per_claim,
+            self.blocks.positions_per_block,
+            self.blocks.live_blocks,
         )
     }
 
@@ -451,10 +450,11 @@ impl CommittedGroupParams {
         self.outer_slice_count.validate_for_commitment(
             fold_level,
             self.payload_mode,
-            self.num_live_blocks,
+            self.blocks.live_blocks,
         )?;
         let expected_a_width = self
-            .num_positions_per_block
+            .blocks
+            .positions_per_block
             .checked_mul(self.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
         if self.inner.matrix.input_width() != expected_a_width {
@@ -464,7 +464,7 @@ impl CommittedGroupParams {
         }
         let geometry = crate::CommitmentSliceGeometry::try_new(
             self.outer_slice_count,
-            self.num_live_blocks,
+            self.blocks.live_blocks,
             num_polynomials,
             self.inner.matrix.output_rank(),
             self.outer.digits.num_digits,
@@ -501,7 +501,7 @@ impl CommittedGroupParams {
     pub fn commitment_polynomial_count(&self) -> Result<usize, AkitaError> {
         let one_polynomial_width = crate::CommitmentSliceGeometry::try_new(
             self.outer_slice_count,
-            self.num_live_blocks,
+            self.blocks.live_blocks,
             1,
             self.inner.matrix.output_rank(),
             self.outer.digits.num_digits,
@@ -536,7 +536,7 @@ impl CommittedGroupParams {
     /// Returns [`AkitaError::InvalidSetup`] on overflow.
     pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
         self.validate_block_geometry()?;
-        Ok(self.num_live_ring_elements_per_claim)
+        Ok(self.blocks.live_ring_elements_per_claim)
     }
 
     /// Total flat field-element count (`n_ring_elems * d_a`).
@@ -576,9 +576,9 @@ impl CommittedGroupParams {
         self.inner.matrix.append_descriptor_bytes(bytes);
         self.outer.matrix.append_descriptor_bytes(bytes);
         self.open_commit_matrix.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_live_ring_elements_per_claim);
-        push_usize(bytes, self.num_positions_per_block);
-        push_usize(bytes, self.num_live_blocks);
+        push_usize(bytes, self.blocks.live_ring_elements_per_claim);
+        push_usize(bytes, self.blocks.positions_per_block);
+        push_usize(bytes, self.blocks.live_blocks);
         self.outer_slice_count.append_descriptor_bytes(bytes);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         push_usize(bytes, self.inner.digits.num_digits);
@@ -637,8 +637,8 @@ impl CommittedGroupParams {
         self.validate_block_geometry()?;
         recursive_opening_num_vars_for_geometry(
             self.d_a(),
-            self.num_positions_per_block,
-            self.num_live_blocks,
+            self.blocks.positions_per_block,
+            self.blocks.live_blocks,
         )
     }
 
@@ -890,7 +890,8 @@ impl CommittedGroupParams {
     /// not derivable from the fold alone.
     pub fn final_group_scalar(&self) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         let source_len = self
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .checked_mul(self.d_a())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("scalar final-group source length overflow".to_string())
@@ -1339,9 +1340,13 @@ impl CommittedGroupParams {
                 self.open_commit_matrix.coeff_linf_bound(),
                 self.open_commit_matrix.ring_dimension(),
             ),
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
+
+            blocks: crate::BlockGeometry::new(
+                num_live_ring_elements_per_claim,
+                num_positions_per_block,
+                num_live_blocks,
+            ),
+
             outer_slice_count: self.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
             num_digits_open,
@@ -1411,9 +1416,13 @@ impl CommittedGroupParams {
                 self.open_commit_matrix.coeff_linf_bound(),
                 self.open_commit_matrix.ring_dimension(),
             ),
-            num_live_ring_elements_per_claim: other.num_live_ring_elements_per_claim,
-            num_positions_per_block: other.num_positions_per_block,
-            num_live_blocks: other.num_live_blocks,
+
+            blocks: crate::BlockGeometry::new(
+                other.blocks.live_ring_elements_per_claim,
+                other.blocks.positions_per_block,
+                other.blocks.live_blocks,
+            ),
+
             outer_slice_count: other.outer_slice_count,
             fold_challenge_config: self.fold_challenge_config,
 

@@ -115,12 +115,14 @@ fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: 
     let required_positions = required_inner_width
         .div_ceil(params.inner.digits.num_digits)
         .next_power_of_two();
-    params.num_positions_per_block = params.num_positions_per_block.max(required_positions);
-    params.num_live_blocks = params
-        .num_live_ring_elements_per_claim
-        .div_ceil(params.num_positions_per_block);
+    params.blocks.positions_per_block = params.blocks.positions_per_block.max(required_positions);
+    params.blocks.live_blocks = params
+        .blocks
+        .live_ring_elements_per_claim
+        .div_ceil(params.blocks.positions_per_block);
     let inner_width = params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .checked_mul(params.inner.digits.num_digits)
         .expect("recursive witness A width");
     let inner_key = params
@@ -134,7 +136,7 @@ fn provision_setup_prefix_capacity(params: &mut CommittedGroupParams, n_prefix: 
 
     let outer_width = crate::CommitmentSliceGeometry::try_new(
         params.outer_slice_count,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         1,
         params.inner.matrix.output_rank(),
         params.outer.digits.num_digits,
@@ -1211,8 +1213,8 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
 fn checked_committed_profile_construction_rejects_invalid_params() {
     let schedule = recursive_schedule(64, 64, false);
     let mut params = schedule.root.params;
-    params.num_live_ring_elements_per_claim = 1;
-    params.num_live_blocks = 1;
+    params.blocks.live_ring_elements_per_claim = 1;
+    params.blocks.live_blocks = 1;
 
     assert!(matches!(
         GroupCommitPhaseParams::try_from_params(PolynomialGroupLayout::singleton(8), &params),

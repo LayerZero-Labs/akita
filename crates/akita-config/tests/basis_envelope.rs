@@ -36,7 +36,8 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
         );
         let honest_policy = akita_config::honest_fold_policy_of::<Cfg>();
         let num_fold_coeffs = root
-            .num_positions_per_block
+            .blocks
+            .positions_per_block
             .checked_mul(root.inner.digits.num_digits)
             .and_then(|width| width.checked_mul(root.d_a()))
             .and_then(|width| width.checked_mul(root.witness_chunk.num_chunks))
@@ -51,9 +52,11 @@ fn adaptive_onehot_schedule_stays_within_basis_envelope() {
                     } => challenge_subring_dimension,
                 },
                 num_claims: 1,
-                num_live_ring_elements_per_claim: root.num_live_ring_elements_per_claim,
-                num_live_blocks: root.num_live_blocks,
-                num_positions_per_block: root.num_positions_per_block,
+
+                num_live_ring_elements_per_claim: root.blocks.live_ring_elements_per_claim,
+                num_positions_per_block: root.blocks.positions_per_block,
+                num_live_blocks: root.blocks.live_blocks,
+
                 num_chunks: root.witness_chunk.num_chunks,
                 num_fold_coeffs,
                 witness_norms: honest_policy

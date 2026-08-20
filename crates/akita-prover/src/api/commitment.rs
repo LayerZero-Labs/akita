@@ -140,8 +140,8 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
     fn from(params: &'a CommittedGroupParams) -> Self {
         Self {
             context: "commit params",
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
+            num_positions_per_block: params.blocks.positions_per_block,
+            num_live_blocks: params.blocks.live_blocks,
             log_basis_inner: params.inner.digits.log_basis,
             num_digits_inner: params.inner.digits.num_digits,
             inner_matrix: &params.inner.matrix,
@@ -224,7 +224,7 @@ where
     F: FieldCore + CanonicalField,
 {
     let slice_geometry = params.validate_commitment_request(fold_level, num_polynomials)?;
-    if params.num_live_blocks == 0 || params.num_positions_per_block == 0 {
+    if params.blocks.live_blocks == 0 || params.blocks.positions_per_block == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));

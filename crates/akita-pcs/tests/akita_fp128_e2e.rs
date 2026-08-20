@@ -496,7 +496,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             .params;
 
         let root_d = layout.d_a();
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
+        let total_field = layout.blocks.live_blocks * layout.blocks.positions_per_block * root_d;
         let onehot_k = root_d;
         let num_chunks = total_field / onehot_k;
         let make_mixed_onehot = |seed: u64| {
@@ -562,7 +562,7 @@ fn fp128_onehot_oversized_setup() {
             .root
             .params;
         let d = layout.d_a();
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * d;
+        let total_field = layout.blocks.live_blocks * layout.blocks.positions_per_block * d;
         let total_chunks = total_field / ONEHOT_K;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);

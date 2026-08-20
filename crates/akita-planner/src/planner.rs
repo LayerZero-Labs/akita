@@ -56,9 +56,11 @@ fn materialize_precommitted_group_for_open_basis(
         ring_dimension,
         challenge_dimension: opening.challenge_dimension(ring_dimension),
         num_claims: group_claims,
+
         num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
-        num_live_blocks: layout.blocks.live_blocks,
         num_positions_per_block: layout.blocks.positions_per_block,
+        num_live_blocks: layout.blocks.live_blocks,
+
         num_chunks,
         num_fold_coeffs,
         witness_norms: honest_fold_policy
@@ -479,9 +481,11 @@ fn root_final_group_level_params_candidate(
             outer_commit_matrix,
         ),
         open_commit_matrix,
-        num_live_ring_elements_per_claim,
-        num_positions_per_block,
-        num_live_blocks,
+        blocks: akita_types::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
         outer_slice_count,
         fold_challenge_config: ctx.opening.challenge_config(),
         num_digits_open,

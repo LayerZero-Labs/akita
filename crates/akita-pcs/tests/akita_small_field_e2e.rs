@@ -538,7 +538,8 @@ fn fp32_onehot_multi_group() {
     run_on_large_stack(|| {
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
             let onehot_k = 256usize;
-            let total = params.num_live_blocks * params.num_positions_per_block * params.d_a();
+            let total =
+                params.blocks.live_blocks * params.blocks.positions_per_block * params.d_a();
             let indices = (0..total / onehot_k)
                 .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
                 .collect();

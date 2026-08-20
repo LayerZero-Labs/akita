@@ -33,8 +33,8 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
     Snapshot {
         inner_basis: root.inner.digits.log_basis,
         opening_basis: root.log_basis_open,
-        positions: root.num_positions_per_block,
-        blocks: root.num_live_blocks,
+        positions: root.blocks.positions_per_block,
+        blocks: root.blocks.live_blocks,
         outer_slices: root.outer_slice_count.get(),
         inner_digits: root.inner.digits.num_digits,
         n_a: root.inner.matrix.output_rank(),

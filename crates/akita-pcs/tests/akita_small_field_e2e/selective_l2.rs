@@ -6,8 +6,9 @@ fn fp32_l2_onehot_poly(
 ) -> akita_prover::OneHotPoly<fp32::Field, u8> {
     let onehot_k = 256;
     let total_field = params
-        .num_live_blocks
-        .checked_mul(params.num_positions_per_block)
+        .blocks
+        .live_blocks
+        .checked_mul(params.blocks.positions_per_block)
         .and_then(|count| count.checked_mul(params.d_a()))
         .expect("fp32 L2 fixture length");
     assert_eq!(total_field % onehot_k, 0);

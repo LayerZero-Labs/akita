@@ -809,7 +809,7 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     assert_eq!(direct_terms, 2 * 2 * depth_open);
     assert_eq!(
         z_terms,
-        fixture.params.num_positions_per_block
+        fixture.params.blocks.positions_per_block
             * fixture.params.inner.digits.num_digits
             * fixture.params.num_digits_fold()
     );
@@ -1040,7 +1040,10 @@ fn semantic_events_match_an_independent_dense_accumulation() {
         {
             for block in unit.global_block_range() {
                 let challenge = challenges
-                    .eval_at_pows::<F, E>(claim * fixture.params.num_live_blocks + block, &powers)
+                    .eval_at_pows::<F, E>(
+                        claim * fixture.params.blocks.live_blocks + block,
+                        &powers,
+                    )
                     .unwrap();
                 for (digit, &gadget) in opening_gadget.iter().enumerate() {
                     for (plane, &basis_element) in basis.iter().enumerate() {
@@ -1183,8 +1186,8 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
     };
     let trace_point = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-        position_weights: vec![F::zero(); fixture.params.num_positions_per_block],
-        live_block_weights: vec![F::zero(); fixture.params.num_live_blocks],
+        position_weights: vec![F::zero(); fixture.params.blocks.positions_per_block],
+        live_block_weights: vec![F::zero(); fixture.params.blocks.live_blocks],
     });
     let trace_relation = RingRelationInstance::new(
         vec![RingRelationGroupOpening::evaluation_trace(
@@ -1370,7 +1373,7 @@ fn structured_stage2_terms_match_independent_dense_tables() {
                         let physical = unit
                             .z_coefficient_index(
                                 geometry.a_ring_dimension(),
-                                fixture.params.num_positions_per_block,
+                                fixture.params.blocks.positions_per_block,
                                 fixture.params.inner.digits.num_digits,
                                 fixture.params.num_digits_fold,
                                 position,

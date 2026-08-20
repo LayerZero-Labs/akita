@@ -88,7 +88,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     let config = params.fold_challenge_config;
     let make_challenges = |claims: usize| {
         Challenges::from_sparse(
-            (0..claims * params.num_live_blocks)
+            (0..claims * params.blocks.live_blocks)
                 .map(|challenge| SparseChallenge {
                     positions: (0..config.weight())
                         .map(|term| ((term + challenge) % 64) as u32)
@@ -99,7 +99,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
                         .collect(),
                 })
                 .collect(),
-            params.num_live_blocks,
+            params.blocks.live_blocks,
             claims,
         )
         .unwrap()

@@ -163,7 +163,7 @@ fn expected_d_width(
         dims.d_a(),
         dims.d_d(),
         params.num_digits_open,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         num_claims,
     )
     .map_err(|_| invalid(label, "main D width is incompatible with opening geometry"))?;
@@ -234,12 +234,13 @@ fn audit_committed_params(
 
     let dims = params.role_dims();
     let expected_a_width = params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .checked_mul(params.inner.digits.num_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
     let expected_b_width = CommitmentSliceGeometry::try_new(
         params.outer_slice_count,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         num_claims,
         params.inner.matrix.output_rank(),
         params.outer.digits.num_digits,

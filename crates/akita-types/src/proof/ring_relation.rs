@@ -193,7 +193,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
     lp: &CommittedGroupParams,
     opening_counts: RingRelationOpeningCounts,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let num_live_blocks = lp.num_live_blocks;
+    let num_live_blocks = lp.blocks.live_blocks;
     if num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".to_string(),
@@ -228,7 +228,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
         .checked_mul(depth_inner)
-        .and_then(|len| len.checked_mul(lp.num_positions_per_block))
+        .and_then(|len| len.checked_mul(lp.blocks.positions_per_block))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
     Ok(RingRelationSegmentLengths {

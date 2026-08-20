@@ -54,7 +54,7 @@ fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
     .expect("tight recursive consumer with setup-prefix capacity");
     assert_eq!(
         params.inner.matrix.input_width(),
-        params.num_positions_per_block * params.inner.digits.num_digits
+        params.blocks.positions_per_block * params.inner.digits.num_digits
     );
     let prefix = setup_prefix_precommitted_params(&params, 128).expect("setup prefix params");
     assert_eq!(
@@ -74,9 +74,9 @@ fn setup_prefix_uses_full_field_digits_for_a_tight_recursive_consumer() {
 fn active_setup_field_len_matches_packed_role_maximum() {
     let lp = sample_level_params();
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
-    let w_a = lp.num_positions_per_block * lp.inner.digits.num_digits;
+    let w_a = lp.blocks.positions_per_block * lp.inner.digits.num_digits;
     let w_b = lp.outer.matrix.input_width();
-    let w_d = opening_batch.num_total_polynomials() * lp.num_live_blocks * lp.num_digits_open;
+    let w_d = opening_batch.num_total_polynomials() * lp.blocks.live_blocks * lp.num_digits_open;
     let expected_ring_slots = lp
         .inner
         .matrix
@@ -118,7 +118,7 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
     lp.outer_slice_count = crate::CommitmentSliceCount::FOUR;
     let slice_geometry = crate::CommitmentSliceGeometry::try_new(
         lp.outer_slice_count,
-        lp.num_live_blocks,
+        lp.blocks.live_blocks,
         opening_batch.num_total_polynomials(),
         lp.inner.matrix.output_rank(),
         lp.outer.digits.num_digits,
@@ -151,7 +151,7 @@ fn active_setup_field_len_prices_one_physical_sliced_b_matrix() {
         .expect("logical B rows")
         * opening_batch.num_total_polynomials()
         * lp.inner.matrix.output_rank()
-        * lp.num_live_blocks
+        * lp.blocks.live_blocks
         * lp.outer.digits.num_digits
         * (lp.outer.matrix.ring_dimension() / base_d);
     assert!(geometry.b_projection_width() < logical_unsliced_projection);
@@ -259,12 +259,14 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
         128,
     );
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
-    let a_slots =
-        lp.inner.matrix.output_rank() * lp.num_positions_per_block * lp.inner.digits.num_digits * 2;
+    let a_slots = lp.inner.matrix.output_rank()
+        * lp.blocks.positions_per_block
+        * lp.inner.digits.num_digits
+        * 2;
     let b_slots = lp.outer.matrix.output_rank() * lp.outer.matrix.input_width() * 2;
     let d_slots = lp.open_commit_matrix.output_rank()
         * opening_batch.num_total_polynomials()
-        * lp.num_live_blocks
+        * lp.blocks.live_blocks
         * lp.num_digits_open
         * 2;
     let expected_field_len = a_slots.max(b_slots).max(d_slots) * 64;

@@ -576,9 +576,13 @@ impl GeneratedGroup {
                 d_bucket,
                 dimensions.d_d(),
             )?,
-            num_live_ring_elements_per_claim,
-            num_live_blocks,
-            num_positions_per_block,
+
+            blocks: akita_types::BlockGeometry::new(
+                num_live_ring_elements_per_claim,
+                num_positions_per_block,
+                num_live_blocks,
+            ),
+
             outer_slice_count,
             fold_challenge_config: ring_challenge_cfg,
             num_digits_open,

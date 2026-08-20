@@ -453,7 +453,7 @@ fn validate_static_inputs<E: FieldCore>(
     opening_batch.check()?;
     let num_groups = opening_batch.num_groups();
     let depth_fold = level_params.num_digits_fold();
-    if level_params.num_live_blocks == 0 {
+    if level_params.blocks.live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".into(),
         ));

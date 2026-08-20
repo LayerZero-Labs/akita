@@ -250,9 +250,13 @@ impl RecursiveCandidateContext<'_, '_> {
                     outer_commit_matrix,
                 ),
                 open_commit_matrix: core.open_commit_matrix,
-                num_live_ring_elements_per_claim: core.num_ring_elems,
-                num_positions_per_block: core.num_positions_per_block,
-                num_live_blocks: core.num_live_blocks,
+
+                blocks: akita_types::BlockGeometry::new(
+                    core.num_ring_elems,
+                    core.num_positions_per_block,
+                    core.num_live_blocks,
+                ),
+
                 outer_slice_count,
                 fold_challenge_config: request.opening.challenge_config(),
                 num_digits_open: core.num_digits_open,
@@ -402,7 +406,7 @@ fn finalize_recursive_level_candidate(
     };
     let score = layout_candidate_score(
         next_witness_len,
-        candidate_params.num_live_blocks,
+        candidate_params.blocks.live_blocks,
         search.num_chunks,
     )?;
     Ok(Some((score, candidate_params, next_witness_len)))

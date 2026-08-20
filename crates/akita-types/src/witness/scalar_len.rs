@@ -396,7 +396,7 @@ mod tests {
                     );
                     assert_eq!(
                         unit.z_range().len(),
-                        params.num_positions_per_block
+                        params.blocks.positions_per_block
                             * params.inner.digits.num_digits
                             * params.num_digits_fold
                             * 256
@@ -526,7 +526,7 @@ mod tests {
         .is_err());
 
         for mutate in [
-            |params: &mut CommittedGroupParams| params.num_positions_per_block = 0,
+            |params: &mut CommittedGroupParams| params.blocks.positions_per_block = 0,
             |params: &mut CommittedGroupParams| params.inner.digits.num_digits = 0,
             |params: &mut CommittedGroupParams| params.outer.digits.num_digits = 0,
             |params: &mut CommittedGroupParams| params.num_digits_open = 0,
@@ -597,14 +597,14 @@ mod tests {
             let dimensions = params.role_dims();
             let opening_width = extension_degree * 64;
             let expected_z = chunks
-                * params.num_positions_per_block
+                * params.blocks.positions_per_block
                 * params.inner.digits.num_digits
                 * params.num_digits_fold
                 * dimensions.d_a();
             let expected_e =
-                claims * params.num_live_blocks * params.num_digits_open * opening_width;
+                claims * params.blocks.live_blocks * params.num_digits_open * opening_width;
             let expected_t = claims
-                * params.num_live_blocks
+                * params.blocks.live_blocks
                 * params.inner.matrix.output_rank()
                 * params.outer.digits.num_digits
                 * dimensions.d_a();

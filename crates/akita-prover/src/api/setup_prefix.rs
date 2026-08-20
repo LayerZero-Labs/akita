@@ -259,8 +259,8 @@ mod tests {
         .expect("audited inner matrix");
         params = params
             .with_decomp(
-                params.num_positions_per_block,
-                params.num_live_ring_elements_per_claim,
+                params.blocks.positions_per_block,
+                params.blocks.live_ring_elements_per_claim,
                 params.inner.digits.num_digits,
                 params.outer.digits.num_digits,
                 params.num_digits_open,
@@ -372,8 +372,9 @@ mod tests {
         )
         .expect("level params");
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks
+            .live_blocks
+            .checked_mul(level_params.blocks.positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
@@ -409,8 +410,9 @@ mod tests {
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks
+            .live_blocks
+            .checked_mul(level_params.blocks.positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch)
@@ -445,8 +447,9 @@ mod tests {
     fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks
+            .live_blocks
+            .checked_mul(level_params.blocks.positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =

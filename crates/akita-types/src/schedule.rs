@@ -186,7 +186,7 @@ impl TerminalFoldParams {
         let witness =
             crate::sis::FoldWitnessNorms::bounded(params.inner.digits.log_basis, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
-            params.num_live_blocks,
+            params.blocks.live_blocks,
             1,
             challenge,
             witness,
@@ -821,8 +821,9 @@ pub struct PlannedFoldSchedule {
 
 /// Witness length entering the root fold, in field elements.
 pub fn root_input_witness_len(lp: &CommittedGroupParams) -> usize {
-    lp.num_live_blocks
-        .checked_mul(lp.num_positions_per_block)
+    lp.blocks
+        .live_blocks
+        .checked_mul(lp.blocks.positions_per_block)
         .and_then(|len| len.checked_mul(lp.d_a()))
         .unwrap_or(0)
 }
