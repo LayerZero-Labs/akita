@@ -26,8 +26,8 @@ use akita_types::sis::{
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommitmentSliceCount,
     CommitmentSliceGeometry, CommittedGroupParams, CommittedSourceEncoding, DecompositionParams,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PrecommittedLevelParams, TerminalCommittedGroupParams,
+    GroupOpenPhaseParams, InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -71,7 +71,7 @@ impl GeneratedSetupPrefixInput {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
-    ) -> Result<PrecommittedLevelParams, AkitaError> {
+    ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
         let d_a = self.commitment.inner.matrix.ring_dimension();
         let committed_len = self
@@ -106,7 +106,7 @@ impl GeneratedSetupPrefixInput {
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
         };
-        let params = PrecommittedLevelParams::admit(
+        let params = GroupOpenPhaseParams::admit(
             self.commitment,
             self.opening.num_digits_fold,
             admission_policy,
@@ -416,11 +416,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| {
-                prefix
-                    .commitment_params
-                    .d_segment_width(policy.claim_ext_degree, dimensions.d_d())
-            })
+            .map(|prefix| prefix.d_segment_width(policy.claim_ext_degree, dimensions.d_d()))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -519,7 +515,7 @@ impl GeneratedCommittedGroup {
         main_num_polys: usize,
         num_digits_inner: u32,
         num_digits_fold: u32,
-        precommitted_groups: Vec<PrecommittedLevelParams>,
+        precommitted_groups: Vec<GroupOpenPhaseParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
     ) -> Result<CommittedGroupParams, AkitaError> {

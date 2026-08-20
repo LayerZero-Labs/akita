@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, GroupCommitPhaseParams, OpeningClaimsLayout, OpeningMethod,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
+    CommittedGroupParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
+    OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
@@ -193,8 +193,8 @@ fn setup_prefix_slot_identity_excludes_consuming_opening_plan() {
 
     let evaluation_trace = scheduled_setup_prefix(777, evaluation_trace);
     let subring_packing = scheduled_setup_prefix(777, subring_packing);
-    let evaluation_trace_id = evaluation_trace.slot_id();
-    let subring_packing_id = subring_packing.slot_id();
+    let evaluation_trace_id = evaluation_trace.slot_id().expect("setup prefix group");
+    let subring_packing_id = subring_packing.slot_id().expect("setup prefix group");
 
     assert_eq!(evaluation_trace_id, subring_packing_id);
     assert_eq!(
@@ -240,7 +240,7 @@ fn setup_prefix_slot_identity_excludes_consuming_opening_plan() {
     let mut subring_packing_schedule = Vec::new();
     subring_packing.append_descriptor_bytes(&mut subring_packing_schedule);
     assert_ne!(evaluation_trace_schedule, subring_packing_schedule);
-    assert!(subring_packing.commitment_params.validate().is_ok());
+    assert!(subring_packing.validate().is_ok());
 }
 
 #[test]
@@ -359,8 +359,9 @@ fn retarget_group_role_dims_wide(
 fn precommitted_group(
     params: &CommittedGroupParams,
     group: PolynomialGroupLayout,
-) -> PrecommittedLevelParams {
-    PrecommittedLevelParams {
+) -> GroupOpenPhaseParams {
+    GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
@@ -480,7 +481,7 @@ fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
     let scheduled = scheduled_setup_prefix(natural_len, commitment_params);
     level_params.setup_prefix = Some(scheduled.clone());
-    let id = scheduled.slot_id();
+    let id = scheduled.slot_id().expect("setup prefix group");
     let slot = verifier_slot_for_id(id.clone());
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot).expect("insert slot");
@@ -556,7 +557,8 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
         natural_len,
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params"),
     )
-    .slot_id();
+    .slot_id()
+    .expect("setup prefix group");
     level_params.setup_prefix = None;
 
     let err = setup_prefix_coverage_eval_len(
@@ -581,7 +583,9 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
-    let id = scheduled_setup_prefix(1, commitment_params).slot_id();
+    let id = scheduled_setup_prefix(1, commitment_params)
+        .slot_id()
+        .expect("setup prefix group");
     let slot = || {
         let inner_rows =
             RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows");
@@ -655,7 +659,9 @@ fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
     retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
-    let id = scheduled_setup_prefix(1, commitment_params).slot_id();
+    let id = scheduled_setup_prefix(1, commitment_params)
+        .slot_id()
+        .expect("setup prefix group");
     let slot = || verifier_slot_for_id(id.clone());
 
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());

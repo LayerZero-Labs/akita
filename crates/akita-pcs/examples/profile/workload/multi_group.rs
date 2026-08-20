@@ -45,7 +45,11 @@ where
         .iter()
         .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
     {
-        if setup.prefix_slots.get(&slot_id.slot_id()).is_some() {
+        if setup
+            .prefix_slots
+            .get(&slot_id.slot_id().expect("setup prefix group"))
+            .is_some()
+        {
             continue;
         }
         let n_prefix = slot_id.n_prefix()?;
@@ -58,9 +62,9 @@ where
                     &setup.expanded,
                     backend,
                     prepared,
-                    &slot_id.commitment_params.layout,
+                    &slot_id.layout,
                     n_prefix,
-                    slot_id.natural_len,
+                    slot_id.setup_natural_len.expect("setup prefix group"),
                 )
             }
         )?;

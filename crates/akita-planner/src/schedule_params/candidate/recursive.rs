@@ -278,7 +278,7 @@ struct RecursiveLevelSearch {
     reduced_vars: usize,
     current_witness_len: usize,
     opening_layout: OpeningClaimsLayout,
-    setup_prefixes: Vec<Option<akita_types::ScheduledSetupPrefix>>,
+    setup_prefixes: Vec<Option<akita_types::GroupOpenPhaseParams>>,
 }
 
 fn prepare_recursive_level_search(
@@ -360,15 +360,14 @@ fn prepare_recursive_level_search(
 }
 
 fn attach_recursive_setup_prefix(
-    setup_prefix: Option<&akita_types::ScheduledSetupPrefix>,
+    setup_prefix: Option<&akita_types::GroupOpenPhaseParams>,
     extension_degree: usize,
     mut candidate_params: CommittedGroupParams,
 ) -> Result<CommittedGroupParams, AkitaError> {
     candidate_params.setup_prefix = setup_prefix.cloned();
     if let Some(prefix) = &candidate_params.setup_prefix {
-        let prefix_d_width = prefix
-            .commitment_params
-            .d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
+        let prefix_d_width =
+            prefix.d_segment_width(extension_degree, candidate_params.role_dims().d_d())?;
         let total_d_width = candidate_params
             .open_commit_matrix
             .input_width()

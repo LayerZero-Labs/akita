@@ -195,7 +195,7 @@ where
             AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
         })?;
     let slot = prefix_slots
-        .get(&selected_slot_id.slot_id())
+        .get(&selected_slot_id.slot_id().expect("setup prefix group"))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "planned setup-prefix slot is missing from prover setup".to_string(),

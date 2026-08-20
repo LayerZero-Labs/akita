@@ -158,23 +158,21 @@ fn capture_row(
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.profile"),
-                prefix_group
-                    .commitment_params
-                    .layout
-                    .canonical_descriptor_bytes(),
+                prefix_group.layout.canonical_descriptor_bytes(),
             );
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.opening"),
-                prefix_group
-                    .commitment_params
-                    .opening
-                    .canonical_descriptor_bytes(),
+                prefix_group.opening.canonical_descriptor_bytes(),
             );
             push(
                 records,
                 format!("{prefix} recursive[{level}].setup_prefix.natural_len"),
-                prefix_group.natural_len.to_le_bytes().to_vec(),
+                prefix_group
+                    .setup_natural_len
+                    .expect("setup prefix group")
+                    .to_le_bytes()
+                    .to_vec(),
             );
         }
     }

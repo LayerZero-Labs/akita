@@ -81,11 +81,11 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         .as_ref()
         .expect("synthetic successor must consume the root setup prefix");
     assert_eq!(
-        prefix.commitment_params.source_encoding(),
+        prefix.source_encoding(),
         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     assert!(matches!(
-        prefix.commitment_params.opening.opening_method,
+        prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64
         }
@@ -174,7 +174,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                 .incoming_setup_prefix
                 .as_ref()
                 .unwrap()
-                .slot_id();
+                .slot_id()
+                .expect("setup prefix group");
             assert_eq!(
                 setup_prefix.d_setup(),
                 setup_prefix

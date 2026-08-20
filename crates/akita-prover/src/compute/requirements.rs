@@ -2,8 +2,8 @@
 
 use akita_field::AkitaError;
 use akita_types::{
-    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, NttCacheKey,
-    NttTransformDomain, PrecommittedLevelParams, SetupPrefixSlotId, SisModulusProfileId,
+    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
+    NttCacheKey, NttTransformDomain, SetupPrefixSlotId, SisModulusProfileId,
     TerminalCommittedGroupParams,
 };
 
@@ -107,12 +107,11 @@ impl NttExecutionRequirements {
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
             requirements.add_group_relation(level, &step.params.witness, num_chunks)?;
             if let Some(prefix) = &step.params.incoming_setup_prefix {
-                requirements.add_setup_prefix_commitment(level, &prefix.slot_id())?;
-                requirements.add_precommitted_relation(
+                requirements.add_setup_prefix_commitment(
                     level,
-                    &prefix.commitment_params,
-                    num_chunks,
+                    &prefix.slot_id().expect("setup prefix group"),
                 )?;
+                requirements.add_precommitted_relation(level, prefix, num_chunks)?;
             }
             let open_extent = matrix_extent(
                 step.params.open_commit_matrix.output_rank(),
@@ -296,7 +295,7 @@ impl NttExecutionRequirements {
     fn add_precommitted_relation(
         &mut self,
         level: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
         num_chunks: usize,
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
@@ -317,7 +316,7 @@ impl NttExecutionRequirements {
     fn add_precommitted_commit(
         &mut self,
         level: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
     ) -> Result<(), AkitaError> {
         let layout = &params.layout;
         let inner_key = NttCacheKey::from_matrix_shape(

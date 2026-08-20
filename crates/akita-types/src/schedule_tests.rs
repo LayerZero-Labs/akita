@@ -189,8 +189,9 @@ fn retarget_open_dimension(
 fn precommitted_group_params(
     params: &CommittedGroupParams,
     group: PolynomialGroupLayout,
-) -> crate::PrecommittedLevelParams {
-    crate::PrecommittedLevelParams {
+) -> crate::GroupOpenPhaseParams {
+    crate::GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout: GroupCommitPhaseParams::from_params_unchecked_for_test(group, params),
         opening: crate::GroupOpeningPlan::evaluation_trace(
             params.fold_challenge_config,
@@ -1305,10 +1306,9 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
         .incoming_setup_prefix
         .as_mut()
         .expect("setup prefix");
-    changed_prefix.commitment_params.opening.opening_method =
-        crate::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
+    changed_prefix.opening.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
     changed.recursive_folds[0].params.witness.setup_prefix = changed.recursive_folds[0]
         .params
         .incoming_setup_prefix
@@ -1330,7 +1330,6 @@ fn schedule_row_identity_binds_setup_prefix_opening_method() {
         .incoming_setup_prefix
         .as_mut()
         .expect("setup prefix")
-        .commitment_params
         .opening
         .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 128,

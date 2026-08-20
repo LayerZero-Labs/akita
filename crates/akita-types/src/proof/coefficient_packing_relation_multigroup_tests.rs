@@ -38,7 +38,8 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         outer.ring_dimension(),
     );
     let pre_layout = PolynomialGroupLayout::new(11, 1);
-    params.precommitted_groups = vec![PrecommittedLevelParams {
+    params.precommitted_groups = vec![GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout: GroupCommitPhaseParams::from_params_unchecked_for_test(pre_layout, &frozen),
         opening: GroupOpeningPlan {
             opening_method: OpeningMethod::SubringCoefficientPacking {

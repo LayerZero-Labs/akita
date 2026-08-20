@@ -35,7 +35,7 @@ where
     if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
         let slot = setup
             .prefix_slots
-            .get(&setup_prefix_id.slot_id())
+            .get(&setup_prefix_id.slot_id().expect("setup prefix group"))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "planned setup-prefix slot is missing from verifier setup".to_string(),

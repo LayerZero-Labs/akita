@@ -54,7 +54,8 @@ fn grouped_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
-    params.precommitted_groups = vec![PrecommittedLevelParams {
+    params.precommitted_groups = vec![GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
         opening: akita_types::GroupOpeningPlan::evaluation_trace(
             precommitted.fold_challenge_config,
@@ -300,13 +301,13 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     for (params, next_witness_len) in with_prefix {
         let prefix = params.setup_prefix.as_ref().expect("attached setup prefix");
         assert_eq!(
-            prefix.commitment_params.opening.opening_method,
+            prefix.opening.opening_method,
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
         assert_eq!(
-            akita_types::LevelParamsLike::source_encoding(&prefix.commitment_params),
+            akita_types::LevelParamsLike::source_encoding(prefix),
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();
@@ -321,7 +322,6 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         )
         .unwrap();
         let prefix_width = prefix
-            .commitment_params
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
@@ -813,7 +813,9 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
         .expect("setup-prefix frontier");
         for params in groups {
             akita_types::setup_prefix_slot_field_elements(
-                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params).slot_id(),
+                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params)
+                    .slot_id()
+                    .expect("setup prefix group"),
             )
             .expect("frontier candidate must support its compression source");
         }

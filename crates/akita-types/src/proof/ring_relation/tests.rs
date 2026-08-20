@@ -4,7 +4,7 @@ mod dimension_tests;
 mod support;
 
 use super::*;
-use crate::layout::PrecommittedLevelParams;
+use crate::layout::GroupOpenPhaseParams;
 use crate::DigitBlocks;
 use crate::{
     emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,
@@ -401,7 +401,8 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
     .with_decomp(4, 16, 2, 2, 2)
     .expect("multi-group precommit params");
     certify_test_sis_bounds(&mut precommit_lp);
-    let precommit = PrecommittedLevelParams {
+    let precommit = GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout: GroupCommitPhaseParams::from_params_unchecked_for_test(
             PolynomialGroupLayout::new(4, 1),
             &precommit_lp,

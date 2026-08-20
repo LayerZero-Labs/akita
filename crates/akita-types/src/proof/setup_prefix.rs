@@ -9,8 +9,8 @@ use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFI
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     AkitaSetupSeed, CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams,
-    GroupCommitPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedLevelParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -41,41 +41,16 @@ pub struct SetupPrefixSlotId {
     pub commitment_profile: GroupCommitPhaseParams,
 }
 
-/// Setup-prefix commitment identity plus the consuming fold's opening policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScheduledSetupPrefix {
-    /// Active setup-weight support in flat field coefficients.
-    pub natural_len: usize,
-    /// Frozen commitment profile and schedule-owned opening plan.
-    pub commitment_params: PrecommittedLevelParams,
-}
-
-impl ScheduledSetupPrefix {
-    /// Commitment-only registry key for this scheduled setup prefix.
-    #[must_use]
-    pub fn slot_id(&self) -> SetupPrefixSlotId {
-        SetupPrefixSlotId {
-            natural_len: self.natural_len,
-            commitment_profile: self.commitment_params.layout,
+impl GroupOpenPhaseParams {
+    /// Descriptor bytes for this group in its role as a fold's setup prefix.
+    ///
+    /// Byte-identical to the encoder on the deleted `GroupOpenPhaseParams`:
+    /// slot id, then the consuming fold's opening plan.
+    pub(crate) fn append_setup_prefix_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        if let Some(slot) = self.slot_id() {
+            slot.append_descriptor_bytes(bytes);
         }
-    }
-
-    /// Full power-of-two flat coefficient length committed for this prefix.
-    pub fn n_prefix(&self) -> Result<usize, AkitaError> {
-        self.slot_id().n_prefix()
-    }
-
-    /// Ring dimension used for the frozen setup-prefix commitment.
-    #[must_use]
-    pub fn d_setup(&self) -> usize {
-        self.commitment_params.layout.inner.matrix.ring_dimension()
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.slot_id().append_descriptor_bytes(bytes);
-        self.commitment_params
-            .opening
-            .append_descriptor_bytes(bytes);
+        self.opening.append_descriptor_bytes(bytes);
     }
 }
 
@@ -1119,7 +1094,7 @@ pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
 pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
-) -> Result<PrecommittedLevelParams, AkitaError> {
+) -> Result<GroupOpenPhaseParams, AkitaError> {
     let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
     let d_outer = prefix_params.outer_commit_matrix.ring_dimension();
     if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
@@ -1182,7 +1157,8 @@ pub fn setup_prefix_precommitted_params(
                 prefix_params.outer_commit_matrix.coeff_linf_bound(),
                 prefix_params.outer_commit_matrix.ring_dimension(),
             );
-            return Ok(PrecommittedLevelParams {
+            return Ok(GroupOpenPhaseParams {
+                setup_natural_len: None,
                 layout: GroupCommitPhaseParams {
                     version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
@@ -1221,14 +1197,19 @@ pub fn setup_prefix_precommitted_params(
     ))
 }
 
-/// Attach a consuming opening plan to one setup-prefix commitment.
+/// Mark one committed group as a fold's incoming setup prefix.
+///
+/// Presence of `setup_natural_len` is the sole record that this group is a
+/// prefix and the sole record of its active support length, so there is no
+/// second field for a mirror audit to compare against.
+#[must_use]
 pub fn scheduled_setup_prefix(
     natural_len: usize,
-    commitment_params: PrecommittedLevelParams,
-) -> ScheduledSetupPrefix {
-    ScheduledSetupPrefix {
-        natural_len,
-        commitment_params,
+    commitment_params: GroupOpenPhaseParams,
+) -> GroupOpenPhaseParams {
+    GroupOpenPhaseParams {
+        setup_natural_len: Some(natural_len),
+        ..commitment_params
     }
 }
 
@@ -1256,7 +1237,12 @@ pub fn setup_prefix_coverage_eval_len(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
-    if selected_slot_id != &template.slot_id() {
+    let template_slot_id = template.slot_id().ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{coverage_error}: planned setup-prefix template is not a prefix group"
+        ))
+    })?;
+    if selected_slot_id != &template_slot_id {
         return Err(AkitaError::InvalidSetup(format!(
             "{coverage_error}: selected setup-prefix slot id does not match planned slot"
         )));
@@ -1270,11 +1256,11 @@ pub fn setup_prefix_coverage_eval_len(
         }
     }
     let template_n_prefix = template.n_prefix()?;
-    if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
+    if template_slot_id.natural_len != natural_field_len || template_n_prefix != n_prefix {
         return Err(AkitaError::InvalidSetup(format!(
             "{coverage_error}: planned natural/full-prefix lengths are {}/{template_n_prefix}, \
              active lengths are {natural_field_len}/{n_prefix}",
-            template.natural_len,
+            template_slot_id.natural_len,
         )));
     }
 

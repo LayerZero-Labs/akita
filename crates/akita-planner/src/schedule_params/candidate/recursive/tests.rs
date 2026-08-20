@@ -122,7 +122,9 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     .expect("late consumer search")
     .expect("eligible recursive level");
 
-    assert!(search.setup_prefixes.iter().flatten().any(|slot| {
-        slot.commitment_params.layout.outer_slice_count > akita_types::CommitmentSliceCount::ONE
-    }));
+    assert!(search
+        .setup_prefixes
+        .iter()
+        .flatten()
+        .any(|slot| { slot.layout.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
 }

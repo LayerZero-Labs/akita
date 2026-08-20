@@ -490,11 +490,13 @@ where
         .setup_prefix
         .as_ref()
         .map(|id| {
-            prefix_slots.get(&id.slot_id()).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "planned setup-prefix slot is missing from prover setup".into(),
-                )
-            })
+            prefix_slots
+                .get(&id.slot_id().expect("setup prefix group"))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "planned setup-prefix slot is missing from prover setup".into(),
+                    )
+                })
         })
         .transpose()?;
     let setup_source_storage = setup_slot.map(|slot| {

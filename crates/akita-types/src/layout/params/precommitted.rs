@@ -160,13 +160,23 @@ impl GroupOpeningPlan {
     }
 }
 
-/// One frozen commitment profile and the policy selected by its consuming fold.
+/// One commitment group taking part in one fold's opening batch.
+///
+/// Every group in a fold has this type: the final/new group, each precommitted
+/// group, and the setup prefix. The fold owns the shared D matrix; a group owns
+/// only its contribution of D digits, through `opening`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrecommittedLevelParams {
-    /// Frozen standalone group layout bound into commitment identity.
+pub struct GroupOpenPhaseParams {
+    /// Frozen commit-phase identity of this group.
     pub layout: GroupCommitPhaseParams,
     /// Opening policy owned by the fold that consumes this commitment.
     pub opening: GroupOpeningPlan,
+    /// Active setup-weight support, in flat field coefficients.
+    ///
+    /// `Some` exactly when this group is the consuming fold's setup prefix.
+    /// This is the sole record of that fact and the sole record of the length,
+    /// so there is no second field to audit it against.
+    pub setup_natural_len: Option<usize>,
 }
 
 /// Security and decomposition policy needed to admit a frozen precommit into
@@ -183,7 +193,34 @@ pub struct PrecommittedGroupAdmissionPolicy {
     pub sis_modulus_profile: SisModulusProfileId,
 }
 
-impl PrecommittedLevelParams {
+impl GroupOpenPhaseParams {
+    /// Registry identity for a prefix group; `None` for an ordinary group.
+    ///
+    /// `SetupPrefixSlotId` stays the runtime registry key. It is derived here
+    /// rather than stored, which removes the third copy of a prefix's frozen
+    /// commit-phase identity.
+    #[must_use]
+    pub fn slot_id(&self) -> Option<crate::SetupPrefixSlotId> {
+        self.setup_natural_len
+            .map(|natural_len| crate::SetupPrefixSlotId {
+                natural_len,
+                commitment_profile: self.layout,
+            })
+    }
+
+    /// Full power-of-two flat coefficient length committed for this prefix.
+    pub fn n_prefix(&self) -> Result<usize, AkitaError> {
+        self.slot_id()
+            .ok_or_else(|| AkitaError::InvalidSetup("group is not a setup prefix".to_string()))?
+            .n_prefix()
+    }
+
+    /// Ring dimension used for the frozen setup-prefix commitment.
+    #[must_use]
+    pub fn d_setup(&self) -> usize {
+        self.layout.inner.matrix.ring_dimension()
+    }
+
     /// Canonical bytes for deterministic planner ordering and schedule identity.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -278,6 +315,7 @@ impl PrecommittedLevelParams {
 
         let params = Self {
             layout,
+            setup_natural_len: None,
             opening: GroupOpeningPlan {
                 opening_method,
                 fold_challenge_config,
@@ -421,7 +459,7 @@ impl PrecommittedLevelParams {
 /// Common view over full and precommitted level parameters.
 ///
 /// Use this trait when code only needs the shared commitment geometry carried
-/// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
+/// by both [`CommittedGroupParams`] and [`GroupOpenPhaseParams`].
 pub trait LevelParamsLike {
     fn source_encoding(&self) -> crate::CommittedSourceEncoding;
     fn opening_method(&self) -> OpeningMethod;
@@ -536,7 +574,7 @@ impl LevelParamsLike for CommittedGroupParams {
     }
 }
 
-impl LevelParamsLike for PrecommittedLevelParams {
+impl LevelParamsLike for GroupOpenPhaseParams {
     fn source_encoding(&self) -> crate::CommittedSourceEncoding {
         crate::CommittedSourceEncoding::CanonicalCoefficientTable
     }

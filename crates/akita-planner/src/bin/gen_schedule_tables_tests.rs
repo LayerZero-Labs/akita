@@ -289,7 +289,6 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
             .incoming_setup_prefix
             .as_ref()
             .expect("first recursive fold consumes the setup prefix")
-            .commitment_params
             .opening
             .opening_method,
         OpeningMethod::SubringCoefficientPacking {

@@ -10,8 +10,8 @@ use akita_types::sis::{
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
-    GroupCommitPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
 };
 
 use akita_schedules::planner_support::projected_collision_role_price;
@@ -32,7 +32,7 @@ fn materialize_precommitted_group_for_open_basis(
     opening: PlannerOpeningCandidate,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
-) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
+) -> Result<Option<GroupOpenPhaseParams>, AkitaError> {
     let ring_dimension = layout.inner.matrix.ring_dimension();
     opening.validate_for(
         0,
@@ -95,7 +95,7 @@ fn materialize_precommitted_group_for_open_basis(
     {
         return Ok(None);
     }
-    PrecommittedLevelParams::admit(
+    GroupOpenPhaseParams::admit(
         *layout,
         num_digits_fold,
         PrecommittedGroupAdmissionPolicy {
@@ -127,7 +127,7 @@ struct RootFinalGroupCandidateInput<'a> {
     position_index_bits: usize,
     block_index_bits: usize,
     outer_slice_count: akita_types::CommitmentSliceCount,
-    precommitted_groups: &'a [PrecommittedLevelParams],
+    precommitted_groups: &'a [GroupOpenPhaseParams],
     precommitted_d_width: usize,
 }
 
@@ -137,7 +137,7 @@ fn precommitted_groups_for_open_basis(
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
-) -> Result<Option<(Vec<PrecommittedLevelParams>, usize)>, AkitaError> {
+) -> Result<Option<(Vec<GroupOpenPhaseParams>, usize)>, AkitaError> {
     let mut groups = Vec::with_capacity(seeds.len());
     for (group, opening) in seeds.iter().zip(openings.iter().copied()) {
         let Some(materialized) = materialize_precommitted_group_for_open_basis(

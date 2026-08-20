@@ -13,7 +13,7 @@ use akita_field::AkitaError;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule, GroupCommitPhaseParams,
-    OpenCommitMatrixParams, PolynomialGroupLayout, ScheduledSetupPrefix, WitnessPartition,
+    GroupOpenPhaseParams, OpenCommitMatrixParams, PolynomialGroupLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -268,10 +268,10 @@ fn runtime_witness_partition(p: &WitnessPartition) -> GeneratedWitnessPartition 
     }
 }
 
-fn setup_prefix_slot_input(slot: &ScheduledSetupPrefix) -> GeneratedSetupPrefixInput {
-    let group = &slot.commitment_params;
+fn setup_prefix_slot_input(slot: &GroupOpenPhaseParams) -> GeneratedSetupPrefixInput {
+    let group = &slot;
     GeneratedSetupPrefixInput {
-        natural_len: slot.natural_len as u64,
+        natural_len: slot.setup_natural_len.expect("setup prefix group") as u64,
         commitment: group.layout,
         opening: group.opening,
     }

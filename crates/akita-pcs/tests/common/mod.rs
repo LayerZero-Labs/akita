@@ -455,6 +455,7 @@ fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {
         .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
         .expect("recursive profile must carry a setup prefix")
         .slot_id()
+        .expect("setup prefix group")
 }
 
 fn verifier_setup_with_alternate_full_prefix(

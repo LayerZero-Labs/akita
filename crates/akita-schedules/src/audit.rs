@@ -9,7 +9,7 @@ use akita_types::sis::{
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    PrecommittedLevelParams, TerminalCommittedGroupParams, TerminalResponseShape,
+    GroupOpenPhaseParams, TerminalCommittedGroupParams, TerminalResponseShape,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
@@ -95,7 +95,7 @@ fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<()
 
 fn audit_precommitted_group(
     label: &str,
-    params: &PrecommittedLevelParams,
+    params: &GroupOpenPhaseParams,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     params.validate()?;
@@ -175,11 +175,7 @@ fn expected_d_width(
     }
     if let Some(prefix) = &params.setup_prefix {
         width = width
-            .checked_add(
-                prefix
-                    .commitment_params
-                    .d_segment_width(extension_degree, dims.d_d())?,
-            )
+            .checked_add(prefix.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "setup-prefix D width overflow"))?;
     }
     Ok(width)

@@ -89,7 +89,7 @@ pub fn verifier_setup_matrix_capacity_for_schedule(
                 .params
                 .incoming_setup_prefix
                 .as_ref()
-                .map(|slot| slot.natural_len);
+                .and_then(|slot| slot.setup_natural_len);
             let layout = suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
             active_setup_field_len(&producer.params.witness, &layout)?
         };
@@ -143,8 +143,10 @@ pub fn accumulate_matrix_field_elements_for_level(
     }
     accumulate_compression_matrix_field_elements_for_level(params, max_field_elements)?;
     if let Some(slot) = &params.setup_prefix {
-        *max_field_elements =
-            (*max_field_elements).max(setup_prefix_slot_field_elements(&slot.slot_id())?);
+        *max_field_elements = (*max_field_elements).max(match slot.slot_id() {
+            Some(slot_id) => setup_prefix_slot_field_elements(&slot_id)?,
+            None => 0,
+        });
     }
     Ok(())
 }

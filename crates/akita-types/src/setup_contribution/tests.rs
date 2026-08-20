@@ -260,7 +260,8 @@ fn test_inputs_for_group_sizes(
                     lp.d_a(),
                 );
                 layout.outer.matrix = outer_commit_matrix;
-                crate::PrecommittedLevelParams {
+                crate::GroupOpenPhaseParams {
+                    setup_natural_len: None,
                     layout,
                     opening: crate::GroupOpeningPlan::evaluation_trace(
                         lp.fold_challenge_config,

@@ -602,7 +602,6 @@ where
             .input_width()
             .checked_add(
                 incoming_setup_prefix
-                    .commitment_params
                     .d_segment_width(Self::EXT_DEGREE, successor_witness.role_dims().d_d())?,
             )
             .ok_or_else(|| AkitaError::InvalidSetup("packing successor D width overflow".into()))?;
@@ -658,15 +657,9 @@ where
                 AkitaError::InvalidSetup("early-ET test row needs a recursive fold".into())
             })?;
             if let Some(prefix) = step.params.incoming_setup_prefix.as_mut() {
-                prefix.commitment_params.opening.opening_method =
-                    akita_types::OpeningMethod::EvaluationTrace;
-                let d_a = prefix
-                    .commitment_params
-                    .layout
-                    .inner
-                    .matrix
-                    .ring_dimension();
-                prefix.commitment_params.opening.fold_challenge_config =
+                prefix.opening.opening_method = akita_types::OpeningMethod::EvaluationTrace;
+                let d_a = prefix.layout.inner.matrix.ring_dimension();
+                prefix.opening.fold_challenge_config =
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;

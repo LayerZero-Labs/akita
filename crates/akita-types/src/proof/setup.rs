@@ -681,7 +681,7 @@ mod tests {
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
 
-    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
+    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::GroupOpenPhaseParams {
         let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
             crate::SisTableKey {
                 policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -706,7 +706,8 @@ mod tests {
             inner_commit_matrix.output_rank() * (n_prefix / d_setup),
         )
         .expect("audited prefix B matrix");
-        crate::PrecommittedLevelParams {
+        crate::GroupOpenPhaseParams {
+            setup_natural_len: None,
             layout: crate::GroupCommitPhaseParams {
                 version: crate::GroupCommitPhaseParams::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
@@ -750,7 +751,9 @@ mod tests {
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params).slot_id(),
+            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params)
+                .slot_id()
+                .expect("setup prefix group"),
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },

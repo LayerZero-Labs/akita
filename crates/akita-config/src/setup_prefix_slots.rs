@@ -57,7 +57,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
                 .params
                 .incoming_setup_prefix
                 .as_ref()
-                .map(|slot| slot.natural_len);
+                .map(|slot| slot.setup_natural_len.expect("setup prefix group"));
             (
                 &producer.params.witness,
                 suffix_opening_layout(producer.input_witness_len, incoming_len)?,
@@ -65,7 +65,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         };
         let natural_len = active_setup_field_len(params, &opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        let commitment_id = slot_id.slot_id();
+        let commitment_id = slot_id.slot_id().expect("setup prefix group");
         setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;
         if !ids.insert(commitment_id) {
             continue;

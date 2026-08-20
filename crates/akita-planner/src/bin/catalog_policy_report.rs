@@ -147,21 +147,11 @@ pub(super) fn catalog_policy_signature(
                 signature,
                 ";prefix={}",
                 opening_policy_signature(
-                    prefix.commitment_params.opening.opening_method,
+                    prefix.opening.opening_method,
                     akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                     spec.policy.claim_ext_degree,
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner
-                        .matrix
-                        .ring_dimension(),
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner
-                        .matrix
-                        .security_route(),
+                    prefix.layout.inner.matrix.ring_dimension(),
+                    prefix.layout.inner.matrix.security_route(),
                 )?,
             )
             .map_err(|error| format!("write catalog policy signature: {error}"))?;

@@ -780,9 +780,9 @@ mod tests {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
                     scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
-                    CompressionChainWitness, GroupCommitPhaseParams, InnerCommitMatrixParams,
-                    OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
-                    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+                    CompressionChainWitness, GroupCommitPhaseParams, GroupOpenPhaseParams,
+                    InnerCommitMatrixParams, OuterCommitMatrixParams, PackedNegativeBinary,
+                    PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
                     SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
@@ -816,7 +816,7 @@ mod tests {
                 )
                 .expect("audited prefix B matrix");
                 let commitment_rows = outer_commit_matrix.output_rank();
-                let commitment_params = PrecommittedLevelParams {
+                let commitment_params = GroupOpenPhaseParams {
                     layout: GroupCommitPhaseParams {
                         version: GroupCommitPhaseParams::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),

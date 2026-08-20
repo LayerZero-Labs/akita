@@ -243,9 +243,9 @@ mod tests {
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
             scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
-            CompressionChainWitness, GroupCommitPhaseParams, InnerCommitMatrixParams,
-            OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
-            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+            CompressionChainWitness, GroupCommitPhaseParams, GroupOpenPhaseParams,
+            InnerCommitMatrixParams, OuterCommitMatrixParams, PackedNegativeBinary,
+            PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
             DEFAULT_SIS_SECURITY_POLICY,
         };
@@ -314,7 +314,8 @@ mod tests {
             &compression_quotients,
         )
         .expect("compression-valid A-native hint");
-        let commitment_params = PrecommittedLevelParams {
+        let commitment_params = GroupOpenPhaseParams {
+            setup_natural_len: None,
             layout: GroupCommitPhaseParams {
                 version: GroupCommitPhaseParams::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
@@ -339,7 +340,9 @@ mod tests {
         let err = setup
             .prefix_slots
             .insert(SetupPrefixSlot {
-                id: scheduled_setup_prefix(1, commitment_params).slot_id(),
+                id: scheduled_setup_prefix(1, commitment_params)
+                    .slot_id()
+                    .expect("setup prefix group"),
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![
                         RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);

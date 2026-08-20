@@ -65,7 +65,7 @@ pub struct RootFinalGroupParams {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPrecommittedGroupParams {
     pub descriptor: GroupCommitPhaseParams,
-    pub commitment: crate::PrecommittedLevelParams,
+    pub commitment: crate::GroupOpenPhaseParams,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,7 +82,7 @@ pub struct RecursiveFoldParams {
     pub witness: CommittedGroupParams,
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub incoming_setup_prefix: Option<crate::ScheduledSetupPrefix>,
+    pub incoming_setup_prefix: Option<crate::GroupOpenPhaseParams>,
     pub witness_partition: WitnessPartition,
 }
 
@@ -431,19 +431,20 @@ impl FoldSchedule {
                 )));
             }
             if let Some(prefix) = &step.params.incoming_setup_prefix {
-                prefix.commitment_params.validate()?;
-                prefix
-                    .commitment_params
-                    .layout
-                    .outer_slice_count
-                    .validate_for_commitment(
-                        0,
-                        crate::CommitmentPayloadMode::Compressed,
-                        prefix.commitment_params.layout.blocks.live_blocks,
-                    )?;
+                prefix.validate()?;
+                prefix.layout.outer_slice_count.validate_for_commitment(
+                    0,
+                    crate::CommitmentPayloadMode::Compressed,
+                    prefix.layout.blocks.live_blocks,
+                )?;
                 let n_prefix = prefix.n_prefix()?;
-                if prefix.natural_len == 0
-                    || prefix.natural_len > n_prefix
+                let natural_len = prefix.setup_natural_len.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "incoming setup prefix carries no active support length".to_string(),
+                    )
+                })?;
+                if natural_len == 0
+                    || natural_len > n_prefix
                     || prefix.d_setup() == 0
                     || !n_prefix.is_multiple_of(prefix.d_setup())
                 {
@@ -557,7 +558,7 @@ impl FoldSchedule {
             }];
             if let Some(prefix) = &step.params.incoming_setup_prefix {
                 groups.push(OpeningExecutionGroup {
-                    params: &prefix.commitment_params,
+                    params: prefix,
                     expected_source_encoding: None,
                 });
             }

@@ -115,7 +115,8 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         &precommit_lp,
     );
     layout.outer.matrix = outer_commit_matrix;
-    let precommit = PrecommittedLevelParams {
+    let precommit = GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             precommit_lp.fold_challenge_config,

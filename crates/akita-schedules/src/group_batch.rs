@@ -2,9 +2,7 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
-use akita_types::{
-    AkitaScheduleLookupKey, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
-};
+use akita_types::{AkitaScheduleLookupKey, GroupOpenPhaseParams, PrecommittedGroupAdmissionPolicy};
 
 use crate::generated::GeneratedRootPrecommittedGroup;
 use crate::PlannerPolicy;
@@ -16,7 +14,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     log_basis_open: u32,
     open_ring_dimension: usize,
-) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
+) -> Result<(Vec<GroupOpenPhaseParams>, usize), AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root params require at least one precommitted group".to_string(),
@@ -51,7 +49,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
                         .to_string(),
                 )
             })?;
-            let params = PrecommittedLevelParams::admit(
+            let params = GroupOpenPhaseParams::admit(
                 *layout,
                 num_digits_fold,
                 admission_policy,

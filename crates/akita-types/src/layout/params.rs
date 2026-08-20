@@ -12,7 +12,6 @@ use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
-    ScheduledSetupPrefix,
 };
 
 pub use crate::sis::{
@@ -62,8 +61,8 @@ mod descriptor;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 pub use precommitted::{
-    opening_d_segment_width, GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, LevelParamsLike,
+    OpeningFamily, OpeningMethod, PrecommittedGroupAdmissionPolicy,
 };
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -74,7 +73,7 @@ pub use precommitted::{
 #[must_use]
 pub fn shared_d_digit_log_basis(
     main_log_basis: u32,
-    _precommitted_groups: &[PrecommittedLevelParams],
+    _precommitted_groups: &[GroupOpenPhaseParams],
 ) -> u32 {
     main_log_basis
 }
@@ -132,13 +131,13 @@ pub struct CommittedGroupParams {
     /// levels; when non-empty, the top-level fields describe the final/new
     /// group and `open_commit_matrix` describes the shared D matrix over all group `w_hat`
     /// segments.
-    pub precommitted_groups: Vec<PrecommittedLevelParams>,
+    pub precommitted_groups: Vec<GroupOpenPhaseParams>,
     /// Derived runtime mirror of the successor-owned setup-prefix edge.
     ///
     /// [`crate::RecursiveFoldParams::incoming_setup_prefix`] is authoritative;
     /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
     /// prover or verifier execution.
-    pub setup_prefix: Option<ScheduledSetupPrefix>,
+    pub setup_prefix: Option<GroupOpenPhaseParams>,
 }
 
 impl CommittedGroupParams {
@@ -322,13 +321,10 @@ impl CommittedGroupParams {
     }
 
     #[inline]
-    pub fn precommitted_group_params(
-        &self,
-        group_index: usize,
-    ) -> Option<&PrecommittedLevelParams> {
+    pub fn precommitted_group_params(&self, group_index: usize) -> Option<&GroupOpenPhaseParams> {
         if let Some(setup_prefix) = &self.setup_prefix {
             if group_index == 0 {
-                return Some(&setup_prefix.commitment_params);
+                return Some(setup_prefix);
             }
             return self.precommitted_groups.get(group_index - 1);
         }
@@ -336,10 +332,9 @@ impl CommittedGroupParams {
     }
 
     #[inline]
-    pub fn precommitted_group_iter(&self) -> impl Iterator<Item = &PrecommittedLevelParams> {
+    pub fn precommitted_group_iter(&self) -> impl Iterator<Item = &GroupOpenPhaseParams> {
         self.setup_prefix
             .as_ref()
-            .map(|setup_prefix| &setup_prefix.commitment_params)
             .into_iter()
             .chain(self.precommitted_groups.iter())
     }
@@ -605,7 +600,7 @@ impl CommittedGroupParams {
         }
         if let Some(setup_prefix) = &self.setup_prefix {
             bytes.push(1);
-            setup_prefix.append_descriptor_bytes(bytes);
+            setup_prefix.append_setup_prefix_descriptor_bytes(bytes);
         } else {
             bytes.push(0);
         }

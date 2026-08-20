@@ -218,7 +218,7 @@ fn opening_d_segment_width_uses_the_method_physical_width() {
 #[test]
 fn precommit_admission_rejects_policy_and_basis_mismatches() {
     let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
-    PrecommittedLevelParams::admit(
+    GroupOpenPhaseParams::admit(
         layout,
         num_digits_fold,
         policy,
@@ -232,7 +232,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
         sis_modulus_profile: SisModulusProfileId::Q64Offset59,
         ..policy
     };
-    let error = PrecommittedLevelParams::admit(
+    let error = GroupOpenPhaseParams::admit(
         layout,
         num_digits_fold,
         mismatched_modulus,
@@ -242,7 +242,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
     )
     .expect_err("mismatched modulus must be rejected");
     assert!(error.to_string().contains("modulus profile does not match"));
-    let error = PrecommittedLevelParams::admit(
+    let error = GroupOpenPhaseParams::admit(
         layout,
         num_digits_fold,
         policy,
@@ -262,7 +262,7 @@ fn precommit_admission_rejects_policy_and_basis_mismatches() {
             + wrong_outer_depth.inner.matrix.output_rank() * wrong_outer_depth.blocks.live_blocks,
     )
     .expect("canonical wrong-depth B matrix");
-    let error = PrecommittedLevelParams::admit(
+    let error = GroupOpenPhaseParams::admit(
         wrong_outer_depth,
         num_digits_fold,
         policy,
@@ -292,7 +292,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         inner.input_width(),
     )
     .expect("canonical low-bound A matrix");
-    let error = PrecommittedLevelParams::admit(
+    let error = GroupOpenPhaseParams::admit(
         low_a,
         num_digits_fold,
         policy,
@@ -318,7 +318,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
         outer.input_width(),
     )
     .expect("canonical low-bound B matrix");
-    let error = PrecommittedLevelParams::admit(
+    let error = GroupOpenPhaseParams::admit(
         low_b,
         num_digits_fold,
         policy,
@@ -453,7 +453,7 @@ fn address_oracle_precommit(
     d_d: usize,
     blocks: usize,
     claims: usize,
-) -> PrecommittedLevelParams {
+) -> GroupOpenPhaseParams {
     let mut lp = address_oracle_group_params(d_a, d_b, d_d, blocks);
     certify_test_sis_bounds(&mut lp);
     let outer = &lp.outer_commit_matrix;
@@ -470,7 +470,8 @@ fn address_oracle_precommit(
         PolynomialGroupLayout::new(4, claims),
         &lp,
     );
-    PrecommittedLevelParams {
+    GroupOpenPhaseParams {
+        setup_natural_len: None,
         layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
             lp.fold_challenge_config,

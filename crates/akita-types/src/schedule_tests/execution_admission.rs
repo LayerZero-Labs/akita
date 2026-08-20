@@ -26,8 +26,8 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
         .incoming_setup_prefix
         .as_mut()
         .expect("level 1 prefix");
-    first_prefix.commitment_params.opening.opening_method = packing;
-    first_prefix.commitment_params.opening.fold_challenge_config = production;
+    first_prefix.opening.opening_method = packing;
+    first_prefix.opening.fold_challenge_config = production;
     schedule.recursive_folds[0].params.witness.setup_prefix = Some(first_prefix.clone());
 
     append_recursive_fold(&mut schedule);
@@ -57,7 +57,6 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
             .incoming_setup_prefix
             .as_ref()
             .unwrap()
-            .commitment_params
             .opening
             .opening_method,
         OpeningMethod::SubringCoefficientPacking { .. }
@@ -68,7 +67,6 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
             .incoming_setup_prefix
             .as_ref()
             .unwrap()
-            .commitment_params
             .opening
             .opening_method,
         OpeningMethod::EvaluationTrace
@@ -81,7 +79,7 @@ fn accepts_packing_prefix_then_evaluation_trace_prefix() {
             .incoming_setup_prefix
             .as_mut()
             .unwrap();
-        prefix.commitment_params.opening.opening_method = packing;
+        prefix.opening.opening_method = packing;
         prefix.clone()
     };
     changed.recursive_folds[1].params.witness.setup_prefix = Some(changed_prefix);

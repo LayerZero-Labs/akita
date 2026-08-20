@@ -116,7 +116,7 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
         .as_ref()
         .expect("W8R2 first recursive fold must consume a setup prefix");
     let witness_a = &first_recursive.witness.inner_commit_matrix;
-    let prefix_a = &prefix.commitment_params.layout.inner_commit_matrix;
+    let prefix_a = &prefix.layout.inner_commit_matrix;
     assert_eq!(
         (
             witness_a.ring_dimension(),
@@ -286,7 +286,6 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             .incoming_setup_prefix
             .as_ref()
             .expect("level-1 setup prefix")
-            .commitment_params
             .opening
             .opening_method,
         OpeningMethod::SubringCoefficientPacking { .. }

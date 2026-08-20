@@ -9,8 +9,8 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout,
+    extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, GroupOpenPhaseParams,
+    PlannedFoldSchedule, PolynomialGroupLayout, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalResponseShape,
 };
 
@@ -328,7 +328,7 @@ fn distributed_activation_depth(
 
 fn validate_expanded_precommitted_groups(
     key: &AkitaScheduleLookupKey,
-    groups: &[PrecommittedLevelParams],
+    groups: &[GroupOpenPhaseParams],
 ) -> Result<(), AkitaError> {
     if groups.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(format!(

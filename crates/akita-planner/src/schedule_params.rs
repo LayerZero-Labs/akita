@@ -19,8 +19,8 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 #[cfg(test)]
 use akita_types::{

@@ -114,10 +114,7 @@ fn append_root_fold_descriptor_bytes<'a>(
     commitment: &CommittedGroupParams,
     payload_mode: crate::CommitmentPayloadMode,
     precommitted_groups: impl ExactSizeIterator<
-        Item = (
-            &'a GroupCommitPhaseParams,
-            &'a crate::PrecommittedLevelParams,
-        ),
+        Item = (&'a GroupCommitPhaseParams, &'a crate::GroupOpenPhaseParams),
     >,
     open_commit_matrix: &crate::OpenCommitMatrixParams,
     sparse_challenge_config: &akita_challenges::SparseChallengeConfig,
@@ -145,7 +142,7 @@ fn append_recursive_fold_descriptor_bytes(
     payload_mode: crate::CommitmentPayloadMode,
     open_commit_matrix: &crate::OpenCommitMatrixParams,
     sparse_challenge_config: &akita_challenges::SparseChallengeConfig,
-    incoming_setup_prefix: Option<&crate::ScheduledSetupPrefix>,
+    incoming_setup_prefix: Option<&crate::GroupOpenPhaseParams>,
     witness_partition: WitnessPartitionDescriptor<'_>,
     input_witness_len: usize,
     output_witness_len: usize,
@@ -157,7 +154,7 @@ fn append_recursive_fold_descriptor_bytes(
         None => bytes.push(0),
         Some(prefix) => {
             bytes.push(1);
-            prefix.append_descriptor_bytes(bytes);
+            prefix.append_setup_prefix_descriptor_bytes(bytes);
         }
     }
     append_witness_partition_descriptor(bytes, witness_partition);

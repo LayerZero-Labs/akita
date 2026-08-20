@@ -424,9 +424,7 @@ mod tests {
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{
-        GroupCommitPhaseParams, PrecommittedLevelParams, RingVec, SisModulusProfileId,
-    };
+    use akita_types::{GroupCommitPhaseParams, GroupOpenPhaseParams, RingVec, SisModulusProfileId};
 
     type F = Fp32<251>;
 
@@ -522,7 +520,8 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
-        root.precommitted_groups.push(PrecommittedLevelParams {
+        root.precommitted_groups.push(GroupOpenPhaseParams {
+            setup_natural_len: None,
             layout: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
                 pre.fold_challenge_config,

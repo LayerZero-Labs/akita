@@ -15,7 +15,7 @@ struct SetupPrefixSearchKey {
 
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
-    entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+    entries: HashMap<SetupPrefixSearchKey, Arc<[GroupOpenPhaseParams]>>,
     hits: usize,
     misses: usize,
 }
@@ -40,7 +40,7 @@ type SetupPrefixFrontierEntry = (
     [usize; 2],
     Vec<u8>,
     LayoutCandidateScore,
-    PrecommittedLevelParams,
+    GroupOpenPhaseParams,
 );
 
 #[derive(Clone, Copy)]
@@ -150,7 +150,8 @@ impl SetupPrefixCandidateContext<'_> {
                 outer_commit_matrix,
             ),
         };
-        let params = PrecommittedLevelParams {
+        let params = GroupOpenPhaseParams {
+            setup_natural_len: None,
             layout,
             opening: akita_types::GroupOpeningPlan {
                 opening_method: self.opening.method(),
@@ -169,7 +170,9 @@ impl SetupPrefixCandidateContext<'_> {
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone()).slot_id(),
+            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone())
+                .slot_id()
+                .expect("setup prefix group"),
         )?;
         let coords = [physical_width, padded_setup_prefix_len(setup_fields)];
         let descriptor = params.canonical_descriptor_bytes();
@@ -208,7 +211,7 @@ fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
     request: SetupPrefixSearchRequest<'_>,
-) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
+) -> Result<Vec<GroupOpenPhaseParams>, AkitaError> {
     let SetupPrefixSearchRequest {
         policy,
         opening,
@@ -353,7 +356,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             params.layout.blocks.live_blocks,
         )
     });
-    let result: Arc<[PrecommittedLevelParams]> = frontier
+    let result: Arc<[GroupOpenPhaseParams]> = frontier
         .into_iter()
         .map(|(_, _, _, params)| params)
         .collect();

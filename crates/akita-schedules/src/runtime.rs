@@ -792,7 +792,7 @@ fn active_setup_field_len_for_recursive_producer(
         .params
         .incoming_setup_prefix
         .as_ref()
-        .map(|prefix| prefix.natural_len);
+        .map(|prefix| prefix.setup_natural_len.expect("setup prefix group"));
     let layout =
         akita_types::suffix_opening_layout(producer.input_witness_len, incoming_prefix_len)?;
     akita_types::active_setup_field_len(&producer.params.witness, &layout)

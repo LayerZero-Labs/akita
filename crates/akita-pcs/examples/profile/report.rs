@@ -7,9 +7,9 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
-    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute,
-    NttTransformDomain, OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout,
-    PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
+    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, GroupOpenPhaseParams,
+    InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams, OpeningMethod,
+    PolynomialGroupLayout, SetupSumcheckProof, SisModulusProfileId,
     SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
 
@@ -520,7 +520,7 @@ impl PlannedGroupReport {
         group: String,
         consumer_level: usize,
         witness_field_elements: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
         shared_open: &OpenCommitMatrixParams,
         setup_prefix_lengths: Option<(usize, usize)>,
         extension_degree: usize,
@@ -753,10 +753,13 @@ pub(crate) fn emit_runtime_schedule_summary(
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
                 index + 1,
-                prefix.natural_len,
-                &prefix.commitment_params,
+                prefix.setup_natural_len.expect("setup prefix group"),
+                prefix,
                 &fold.params.open_commit_matrix,
-                Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
+                Some((
+                    prefix.setup_natural_len.expect("setup prefix group"),
+                    prefix.n_prefix().unwrap_or(0),
+                )),
                 extension_degree,
             )?
             .emit(label, index, field_bits);
@@ -810,8 +813,9 @@ pub(crate) fn emit_runtime_schedule_summary(
             .recursive_folds
             .get(level_idx)
             .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
-        let setup_prefix_natural_field_elements =
-            setup_prefix.map_or(0, |prefix| prefix.natural_len);
+        let setup_prefix_natural_field_elements = setup_prefix.map_or(0, |prefix| {
+            prefix.setup_natural_len.expect("setup prefix group")
+        });
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
         let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
