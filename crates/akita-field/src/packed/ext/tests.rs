@@ -35,6 +35,10 @@ type WideSubWordFp64 = Fp64<{ (1u64 << 63) - 259 }>;
 type WideSubWordFp64Ext2 = FpExt2<WideSubWordFp64, TwoNr>;
 type PackedWideSubWordFp64Ext2 =
     PackedFpExt2<WideSubWordFp64, TwoNr, <WideSubWordFp64 as HasPacking>::Packing>;
+type NarrowBaseWideFusedFp64 = Fp64<{ (1u64 << 58) - 27 }>;
+type NarrowBaseWideFusedFp64Ext2 = FpExt2<NarrowBaseWideFusedFp64, TwoNr>;
+type PackedNarrowBaseWideFusedFp64Ext2 =
+    PackedFpExt2<NarrowBaseWideFusedFp64, TwoNr, <NarrowBaseWideFusedFp64 as HasPacking>::Packing>;
 type LargeOffsetFp64 = Fp64<{ (1u64 << 63) - 1_500_000_051 }>;
 type LargeOffsetFp64Ext2 = FpExt2<LargeOffsetFp64, TwoNr>;
 type PackedLargeOffsetFp64Ext2 =
@@ -166,6 +170,18 @@ fn packed_fp_ext2_mul_wide_sub_word_fused() {
             "wide sub-word packed FpExt2 square mismatch at lane {i}"
         );
     }
+}
+
+/// A single product for `2^58 - 27` satisfies the narrow-reducer bound
+/// (`27 < 2^6`), but the fused three-product coefficient does not
+/// (`3 * 27 > 2^6`). The AVX fused path must therefore preserve the first-fold
+/// carry even though ordinary base multiplication uses the narrow path.
+#[test]
+fn packed_fp_ext2_fused_first_fold_carry() {
+    let max = NarrowBaseWideFusedFp64::zero() - NarrowBaseWideFusedFp64::one();
+    let value = NarrowBaseWideFusedFp64Ext2::new(max, max);
+    let packed = PackedNarrowBaseWideFusedFp64Ext2::broadcast(value);
+    assert_eq!((packed * packed).extract(0), value * value);
 }
 
 /// The AVX second fold multiplies only the low 32 bits of `fold1_high`.

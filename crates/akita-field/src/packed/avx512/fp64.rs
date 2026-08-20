@@ -315,8 +315,8 @@ impl<const P: u64> PackedField for PackedFp64Avx512<P> {
                 let (z0_hi, z0_lo) = Self::add128_vec(z0_hi, z0_lo, p11_hi, p11_lo);
                 let (z1_hi, z1_lo) = Self::add128_vec(p01_hi, p01_lo, p10_hi, p10_lo);
                 return (
-                    Self::from_vec(Self::reduce128_vec(z0_hi, z0_lo)),
-                    Self::from_vec(Self::reduce128_vec(z1_hi, z1_lo)),
+                    Self::from_vec(Self::reduce128_sub_word_wide(z0_hi, z0_lo)),
+                    Self::from_vec(Self::reduce128_sub_word_wide(z1_hi, z1_lo)),
                 );
             }
         }

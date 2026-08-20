@@ -95,6 +95,16 @@ impl<const P: u64> Fp64<P> {
     /// Whether two Solinas folds and one final subtraction can reduce a sum
     /// of three multiplication products. This is the exact bound needed by
     /// the fused `FpExt2` kernel for non-residue two.
+    #[cfg(any(
+        all(
+            target_arch = "x86_64",
+            any(
+                target_feature = "avx2",
+                all(target_feature = "avx512f", target_feature = "avx512dq")
+            )
+        ),
+        all(target_arch = "aarch64", target_feature = "neon")
+    ))]
     pub(crate) const EXT2_TWO_FUSION_SAFE: bool =
         Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
 
