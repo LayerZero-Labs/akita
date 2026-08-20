@@ -90,10 +90,13 @@ pub(super) fn single_group_roundtrip<Cfg>(
     )
     .expect("prover group")])
     .expect("prover claims");
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("trusted schedule catalog");
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         prover_claims,
         vec![hint],
         vec![&poly_refs[..]],
+        &schedules,
     )
     .expect("prover data");
     let selection = prover_data.selection();

@@ -42,7 +42,7 @@ pub enum NextWitnessBindingPolicy {
     TerminalInnerState,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WitnessPartition {
     Single,
     Distributed { num_chunks: usize },
@@ -57,18 +57,18 @@ impl WitnessPartition {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RootFinalGroupParams {
     pub commitment: CommittedGroupParams,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RootPrecommittedGroupParams {
     pub descriptor: CommittedGroupProfile,
     pub commitment: crate::PrecommittedLevelParams,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RootFoldParams {
     pub final_group: RootFinalGroupParams,
     pub precommitted_groups: Vec<RootPrecommittedGroupParams>,
@@ -77,7 +77,7 @@ pub struct RootFoldParams {
     pub witness_partition: WitnessPartition,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecursiveFoldParams {
     pub witness: CommittedGroupParams,
     pub open_commit_matrix: crate::OpenCommitMatrixParams,
@@ -104,7 +104,7 @@ impl RecursiveFoldParams {
 /// commitment matrix. It also retains the terminal fold basis and digit count
 /// needed to audit a calibrated L2 route. It has no outer/open commitment
 /// matrix and no outer/open response decomposition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalCommittedGroupParams {
     pub log_basis_inner: u32,
     /// Response basis used by the planner for this terminal fold.
@@ -287,34 +287,34 @@ impl TerminalCommittedGroupParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalFoldParams {
     pub witness: TerminalCommittedGroupParams,
     pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
     pub response_shape: TerminalResponseShape,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RootFoldStep {
     pub params: RootFoldParams,
     pub input_witness_len: usize,
     pub output_witness_len: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecursiveFoldStep {
     pub params: RecursiveFoldParams,
     pub input_witness_len: usize,
     pub output_witness_len: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalFoldStep {
     pub params: TerminalFoldParams,
     pub input_witness_len: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
     pub root: RootFoldStep,
     pub recursive_folds: Vec<RecursiveFoldStep>,

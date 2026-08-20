@@ -11,6 +11,7 @@ use akita_types::{
     OpeningScheduleSelection,
 };
 
+use crate::artifact::TrustedScheduleCatalog;
 use crate::audit::audit_resolved_schedule;
 use crate::catalog_identity::{identity_digest, policy_digest, validate_catalog_identity};
 use crate::generated::walk::walk_generated_schedule_entry;
@@ -276,6 +277,25 @@ fn materialized_catalog(
         .entry(cache_key)
         .or_insert_with(|| Arc::clone(&materialized))
         .clone())
+}
+
+/// Materialize one compact generated table into the owned trusted catalog used
+/// by prover and verifier schedule resolution.
+pub fn trusted_catalog_from_generated(
+    table: GeneratedScheduleTable,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+) -> Result<TrustedScheduleCatalog, AkitaError> {
+    let materialized = materialized_catalog(table, policy, &ring_challenge_config)?;
+    TrustedScheduleCatalog::try_new(
+        table.identity.family_name,
+        materialized
+            .rows_by_digest
+            .iter()
+            .map(|row| (row.profiles().clone(), row.schedule().clone())),
+        policy,
+        ring_challenge_config,
+    )
 }
 
 /// Resolve an explicit public schedule selection without planner/key search.

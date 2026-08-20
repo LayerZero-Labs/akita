@@ -83,7 +83,7 @@ pub fn shared_d_digit_log_basis(
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
 /// single authoritative struct.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommittedGroupParams {
     /// Public B/D payload encoding selected for this fold level.
     pub payload_mode: crate::CommitmentPayloadMode,

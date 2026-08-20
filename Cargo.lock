@@ -54,6 +54,7 @@ dependencies = [
  "akita-field",
  "akita-transcript",
  "criterion",
+ "serde",
  "sha3 0.10.9",
  "smallvec",
  "tracing",
@@ -168,6 +169,8 @@ dependencies = [
  "akita-challenges",
  "akita-field",
  "akita-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -245,6 +248,7 @@ dependencies = [
  "rand 0.8.6",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]

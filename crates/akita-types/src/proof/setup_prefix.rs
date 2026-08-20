@@ -42,7 +42,7 @@ pub struct SetupPrefixSlotId {
 }
 
 /// Setup-prefix commitment identity plus the consuming fold's opening policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScheduledSetupPrefix {
     /// Active setup-weight support in flat field coefficients.
     pub natural_len: usize,

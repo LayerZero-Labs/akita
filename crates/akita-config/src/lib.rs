@@ -21,6 +21,13 @@ use akita_types::{
     AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+
+static EMBEDDED_TRUSTED_SCHEDULE_CATALOGS: LazyLock<
+    Mutex<HashMap<TypeId, Arc<TrustedScheduleCatalog>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -35,6 +42,11 @@ macro_rules! impl_multi_chunk_companion {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            fn schedule_family_name() -> &'static str {
+                stringify!($table)
+                    .strip_suffix("_table")
+                    .unwrap_or(stringify!($table))
+            }
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
@@ -96,6 +108,7 @@ pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
+pub use akita_schedules::TrustedScheduleCatalog;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
@@ -134,6 +147,56 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
+}
+
+/// Decode and validate a trusted schedule artifact for one concrete config.
+///
+/// This is an application or preprocessing boundary. Proof parsing never
+/// calls it and no proof field contains these artifact bytes.
+pub fn trusted_schedule_catalog_from_bytes<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+) -> Result<TrustedScheduleCatalog, AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    TrustedScheduleCatalog::from_artifact_bytes(
+        bytes,
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+}
+
+/// Materialize the feature gated generated table through the same owned
+/// catalog contract used by external artifacts.
+///
+/// This exists only as a migration source while checked in Rust schedule
+/// tables are replaced by published artifact files.
+pub fn trusted_schedule_catalog_from_embedded<Cfg: CommitmentConfig>(
+) -> Result<Arc<TrustedScheduleCatalog>, AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    let config_id = TypeId::of::<Cfg>();
+    if let Some(catalog) = EMBEDDED_TRUSTED_SCHEDULE_CATALOGS
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("trusted catalog cache poisoned".to_string()))?
+        .get(&config_id)
+        .cloned()
+    {
+        return Ok(catalog);
+    }
+    let table = Cfg::schedule_catalog().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule("embedded schedule catalog is not enabled".to_string())
+    })?;
+    let catalog = Arc::new(akita_schedules::trusted_catalog_from_generated(
+        table,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )?);
+    let mut cache = EMBEDDED_TRUSTED_SCHEDULE_CATALOGS
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("trusted catalog cache poisoned".to_string()))?;
+    Ok(cache
+        .entry(config_id)
+        .or_insert_with(|| Arc::clone(&catalog))
+        .clone())
 }
 
 /// Validate a config's schedule policy and concrete extension-field tower.
@@ -314,6 +377,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             Self::recursive_setup_planning(),
             Self::RING_DIMENSION_SCHEDULE_MODE,
         )
+    }
+
+    /// Stable trusted schedule family identity for external artifact loading.
+    fn schedule_family_name() -> &'static str {
+        std::any::type_name::<Self>()
     }
 
     /// Optional generated schedule catalog for this preset.

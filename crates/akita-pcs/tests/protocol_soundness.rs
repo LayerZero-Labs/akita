@@ -128,10 +128,13 @@ fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Fie
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("trusted schedule catalog");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
         vec![hint],
         vec![polynomials],
+        &schedules,
     )
     .expect("valid prover opening data");
     assert_eq!(selected.selection(), selection);

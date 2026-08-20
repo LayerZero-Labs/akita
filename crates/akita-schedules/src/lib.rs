@@ -1,5 +1,6 @@
 //! Runtime schedule catalogs and strict generated schedule resolution.
 
+mod artifact;
 mod audit;
 mod candidate;
 pub mod catalog_identity;
@@ -12,6 +13,7 @@ pub use akita_types::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
+pub use artifact::TrustedScheduleCatalog;
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
     ring_challenge_config_digest, validate_catalog_identity,
@@ -20,7 +22,7 @@ pub use generated::*;
 pub use resolve::{
     estimate_proof_bytes, resolve_generated_catalog_row_for_key,
     resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
-    schedule_from_entry, ResolvedScheduleRow,
+    schedule_from_entry, trusted_catalog_from_generated, ResolvedScheduleRow,
 };
 pub use runtime::{
     default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,

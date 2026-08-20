@@ -762,9 +762,12 @@ fn heterogeneous_compute_backends() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
+        let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+            .expect("trusted schedule catalog");
         let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
+            &schedules,
             &stack,
             prover_data,
             &mut prover_transcript,

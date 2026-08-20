@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Public segment geometry for a transparent terminal witness.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TailSegmentLayout {
     pub ring_dimension: usize,
     /// Per-group terminal segments in witness order. Scalar/single-group tails
@@ -33,7 +33,7 @@ pub struct TailSegmentLayout {
 }
 
 /// Per-group terminal segment geometry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TailSegmentGroupLayout {
     pub z_coords: usize,
     pub e_field_elems: usize,
@@ -51,7 +51,7 @@ pub struct TailSegmentGroupLayout {
 }
 
 /// Shape of the clear terminal response payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalResponseShape {
     pub layout: TailSegmentLayout,
 }

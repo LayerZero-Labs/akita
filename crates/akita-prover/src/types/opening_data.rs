@@ -3,7 +3,7 @@ use crate::backend::RecursiveFoldSource;
 use crate::compute::RootPolyMeta;
 use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
@@ -190,6 +190,7 @@ where
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomial_groups: Vec<&'a [&'a P]>,
+        schedules: &TrustedScheduleCatalog,
     ) -> Result<Self, AkitaError>
     where
         Cfg: CommitmentConfig<Field = CommitF, ExtField = PointF>,
@@ -200,7 +201,8 @@ where
                 .iter()
                 .map(PolynomialGroupClaims::commitment),
         )?;
-        let selection = Cfg::resolve_catalog_row_for_profiles(&batch_profile)?.selection();
+        Cfg::validate_sis_modulus_profile()?;
+        let selection = schedules.resolve_profiles(&batch_profile)?.selection();
         let opening_data = ProverOpeningData::new(opening_claims, hints, polynomial_groups)?;
         Ok(Self {
             selection,

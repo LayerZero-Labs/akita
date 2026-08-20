@@ -11,7 +11,9 @@ use crate::witness::dyadic_block_ranges;
 pub const MAX_COMMITMENT_SLICES: usize = 8;
 
 /// Checked number of logical inputs committed through one physical B matrix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct CommitmentSliceCount(u8);
 
 impl Default for CommitmentSliceCount {

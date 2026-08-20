@@ -13,7 +13,7 @@ use crate::{CommitmentRingDims, DecompositionParams};
 use super::CommittedGroupParams;
 
 /// Schedule-selected procedure for opening one committed group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum OpeningMethod {
     /// Open full A-ring partials with evaluation-trace weights.
     EvaluationTrace,
@@ -108,7 +108,7 @@ pub fn opening_d_segment_width(
 }
 
 /// Opening policy selected by the fold that consumes a committed group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GroupOpeningPlan {
     /// Procedure used to reduce and open the group's coefficients.
     pub opening_method: OpeningMethod,
@@ -161,7 +161,7 @@ impl GroupOpeningPlan {
 }
 
 /// One frozen commitment profile and the policy selected by its consuming fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into commitment identity.
     pub layout: CommittedGroupProfile,

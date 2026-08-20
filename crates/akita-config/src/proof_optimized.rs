@@ -408,6 +408,9 @@ macro_rules! impl_proof_optimized_preset {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
+            fn schedule_family_name() -> &'static str {
+                $family_name
+            }
             impl_proof_optimized_preset!(@options $($options)*);
 
             fn decomposition() -> akita_types::DecompositionParams {

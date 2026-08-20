@@ -170,7 +170,7 @@ const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
 ];
 
 /// Fixed-weight sparse ring fold challenge family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SparseChallengeConfig {
     /// Number of non-zero coefficients with magnitude 1 (random sign).
     pub count_pm1: usize,

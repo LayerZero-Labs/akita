@@ -4,7 +4,7 @@ use super::*;
 
 use akita_config::{
     bind_transcript_instance_descriptor, effective_batched_schedule,
-    ensure_verifier_schedule_fits_setup, CommitmentConfig,
+    ensure_verifier_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog,
 };
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -218,7 +218,8 @@ use akita_types::{
 /// Verify a batched proof under config `Cfg`.
 ///
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
-/// public claim normalization, folded schedule selection (from `Cfg`), and
+/// public claim normalization, folded schedule selection from the trusted
+/// catalog, and
 /// transcript instance-descriptor binding before handing off to `verify`.
 ///
 /// # Errors
@@ -228,6 +229,7 @@ use akita_types::{
 pub fn batched_verify<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     transcript: &mut T,
     statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
@@ -307,7 +309,7 @@ where
     let final_group_point = claims
         .group_point(final_group_index)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    let resolved = schedules.resolve_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)
         .map_err(|_| AkitaError::InvalidProof)?;
     if resolved.profiles() != &batch_profile {

@@ -13,7 +13,7 @@ use akita_field::{AkitaError, FieldCore};
 /// This is commitment identity, not an opening policy. In particular, changing
 /// [`crate::OpeningMethod`] cannot reinterpret an existing commitment between
 /// these encodings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CommittedSourceEncoding {
     /// The source's canonical base-field coefficient table.
     CanonicalCoefficientTable,
@@ -80,7 +80,7 @@ impl CommittedSourceEncoding {
 }
 
 /// Root layout metadata frozen when a standalone commitment group is created.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CommittedGroupProfile {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
@@ -324,7 +324,7 @@ pub struct AkitaScheduleLookupKey {
 /// cannot describe "no precommitted groups" — that state has its own spelling in
 /// `PrecommittedGroupContext::NoPrecommittedGroups`. Both constructors reject an empty
 /// input, which is why building a grouped context is infallible.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrecommittedGroupProfiles {
     profiles: Vec<CommittedGroupProfile>,
 }
@@ -526,7 +526,7 @@ mod source_encoding_tests {
 }
 
 /// Exact ordered committed profiles used to resolve a verifier-approved row.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CommittedGroupBatchProfile {
     /// Final/new commitment group.
     pub final_group: CommittedGroupProfile,

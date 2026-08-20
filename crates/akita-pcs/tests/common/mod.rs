@@ -188,10 +188,13 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("trusted schedule catalog");
     SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
         vec![hint],
         vec![polynomials],
+        &schedules,
     )
     .expect("valid prover opening data")
 }
@@ -210,7 +213,9 @@ where
     Cfg: CommitmentConfig,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials)
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("trusted schedule catalog");
+    SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials, &schedules)
         .expect("valid selected prover data")
 }
 

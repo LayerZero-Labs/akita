@@ -1,6 +1,6 @@
 //! End-to-end Akita PCS scheme orchestration.
 
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -171,9 +171,11 @@ where
     {
         let t_prove_total = Instant::now();
         akita_config::validate_config_policy::<Cfg>()?;
+        let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()?;
         let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
             &setup.expanded,
             &setup.prefix_slots,
+            &schedules,
             stacks,
             opening,
             transcript,
@@ -203,7 +205,8 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         akita_config::validate_config_policy::<Cfg>()?;
-        batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
+        let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()?;
+        batched_verify_inner::<Cfg, T>(proof, setup, &schedules, transcript, statement, basis)
     }
 
     /// Protocol identifier.
@@ -216,6 +219,7 @@ where
 fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     transcript: &mut T,
     statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
@@ -236,7 +240,9 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, statement, basis)?;
+    akita_verifier::batched_verify::<Cfg, T>(
+        proof, setup, schedules, transcript, statement, basis,
+    )?;
 
     tracing::info!(
         levels = proof.num_fold_levels(),

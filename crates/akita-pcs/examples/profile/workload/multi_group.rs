@@ -343,11 +343,14 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
+        let schedules = akita_config::trusted_schedule_catalog_from_embedded::<ProofCfg>()
+            .expect("trusted schedule catalog");
         let prover_data =
             akita_prover::SelectedProverOpeningData::from_committed_claims::<ProofCfg>(
                 OpeningClaims::from_groups(prover_groups).expect("prover claims"),
                 prover_hints,
                 prover_polys,
+                &schedules,
             )
             .expect("multi-group prover data");
         let selection = prover_data.selection();

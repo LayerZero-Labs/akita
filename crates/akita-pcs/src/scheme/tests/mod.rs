@@ -63,7 +63,8 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<C>()?;
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials, &schedules)
 }
 
 fn selected_statement<'a, C>(

@@ -23,6 +23,22 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
+
+    fn schedule_family_name() -> &'static str {
+        #[cfg(feature = "schedules-fp128-onehot-recursive")]
+        if std::any::TypeId::of::<Cfg>()
+            == std::any::TypeId::of::<crate::proof_optimized::fp128::OneHot>()
+        {
+            return "fp128_onehot_recursive";
+        }
+        #[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk-w8r2")]
+        if std::any::TypeId::of::<Cfg>()
+            == std::any::TypeId::of::<crate::proof_optimized::fp128::OneHotMultiChunk>()
+        {
+            return "fp128_onehot_recursive_multi_chunk_w8r2";
+        }
+        std::any::type_name::<Self>()
+    }
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
     }
