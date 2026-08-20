@@ -188,7 +188,7 @@ jobs:
         run: |
           cargo test --release -p akita-config --features all-schedules --test generated_tables
       # Golden descriptor bytes for every catalog, at every level of the
-      # parameter surface. Owned by specs/parameter-struct-consolidation.md.
+      # parameter surface. Owned by specs/archive/2026-Q3/parameter-struct-consolidation.md.
       # This job is the only one that links all 13 catalogs, so it is the only
       # place the fixture is complete.
       - name: Schedule descriptor byte fixtures
