@@ -57,7 +57,10 @@ pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
     /// Exact frozen commitment identity emitted by the planner.
     pub commitment: akita_types::GroupCommitPhaseParams,
-    pub opening: akita_types::GroupOpeningPlan,
+    /// Procedure the consuming fold uses to open this prefix.
+    pub opening_method: akita_types::OpeningMethod,
+    /// Folded-witness digit depth for this prefix.
+    pub num_digits_fold: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

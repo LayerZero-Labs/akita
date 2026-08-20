@@ -259,11 +259,13 @@ fn open_matrix_params(p: &OpenCommitMatrixParams, log_basis: u32) -> GeneratedMa
 }
 
 fn setup_prefix_slot_input(slot: &GroupOpenPhaseParams) -> GeneratedSetupPrefixInput {
-    let group = &slot;
     GeneratedSetupPrefixInput {
         natural_len: slot.setup_natural_len.expect("setup prefix group") as u64,
-        commitment: group.profile,
-        opening: group.opening,
+        commitment: slot.profile,
+        // The rest of the opening plan is the consuming fold's, so it is derived
+        // at expansion rather than stored here.
+        opening_method: slot.opening.opening_method,
+        num_digits_fold: slot.opening.num_digits_fold as u32,
     }
 }
 
@@ -497,34 +499,14 @@ fn emit_opening_method(value: akita_types::OpeningMethod) -> String {
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, commitment: {}, opening: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, commitment: {}, opening_method: {}, num_digits_fold: {} }})",
             value.natural_len,
             emit_precommitted_group_key(&value.commitment),
-            emit_group_opening_plan(value.opening),
+            emit_opening_method(value.opening_method),
+            value.num_digits_fold,
         ),
         None => "None".to_string(),
     }
-}
-
-fn emit_group_opening_plan(value: akita_types::GroupOpeningPlan) -> String {
-    let method = match value.opening_method {
-        akita_types::OpeningMethod::EvaluationTrace => {
-            "akita_types::OpeningMethod::EvaluationTrace".to_string()
-        }
-        akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension,
-        } => format!(
-            "akita_types::OpeningMethod::SubringCoefficientPacking {{ challenge_subring_dimension: {challenge_subring_dimension} }}"
-        ),
-    };
-    format!(
-        "akita_types::GroupOpeningPlan {{ opening_method: {method}, fold_challenge_config: akita_challenges::SparseChallengeConfig {{ count_pm1: {}, count_pm2: {} }}, log_basis_open: {}, num_digits_open: {}, num_digits_fold: {} }}",
-        value.fold_challenge_config.count_pm1,
-        value.fold_challenge_config.count_pm2,
-        value.log_basis_open,
-        value.num_digits_open,
-        value.num_digits_fold,
-    )
 }
 
 fn emit_schedule_entry(

@@ -87,19 +87,18 @@ impl GeneratedSetupPrefixInput {
                 "generated setup-prefix natural length disagrees with its frozen commitment".into(),
             ));
         }
-        let challenge_dimension = match self.opening.opening_method {
+        // The consuming fold supplies the shared opening basis and the challenge
+        // family; a prefix cannot pin its own. This used to be a stored
+        // `GroupOpeningPlan` re-derived here and rejected on disagreement, which
+        // meant three audits guarding a field that carried no information. The
+        // plan is now derived only, so there is nothing left to disagree.
+        let challenge_dimension = match self.opening_method {
             akita_types::OpeningMethod::EvaluationTrace => d_a,
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => challenge_subring_dimension,
         };
-        if ring_challenge_config(challenge_dimension)? != self.opening.fold_challenge_config
-            || self.opening.log_basis_open != log_basis_open
-        {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix opening plan disagrees with its consuming fold".into(),
-            ));
-        }
+        let fold_challenge_config = ring_challenge_config(challenge_dimension)?;
         let admission_policy = akita_types::PrecommittedGroupAdmissionPolicy {
             decomposition: policy.decomposition,
             sis_security_policy: policy.sis_security_policy,
@@ -108,17 +107,12 @@ impl GeneratedSetupPrefixInput {
         };
         let params = GroupOpenPhaseParams::admit(
             self.commitment,
-            self.opening.num_digits_fold,
+            generated_count(u64::from(self.num_digits_fold), "setup-prefix fold digits")?,
             admission_policy,
-            self.opening.opening_method,
-            self.opening.fold_challenge_config,
+            self.opening_method,
+            fold_challenge_config,
             log_basis_open,
         )?;
-        if params.opening != self.opening {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix opening plan is not the canonical admitted plan".into(),
-            ));
-        }
         params.validate()?;
         Ok(params)
     }
@@ -981,11 +975,13 @@ mod tests {
 
     #[test]
     fn setup_prefix_expansion_preserves_independent_a_b_dimensions() {
-        let input = crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
-            .iter()
-            .flat_map(|entry| entry.recursive_folds)
-            .find_map(|fold| fold.incoming_setup_prefix)
-            .expect("generated recursive setup-prefix fixture");
+        // The shared opening basis belongs to the consuming fold, so take both.
+        let (fold, input) =
+            crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
+                .iter()
+                .flat_map(|entry| entry.recursive_folds)
+                .find_map(|fold| fold.incoming_setup_prefix.map(|prefix| (fold, prefix)))
+                .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
         let ring_challenge_config = |d| {
             requested_dimensions.borrow_mut().push(d);
@@ -998,7 +994,7 @@ mod tests {
             .expand_to_precommitted_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                input.opening.log_basis_open,
+                fold.open_commit_matrix.log_basis,
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
@@ -1007,16 +1003,27 @@ mod tests {
             &[input.commitment.inner.matrix.ring_dimension()]
         );
         assert_eq!(expanded.profile, input.commitment);
-        assert_eq!(expanded.opening, input.opening);
+        // The plan is derived, so assert it carries the two inputs the row still
+        // stores and the basis its consuming fold supplied.
+        assert_eq!(expanded.opening.opening_method, input.opening_method);
+        assert_eq!(
+            expanded.opening.num_digits_fold,
+            input.num_digits_fold as usize
+        );
+        assert_eq!(
+            expanded.opening.log_basis_open,
+            fold.open_commit_matrix.log_basis
+        );
     }
 
     #[test]
     fn setup_prefix_expansion_rejects_frozen_profile_mutation() {
-        let mut input = crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
-            .iter()
-            .flat_map(|entry| entry.recursive_folds)
-            .find_map(|fold| fold.incoming_setup_prefix)
-            .expect("generated recursive setup-prefix fixture");
+        let (fold, mut input) =
+            crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
+                .iter()
+                .flat_map(|entry| entry.recursive_folds)
+                .find_map(|fold| fold.incoming_setup_prefix.map(|prefix| (fold, prefix)))
+                .expect("generated recursive setup-prefix fixture");
         input.commitment.blocks.live_blocks += 1;
         let ring_challenge_config = |d| {
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
@@ -1028,7 +1035,7 @@ mod tests {
             .expand_to_precommitted_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                input.opening.log_basis_open,
+                fold.open_commit_matrix.log_basis,
             )
             .expect_err("frozen setup-prefix profile mutation must reject");
     }

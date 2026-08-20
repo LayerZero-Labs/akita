@@ -585,7 +585,10 @@ fn entries_key_digest_with_setup_prefix_content_mode(
                 }
                 h.write_u64(prefix.natural_len);
                 h.write_bytes(&prefix.commitment.canonical_descriptor_bytes());
-                h.write_bytes(&prefix.opening.canonical_descriptor_bytes());
+                // The opening plan is derived from the consuming fold, so the
+                // only prefix-owned inputs are the method and the fold depth.
+                write_opening_method(&mut h, prefix.opening_method);
+                h.write_u64(u64::from(prefix.num_digits_fold));
             }
         }
         write_generated_geometry(&mut h, entry.terminal.geometry);

@@ -590,8 +590,8 @@ fp128_onehot_multi_chunk_w4r2 [000] recursive[3].fold      len=345    fnv1a=591b
 fp128_onehot_multi_chunk_w4r2 [000] recursive[4].fold      len=345    fnv1a=07f839b0cd78113b
 fp128_onehot_multi_chunk_w4r2 [000] terminal               len=263    fnv1a=d4dfd7461b205847
 fp128_onehot_multi_chunk_w4r2 [000] row_digest             len=165    fnv1a=7514bf9501406a2c
-fp128_onehot_recursive catalog.identity                    len=1454   fnv1a=99b5c3e8a5e4fff6
-fp128_onehot_recursive catalog.key_digest                  len=8      fnv1a=6470e4b402abe0d5
+fp128_onehot_recursive catalog.identity                    len=1454   fnv1a=c61eba00899721bd
+fp128_onehot_recursive catalog.key_digest                  len=8      fnv1a=c2e1ce7cc7ab51c5
 fp128_onehot_recursive catalog.key_count                   len=8      fnv1a=e6bd86443df8ce07
 fp128_onehot_recursive [000] lookup_key                    len=440    fnv1a=dc742a08de66e979
 fp128_onehot_recursive [000] schedule                      len=4847   fnv1a=f94b8afcf02ebf50
@@ -627,8 +627,8 @@ fp128_onehot_recursive [001] recursive[3].fold             len=345    fnv1a=40eb
 fp128_onehot_recursive [001] recursive[4].fold             len=345    fnv1a=07f839b0cd78113b
 fp128_onehot_recursive [001] terminal                      len=263    fnv1a=d4dfd7461b205847
 fp128_onehot_recursive [001] row_digest                    len=163    fnv1a=411258d316c33ba0
-fp128_onehot_recursive_multi_chunk_w8r2 catalog.identity   len=1469   fnv1a=c87b98603975e93e
-fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_digest len=8      fnv1a=9fe33bc66f6cc742
+fp128_onehot_recursive_multi_chunk_w8r2 catalog.identity   len=1470   fnv1a=9c9024f0fe92c6f3
+fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_digest len=8      fnv1a=49222b19952706c6
 fp128_onehot_recursive_multi_chunk_w8r2 catalog.key_count  len=8      fnv1a=89cd31291d2aefa4
 fp128_onehot_recursive_multi_chunk_w8r2 [000] lookup_key   len=440    fnv1a=904dc696028825d1
 fp128_onehot_recursive_multi_chunk_w8r2 [000] schedule     len=5262   fnv1a=53c51bcbb5b625de
