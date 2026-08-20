@@ -15,7 +15,7 @@ validation boundary.
 > gadget decomposition, Module-SIS, multilinear sum-check, and
 > equality-factored sum-check chapters are full implementation narratives. The
 > commitment and binding chapter gives a current security overview. The
-> extension opening chapter is still a short guide and is marked as such below.
+> extension-opening chapter is still a short guide and is marked as such below.
 
 ## What these foundations connect
 
@@ -85,11 +85,11 @@ code.
 | [Lattices and Module-SIS](./lattices-sis.md) | What hard problem supports binding, and why do short vectors and norm bounds matter? | Full introduction from integer lattices through commitment collisions, generated security tables, and verifier enforcement. |
 | [Multilinear extensions and sum-check](./multilinear-sumcheck.md) | How does a table become a polynomial, and how can a verifier check a large sum with little work? | Full introduction with a complete two-round example, compressed messages, soundness, unequal-size batching, and an implementation review map. |
 | [Equality-factored sum-check](./eq-factored-sumcheck.md) | How does Akita exploit the structure of an equality polynomial while avoiding verifier inversions? | Full derivation of the smaller round message, scaled verifier update, split equality tables, scope, and review checks. |
-| [Extension opening reduction](./extension-opening-reduction.md) | How is an opening over an extension field reduced to claims over the base field? | Short protocol guide. It still needs an end to end numerical example and a fuller code map. |
+| [Extension-opening reduction](./extension-opening-reduction.md) | How does Akita open a base-field polynomial at an extension-field point? | Self-contained protocol guide with an implementation map. A complete numerical example and soundness derivation remain for a later slice. |
 | [Polynomial commitments and binding](./pcs-and-binding.md) | What do setup, commitment, opening, and verification promise, and how is incompatible opening tied to Module-SIS? | Current security overview with implementation anchors. More introductory examples can still be added. |
-| [Glossary and notation](./glossary.md) | What do recurring Akita names and symbols mean? | Developing reference. Use it as a lookup aid, not as the first explanation of a concept. |
+| [Glossary and notation](./glossary.md) | What do recurring Akita names and symbols mean? | Current lookup reference for protocol terms, catalog rows, and notation. |
 | [Spec index](./spec-index.md) | Which design records are live, implemented, or retained as history? | Current maintainer index. |
-| [References](./references.md) | Where can a reader find stable external background for the ideas used here? | Developing bibliography. |
+| [References](./references.md) | Where can a reader find stable external background for the ideas used here? | Curated public references grouped by subject. |
 
 ## Paths for different jobs
 

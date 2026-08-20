@@ -45,8 +45,8 @@ row rather than trusting proof bytes.
 - `crates/akita-types/src/layout/params.rs` (`CommittedGroupParams`).
 - `crates/akita-types/src/schedule.rs` (`RootFoldParams`,
   `RecursiveFoldParams`, `TerminalFoldParams`, and `FoldSchedule`).
-- Paper §3.11 `sec:akita-planner` ("What the schedule fixes").
-- Council architecture + newcomer reports (schedule invariants, level overload).
+- `crates/akita-schedules/src/resolve.rs` validates generated rows before the
+  prover or verifier uses them.
 
 ## The planner and proof size
 
@@ -63,7 +63,6 @@ without panicking.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
-- Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-schedules/src/generated/`, and
   `crates/akita-schedules/src/resolve.rs` (`resolve_generated_catalog_row_for_key`).
