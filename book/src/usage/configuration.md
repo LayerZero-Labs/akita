@@ -19,11 +19,11 @@ for evaluation points and claimed values.
 | `fp64` | A 64 bit prime field | A degree 2 extension | Hosts that want 64 bit base arithmetic |
 | `fp128` | A 128 bit prime field | The same field | Hosts that already work over the full challenge field |
 
-All three families reach the production security target. The smaller base
-fields use extension fields for opening points and claimed values. The host
-should choose the family whose opening field matches the values it needs to
-prove. The [rings and fields](../foundations/rings-and-fields.md) chapter
-explains the construction.
+All three families target 128-bit quantum security under Akita's concrete
+lattice attack model. The smaller base fields use extension fields for opening
+points and claimed values. The host should choose the family whose opening
+field matches the values it needs to prove. The [rings and
+fields](../foundations/rings-and-fields.md) chapter explains the construction.
 
 ## Match the committed data
 

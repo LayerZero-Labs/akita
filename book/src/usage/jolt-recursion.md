@@ -1,9 +1,9 @@
 # Jolt recursion
 
-Jolt is a zero knowledge virtual machine that proves the correct execution of
-64 bit RISC-V programs. Akita's Jolt integration turns the Akita verifier into
-one of those programs. Jolt can therefore produce an outer proof that says an
-Akita opening proof was accepted.
+[Jolt](https://jolt.a16zcrypto.com/) is a zero-knowledge virtual machine that
+proves the correct execution of 64-bit RISC-V programs. Akita's Jolt
+integration turns the Akita verifier into one of those programs. Jolt can
+therefore produce an outer proof that says an Akita opening proof was accepted.
 
 This is recursive verification: one proof system proves the execution of
 another proof system's verifier. It lets a host combine Akita's compact,

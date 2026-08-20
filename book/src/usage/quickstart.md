@@ -203,4 +203,6 @@ real integration will choose them from the host protocol.
   opening points, or earlier commitment groups.
 - Use [Verifier only integration](./verifier-only.md) when verification must
   compile without the prover backend.
+- Use [Integrating with a proof system](./integrations.md) to connect Akita to
+  a host protocol or recursive verifier.
 - Use [Profiling](./profiling.md) to measure a production size workload.

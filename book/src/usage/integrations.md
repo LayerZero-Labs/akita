@@ -76,7 +76,7 @@ after the adapter supplies the field and claim shape.
 ## Build one public statement
 
 The host should define a single versioned Akita artifact. It contains, or
-authentically names, everything the verifier needs:
+securely identifies, everything the verifier needs:
 
 - the Akita revision and configuration;
 - the verifier setup;
