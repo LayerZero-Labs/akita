@@ -27,7 +27,7 @@ ring dimensions are linked in [Related layouts](#related-layouts).
   - [Chunk ranges and commitment-side data](#chunk-ranges-and-commitment-side-data)
   - [Chunk-local partial evaluations and opening commitment](#chunk-local-partial-evaluations-and-opening-commitment)
   - [Chunk-local folded responses and witness relations](#chunk-local-folded-responses-and-witness-relations)
-  - [Chunk-major relation matrix and physical realization](#chunk-major-relation-matrix-and-physical-realization)
+  - [Semantic relations remain unchanged](#semantic-relations-remain-unchanged)
 - [Related layouts](#related-layouts)
 
 ## Multiple commitment groups
@@ -477,9 +477,10 @@ $$
 $$
 
 Thus $\mathbf w$ is the complete chunk-major logical witness for those four
-families, not one separately proved witness per chunk. The raw and compressed
-physical realizations append their shared quotient and compression data to
-this logical witness as described below.
+families, not one separately proved witness per chunk. The physical
+realizations extend it with the shared ordinary quotients and, in compressed
+mode, the compression data described on the [realizations
+page](./akita-fold-realizations.md).
 
 The local responses still define the same global folded response
 algebraically:
@@ -495,9 +496,13 @@ $$
 
 The global $\mathbf z$ is therefore determined by the chunk-local witnesses,
 but it is not an additional committed coordinate and need not be materialized
-through a full-width reduction before constructing the outgoing witness. If a
-production chunk range is empty, its E and T segments are empty and the honest
-prover puts zero in its full-width Z segment.
+through a full-width reduction before constructing the outgoing witness.
+
+The basic $\hat{\mathbf z}$ is not a concatenation or reordering of the local
+$\hat{\mathbf z}^{(j)}$ segments. Recovering that digit vector would require
+materializing the global $\mathbf z$ and decomposing it again; the multi-chunk
+relation avoids that full-width reduction by acting on the local digit vectors
+directly.
 
 Because the ranges $\mathcal I_j$ partition the live blocks, this derived
 $\mathbf z$ still satisfies the two recomposed identities from the basic
@@ -550,60 +555,12 @@ c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
 \tag{5}
 $$
 
-The other two families are the aggregate outer- and opening-commitment
-relations already defined by Equations (1) and (2).
+### Semantic relations remain unchanged
 
-Thus the multi-chunk construction preserves one consistency row, the original
-$\mathbf A$, $\mathbf B$, and $\mathbf D$ row families, and the original
-semantic target. It does not add a separately proved row family for each
-chunk; chunks are column ranges inside one aggregate relation.
-
-### Chunk-major relation matrix and physical realization
-
-Compared with the basic logical layout
-$[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$, the opening and
-outer-digit coordinates are only partitioned and reordered into their
-chunk-local segments, so their total lengths do not change. The folded-response
-layout is different: every chunk contributes its own full-width
-$\hat{\mathbf z}^{(j)}$ segment. This accounts for the
-$(C-1)|\hat{\mathbf z}|$ additional coordinates identified above.
-
-The recomposed global $\mathbf z$ can be recovered algebraically from the
-local responses, but the basic $\hat{\mathbf z}$ is not a concatenation or
-reordering of the $\hat{\mathbf z}^{(j)}$. Recovering that digit vector would
-require materializing the global $\mathbf z$ and decomposing it again. The
-multi-chunk relation avoids that full-width reduction by acting on the local
-digit vectors directly.
-
-Let $\mathbf M^{(j)}$ be the full-height relation column block acting on
-$\mathbf w^{(j)}$. The $\hat{\mathbf e}^{(j)}$ and
-$\hat{\mathbf t}^{(j)}$ columns restrict the original block-indexed
-coefficients to $\mathcal I_j$, while the same folded-response operators act
-on every full-width $\hat{\mathbf z}^{(j)}$ segment. Thus the row families are
-not replicated: only their witness columns are redesigned as the horizontal
-concatenation
-
-$$
-\mathbf M_{\mathrm{chunk}}
-=
-[\mathbf M^{(0)}\mid\cdots\mid\mathbf M^{(C-1)}],
-$$
-
-and its semantic statement is
-
-$$
-\boxed{
-\mathbf M_{\mathrm{chunk}}\mathbf w
-=
-\sum_{j=0}^{C-1}\mathbf M^{(j)}\mathbf w^{(j)}
-=
-\mathbf y,
-}
-\tag{6}
-$$
-
-with the same semantic target as the basic relation, which is also the
-physical right-hand side in raw mode:
+Equations (4), (5), (1), and (2), in canonical row-family order, are the same
+four semantic relations as in the basic setting: fold-evaluation consistency,
+inner-commitment consistency, outer-commitment consistency, and
+opening-commitment consistency. Their semantic target remains
 
 $$
 \mathbf y
@@ -611,55 +568,22 @@ $$
 [0\mid\mathbf 0_{\mathbf A}\mid\mathbf u\mid\mathbf v_D].
 $$
 
-Raw mode appends one ordinary quotient family after all chunk units:
+Each relation sums the relevant chunk-local witness contributions inside the
+original rows. Multi-chunking does not create a separately proved row family
+for every chunk; it changes the witness layout and the column support of those
+rows.
 
-$$
-\mathbf w_{\mathrm{raw}}
-=
-\mathbf w
-\;\Vert\;
-\hat{\mathbf r}_{\mathrm{ord}}.
-$$
+Raw and compressed modes realize these same semantic relations as described on
+the [realizations page](./akita-fold-realizations.md). Chunking does not
+replicate the ordinary quotient family or the shared $\mathbf F/\mathbf H$
+compression chains. The field-valued evaluation trace likewise remains one
+virtual relation over the chunk-local opening-digit ranges, not an additional
+physical ring row; its construction is described in [Field-to-ring evaluation
+reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-claim).
 
-There is one quotient polynomial per physical row, not one per chunk. Under
-this section's common-ring assumption, let a tilde denote the canonical
-coefficient-polynomial lift from $R$ to $F[X]$. Row $i$ then satisfies
-
-$$
-\sum_{j=0}^{C-1}
-\widetilde{\mathbf M}^{(j)}_i(X)
-\widetilde{\mathbf w}^{(j)}(X)
--
-\widetilde y_i(X)
-=
-(X^D+1)r_i(X).
-$$
-
-Compressed mode keeps the same chunked ordinary prefix and shared ordinary
-quotients. It then adds the single $\mathbf F$ chain for the aggregate
-$\mathbf u$ and the single $\mathbf H$ chain for the aggregate
-$\mathbf v_D$, using the physical order defined on the realizations and
-opening-layout pages. Neither compression chain is replicated per chunk.
-
-Finally, chunking does not turn the scalar evaluation claim into a physical
-ring row. For the one `EvaluationTrace` claim in this section, let $B_b$ be the
-block-opening weight (distinct from the commitment matrix $\mathbf B$), let
-$\ell$ index a ring coefficient, and let $J_\ell$ be the inner trace weight,
-equal to $I_\ell$ in the base-field case. The virtual relation is distributed
-over the chunk-local E segments:
-
-$$
-v_{\mathrm{tr}}
-=
-\sum_{j=0}^{C-1}
-\sum_{b\in\mathcal I_j,h,\ell}
-\hat e_{b,h,\ell}B_bG_h^{\mathrm{open}}J_\ell.
-$$
-
-It remains one field-valued Stage-2 relation with no ring-switch quotient. When
-$C=1$, the sole range contains every live block, the single local response is
-$\mathbf z$, and every equation and witness layout above reduces to the basic
-single-chunk construction.
+When $C=1$, the sole range contains every live block, the single local response
+is $\mathbf z$, and every equation and witness layout above reduces to the
+basic single-chunk construction.
 
 ## Related layouts
 
