@@ -101,7 +101,7 @@ where
         &opening_batch,
         &relation_witness_geometry,
         2,
-        r_decomp_levels::<F>(level_params.log_basis_open),
+        r_decomp_levels::<F>(level_params.open().digits.log_basis),
     )
     .unwrap();
     let live_len = witness_layout.live_coeff_len();
@@ -111,7 +111,7 @@ where
     let plan = RelationRangeImagePlan::new(
         relation_witness_geometry,
         relation_address_geometry,
-        DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
+        DigitRangePlan::new(1usize << level_params.open().digits.log_basis).unwrap(),
         witness_layout,
         &opening_batch,
     )

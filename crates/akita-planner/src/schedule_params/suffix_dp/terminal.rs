@@ -69,19 +69,19 @@ pub(crate) fn terminal_direct_suffix_cost(
             "terminal-direct input length must be divisible by its A-ring dimension".to_string(),
         ));
     }
-    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
+    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_preceding_groups() {
         return Err(AkitaError::InvalidSetup(
             "terminal direct response must be a scalar flat fold".to_string(),
         ));
     }
     let (mut terminal_params, certified_linf_cap) =
-        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
-    let mut sparse_challenge_config = terminal_lp.fold_challenge_config;
+        akita_types::TerminalFoldParams::try_from_expanded_group(terminal_lp.clone())?;
+    let mut sparse_challenge_config = terminal_lp.fold_challenge_config();
     if let Some(l2_challenge) =
         akita_challenges::selective_l2_challenge_config(terminal_params.d_a())
     {
         let fold_basis = 1usize
-            .checked_shl(terminal_lp.log_basis_open)
+            .checked_shl(terminal_lp.open().digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal L2 basis overflow".into()))?;
         let response_l2_sq_cap = source_moment
             .and_then(|moment| moment.response_l2_sq_cap(l2_challenge.challenge_l2_sq_max()));
@@ -94,7 +94,7 @@ pub(crate) fn terminal_direct_suffix_cost(
                 inner_width: terminal_params.inner_width(),
                 ring_dimension: terminal_params.d_a(),
                 fold_basis,
-                fold_digit_count: terminal_lp.num_digits_fold,
+                fold_digit_count: terminal_lp.num_digits_fold(),
                 fold_challenge_config: &l2_challenge,
                 response_l2_sq_cap,
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
@@ -107,8 +107,8 @@ pub(crate) fn terminal_direct_suffix_cost(
                 }),
             },
         )? {
-            if l2_matrix.output_rank() < terminal_params.inner_commit_matrix.output_rank() {
-                terminal_params.inner_commit_matrix = l2_matrix;
+            if l2_matrix.output_rank() < terminal_params.inner.matrix.output_rank() {
+                terminal_params.inner.matrix = l2_matrix;
                 sparse_challenge_config = l2_challenge;
             }
         }
@@ -120,7 +120,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     let modeled_encoding_scale = source_moment.and_then(|moment| {
         moment.response_linf_cap(
             sparse_challenge_config.challenge_l2_sq_max(),
-            terminal_params.num_live_blocks,
+            terminal_params.blocks.live_blocks,
             1,
             num_fold_coeffs,
             terminal_params.d_a(),

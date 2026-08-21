@@ -74,7 +74,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
-            let d_rows = level_params.open_commit_matrix.output_rank();
+            let d_rows = level_params.open().matrix.output_rank();
             let row_families = relation_geometry.rhs_layout().row_families()?;
             let d_row_start = row_families
                 .iter()
@@ -453,7 +453,7 @@ fn validate_static_inputs<E: FieldCore>(
     opening_batch.check()?;
     let num_groups = opening_batch.num_groups();
     let depth_fold = level_params.num_digits_fold();
-    if level_params.num_live_blocks == 0 {
+    if level_params.blocks().live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".into(),
         ));

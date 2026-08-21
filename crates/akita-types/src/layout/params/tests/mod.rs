@@ -20,33 +20,33 @@ fn sample_layout_lp() -> CommittedGroupParams {
 #[test]
 fn distinct_semantic_depths_size_a_b_and_d_independently() {
     let mut params = sample_params_only();
-    params.log_basis_inner = 2;
-    params.log_basis_outer = 3;
-    params.log_basis_open = 4;
+    params.own_group_mut().profile.inner.digits.log_basis = 2;
+    params.own_group_mut().profile.outer.digits.log_basis = 3;
+    params.own_group_mut().opening.log_basis_open = 4;
     let params = params
         .with_decomp(8, 17, 5, 4, 3)
         .expect("distinct semantic decomposition");
     let blocks = 17usize.div_ceil(8);
     assert_eq!(
-        params.inner_commit_matrix.input_width(),
+        params.inner().matrix.input_width(),
         8 * 5,
         "A uses inner depth"
     );
     assert_eq!(
-        params.outer_commit_matrix.input_width(),
-        params.inner_commit_matrix.output_rank() * 4 * blocks,
+        params.outer().matrix.input_width(),
+        params.inner().matrix.output_rank() * 4 * blocks,
         "B uses outer depth"
     );
     assert_eq!(
-        params.open_commit_matrix.input_width(),
+        params.open().matrix.input_width(),
         3 * blocks,
         "D uses open depth"
     );
     assert_eq!(
         (
-            params.log_basis_inner,
-            params.log_basis_outer,
-            params.log_basis_open,
+            params.inner().digits.log_basis,
+            params.outer().digits.log_basis,
+            params.open().digits.log_basis,
         ),
         (2, 3, 4)
     );
@@ -61,73 +61,89 @@ fn laid_out_sample_lp() -> CommittedGroupParams {
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     const INNER_BOUND: u128 = 2;
     const OUTER_BOUND: u128 = 3;
-    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix
+    lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner().matrix.security_policy(),
+        lp.inner()
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        lp.inner_commit_matrix.sis_modulus_profile(),
-        lp.inner_commit_matrix.output_rank(),
-        lp.inner_commit_matrix.input_width(),
+        lp.inner().matrix.sis_modulus_profile(),
+        lp.inner().matrix.output_rank(),
+        lp.inner().matrix.input_width(),
         INNER_BOUND,
         lp.d_a(),
     );
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        lp.outer_commit_matrix.security_policy(),
-        lp.outer_commit_matrix.sis_table_key().table_digest,
-        lp.outer_commit_matrix.sis_modulus_profile(),
-        lp.outer_commit_matrix.output_rank(),
-        lp.outer_commit_matrix.input_width(),
+    lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer().matrix.security_policy(),
+        lp.outer().matrix.sis_table_key().table_digest,
+        lp.outer().matrix.sis_modulus_profile(),
+        lp.outer().matrix.output_rank(),
+        lp.outer().matrix.input_width(),
         OUTER_BOUND,
         lp.d_a(),
     );
 }
 
 fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::CommittedGroupProfile;
+    use crate::schedule::GroupCommitPhaseParams;
     let mut lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
-    lp.fold_challenge_config =
+    lp.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(lp.d_a()).expect("test challenge");
     let mut precommit_lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
-    precommit_lp.fold_challenge_config =
+    precommit_lp.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(precommit_lp.d_a())
             .expect("precommit test challenge");
     certify_test_sis_bounds(&mut precommit_lp);
     let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        precommit_lp.outer_commit_matrix.security_policy(),
-        precommit_lp
-            .outer_commit_matrix
-            .sis_table_key()
-            .table_digest,
-        precommit_lp.outer_commit_matrix.sis_modulus_profile(),
+        precommit_lp.outer().matrix.security_policy(),
+        precommit_lp.outer().matrix.sis_table_key().table_digest,
+        precommit_lp.outer().matrix.sis_modulus_profile(),
         5,
-        precommit_lp.outer_commit_matrix.input_width(),
-        precommit_lp.outer_commit_matrix.coeff_linf_bound(),
+        precommit_lp.outer().matrix.input_width(),
+        precommit_lp.outer().matrix.coeff_linf_bound(),
         precommit_lp.d_a(),
     );
-    let mut layout = CommittedGroupProfile::from_params_unchecked_for_test(
+    let mut layout = GroupCommitPhaseParams::from_params_unchecked_for_test(
         PolynomialGroupLayout::new(4, 1),
         &precommit_lp,
     );
-    layout.outer_commit_matrix = outer_commit_matrix;
-    let precommit = PrecommittedLevelParams {
-        layout,
+    layout.outer.matrix = outer_commit_matrix;
+    let precommit = GroupOpenPhaseParams {
+        setup_natural_len: None,
+        profile: layout,
         opening: crate::GroupOpeningPlan::evaluation_trace(
-            precommit_lp.fold_challenge_config,
-            precommit_lp.log_basis_open,
-            precommit_lp.num_digits_open,
-            precommit_lp.num_digits_fold,
+            precommit_lp.fold_challenge_config(),
+            precommit_lp.open().digits.log_basis,
+            precommit_lp.open().digits.num_digits,
+            precommit_lp.num_digits_fold(),
         ),
     };
     let mut grouped = lp;
-    grouped.precommitted_groups = vec![precommit];
+    grouped.set_precommitted_groups(vec![precommit]).unwrap();
     let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
     (grouped, batch)
+}
+
+#[test]
+fn fold_groups_reject_empty_and_misordered_topologies_without_unwinding() {
+    let empty = std::panic::catch_unwind(|| FoldGroups::try_from_vec(Vec::new()));
+    assert!(matches!(empty, Ok(Err(AkitaError::InvalidSetup(_)))));
+
+    let ordinary = *sample_layout_lp().own_group();
+    let mut prefix = ordinary;
+    prefix.setup_natural_len = Some(64);
+
+    let sole_prefix = std::panic::catch_unwind(|| FoldGroups::try_from_vec(vec![prefix]));
+    assert!(matches!(sole_prefix, Ok(Err(AkitaError::InvalidSetup(_)))));
+
+    let late_prefix =
+        std::panic::catch_unwind(|| FoldGroups::try_from_vec(vec![ordinary, prefix, ordinary]));
+    assert!(matches!(late_prefix, Ok(Err(AkitaError::InvalidSetup(_)))));
 }
 
 #[test]
@@ -146,7 +162,7 @@ fn fold_nonce_accepts_only_the_global_attempt_range() {
 #[test]
 fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
     let (params, _) = sample_multi_group_root_params();
-    let precommitted = &params.precommitted_groups[0];
+    let precommitted = &params.precommitted_groups()[0];
 
     assert_eq!(precommitted.opening.fold_challenge_config.weight(), 41);
     assert_eq!(precommitted.challenge_l1_mass(), 51);
@@ -155,8 +171,14 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
 #[test]
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
-    grouped.log_basis_open = 3;
-    grouped.precommitted_groups[0].layout.log_basis_outer = 6;
+    grouped.own_group_mut().opening.log_basis_open = 3;
+    grouped
+        .preceding_group_mut_for_test(0)
+        .unwrap()
+        .profile
+        .outer
+        .digits
+        .log_basis = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
@@ -166,9 +188,9 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 fn with_decomp_derives_exact_live_block_geometry() {
     let lp = sample_params_only().with_decomp(8, 17, 2, 2, 2).unwrap();
 
-    assert_eq!(lp.num_live_ring_elements_per_claim, 17);
-    assert_eq!(lp.num_positions_per_block, 8);
-    assert_eq!(lp.num_live_blocks, 3);
+    assert_eq!(lp.blocks().live_ring_elements_per_claim, 17);
+    assert_eq!(lp.blocks().positions_per_block, 8);
+    assert_eq!(lp.blocks().live_blocks, 3);
     assert_eq!(lp.position_index_bits(), 3);
     assert_eq!(lp.block_index_bits(), 2);
     assert_eq!(lp.block_index_domain_size().unwrap(), 4);
@@ -185,21 +207,39 @@ fn with_layout_keeps_self_ranks() {
     let lp = params.with_layout(&layout_lp).unwrap();
 
     assert_eq!(lp.d_a(), 64);
-    assert_eq!(lp.log_basis_inner, layout_lp.log_basis_inner);
-    assert_eq!(lp.log_basis_outer, layout_lp.log_basis_outer);
-    assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
-    assert_eq!(lp.inner_commit_matrix.output_rank(), 2);
-    assert_eq!(lp.outer_commit_matrix.output_rank(), 4);
-    assert_eq!(lp.open_commit_matrix.output_rank(), 3);
-    assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
     assert_eq!(
-        lp.num_positions_per_block,
-        layout_lp.num_positions_per_block
+        lp.inner().digits.log_basis,
+        layout_lp.inner().digits.log_basis
+    );
+    assert_eq!(
+        lp.outer().digits.log_basis,
+        layout_lp.outer().digits.log_basis
+    );
+    assert_eq!(
+        lp.open().digits.log_basis,
+        layout_lp.open().digits.log_basis
+    );
+    assert_eq!(lp.inner().matrix.output_rank(), 2);
+    assert_eq!(lp.outer().matrix.output_rank(), 4);
+    assert_eq!(lp.open().matrix.output_rank(), 3);
+    assert_eq!(lp.blocks().live_blocks, layout_lp.blocks().live_blocks);
+    assert_eq!(
+        lp.blocks().positions_per_block,
+        layout_lp.blocks().positions_per_block
     );
     assert_eq!(lp.challenge_l1_mass(), 3);
-    assert_eq!(lp.num_digits_inner, layout_lp.num_digits_inner);
-    assert_eq!(lp.num_digits_outer, layout_lp.num_digits_outer);
-    assert_eq!(lp.num_digits_open, layout_lp.num_digits_open);
+    assert_eq!(
+        lp.inner().digits.num_digits,
+        layout_lp.inner().digits.num_digits
+    );
+    assert_eq!(
+        lp.outer().digits.num_digits,
+        layout_lp.outer().digits.num_digits
+    );
+    assert_eq!(
+        lp.open().digits.num_digits,
+        layout_lp.open().digits.num_digits
+    );
 }
 
 #[test]
@@ -208,9 +248,9 @@ fn derived_widths_match_ajtai_col_len() {
         .with_layout(&sample_layout_lp())
         .unwrap();
 
-    assert_eq!(lp.inner_width(), lp.inner_commit_matrix.input_width());
-    assert_eq!(lp.outer_width(), lp.outer_commit_matrix.input_width());
-    assert_eq!(lp.d_matrix_width(), lp.open_commit_matrix.input_width());
+    assert_eq!(lp.inner_width(), lp.inner().matrix.input_width());
+    assert_eq!(lp.outer_width(), lp.outer().matrix.input_width());
+    assert_eq!(lp.d_matrix_width(), lp.open().matrix.input_width());
 }
 
 #[test]
@@ -248,9 +288,9 @@ fn canonical_row_offsets_match_open_coded_layout() {
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp())
         .unwrap();
-    let n_a = lp.inner_commit_matrix.output_rank();
-    let n_b = lp.outer_commit_matrix.output_rank();
-    let n_d = lp.open_commit_matrix.output_rank();
+    let n_a = lp.inner().matrix.output_rank();
+    let n_b = lp.outer().matrix.output_rank();
+    let n_d = lp.open().matrix.output_rank();
 
     for nc in [1usize, 2, 4] {
         let n_d_active = n_d;

@@ -23,8 +23,8 @@ use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
 };
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
+    GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use std::env;
 use std::fs;
@@ -321,11 +321,9 @@ struct CatalogRowMetrics {
 const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
-    let final_group = CommittedGroupProfile::try_from_params(
-        key.final_group,
-        &schedule.root.params.final_group.commitment,
-    )
-    .map_err(|error| format!("derive final committed profile: {error}"))?;
+    let final_group =
+        GroupCommitPhaseParams::try_from_params(key.final_group, &schedule.root.params)
+            .map_err(|error| format!("derive final committed profile: {error}"))?;
     let profiles = CommittedGroupBatchProfile {
         final_group,
         precommitteds: key.precommitteds.clone(),

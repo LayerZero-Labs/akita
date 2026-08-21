@@ -421,7 +421,7 @@ fn price_terminal_candidate(
         };
     if (ctx.level_zero_is_root && state.level == 0)
         || state.incoming_setup_prefix.is_some()
-        || candidate_params.has_precommitted_groups()
+        || candidate_params.has_preceding_groups()
     {
         return Ok(());
     }

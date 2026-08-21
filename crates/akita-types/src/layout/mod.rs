@@ -10,6 +10,7 @@
 
 pub mod digit_math;
 pub mod flat_matrix;
+pub mod geometry;
 pub mod opening_point;
 pub mod params;
 pub mod proof_size;
@@ -17,16 +18,18 @@ pub mod ring_dims;
 
 pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
+pub use geometry::{
+    BlockGeometry, GadgetDigits, InnerRoleParams, OpenRoleParams, OuterRoleParams, RoleParams,
+};
 pub use opening_point::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     lagrange_weights, monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, witness_commitment_domain_len, BasisMode, RingOpeningPoint,
 };
 pub use params::{
-    opening_d_segment_width, shared_d_digit_log_basis, CommittedGroupParams, GroupOpeningPlan,
-    InnerCommitMatrixParams, LevelParamsLike, OpenCommitMatrixParams, OpeningFamily, OpeningMethod,
-    OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
-    SisModulusProfileId,
+    opening_d_segment_width, shared_d_digit_log_basis, CommittedGroupParams, GroupOpenPhaseParams,
+    GroupOpeningPlan, InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningFamily,
+    OpeningMethod, OuterCommitMatrixParams, PrecommittedGroupAdmissionPolicy, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,

@@ -158,6 +158,9 @@ catalogs. The current build can expose recursive setup schedules for:
 - the fp128 one hot multi chunk configuration with eight chunks and two leading
   distributed levels.
 
+Setup offloading currently uses the supported uniform $D = 64$ shape. Other
+setup ring dimensions do not expose a recursive offloading catalog.
+
 Support depends on the matching schedule features being enabled. Other base
 configurations have no recursive catalog and are rejected rather than silently
 falling back to a direct schedule under the recursive adapter.

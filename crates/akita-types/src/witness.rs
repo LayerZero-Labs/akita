@@ -10,9 +10,8 @@ use std::ops::Range;
 use akita_error::{checked, AkitaError};
 
 use crate::{
-    CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, LevelParamsLike,
-    OpeningClaimsLayout, RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry,
-    COMPRESSION_MAP_COUNT,
+    CommitmentRingDims, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,
+    RelationRowFamily, RelationRowGeometry, RelationWitnessGeometry, COMPRESSION_MAP_COUNT,
 };
 
 mod chunk_partition;
@@ -26,7 +25,8 @@ pub use chunk_partition::dyadic_block_ranges;
 /// the shared sizing authority for runtime witness layout and planner
 /// contraction/scoring decisions.
 pub fn grouped_witness_body_coefficients(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
+    source_encoding: crate::CommittedSourceEncoding,
     role_dims: CommitmentRingDims,
     extension_degree: usize,
     num_claims: usize,
@@ -51,7 +51,8 @@ pub fn grouped_witness_body_coefficients(
             "witness group has malformed dimensions".into(),
         ));
     }
-    let opening_geometry = crate::proof::relation::opening_row_geometry(params, extension_degree)?;
+    let opening_geometry =
+        crate::proof::relation::opening_row_geometry(params, source_encoding, extension_degree)?;
     let mut total = 0usize;
     for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
         let (z_len, e_len, t_len) = witness_unit_lengths(
@@ -575,7 +576,7 @@ impl WitnessLayout {
                 let global_block_start = global_block_range.start;
                 let chunk_num_live_blocks = global_block_range.len();
                 let (z_len, e_len, t_len) = witness_unit_lengths(
-                    params,
+                    &params,
                     role_dims,
                     opening_geometry,
                     num_claims,
@@ -1031,7 +1032,7 @@ fn align_witness_offset(
 }
 
 fn witness_unit_lengths(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
     role_dims: CommitmentRingDims,
     opening_geometry: RelationRowGeometry,
     num_claims: usize,

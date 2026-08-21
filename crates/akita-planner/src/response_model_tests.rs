@@ -14,9 +14,9 @@ fn response_geometry_params(opening_method: akita_types::OpeningMethod) -> Commi
     .with_decomp(4, 8, 2, 2, 2)
     .expect("response geometry params");
     params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.opening_method = opening_method;
-    let opening = params.open_commit_matrix;
-    params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    params.own_group_mut().opening.opening_method = opening_method;
+    let opening = params.open().matrix;
+    params.open_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),

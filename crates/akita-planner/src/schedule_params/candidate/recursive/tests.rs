@@ -43,7 +43,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         assert_eq!(actual.terminal, expected_terminal);
         assert_eq!(actual.folds, expected_folds);
         assert!(actual.folds.iter().any(|(params, _)| matches!(
-            params.inner_commit_matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )));
     }
@@ -122,7 +122,9 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     .expect("late consumer search")
     .expect("eligible recursive level");
 
-    assert!(search.setup_prefixes.iter().flatten().any(|slot| {
-        slot.commitment_params.layout.outer_slice_count > akita_types::CommitmentSliceCount::ONE
-    }));
+    assert!(search
+        .setup_prefixes
+        .iter()
+        .flatten()
+        .any(|slot| { slot.profile.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
 }

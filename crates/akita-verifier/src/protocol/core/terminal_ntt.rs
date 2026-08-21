@@ -15,7 +15,7 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
-    let terminal_params = &schedule.terminal.params.witness;
+    let terminal_params = &schedule.terminal;
     let ring_d = terminal_params.d_a();
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
@@ -24,7 +24,8 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
         |D| {
             let max_width = terminal_params.inner_width();
             let base_prefix_len = terminal_params
-                .inner_commit_matrix
+                .inner
+                .matrix
                 .output_rank()
                 .checked_mul(max_width)
                 .ok_or(AkitaError::InvalidSetup(
@@ -339,9 +340,10 @@ mod tests {
         let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
             .expect("adaptive schedule")
             .into_schedule();
-        let params = &schedule.terminal.params.witness;
+        let params = &schedule.terminal;
         let prefix_len = params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .output_rank()
             .checked_mul(params.inner_width())
             .expect("terminal prefix");

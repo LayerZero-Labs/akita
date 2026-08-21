@@ -12,7 +12,7 @@ provided by a zkVM.
 
 The live integration is the standalone workspace under
 `profile/akita-recursion/`. Its
-[runbook](https://github.com/LayerZero-Labs/akita/blob/main/profile/akita-recursion/README.md)
+[runbook](../../../profile/akita-recursion/README.md)
 contains current commands, environment variables, and measured trace notes.
 
 ## The complete path

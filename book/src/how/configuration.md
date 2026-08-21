@@ -1,8 +1,8 @@
 # Configuration and planning
 
-How a preset turns into a concrete recursion schedule: the single
-`CommitmentConfig` trait, the `FoldSchedule` it resolves, and the planner that
-searches for schedules and prices their proof size offline.
+This chapter explains how a preset becomes a concrete recursion schedule. It
+covers the `CommitmentConfig` trait, the fold parameters stored in a schedule,
+and the planner that searches for schedules and prices their proof size offline.
 
 ## CommitmentConfig and presets
 
@@ -26,36 +26,63 @@ dimension selected by the fold that consumes the prefix.
 
 **Implementation map**
 
-- `crates/akita-config/src/lib.rs` (`CommitmentConfig`).
+- `crates/akita-config/src/lib.rs:54-120`.
 - `crates/akita-config/src/proof_optimized/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
 
+### Bounded committed sources
+
+The `fp128::DenseBounded` preset is for dense polynomials whose centered
+coefficients fit within a declared signed width of 65 bits. This range is
+`[-2^64, 2^64 - 1]`, so it contains every `u64`. The narrower declaration lets
+the generated schedule use the actual source range instead of charging every
+coefficient for the full 128-bit field width. Commitment rejects a source that
+does not fit the declared interval.
+
+This preset uses the `schedules-fp128-dense-bounded` catalog. That catalog is
+not part of `schedules-default`; applications must enable it explicitly.
+
 ## Schedule and fold parameters
 
-`FoldSchedule` contains one `RootFoldStep`, zero or more
-`RecursiveFoldStep` values, and one `TerminalFoldStep`. Their parameter types
-are `RootFoldParams`, `RecursiveFoldParams`, and `TerminalFoldParams`.
-`CommittedGroupParams` records the commitment matrices, ring dimensions,
-decomposition depths, opening method, and block geometry for one committed
-group. The verifier derives and checks these values from the selected generated
-row rather than trusting proof bytes.
+A `FoldSchedule` stores one root `FoldParams`, zero or more recursive
+`FoldParams`, and one `TerminalFoldParams`. Each nonterminal `FoldParams` points
+to one `CommittedGroupParams`. That value owns the fold's groups, the shared D
+matrix, payload mode, source encoding, and witness chunk layout.
+
+The groups are stored in protocol order. An incoming setup prefix comes first,
+then ordinary precommitted groups, and the fold's own new group comes last.
+Each `GroupOpenPhaseParams` holds a frozen `GroupCommitPhaseParams` and the
+opening plan chosen by the consuming fold. A setup prefix is the group whose
+`setup_natural_len` is set. There is no second prefix identity or separate
+producer choice to keep in sync.
+
+The fold owns one `open_matrix` for the complete D product. Each group owns its
+opening basis and digit depth through `GroupOpeningPlan`. The verifier checks
+this ownership, the group order, matrix dimensions, decomposition depths, and
+witness lengths before it uses the schedule.
 
 **Implementation map**
 
-- `crates/akita-types/src/layout/params.rs` (`CommittedGroupParams`).
-- `crates/akita-types/src/schedule.rs` (`RootFoldParams`,
-  `RecursiveFoldParams`, `TerminalFoldParams`, and `FoldSchedule`).
+- `crates/akita-types/src/layout/params.rs` defines `CommittedGroupParams`.
+- `crates/akita-types/src/schedule/profiles.rs` defines
+  `GroupCommitPhaseParams`.
+- `crates/akita-types/src/layout/params/precommitted.rs` defines
+  `GroupOpenPhaseParams` and `GroupOpeningPlan`.
+- `crates/akita-types/src/schedule.rs` defines `FoldParams`,
+  `TerminalFoldParams`, and `FoldSchedule`.
 - `crates/akita-schedules/src/resolve.rs` validates generated rows before the
   prover or verifier uses them.
 
 ## The planner and proof size
 
-The `Cfg`-free planner owns offline schedule search and table emission. The
-feature-gated `akita-schedules` crate owns shipped table data and runtime
-expansion into `FoldSchedule` and its committed group parameters. Verification
-resolves an enabled generated row and never runs planner search. The shared
-proof-size formulas remain verifier-reachable and must reject malformed input
-without panicking.
+Normal planner search is `Cfg`-free. The optional `catalog-gen` feature enables
+`akita-config`, so table-emission binaries can name concrete
+`CommitmentConfig` presets. The feature-gated `akita-schedules` crate owns
+shipped table data and runtime expansion into `FoldSchedule` and its committed
+group parameters. Runtime proving and verification resolve an enabled
+generated row and never run planner search. Shared proof-size formulas remain
+verifier-reachable and reject malformed input with an error rather than
+panicking.
 
 **Implementation map**
 
