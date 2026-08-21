@@ -373,7 +373,7 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `1ac7d402d33a162fdc133cd43bfc6c5124861629`, the refreshed head
+upstream commit `026226b0511fc105c1db5495cf7a22f3abb8f32c`, the refreshed head
 prepared for Jolt PR A #1792. That revision is replaced with the upstream merge
 revision or a released package identity once PR A lands.
 

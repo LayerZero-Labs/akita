@@ -15,6 +15,7 @@ use akita_types::{
     TerminalResponseShape,
 };
 use common::*;
+use jolt_field::{One, Zero};
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 

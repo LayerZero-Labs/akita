@@ -1254,7 +1254,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=1ac7d402d33a162fdc133cd43bfc6c5124861629#1ac7d402d33a162fdc133cd43bfc6c5124861629"
+source = "git+https://github.com/a16z/jolt?rev=026226b0511fc105c1db5495cf7a22f3abb8f32c#026226b0511fc105c1db5495cf7a22f3abb8f32c"
 dependencies = [
  "num-traits",
  "rand_core 0.6.4",

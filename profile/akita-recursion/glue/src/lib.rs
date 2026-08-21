@@ -12,7 +12,7 @@
 
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, Field, Ring, Field};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -202,6 +202,7 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
+        + ExtField<F>
         + Ring
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
@@ -453,8 +454,8 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
+        + ExtField<F>
         + Ring
-        + Field
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -495,6 +496,7 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
+        + ExtField<F>
         + Ring
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
@@ -541,6 +543,7 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_config::proof_optimized::fp128;
+    use jolt_field::Zero;
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
         CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
