@@ -53,6 +53,7 @@
     - [Setup contribution and Stage 3](./how/verifying/setup_contribution.md)
     - [The distributed relation verifier](./how/verifying/distributed-relation-verifier.md)
     - [Terminal verification](./how/verifying/terminal.md)
+  - [Formal verification of arithmetic kernels](./how/formal-verification.md)
   - [Security model](./how/security.md)
   - [Optimizations](./how/optimizations.md)
 

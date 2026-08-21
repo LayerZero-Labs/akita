@@ -4,12 +4,26 @@
  * The object path is supplied by the build that produced fp128_add.o. The
  * explicit instruction list makes the theorem fail if those object bytes
  * change.
+ *
+ * How to read this file:
+ *
+ * 1. define_assert_from_elf binds the proof to exact object bytes.
+ * 2. ARM_MK_EXEC_RULE gives HOL Light a rule for each AArch64 instruction.
+ * 3. AKITA_FP128_ADD_CORRECT proves the arithmetic body before ret.
+ * 4. AKITA_FP128_ADD_SUBROUTINE_CORRECT adds ret and the calling convention.
+ *
+ * The input value a is stored in X0:X1, with the low word first. The input b
+ * is stored in X2:X3. X4 contains C = 2^128 - p. The result is returned in
+ * X0:X1. The book chapter book/src/how/formal-verification.md explains this
+ * structure and the main tactics for readers who are new to HOL Light.
  *)
 
 needs "arm/proofs/base.ml";;
 
 let akita_fp128_add_object = Sys.getenv "AKITA_FP128_ADD_OBJECT";;
 
+(*** The list includes the eight arithmetic instructions and the final ret.
+     Loading an object with any different instruction word fails here. ***)
 let akita_fp128_add_mc =
   define_assert_from_elf "akita_fp128_add_mc" akita_fp128_add_object
   [
@@ -29,6 +43,15 @@ let AKITA_FP128_ADD_EXEC = ARM_MK_EXEC_RULE akita_fp128_add_mc;;
 let akita_fp128_a7f7_p = new_definition
  `akita_fp128_a7f7_p = 0xffffffffffffffffffffffff00005809`;;
 
+(*** ensures arm takes a precondition, a postcondition, and a frame condition.
+
+     The precondition fixes the loaded code, program counter, and input
+     registers. The postcondition fixes the next program counter and states
+     the field result. The frame condition lists every part of the processor
+     state that the body may change.
+
+     The machine execution is modeled for all input words. The field equation
+     is conditional on both inputs being canonical values below p. ***)
 let AKITA_FP128_ADD_CORRECT = time prove
  (`!a0 a1 b0 b1 pc.
         ensures arm
@@ -51,11 +74,19 @@ let AKITA_FP128_ADD_CORRECT = time prove
   MAP_EVERY X_GEN_TAC
    [`a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
   REWRITE_TAC[SOME_FLAGS] THEN
+
+  (* Give the two input integers short names. Each one joins a low and high
+     64 bit word into one natural number. *)
   ABBREV_TAC `m = bignum_of_wordlist [a0; a1]` THEN
   ABBREV_TAC `n = bignum_of_wordlist [b0; b1]` THEN
+
+  (* Symbolically execute instructions 1 through 8. The selected accumulator
+     steps retain the carry equations needed below. *)
   ENSURES_INIT_TAC "s0" THEN
   ARM_ACCSTEPS_TAC AKITA_FP128_ADD_EXEC [1;2;4;5] (1--8) THEN
   ENSURES_FINAL_STATE_TAC THEN ASM_REWRITE_TAC[] THEN STRIP_TAC THEN
+
+  (* l is the wrapped input sum. t is the candidate after adding C. *)
   ABBREV_TAC `l = bignum_of_wordlist [sum_s1; sum_s2]` THEN
   ABBREV_TAC `t = bignum_of_wordlist [sum_s4; sum_s5]` THEN
 
@@ -83,7 +114,9 @@ let AKITA_FP128_ADD_CORRECT = time prove
   DISCARD_STATE_TAC "s8" THEN
   ACCUMULATOR_POP_ASSUM_LIST(K ALL_TAC) THEN
 
-  (* The conditional compare selects t exactly when reduction is needed. *)
+  (* The conditional compare selects t exactly when reduction is needed.
+     The proof covers both values of each carry and both sides of p <= m + n.
+     After those cases are fixed, the remaining goal is integer arithmetic. *)
   (ASM_CASES_TAC `carry_s2:bool` THENL
     [RULE_ASSUM_TAC(REWRITE_RULE[ASSUME `carry_s2:bool`; BITVAL_CLAUSES]) THEN
      ASSUME_TAC(ASSUME `carry_s2:bool`);
@@ -105,6 +138,10 @@ let AKITA_FP128_ADD_CORRECT = time prove
   CONV_TAC NUM_REDUCE_CONV THEN
   POP_ASSUM_LIST(MP_TAC o end_itlist CONJ) THEN ARITH_TAC);;
 
+(*** Lift the body theorem to the callable function. X30 supplies the return
+     address, ret transfers control there, and the final frame is the set of
+     registers and flags that the AArch64 calling convention permits a callee
+     to change. The function does not use stack memory. ***)
 let AKITA_FP128_ADD_SUBROUTINE_CORRECT = time prove
  (`!a0 a1 b0 b1 pc returnaddress.
         ensures arm

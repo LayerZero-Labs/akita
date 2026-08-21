@@ -5,6 +5,12 @@ These proofs check the standalone AArch64 addition and subtraction objects for
 loads them with `define_assert_from_elf`. The proof fails if the object bytes
 change.
 
+Start with the Akita Book chapter
+[Formal verification of arithmetic kernels](../../book/src/how/formal-verification.md)
+if you are new to HOL Light or instruction semantics proofs. It explains the
+register contract, the shape of an `ensures arm` theorem, the carry and borrow
+arguments, and the syntax that differs from Lean.
+
 The final theorems cover the callable functions, including the `ret`
 instruction and the AArch64 procedure call convention. They assume canonical
 field inputs and prove the canonical result modulo

@@ -4,12 +4,26 @@
  * The object path is supplied by the build that produced fp128_sub.o. The
  * explicit instruction list makes the theorem fail if those object bytes
  * change.
+ *
+ * How to read this file:
+ *
+ * 1. define_assert_from_elf binds the proof to exact object bytes.
+ * 2. ARM_MK_EXEC_RULE gives HOL Light a rule for each AArch64 instruction.
+ * 3. AKITA_FP128_SUB_CORRECT proves the arithmetic body before ret.
+ * 4. AKITA_FP128_SUB_SUBROUTINE_CORRECT adds ret and the calling convention.
+ *
+ * The input value a is stored in X0:X1, with the low word first. The input b
+ * is stored in X2:X3. X4 contains C = 2^128 - p. The result is returned in
+ * X0:X1. The book chapter book/src/how/formal-verification.md explains this
+ * structure and the main tactics for readers who are new to HOL Light.
  *)
 
 needs "arm/proofs/base.ml";;
 
 let akita_fp128_sub_object = Sys.getenv "AKITA_FP128_SUB_OBJECT";;
 
+(*** The list includes the five arithmetic instructions and the final ret.
+     Loading an object with any different instruction word fails here. ***)
 let akita_fp128_sub_mc =
   define_assert_from_elf "akita_fp128_sub_mc" akita_fp128_sub_object
   [
@@ -26,6 +40,18 @@ let AKITA_FP128_SUB_EXEC = ARM_MK_EXEC_RULE akita_fp128_sub_mc;;
 let akita_fp128_a7f7_p = new_definition
  `akita_fp128_a7f7_p = 0xffffffffffffffffffffffff00005809`;;
 
+(*** ensures arm takes a precondition, a postcondition, and a frame condition.
+
+     The precondition fixes the loaded code, program counter, and input
+     registers. The postcondition fixes the next program counter and states
+     the field result. The frame condition lists every part of the processor
+     state that the body may change.
+
+     The machine execution is modeled for all input words. The field equation
+     is conditional on both inputs being canonical values below p. The result
+     is written as (a + p - b) MOD p because natural number subtraction stops
+     at zero. Adding p first makes the expression total for canonical inputs.
+     ***)
 let AKITA_FP128_SUB_CORRECT = time prove
  (`!a0 a1 b0 b1 pc.
         ensures arm
@@ -49,11 +75,19 @@ let AKITA_FP128_SUB_CORRECT = time prove
   MAP_EVERY X_GEN_TAC
    [`a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
   REWRITE_TAC[SOME_FLAGS] THEN
+
+  (* Give the two input integers short names. Each one joins a low and high
+     64 bit word into one natural number. *)
   ABBREV_TAC `m = bignum_of_wordlist [a0; a1]` THEN
   ABBREV_TAC `n = bignum_of_wordlist [b0; b1]` THEN
+
+  (* Symbolically execute instructions 1 through 5. The selected accumulator
+     steps retain the borrow and correction equations needed below. *)
   ENSURES_INIT_TAC "s0" THEN
   ARM_ACCSTEPS_TAC AKITA_FP128_SUB_EXEC [1;2;4;5] (1--5) THEN
   ENSURES_FINAL_STATE_TAC THEN ASM_REWRITE_TAC[] THEN STRIP_TAC THEN
+
+  (* d is the wrapped result of m - n. t is the corrected result. *)
   ABBREV_TAC `d = bignum_of_wordlist [sum_s1; sum_s2]` THEN
   ABBREV_TAC `t = bignum_of_wordlist [sum_s4; sum_s5]` THEN
 
@@ -67,7 +101,10 @@ let AKITA_FP128_SUB_CORRECT = time prove
     DISCH_THEN(fun th -> REWRITE_TAC[th]) THEN REAL_ARITH_TAC;
     ALL_TAC] THEN
 
-  (* The selected correction is zero without a borrow, and C otherwise. *)
+  (* The selected correction is zero without a borrow, and C otherwise.
+     AArch64 CF means no borrow after subtraction. The accumulator equation
+     below uses carry_s2 for the mathematical borrow, so the condition appears
+     as ~carry_s2 when the selected correction is zero. *)
   SUBGOAL_THEN
    `2 EXP 128 * bitval carry_s5 + d =
     val(if ~carry_s2 then (word 0:int64) else word 4294944759) + t`
@@ -86,6 +123,9 @@ let AKITA_FP128_SUB_CORRECT = time prove
   RULE_ASSUM_TAC(REWRITE_RULE[akita_fp128_a7f7_p]) THEN
   REWRITE_TAC[akita_fp128_a7f7_p] THEN
 
+  (* Canonical inputs make a + p - b smaller than 2p. Its reduction therefore
+     has only two cases. Keep the value when it is below p, or subtract p once.
+     The final carry cases show that the assembly makes the same choice. *)
   SUBGOAL_THEN
    `m + 340282366920938463463374607427473266697 - n <
     2 * 340282366920938463463374607427473266697`
@@ -128,6 +168,10 @@ let AKITA_FP128_SUB_CORRECT = time prove
   CONV_TAC NUM_REDUCE_CONV THEN
   ARITH_TAC);;
 
+(*** Lift the body theorem to the callable function. X30 supplies the return
+     address, ret transfers control there, and the final frame is the set of
+     registers and flags that the AArch64 calling convention permits a callee
+     to change. The function does not use stack memory. ***)
 let AKITA_FP128_SUB_SUBROUTINE_CORRECT = time prove
  (`!a0 a1 b0 b1 pc returnaddress.
         ensures arm
