@@ -236,9 +236,13 @@ mod tests {
             TranscriptGrindingBinding::deserialize_uncompressed_exact(&bytes, &()).unwrap(),
             binding
         );
-        TranscriptGrindingBinding::validate_fold_response_nonce(4095).unwrap();
+        let last_valid_attempt = binding
+            .fold_response_attempts
+            .checked_sub(1)
+            .expect("positive fold response attempt budget");
+        TranscriptGrindingBinding::validate_fold_response_nonce(last_valid_attempt).unwrap();
         assert_eq!(
-            TranscriptGrindingBinding::validate_fold_response_nonce(4096),
+            TranscriptGrindingBinding::validate_fold_response_nonce(binding.fold_response_attempts),
             Err(AkitaError::InvalidProof)
         );
     }

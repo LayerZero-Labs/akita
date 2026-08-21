@@ -6,7 +6,7 @@ pub(super) use opening_oracles::*;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::RecursiveCommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, RecursiveCommitmentConfig};
 use akita_field::Zero;
 pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
@@ -18,7 +18,7 @@ use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
+    canonical_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
     AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
     GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupSumcheckProof,
@@ -690,14 +690,16 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             "recursive proof must carry stage-3 setup sumcheck evidence"
         );
 
-        let grinding_plan = akita_config::derive_transcript_grinding_plan::<
-            RecursiveCommitmentConfig<BaseCfg>,
-        >(&schedule, &opening_layout, BasisMode::Lagrange)
+        let grinding_plan = derive_transcript_grinding_plan::<RecursiveCommitmentConfig<BaseCfg>>(
+            &schedule,
+            &opening_layout,
+            BasisMode::Lagrange,
+        )
         .expect("canonical grinding plan");
         let shape = proof.shape_for_grinding_plan(&grinding_plan);
         assert_eq!(
             shape,
-            canonical_base_field_proof_shape(&schedule, &grinding_plan)
+            canonical_proof_shape(&schedule, &opening_layout, 1, &grinding_plan)
                 .expect("canonical schedule proof shape"),
             "a produced proof must have the verifier's canonical schedule-derived shape"
         );

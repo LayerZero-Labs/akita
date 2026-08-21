@@ -31,6 +31,18 @@ type R4Prime32 = FpExt4<Prime32Offset99>;
 type PR4Prime32 = PackedFpExt4<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
 type Fp64Ext2 = FpExt2<Prime64Offset59, TwoNr>;
 type PFp64Ext2 = PackedFpExt2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
+type WideSubWordFp64 = Fp64<{ (1u64 << 63) - 259 }>;
+type WideSubWordFp64Ext2 = FpExt2<WideSubWordFp64, TwoNr>;
+type PackedWideSubWordFp64Ext2 =
+    PackedFpExt2<WideSubWordFp64, TwoNr, <WideSubWordFp64 as HasPacking>::Packing>;
+type NarrowBaseWideFusedFp64 = Fp64<{ (1u64 << 58) - 27 }>;
+type NarrowBaseWideFusedFp64Ext2 = FpExt2<NarrowBaseWideFusedFp64, TwoNr>;
+type PackedNarrowBaseWideFusedFp64Ext2 =
+    PackedFpExt2<NarrowBaseWideFusedFp64, TwoNr, <NarrowBaseWideFusedFp64 as HasPacking>::Packing>;
+type LargeOffsetFp64 = Fp64<{ (1u64 << 63) - 1_500_000_051 }>;
+type LargeOffsetFp64Ext2 = FpExt2<LargeOffsetFp64, TwoNr>;
+type PackedLargeOffsetFp64Ext2 =
+    PackedFpExt2<LargeOffsetFp64, TwoNr, <LargeOffsetFp64 as HasPacking>::Packing>;
 
 fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
     [
@@ -124,6 +136,64 @@ fn packed_fp_ext2_mul_fp64() {
             "word-sized packed FpExt2 mul mismatch at lane {i}"
         );
     }
+}
+
+#[test]
+fn packed_fp_ext2_mul_wide_sub_word_fused() {
+    let mut rng = StdRng::seed_from_u64(263);
+    let width = <PackedWideSubWordFp64Ext2 as PackedValue>::WIDTH;
+    let mut a_elems: Vec<WideSubWordFp64Ext2> = (0..width)
+        .map(|_| WideSubWordFp64Ext2::random(&mut rng))
+        .collect();
+    let mut b_elems: Vec<WideSubWordFp64Ext2> = (0..width)
+        .map(|_| WideSubWordFp64Ext2::random(&mut rng))
+        .collect();
+
+    let max = WideSubWordFp64::zero() - WideSubWordFp64::one();
+    a_elems[0] = WideSubWordFp64Ext2::new(max, max);
+    b_elems[0] = WideSubWordFp64Ext2::new(max, max);
+
+    let pa = PackedWideSubWordFp64Ext2::from_fn(|i| a_elems[i]);
+    let pb = PackedWideSubWordFp64Ext2::from_fn(|i| b_elems[i]);
+    let product = pa * pb;
+    let square = pa.square();
+
+    for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
+        assert_eq!(
+            product.extract(i),
+            *a * *b,
+            "wide sub-word packed FpExt2 mul mismatch at lane {i}"
+        );
+        assert_eq!(
+            square.extract(i),
+            a.square(),
+            "wide sub-word packed FpExt2 square mismatch at lane {i}"
+        );
+    }
+}
+
+/// A single product for `2^58 - 27` satisfies the narrow-reducer bound
+/// (`27 < 2^6`), but the fused three-product coefficient does not
+/// (`3 * 27 > 2^6`). The AVX fused path must therefore preserve the first-fold
+/// carry even though ordinary base multiplication uses the narrow path.
+#[test]
+fn packed_fp_ext2_fused_first_fold_carry() {
+    let max = NarrowBaseWideFusedFp64::zero() - NarrowBaseWideFusedFp64::one();
+    let value = NarrowBaseWideFusedFp64Ext2::new(max, max);
+    let packed = PackedNarrowBaseWideFusedFp64Ext2::broadcast(value);
+    assert_eq!((packed * packed).extract(0), value * value);
+}
+
+/// The AVX second fold multiplies only the low 32 bits of `fold1_high`.
+/// This valid prime modulus makes `fold1_high = 4_500_000_152` for the first
+/// coefficient of `(P - 1, P - 1)^2`, so AVX must use the generic path.
+#[test]
+fn packed_fp_ext2_large_offset_second_fold_matches_scalar() {
+    let max = LargeOffsetFp64::zero() - LargeOffsetFp64::one();
+    let value = LargeOffsetFp64Ext2::new(max, max);
+    let packed = PackedLargeOffsetFp64Ext2::broadcast(value);
+    let got = (packed * packed).extract(0);
+    assert_eq!(got, value * value);
 }
 
 #[test]
