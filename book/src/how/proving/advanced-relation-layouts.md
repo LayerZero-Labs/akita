@@ -10,9 +10,9 @@ multiple chunks divide one group's witness columns across block ranges without
 duplicating those rows.
 
 The physical opening-commitment relation remains distinct from the
-field-valued evaluation trace. This page derives the algebraic chunk layout;
-the canonical pages for exact chunk addresses, their physical order, and mixed
-ring dimensions are linked in [Related layouts](#related-layouts).
+field-valued evaluation trace. This page derives the algebraic group and chunk
+layouts; the canonical pages for exact chunk addresses, their physical order,
+and mixed ring dimensions are linked in [Related layouts](#related-layouts).
 
 ## Contents
 
@@ -163,30 +163,10 @@ multi-group relation under this section's single-chunk, common-ring assumptions.
 They specify the algebraic variables, row support, and group ordering without
 choosing a public payload representation.
 
-#### Raw realization
-
-Raw mode realizes these rows directly: the full $\mathbf u_g$ targets occupy
-the group-local $\mathbf B_g$ rows, and $\mathbf v_D$ occupies the shared
-$\mathbf D$ rows. Applying the ordinary row-wise quotient lift gives
-
-$$
-\boxed{
-\mathbf w_{\mathrm{raw}}
-=
-\mathbf w_0
-\;\Vert\;
-\hat{\mathbf r}_{\mathrm{ord}}.
-}
-$$
-
-Here $\hat{\mathbf r}_{\mathrm{ord}}$ follows the same canonical row order:
-each group's `consistency | A | B` quotient digits first, followed by the
-quotient digits for the shared $\mathbf D$ rows. The quotient construction is
-unchanged from the [basic realization](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck).
-The implemented root transition uses compressed payloads, but compression does
-not change the semantic multi-group relation above; its $\mathbf F/\mathbf H$
-chains are the same realization step already owned by the
-[realizations page](./akita-fold-realizations.md) and are not expanded here.
+Raw and compressed modes realize this semantic layout as described on the
+[realizations page](./akita-fold-realizations.md). Multi-grouping changes the
+group-local row blocks and the input layout of the shared $\mathbf D$ relation,
+but not the ordinary quotient or compression machinery.
 
 ### Return to the single-group recursion
 
@@ -250,18 +230,26 @@ total, but every chunk carries a full-width $\hat{\mathbf z}^{(j)}$ segment.
 For $C$ chunks, the live ordinary witness therefore gains
 $(C-1)|\hat{\mathbf z}|$ coordinates relative to the single-chunk layout.
 
+| Object | Effect of multi-chunking |
+|---|---|
+| $\hat{\mathbf z}$ | Replaced by $C$ full-width local responses $\hat{\mathbf z}^{(j)}$ |
+| $\hat{\mathbf e},\hat{\mathbf t}$ | Partitioned by block range; total width is unchanged |
+| $\mathbf u,\mathbf v_D$ | Remain aggregate commitment images |
+| Semantic rows and targets | Remain unchanged |
+
 ### Chunk ranges and commitment-side data
 
 To isolate the chunk axis, assume one commitment group, one polynomial claim,
-one common ring
+the `EvaluationTrace` opening method, one unsliced $\mathbf B$ matrix, and one
+common ring
 
 $$
-R=F[X]/(X^D+1),
+R=F[X]/(X^D+1).
 $$
 
-and one unsliced $\mathbf B$ matrix. Let $N$ be the number of live blocks and
-let $C\ge 1$ be the chunk count. For this derivation, assume $C\mid N$. For
-$j=0,\ldots,C-1$, chunk $j$ owns the equal-sized range
+Let $N$ be the number of live blocks. Let $C$ be a supported power-of-two chunk
+count and, for this derivation, assume $C\mid N$. For $j=0,\ldots,C-1$, chunk
+$j$ owns the equal-sized range
 
 $$
 \mathcal I_j
@@ -557,10 +545,46 @@ $$
 
 ### Semantic relations remain unchanged
 
-Equations (4), (5), (1), and (2), in canonical row-family order, are the same
-four semantic relations as in the basic setting: fold-evaluation consistency,
-inner-commitment consistency, outer-commitment consistency, and
-opening-commitment consistency. Their semantic target remains
+For the complete chunked witness $\mathbf w$, the four proved semantic
+relations can be read together in canonical row-family order:
+
+$$
+\begin{aligned}
+\sum_{j=0}^{C-1}
+\left(
+\sum_{b\in\mathcal I_j}
+c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
+-
+\mathbf Q\mathbf G_{\mathrm{in}}\mathbf G_{\mathrm{fold}}
+\hat{\mathbf z}^{(j)}
+\right)
+&=0,
+&&\text{fold-evaluation consistency},
+\\
+\sum_{j=0}^{C-1}
+\left(
+\sum_{b\in\mathcal I_j}
+c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
+-
+\mathbf A\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}
+\right)
+&=\mathbf 0_{\mathbf A},
+&&\text{inner-commitment consistency},
+\\
+\sum_{j=0}^{C-1}
+\mathbf B^{(j)}\hat{\mathbf t}^{(j)}
+&=\mathbf u,
+&&\text{outer-commitment consistency},
+\\
+\sum_{j=0}^{C-1}
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)}
+&=\mathbf v_D,
+&&\text{opening-commitment consistency}.
+\end{aligned}
+$$
+
+These are the same four semantic relations as in the basic setting. Their
+semantic target remains
 
 $$
 \mathbf y
