@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_error::AkitaError;
-use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
+use akita_transcript::{AkitaTranscript, Transcript, TranscriptChallengePreview, TranscriptSponge};
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
@@ -29,9 +29,10 @@ use akita_types::dispatch_for_field;
 
 /// Preview-only transcript access for prover-side fold grinding.
 ///
-/// Implemented only for production prover transcripts; grinding stays confined
-/// to this module instead of infecting the public [`Transcript`] trait surface.
-pub trait ProverTranscriptGrind<F>: Transcript<F> + FoldChallengeSeedPreview
+/// Implemented only for production prover transcripts. Mutable live transcript
+/// operations remain on [`Transcript`], while scratch-state access stays on
+/// this prover-only bound.
+pub trait ProverTranscriptGrind<F>: Transcript<F> + TranscriptChallengePreview
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
 {

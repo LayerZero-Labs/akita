@@ -22,7 +22,7 @@ mod config;
 mod fold_draw;
 mod sampler;
 
-pub use akita_transcript::FoldChallengeSeedPreview;
+pub use akita_transcript::TranscriptChallengePreview;
 pub use challenge::{
     SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,
 };

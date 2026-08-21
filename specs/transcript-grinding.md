@@ -972,10 +972,10 @@ generated output.
       dedicated descriptor field after `PlanSection` and binds the exact policy
       constants, oracle revision, and Blake2b-256 plan digest specified above.
       Golden bytes cover every kind, site, and sumcheck protocol discriminator.
-- [ ] `AkitaBatchedProof` carries one leading `TranscriptNonceStream`.
+- [x] `AkitaBatchedProof` carries one leading `TranscriptNonceStream`.
       `FoldLevelProof` and `TerminalLevelProof` no longer carry individual
       `u32` nonce fields.
-- [ ] `AkitaBatchedProofShape` carries the exact plan-derived stream bit count.
+- [x] `AkitaBatchedProofShape` carries the exact plan-derived stream bit count.
       Its canonical bytes start with `nonce_stream_bits_as_le_u64`, followed by
       the existing root, recursive-fold, and terminal fields. Checked conversion,
       byte-bound, and equality-to-plan validation occur before proof allocation.
@@ -983,7 +983,7 @@ generated output.
       alignment, and rejects truncation, nonzero final padding, wrong query
       kinds, wrong sites, and incomplete replay. The writer rejects over-wide
       values, and the enclosing exact proof decoder rejects trailing bytes.
-- [ ] Existing fold-response nonces consume exactly 12 stream bits, retain the
+- [x] Existing fold-response nonces consume exactly 12 stream bits, retain the
       4096-attempt cap, remain one shared value per fold across all groups, and
       produce the same group root for the same transcript prefix and numeric
       nonce across the wire cutover.
@@ -999,12 +999,12 @@ generated output.
       list full-vector CWSS structure as an open blocker. They state the
       coordinatewise construction and complete multi-fork accounting used by
       both opening methods.
-- [ ] `akita-transcript` exposes one canonical 32-byte proof-of-work predicate
+- [x] `akita-transcript` exposes one canonical 32-byte proof-of-work predicate
       transition with the exact payload and low-bit test specified above.
-- [ ] The prover preview tests candidates without mutating the live transcript.
+- [x] The prover preview tests candidates without mutating the live transcript.
       The accepted candidate replay equals verifier replay for both Blake2b and
       Keccak transcript backends.
-- [ ] The predicate squeeze is distinct from the following protocol challenge.
+- [x] The predicate squeeze is distinct from the following protocol challenge.
       A regression test fails if the predicate bytes are reused as challenge
       bytes.
 - [ ] Every protected sumcheck round grinds after absorbing its round

@@ -4,7 +4,7 @@ use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
-use akita_transcript::{FoldChallengeSeedPreview, Transcript, FOLD_CHALLENGE_SEED_LEN};
+use akita_transcript::{Transcript, TranscriptChallengePreview, FOLD_CHALLENGE_SEED_LEN};
 use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
@@ -152,12 +152,12 @@ pub trait FoldDraw {
 }
 
 pub struct PreviewFoldDraw<'a> {
-    preview: &'a dyn FoldChallengeSeedPreview,
+    preview: &'a dyn TranscriptChallengePreview,
     absorbs: Vec<Vec<u8>>,
 }
 
 impl<'a> PreviewFoldDraw<'a> {
-    pub fn new(preview: &'a dyn FoldChallengeSeedPreview) -> Self {
+    pub fn new(preview: &'a dyn TranscriptChallengePreview) -> Self {
         Self {
             preview,
             absorbs: Vec::new(),
@@ -169,7 +169,7 @@ impl FoldDraw for PreviewFoldDraw<'_> {
     fn absorb_and_squeeze(&mut self, _label: &[u8], payload: &[u8]) -> Vec<u8> {
         self.absorbs.push(payload.to_vec());
         let absorbs = self.absorbs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        self.preview.preview_fold_challenge_seed(&absorbs)
+        self.preview.preview_challenge_block(&absorbs).to_vec()
     }
 }
 

@@ -4,13 +4,13 @@ use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
 use akita_serialization::SerializationError;
+pub use akita_transcript::{
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    MAX_GRINDING_BITS,
+};
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
-/// Extra nonce bits that make honest proof-of-work exhaustion negligible.
-pub const GRINDING_NONCE_SLACK_BITS: u8 = 7;
-/// Largest proof-of-work target supported by the first implementation.
-pub const MAX_GRINDING_BITS: u8 = 25;
 /// Packed width of the existing fold-response search nonce.
 pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 /// Exclusive upper bound for the existing fold-response search.
@@ -21,10 +21,6 @@ pub const GRINDING_ENCODING_VERSION: u16 = 1;
 pub const GRINDING_QUERY_POLICY_REVISION: u16 = 1;
 /// Indexed fold-coordinate oracle revision.
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
-/// Fixed public predicate output length.
-pub const GRINDING_PREDICATE_BYTES: u8 = 32;
-/// Low-bit-first predicate and packed-stream bit order.
-pub const GRINDING_LITTLE_ENDIAN_BIT_ORDER: u8 = 0;
 
 const GRINDING_PLAN_DOMAIN: &[u8] = b"akita/grinding-plan/v1";
 
@@ -863,6 +859,12 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_field::Prime128Offset275;
+    use akita_transcript::{
+        grinding_predicate_accepts, preview_grinding_predicate, search_grinding_nonce,
+        AkitaTranscript, Transcript,
+    };
+    use std::num::NonZeroU8;
 
     fn stream_test_plan() -> GrindingPlan {
         GrindingPlan::new(
@@ -876,6 +878,58 @@ mod tests {
             128,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn one_proof_of_work_entry_searches_packs_and_replays() {
+        let site = GrindingSite::Tau0Point { level: 0 };
+        let run = GrindingRun::proof_of_work(site, 1, 127).unwrap();
+        let plan = GrindingPlan::new(vec![run], 127).unwrap();
+        assert_eq!(run.grind_bits(), 1);
+        assert_eq!(run.nonce_bits(), 8);
+
+        let mut prover =
+            AkitaTranscript::<Prime128Offset275>::prover(b"grinding-wire-test", b"instance");
+        let nonce = search_grinding_nonce(&prover, run.grind_bits(), run.nonce_bits()).unwrap();
+        let preview =
+            preview_grinding_predicate(&prover, run.grind_bits(), run.nonce_bits(), nonce).unwrap();
+
+        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+        writer
+            .write(site, GrindingQueryKind::ProofOfWork, nonce)
+            .unwrap();
+        let stream = writer.finish().unwrap();
+        let wire = stream.as_bytes().to_vec();
+        let decoded = TranscriptNonceStream::from_bytes(wire, plan.total_nonce_bits()).unwrap();
+        let mut reader = decoded.reader(&plan).unwrap();
+        let decoded_nonce = reader.read(site, GrindingQueryKind::ProofOfWork).unwrap();
+        reader.finish().unwrap();
+        assert_eq!(decoded_nonce, nonce);
+
+        let prover_predicate = Transcript::grinding_predicate(
+            &mut prover,
+            akita_transcript::labels::CHALLENGE_TAU0,
+            run.grind_bits(),
+            run.nonce_bits(),
+            nonce,
+        )
+        .unwrap();
+        let mut verifier =
+            AkitaTranscript::<Prime128Offset275>::verifier(b"grinding-wire-test", b"instance");
+        let verifier_predicate = Transcript::grinding_predicate(
+            &mut verifier,
+            akita_transcript::labels::CHALLENGE_TAU0,
+            run.grind_bits(),
+            run.nonce_bits(),
+            decoded_nonce,
+        )
+        .unwrap();
+        assert_eq!(preview, prover_predicate);
+        assert_eq!(prover_predicate, verifier_predicate);
+        assert!(grinding_predicate_accepts(
+            &verifier_predicate,
+            NonZeroU8::new(run.grind_bits()).unwrap()
+        ));
     }
 
     #[test]
