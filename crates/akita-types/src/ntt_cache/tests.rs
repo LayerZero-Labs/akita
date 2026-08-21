@@ -258,6 +258,62 @@ fn quotient_tail_planning_and_runtime_selectors_agree_for_all_fields() {
     );
 }
 
+fn assert_matvec_tail_selectors_agree<F: CanonicalField, const D: usize>(
+    profile: SisModulusProfileId,
+) {
+    for width in [1, 63, 64, 127, 128, 4_864, 19_456] {
+        for rhs_abs_bound in [32, 64] {
+            let profile_result =
+                ntt_cache_requires_i16_tail_for_profile(profile, D, width, rhs_abs_bound);
+            let field_result = ntt_cache_requires_i16_tail::<F, D>(width, rhs_abs_bound);
+            match (profile_result, field_result) {
+                (Ok(profile_tail), Ok(field_tail)) => assert_eq!(profile_tail, field_tail),
+                (Err(_), Err(_)) => {}
+                (profile_result, field_result) => panic!(
+                    "profile and field matvec-tail selectors disagree for D={D}, width={width}, bound={rhs_abs_bound}: profile={profile_result:?}, field={field_result:?}"
+                ),
+            }
+        }
+    }
+}
+
+#[test]
+fn matvec_tail_planning_and_runtime_selectors_agree_for_production_fields() {
+    assert_matvec_tail_selectors_agree::<Prime32Offset99, 256>(SisModulusProfileId::Q32Offset99);
+    assert_matvec_tail_selectors_agree::<Prime64Offset59, 256>(SisModulusProfileId::Q64Offset59);
+    assert_matvec_tail_selectors_agree::<Prime128OffsetA7F7, 256>(
+        SisModulusProfileId::Q128OffsetA7F7,
+    );
+    assert_matvec_tail_selectors_agree::<Prime128OffsetA7F7, 512>(
+        SisModulusProfileId::Q128OffsetA7F7,
+    );
+}
+
+#[test]
+fn dense_i8_exact_tail_preference_is_q128_specific() {
+    assert!(!dense_i8_commit_prefers_exact_i16_for_profile(
+        SisModulusProfileId::Q32Offset99,
+        2_048,
+        2_560,
+        64,
+    )
+    .unwrap());
+    assert!(!dense_i8_commit_prefers_exact_i16_for_profile(
+        SisModulusProfileId::Q64Offset59,
+        1_024,
+        11_264,
+        32,
+    )
+    .unwrap());
+    assert!(dense_i8_commit_prefers_exact_i16_for_profile(
+        SisModulusProfileId::Q128OffsetA7F7,
+        512,
+        19_456,
+        64,
+    )
+    .unwrap());
+}
+
 #[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(

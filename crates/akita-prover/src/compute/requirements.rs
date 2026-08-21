@@ -161,6 +161,8 @@ impl NttExecutionRequirements {
             params.inner.matrix.output_rank(),
             params.inner.matrix.input_width(),
             signed_commit_domain(
+                params.inner.matrix.sis_modulus_profile(),
+                params.inner.matrix.ring_dimension(),
                 params.inner.matrix.input_width(),
                 params.inner.digits.log_basis,
             )?,
@@ -233,6 +235,8 @@ impl NttExecutionRequirements {
             params.inner().matrix.output_rank(),
             params.inner().matrix.input_width(),
             signed_commit_domain(
+                params.inner().matrix.sis_modulus_profile(),
+                params.inner().matrix.ring_dimension(),
                 params.inner().matrix.input_width(),
                 params.inner().digits.log_basis,
             )?,
@@ -320,6 +324,8 @@ impl NttExecutionRequirements {
             layout.inner.matrix.output_rank(),
             layout.inner.matrix.input_width(),
             signed_commit_domain(
+                layout.inner.matrix.sis_modulus_profile(),
+                layout.inner.matrix.ring_dimension(),
                 layout.inner.matrix.input_width(),
                 layout.inner.digits.log_basis,
             )?,
@@ -422,6 +428,8 @@ impl NttExecutionRequirements {
             params.inner.matrix.output_rank(),
             params.inner.matrix.input_width(),
             signed_commit_domain(
+                params.inner.matrix.sis_modulus_profile(),
+                params.inner.matrix.ring_dimension(),
                 params.inner.matrix.input_width(),
                 params.inner.digits.log_basis,
             )?,
@@ -445,14 +453,31 @@ fn matrix_extent(num_rows: usize, active_width: usize) -> Result<usize, AkitaErr
 }
 
 /// Transform domain required to commit balanced digits at one basis.
-fn signed_commit_domain(width: usize, log_basis: u32) -> Result<NttTransformDomain, AkitaError> {
+fn signed_commit_domain(
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: usize,
+    width: usize,
+    log_basis: u32,
+) -> Result<NttTransformDomain, AkitaError> {
+    let rhs_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
-        akita_types::SignedDigitKernel::I8 => Ok(NttTransformDomain::Negacyclic),
-        akita_types::SignedDigitKernel::I16 => Ok(NttTransformDomain::ExactNegacyclicI16 {
-            width,
-            rhs_abs_bound: akita_types::balanced_signed_digit_abs_bound(log_basis)
-                .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?,
-        }),
+        akita_types::SignedDigitKernel::I8
+            if !akita_types::dense_i8_commit_prefers_exact_i16_for_profile(
+                modulus_profile,
+                ring_dimension,
+                width,
+                rhs_abs_bound,
+            )? =>
+        {
+            Ok(NttTransformDomain::Negacyclic)
+        }
+        akita_types::SignedDigitKernel::I8 | akita_types::SignedDigitKernel::I16 => {
+            Ok(NttTransformDomain::ExactNegacyclicI16 {
+                width,
+                rhs_abs_bound,
+            })
+        }
     }
 }
 
@@ -767,6 +792,41 @@ mod tests {
 
     #[test]
     #[cfg(feature = "schedules-default")]
+    fn fp128_dense_root_commit_prewarms_one_exact_tail_accumulation() {
+        for num_vars in [26, 28, 30] {
+            let schedule = fp128::Dense::resolve_catalog_row_for_key(
+                &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars)),
+            )
+            .expect("generated dense schedule")
+            .into_schedule();
+            let root = &schedule.root.params;
+            let width = root.inner().matrix.input_width();
+            let rhs_abs_bound =
+                akita_types::balanced_signed_digit_abs_bound(root.inner().digits.log_basis)
+                    .expect("valid signed digit basis");
+            let expected = NttCacheKey::from_matrix_shape(
+                root.inner().matrix.ring_dimension(),
+                root.inner().matrix.output_rank(),
+                width,
+                NttTransformDomain::ExactNegacyclicI16 {
+                    width,
+                    rhs_abs_bound,
+                },
+            )
+            .expect("root commit key");
+            let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule)
+                .expect("compile complete NTT requirements");
+
+            assert!(requirements.entries().iter().any(|entry| {
+                entry.fold_level == 0
+                    && entry.cluster == NttOperationCluster::Commit
+                    && entry.key == expected
+            }));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "schedules-default")]
     fn dense_small_field_nv26_cache_plan_matches_selected_geometry() {
         for schedule in [
             fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
@@ -791,6 +851,8 @@ mod tests {
             );
 
             let expected_commit_domain = signed_commit_domain(
+                root.inner().matrix.sis_modulus_profile(),
+                root.inner().matrix.ring_dimension(),
                 root.inner().matrix.input_width(),
                 root.inner().digits.log_basis,
             )
