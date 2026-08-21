@@ -35,6 +35,12 @@ pub enum OpeningFamily<Trace, Packing> {
 }
 
 impl OpeningMethod {
+    /// Whether this method uses extension-opening reduction for the field tower.
+    #[must_use]
+    pub const fn requires_extension_opening_reduction(self, extension_degree: usize) -> bool {
+        matches!(self, Self::EvaluationTrace) && extension_degree > 1
+    }
+
     pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
         match self {
             Self::EvaluationTrace => bytes.push(0),

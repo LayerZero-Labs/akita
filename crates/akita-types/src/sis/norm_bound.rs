@@ -19,7 +19,7 @@ use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
     rademacher_proxy_variance, FoldWitnessLinfCapConfig, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
 };
 
 /// Rounded-up SIS infinity norm when adding/subtracting two small digits. A

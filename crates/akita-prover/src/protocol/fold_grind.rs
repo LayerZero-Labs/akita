@@ -11,8 +11,8 @@ pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
-    FoldLinfProtocolBinding, InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams,
-    TerminalResponseShape,
+    InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams, TerminalResponseShape,
+    FOLD_RESPONSE_ATTEMPTS,
 };
 #[cfg(test)]
 use akita_types::{OpeningFamily, OpeningMethod};
@@ -209,11 +209,10 @@ where
     } else {
         None
     };
-    let binding = FoldLinfProtocolBinding::CURRENT;
     let polys = [poly];
     let point_indices = [0usize];
     let (nonce, (witness, challenges)) =
-        first_jointly_accepted_nonce(binding.max_grind_attempts, |nonce| {
+        first_jointly_accepted_nonce(FOLD_RESPONSE_ATTEMPTS, |nonce| {
             let mut preview = PreviewFoldDraw::new(transcript);
             let challenges = preview.draw_folding_challenges_with_rejection(
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
@@ -560,7 +559,6 @@ where
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let binding = FoldLinfProtocolBinding::CURRENT;
     if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSetup(
             "fold grind groups do not match the opening batch".to_string(),
@@ -612,7 +610,7 @@ where
         transcript,
         root_lp,
         &prepared_groups,
-        binding.max_grind_attempts,
+        FOLD_RESPONSE_ATTEMPTS,
     )
 }
 

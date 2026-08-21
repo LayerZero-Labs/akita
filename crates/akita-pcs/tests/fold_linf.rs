@@ -7,9 +7,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup,
-};
+use akita_types::{AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup, FOLD_RESPONSE_ATTEMPTS};
 use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -103,11 +101,11 @@ fn fold_linf_grind_onehot_e2e_prove_verify() {
         let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
         for step in fixture.proof.nonterminal_folds() {
             assert!(
-                step.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS,
+                step.fold_grind_nonce < FOLD_RESPONSE_ATTEMPTS,
                 "grind nonce must stay within cap"
             );
         }
-        assert!(fixture.proof.terminal.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS);
+        assert!(fixture.proof.terminal.fold_grind_nonce < FOLD_RESPONSE_ATTEMPTS);
     });
 }
 
@@ -135,8 +133,8 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect("deserialized proof must verify");
 
-        roundtrip.root.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
-        roundtrip.terminal.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
+        roundtrip.root.fold_grind_nonce = FOLD_RESPONSE_ATTEMPTS;
+        roundtrip.terminal.fold_grind_nonce = FOLD_RESPONSE_ATTEMPTS;
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let err = Scheme::batched_verify(

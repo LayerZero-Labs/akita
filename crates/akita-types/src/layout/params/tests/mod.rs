@@ -149,7 +149,7 @@ fn fold_groups_reject_empty_and_misordered_topologies_without_unwinding() {
 #[test]
 fn fold_nonce_accepts_only_the_global_attempt_range() {
     let (params, opening_batch) = sample_multi_group_root_params();
-    let attempts = crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
+    let attempts = crate::FOLD_RESPONSE_ATTEMPTS;
 
     params
         .validate_fold_grind_nonce(&opening_batch, attempts - 1)

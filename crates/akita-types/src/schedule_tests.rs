@@ -311,7 +311,8 @@ fn base_field_proof_shape_rejects_mixed_opening_families() {
     ])
     .expect("grouped opening layout");
 
-    let error = canonical_proof_shape(&schedule, &layout, 1)
+    let grinding_plan = GrindingPlan::new(Vec::new(), 1).expect("empty grinding plan");
+    let error = canonical_proof_shape(&schedule, &layout, 1, &grinding_plan)
         .expect_err("base-field proof shape must reject mixed opening families");
     assert!(
         matches!(

@@ -68,7 +68,7 @@ where
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_batch)?;
+    let opening_method = root_params.uniform_opening_method(&opening_batch)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -159,7 +159,7 @@ where
     let stack = stacks.prove_stack_at_level(0);
     let root_params = &scheduled.params;
     let opening_layout = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_layout)?;
+    let opening_method = root_params.uniform_opening_method(&opening_layout)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }

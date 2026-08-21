@@ -237,12 +237,15 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
         &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
     )
     .expect("generated singleton row");
-    let canonical = canonical_proof_shape(
+    let opening_layout = row.profiles().opening_layout().expect("opening layout");
+    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
         row.schedule(),
-        &row.profiles().opening_layout().expect("opening layout"),
-        1,
+        &opening_layout,
+        akita_types::BasisMode::Lagrange,
     )
-    .expect("canonical shape");
+    .expect("grinding plan");
+    let canonical = canonical_proof_shape(row.schedule(), &opening_layout, 1, &grinding_plan)
+        .expect("canonical shape");
 
     let mut huge = canonical.clone();
     huge.root.opening_payload_coeffs = usize::MAX;
@@ -277,10 +280,18 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
     let row =
         ExtCfg::resolve_catalog_row_for_opening(&layout).expect("generated fp32 singleton row");
+    let opening_layout = row.profiles().opening_layout().expect("catalog layout");
+    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(
+        row.schedule(),
+        &opening_layout,
+        akita_types::BasisMode::Lagrange,
+    )
+    .expect("grinding plan");
     let mut noncanonical = canonical_proof_shape(
         row.schedule(),
-        &row.profiles().opening_layout().expect("catalog layout"),
+        &opening_layout,
         <ExtE as ExtField<ExtF>>::DEGREE,
+        &grinding_plan,
     )
     .expect("canonical extension shape");
     noncanonical

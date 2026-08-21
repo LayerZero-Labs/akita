@@ -15,7 +15,9 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitOutput, ComputeBackendSetup, CpuBackend,
@@ -778,7 +780,13 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
-    let proof_shape = proof.shape();
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+        schedule.schedule(),
+        &opening_layout,
+        BasisMode::Lagrange,
+    )
+    .map_err(|err| format!("derive grinding plan failed: {err}"))?;
+    let proof_shape = proof.shape_for_grinding_plan(&grinding_plan);
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         case: AkitaJoltCase::OneHotFp128MultiGroupRecursive,
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),

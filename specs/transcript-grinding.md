@@ -943,21 +943,21 @@ generated output.
 
 ### Acceptance criteria
 
-- [ ] `akita-types` exposes one validated `GrindingPlan` whose ordered runs
+- [x] `akita-types` exposes one validated `GrindingPlan` whose ordered runs
       cover every conditional challenge site, sparse group root, and expanded
       fold coordinate for every production schedule and opening layout.
-- [ ] `akita-config` derives that plan from schedule, normalized opening
+- [x] `akita-config` derives that plan from schedule, normalized opening
       layout, field metadata, basis, and protocol configuration before proof
       shape construction. `AkitaBatchedProofShape` consumes the resulting
       `nonce_stream_bits`; no reverse dependency exists.
-- [ ] The plan derives `g = max(0, 128 + ceil_log2(L) - C)`, uses `w = g + 7`
+- [x] The plan derives `g = max(0, 128 + ceil_log2(L) - C)`, uses `w = g + 7`
       for nonzero proof-of-work queries, rejects `g > 25`, and proves the stated
       `exp(-128)` per-query exhaustion bound in unit tests.
-- [ ] The plan catalog distinguishes degree checks, sumcheck rounds,
+- [x] The plan catalog distinguishes degree checks, sumcheck rounds,
       multilinear points, powers batching, independent coefficient vectors,
       sparse challenge draws, and fold-response search using the loss rules in
       this specification.
-- [ ] A security test or executable table checks for every admitted site that
+- [x] A security test or executable table checks for every admitted site that
       `2^-g * L / 2^C <= 2^-128` under the nominal convention and separately
       reports the exact `2^-g * L / |E|` value and pseudo-Mersenne deficit. The
       exact deficit does not silently add a blanket grind bit. The security
@@ -967,7 +967,7 @@ generated output.
 - [ ] Every current challenge label reached by a production proof has exactly
       one matching logical plan entry. Zero-bit entries remain visible to the
       audit but consume no stream bits and make no transcript change.
-- [ ] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` in the
+- [x] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` in the
       dedicated descriptor field after `PlanSection` and binds the exact policy
       constants, oracle revision, and Blake2b-256 plan digest specified above.
       Golden bytes cover every kind, site, and sumcheck protocol discriminator.
