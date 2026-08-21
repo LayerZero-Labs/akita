@@ -12,7 +12,6 @@
 
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -22,6 +21,7 @@ use akita_types::{
     GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
@@ -543,7 +543,6 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_config::proof_optimized::fp128;
-    use jolt_field::Zero;
     use akita_types::{
         derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
         CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
@@ -551,6 +550,7 @@ mod tests {
         SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
         SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
     };
+    use jolt_field::Zero;
 
     type TestCfg = fp128::OneHot;
     type TestF = fp128::Field;

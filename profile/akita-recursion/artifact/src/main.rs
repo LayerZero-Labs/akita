@@ -18,7 +18,6 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use jolt_field::{CanonicalEncoding, PseudoMersenne};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
@@ -34,6 +33,7 @@ use akita_types::{
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
+use jolt_field::{CanonicalEncoding, PseudoMersenne, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
