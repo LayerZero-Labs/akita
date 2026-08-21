@@ -1,6 +1,8 @@
 use super::*;
 
-use jolt_field::{One, Ring, Zero};
+#[cfg(feature = "schedules-fp128-dense-bounded")]
+use jolt_field::Zero;
+use jolt_field::{One, Ring};
 
 // ============================================================================
 // GROUP E — Heterogeneous configurations (fp128)
