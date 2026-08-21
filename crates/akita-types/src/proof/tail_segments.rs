@@ -18,10 +18,7 @@ use crate::golomb_rice::{
 use crate::layout::field_bytes;
 use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
-use crate::{
-    CommittedGroupParams, LevelParamsLike, TerminalCommittedGroupParams, WitnessLayout,
-    WitnessUnitLayout,
-};
+use crate::{CommittedGroupParams, TerminalFoldParams, WitnessLayout, WitnessUnitLayout};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +65,7 @@ pub struct TerminalResponse<F: FieldCore> {
 }
 
 pub struct TerminalResponseGroupParts<'a, F: FieldCore> {
-    pub params: &'a dyn LevelParamsLike,
+    pub params: crate::GroupOpenPhaseParams,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
     pub num_z_segments: usize,
@@ -325,10 +322,7 @@ impl TerminalResponseShape {
     /// `encoding_scale` selects the frozen Golomb parameters and payload byte
     /// budget. It is also the verifier cap for a Linf route. An L2 route emits
     /// no Linf cap and enforces only its complete response energy.
-    pub fn derive(
-        params: &TerminalCommittedGroupParams,
-        encoding_scale: u128,
-    ) -> Result<Self, AkitaError> {
+    pub fn derive(params: &TerminalFoldParams, encoding_scale: u128) -> Result<Self, AkitaError> {
         if encoding_scale == 0 {
             return Err(AkitaError::InvalidSetup(
                 "terminal response encoding scale must be nonzero".to_string(),
@@ -339,13 +333,14 @@ impl TerminalResponseShape {
             .inner_width()
             .checked_mul(d)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
-        let e_field_elems = params
-            .num_live_blocks
-            .checked_mul(d)
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+        let e_field_elems =
+            params.blocks.live_blocks.checked_mul(d).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal e coordinates overflow".into())
+            })?;
         let t_field_elems = params
-            .num_live_blocks
-            .checked_mul(params.inner_commit_matrix.output_rank())
+            .blocks
+            .live_blocks
+            .checked_mul(params.inner.matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
         let z_rice_low_bits = wire_rice_low_bits(encoding_scale);
@@ -363,7 +358,7 @@ impl TerminalResponseShape {
                     z_coords,
                     e_field_elems,
                     t_field_elems,
-                    z_linf_cap: match params.inner_commit_matrix.security_route() {
+                    z_linf_cap: match params.inner.matrix.security_route() {
                         crate::sis::InnerCommitSecurityRoute::Linf(_) => Some(encoding_scale),
                         crate::sis::InnerCommitSecurityRoute::L2 { .. } => None,
                     },
@@ -691,9 +686,9 @@ fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
     z_coords.saturating_mul(bits_per_coord).div_ceil(8)
 }
 
-fn tail_segment_layout_from_groups<'a>(
+fn tail_segment_layout_from_groups(
     lp: &CommittedGroupParams,
-    groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize, u128)>,
+    groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
     _num_commitment_groups: usize,
     _field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
@@ -753,7 +748,11 @@ fn tail_segment_layout_from_groups<'a>(
             .checked_mul(params.a_rows_len())
             .and_then(|n| n.checked_mul(depth_commit))
             .ok_or_else(|| AkitaError::InvalidSetup("tail t plane count overflow".to_string()))?;
-        let security_cap = lp.terminal_response_linf_limit_for_params(params)?;
+        // Price this group's response against *this group's* challenge family.
+        let security_cap = crate::sis::certified_terminal_response_linf_cap(
+            params.inner_commit_matrix_params(),
+            &params.fold_challenge_config(),
+        )?;
         if z_cap > security_cap {
             return Err(AkitaError::InvalidSetup(format!(
                 "terminal honest response cap {z_cap} exceeds inner-matrix SIS capacity {security_cap}"
@@ -791,10 +790,10 @@ impl TerminalResponseShape {
     ///
     /// Returns [`AkitaError::InvalidSetup`] when dimensions are empty or any
     /// derived segment size overflows.
-    pub fn from_groups<'a>(
+    pub fn from_groups(
         lp: &CommittedGroupParams,
         field_bits: u32,
-        groups: impl IntoIterator<Item = (&'a dyn LevelParamsLike, usize, usize, usize, u128)>,
+        groups: impl IntoIterator<Item = (crate::GroupOpenPhaseParams, usize, usize, usize, u128)>,
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             layout: tail_segment_layout_from_groups(lp, groups, 0, field_bits)?,
@@ -812,11 +811,16 @@ pub fn tail_segment_multiplicities_from_layout(
     layout: &TailSegmentLayout,
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    tail_segment_multiplicities_from_layout_for_params(lp, lp.d_a(), layout, group_index)
+    tail_segment_multiplicities_from_layout_for_params(
+        &lp.final_group_scalar()?,
+        lp.d_a(),
+        layout,
+        group_index,
+    )
 }
 
 pub fn tail_segment_multiplicities_from_layout_for_params(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
     ring_dimension: usize,
     layout: &TailSegmentLayout,
     group_index: usize,
@@ -927,7 +931,11 @@ where
             .iter()
             .map(|&coeff| i64::from(coeff))
             .collect();
-        let security_cap = lp.terminal_response_linf_limit_for_params(group.params)?;
+        // Price this group's response against *this group's* challenge family.
+        let security_cap = crate::sis::certified_terminal_response_linf_cap(
+            group.params.inner_commit_matrix_params(),
+            &group.params.fold_challenge_config(),
+        )?;
         let depth_witness = group.params.num_digits_inner();
         let inner_width = group.params.num_positions_per_block() * depth_witness;
         let row_count = group.z_folded_centered_flat.len() / ring_d;
@@ -992,8 +1000,7 @@ where
 /// Build the scalar raw terminal response selected by the typed terminal
 /// schedule. Neither `e` nor `t` is gadget decomposed.
 pub fn build_terminal_response<F>(
-    params: &TerminalCommittedGroupParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
+    params: &TerminalFoldParams,
     scheduled_shape: &TerminalResponseShape,
     e_folded: &RingVec<F>,
     t_fields: RingVec<F>,
@@ -1015,7 +1022,7 @@ where
             "terminal response segment length mismatch".into(),
         ));
     }
-    params.validate_terminal_linf_cap(sparse, group.z_linf_cap)?;
+    params.validate_terminal_linf_cap(group.z_linf_cap)?;
     let z_values = z_folded_centered_flat
         .iter()
         .map(|value| i64::from(*value))

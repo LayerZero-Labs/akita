@@ -1,22 +1,26 @@
 # Roadmap
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+> **Status:** current status index. Detailed reader guidance belongs in the
+> reader-path follow-up.
 
-In-flight and planned work. The larger threads get their own pages
-([Verifier offloading](./verifier-offloading.md),
-[Zero-knowledge](./zero-knowledge.md),
-[Compute backends](./compute-backends.md)); shorter items stay here as sections.
-Keep each item honest about what has already landed versus what is still a spec.
+This section tracks capabilities that are not part of the current production
+implementation. [Compute backends](./compute-backends.md) tracks the active
+Metal work. [Zero knowledge](./zero-knowledge.md) states the current privacy
+boundary and the requirements for any future implementation.
+
+Implemented work belongs under [How it works](../how/how-it-works.md). See
+[Setup offloading](../how/setup-offloading.md) for the recursive setup path that
+has moved out of this roadmap.
 
 ## Streaming prover
 
-A future small-space prover for suffix and terminal extension-opening reduction
-may stage the prefix-suffix construction instead of materializing the packed
-table. Root folds use subring coefficient packing and are outside this work.
+PR [#398](https://github.com/LayerZero-Labs/akita/pull/398) is implementing
+streamed inputs for suffix extension-opening reduction. Root folds use subring
+coefficient packing and are outside that work. The archived design below is
+historical and does not define the active implementation.
 
 **Sources to fold in**
 
-- Paper App B.4.1 (`sec:akita-eor-sumcheck`, "Small-space staged prover"; streaming-Jolt App A).
 - Historical records:
   `specs/archive/2026-Q3/eor-streamed-prover.md` and
   `specs/archive/2026-Q3/eor-sumcheck-prover-acceleration.md`.

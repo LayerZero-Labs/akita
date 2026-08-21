@@ -96,8 +96,8 @@ pub(crate) fn packing_precommit_opening_products(
             0,
             policy.claim_ext_degree,
             CommitmentRingDims {
-                inner: profile.inner_commit_matrix.ring_dimension(),
-                outer: profile.outer_commit_matrix.ring_dimension(),
+                inner: profile.inner.matrix.ring_dimension(),
+                outer: profile.outer.matrix.ring_dimension(),
                 opening: dimensions.d_d(),
             },
         )?;
@@ -179,9 +179,9 @@ fn opening_work_domain(
                     let mut openings = Vec::with_capacity(root_key.precommitteds.len());
                     let mut valid = true;
                     for profile in &root_key.precommitteds {
-                        let Ok(config) = (ctx.ring_challenge_config)(
-                            profile.inner_commit_matrix.ring_dimension(),
-                        ) else {
+                        let Ok(config) =
+                            (ctx.ring_challenge_config)(profile.inner.matrix.ring_dimension())
+                        else {
                             valid = false;
                             break;
                         };

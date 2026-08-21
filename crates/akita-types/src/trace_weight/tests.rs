@@ -47,7 +47,7 @@ fn trace_layout(
     )
     .unwrap();
     let mut lp = lp;
-    lp.num_digits_fold = 2;
+    lp.own_group_mut().opening.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let relation_geometry =
         crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)

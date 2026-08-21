@@ -124,17 +124,17 @@ where
     let mut level = 1usize;
 
     for (recursive_index, step) in schedule.recursive_folds.iter().enumerate() {
-        let level_params = &step.params.witness;
+        let level_params = &step.params;
         let input_witness_len = step.input_witness_len;
         let successor = schedule.recursive_folds.get(recursive_index + 1);
         let (next_params, next_binding) = successor.map_or(
             (
-                super::fold::FoldSuccessorParams::Terminal(&schedule.terminal.params.witness),
+                super::fold::FoldSuccessorParams::Terminal(&schedule.terminal),
                 akita_types::NextWitnessBindingPolicy::TerminalInnerState,
             ),
             |next| {
                 (
-                    super::fold::FoldSuccessorParams::Recursive(&next.params),
+                    super::fold::FoldSuccessorParams::Recursive(next),
                     akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
@@ -199,7 +199,7 @@ where
         stacks.prove_stack_at_level(level),
         transcript,
         current_state,
-        &schedule.terminal.params,
+        &schedule.terminal,
     )?;
 
     Ok(RecursiveSuffixOutcome {
@@ -278,7 +278,7 @@ where
         .unwrap_or_else(|| Arc::clone(&witness));
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_source = RecursiveFoldSource::witness(logical_witness);
-    let params = &scheduled.witness;
+    let params = &scheduled;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if sumcheck_challenges.len() > recursive_num_vars {
@@ -330,8 +330,8 @@ where
                     &[&witness_source],
                     &protocol_point,
                     BasisMode::Lagrange,
-                    params.num_positions_per_block,
-                    params.num_live_blocks,
+                    params.blocks.positions_per_block,
+                    params.blocks.live_blocks,
                     alpha_bits,
                 )?;
             let (trace, _) = compute_trace_target::<F, E, T, D>(
@@ -367,7 +367,7 @@ where
                 Some(stack.opening().prepared()),
                 transcript,
                 params,
-                &scheduled.sparse_challenge_config,
+                &scheduled.fold_challenge_config,
                 &witness_source,
                 &scheduled.response_shape,
             )?;
@@ -380,7 +380,6 @@ where
     )?;
     let terminal_response = akita_types::build_terminal_response(
         params,
-        &scheduled.sparse_challenge_config,
         &scheduled.response_shape,
         &e_folded,
         t_state,
@@ -487,14 +486,16 @@ where
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
     let setup_slot = level_params
-        .setup_prefix
+        .setup_prefix()
         .as_ref()
         .map(|id| {
-            prefix_slots.get(&id.slot_id()).ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "planned setup-prefix slot is missing from prover setup".into(),
-                )
-            })
+            prefix_slots
+                .get(&id.slot_id().expect("setup prefix group"))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "planned setup-prefix slot is missing from prover setup".into(),
+                    )
+                })
         })
         .transpose()?;
     let setup_source_storage = setup_slot.map(|slot| {

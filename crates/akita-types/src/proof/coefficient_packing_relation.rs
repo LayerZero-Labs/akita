@@ -87,7 +87,8 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if SignedDigitKernel::for_log_basis(level_params.log_basis_open) != Some(SignedDigitKernel::I8)
+    if SignedDigitKernel::for_log_basis(level_params.open().digits.log_basis)
+        != Some(SignedDigitKernel::I8)
     {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing level opening basis requires the i8 digit kernel".into(),
@@ -350,8 +351,8 @@ where
     }
 
     let quotient_gadget = gadget_row_scalars::<F>(
-        r_decomp_levels::<F>(inputs.level_params.log_basis_open),
-        inputs.level_params.log_basis_open,
+        r_decomp_levels::<F>(inputs.level_params.open().digits.log_basis),
+        inputs.level_params.open().digits.log_basis,
     )
     .into_iter()
     .map(E::lift_base)

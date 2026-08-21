@@ -193,24 +193,24 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             // resident, so it is provisionable at its own polynomial count even
             // when the grouped root it later feeds is not.
             for group in entry.root.precommitted_groups {
-                let profile = group.descriptor;
+                let profile = group.group.profile;
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
                     scan.observe(akita_types::commit_only_setup_field_elements(
-                        &profile.inner_commit_matrix,
-                        &profile.outer_commit_matrix,
+                        &profile.inner.matrix,
+                        &profile.outer.matrix,
                         profile.outer_slice_count,
                     )?);
                 }
             }
             let key = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
+                final_group: entry.final_group,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.descriptor)
+                    .map(|group| group.group.profile)
                     .collect(),
             };
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
@@ -289,12 +289,12 @@ fn setup_capacity_scan_layouts(
 /// Extract setup-level params from a `FoldSchedule`.
 ///
 pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<CommittedGroupParams> {
-    std::iter::once(schedule.root.params.final_group.commitment.clone())
+    std::iter::once(schedule.root.params.clone())
         .chain(
             schedule
                 .recursive_folds
                 .iter()
-                .map(|fold| fold.params.witness.clone()),
+                .map(|fold| fold.params.clone()),
         )
         .collect()
 }
@@ -316,12 +316,7 @@ where
     // `setup_matrix_field_elements_for_schedule` already maxes over the root
     // level's A/B/D matrices, every frozen precommitted group, the compression maps,
     // and the fold tail, so it dominates any per-level recomputation here.
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .validate_opening_batch(layout)?;
+    schedule.root.params.validate_opening_batch(layout)?;
     ensure_required_setup_field_elements(
         setup_matrix_field_elements_for_schedule(schedule)?,
         setup.shared_matrix.as_field_slice().len(),

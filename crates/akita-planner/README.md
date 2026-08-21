@@ -50,7 +50,7 @@ leave `precommitteds` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
+`GroupCommitPhaseParams` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.
@@ -161,8 +161,8 @@ schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
 terminate only when the current state can feed the terminal directly. In the
-supported parameter ranges, schedules do not need deeper recursion, and the cap
-keeps planner work bounded.
+supported parameter ranges, offline schedule generation does not need deeper
+recursion. Runtime verification never invokes this search.
 
 ## Proof-Size Accounting
 
@@ -226,15 +226,16 @@ alone.
 
 ## Generated Tables
 
-The planner owns the generated schedule-table representation and expansion
+The planner owns the generated schedule table representation and expansion
 logic. Deterministic generated table data is tracked in the `akita-schedules`
 crate. Compact entries mirror the protocol topology:
 
-- `GeneratedRootFold` records the root-only challenge form, exact fold digits
-  and cap, ordered precommitted groups, final-group commitment, open matrix,
-  and witness partition.
-- `GeneratedRecursiveFold` records the recursive witness commitment, open
-  matrix, optional incoming setup prefix, and witness partition.
+- `GeneratedFoldCore` stores the new group, shared opening matrix, and witness
+  chunk count used by every nonterminal fold.
+- `GeneratedRootFold` adds the root inner digit depth and ordered frozen
+  precommitted groups.
+- `GeneratedRecursiveFold` adds the optional setup prefix, payload mode, and
+  optional L2 response cap.
 - `GeneratedTerminalFold` records only source geometry and the inner matrix
   choice; terminal B/D matrices and outer/open digit bases do not exist.
 

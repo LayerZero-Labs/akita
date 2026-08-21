@@ -8,7 +8,7 @@
 | PR            | #301; revised by #318                      |
 | Supersedes    | Fixed two-level rollout in this document   |
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection remains the current policy |
-| Book-chapter  | book/src/roadmap/verifier-offloading.md    |
+| Book-chapter  | book/src/how/setup-offloading.md           |
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one
 > `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
@@ -40,8 +40,8 @@ recursive proof accounting, explicit direct/offloaded alternatives, a minimum
 recursive-witness contraction, and a verifier-first schedule comparator. It
 does not add mixed ring dimensions, independent role bases, commitment slicing,
 or a full Pareto frontier. The planner policy and generated schedule contract
-are shipped. The Book roadmap tracks broader verifier-offloading work outside
-this record.
+are shipped. The Book setup offloading chapter explains that behavior for
+readers.
 
 ## Summary
 
@@ -53,7 +53,7 @@ newly committed folded witness and the setup-prefix commitment selected by the
 preceding fold.
 
 This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
-generated `CommittedGroupProfile` and the independent-commit flow specified in
+generated `GroupCommitPhaseParams` and the independent commit flow specified in
 [`archive/2026-Q3/multi-group-batching.md`](archive/2026-Q3/multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
 schedule. Selecting the recursion adapter activates setup-aware planning for
@@ -427,41 +427,35 @@ not a schedule-validation rule.
 
 ### Successor-owned setup-prefix edge
 
-The current typed topology is authoritative:
+The current typed topology is authoritative. A fold has one runtime wrapper,
+and its `CommittedGroupParams` owns every group and the shared opening matrix:
 
 ```rust
-pub struct RecursiveFoldParams {
-    pub witness: CommittedGroupParams,
-    pub open_commit_matrix: OpenCommitMatrixParams,
-    pub incoming_setup_prefix: Option<SetupPrefixSlotId>,
-    pub witness_partition: WitnessPartition,
+pub struct FoldParams {
+    pub params: CommittedGroupParams,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
 }
 ```
 
-`incoming_setup_prefix` determines whether the predecessor offloads. Runtime
-code may temporarily mirror this identity inside `witness.setup_prefix` for
-layout compatibility, but canonical validation must require equality and the
-mirror must eventually be derived or removed. No call-wide or producer-side
-`SetupContributionMode` may choose a different proof shape.
+The prefix is a `GroupOpenPhaseParams` entry with `setup_natural_len` set. It is
+the first entry in `params.groups`, before ordinary precommitted groups and the
+fold's own group. `CommittedGroupParams::setup_prefix` reads that entry. No
+second prefix identity or producer side `SetupContributionMode` may choose a
+different proof shape.
 
 ### Generated Rows
 
 Generated rows store the selected successor topology rather than a duplicated
-producer-side mode. A recursive fold consumes an offloaded prefix exactly when
-`incoming_setup_prefix` is present:
+producer side mode. A recursive fold consumes an offloaded prefix exactly when
+`setup_prefix` is present:
 
 ```rust
-pub struct GeneratedSetupPrefixInput {
-    pub natural_len: u64,
-    pub d_setup: u32,
-    pub commitment: GeneratedCommittedGroup,
-}
-
 pub struct GeneratedRecursiveFold {
-    pub witness: GeneratedCommittedGroup,
-    pub open_commit_matrix: GeneratedOpenCommitMatrix,
-    pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
-    pub witness_partition: GeneratedWitnessPartition,
+    pub core: GeneratedFoldCore,
+    pub setup_prefix: Option<GeneratedFrozenGroup>,
+    pub payload_mode: CommitmentPayloadMode,
+    pub response_l2_sq_cap: Option<u128>,
 }
 ```
 
@@ -549,17 +543,18 @@ Generalize the existing:
 
 ```rust
 pub fn active_setup_field_len(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     d_setup: usize,
 ) -> Result<usize, AkitaError>;
 ```
 
-to grouped `LevelParams`. It continues to return one `usize`: the number of
+to grouped `CommittedGroupParams`. It continues to return one `usize`: the number of
 active setup coefficients. Per-role quantities are implementation locals, not
 new public structures.
 
-For each group `g`, use the existing `LevelParamsLike` view and let:
+For each group `g`, read the concrete `GroupOpenPhaseParams` in the fold's
+canonical group slice and let:
 
 ```text
 K_g       = group polynomial count
@@ -615,8 +610,8 @@ group. Do **not** test the prefix against the successor witness group's A/B
 columns. The successor has two groups:
 
 ```text
-final group:       folded witness, described by GeneratedFoldStep.{m,r,n_a,n_b}
-precommitted group setup prefix, described by GeneratedSetupPrefixGroup.{m,r,n_a,n_b}
+final group:       folded witness, described by GeneratedFoldCore.{m,r,n_a,n_b}
+precommitted group setup prefix, described by GeneratedSetupPrefix.{m,r,n_a,n_b}
 ```
 
 The setup-prefix group shares:
@@ -665,7 +660,7 @@ After the prefix group is inserted, derive one shared D key over:
 D_width_total = D_width_final_witness + D_width_setup_prefix
 ```
 
-and store its rank in the successor `LevelParams::d_key` / generated `n_d`.
+and store its rank in the successor `CommittedGroupParams::d_key` / generated `n_d`.
 There is no per-group D key and no generated per-group `n_d`.
 
 `setup_prefix_level_params` may still be used by setup-slot commitment code to
@@ -772,7 +767,7 @@ candidate frontier.
 ## Generalizing Existing Grouped Layout Methods
 
 Do not add free `group_*` sizing functions. Generalize the existing methods on
-`LevelParams`:
+`CommittedGroupParams`:
 
 ```text
 validate_root_opening_batch -> validate_opening_batch
@@ -784,8 +779,9 @@ root_next_w_len             -> next_w_len
 root_segment_rings          -> segment_rings (private)
 ```
 
-Private arithmetic should accept `&(impl LevelParamsLike + ?Sized)` where that
-eliminates duplicated main/precommitted cases.
+Private arithmetic should accept `&GroupOpenPhaseParams` where group-specific
+geometry is needed. Fold-wide values such as the shared D matrix remain on
+`CommittedGroupParams`.
 
 `m_row_count_for` remains the only M-row count. Its grouped branch already
 counts:
@@ -856,13 +852,13 @@ The canonical generated walker expands the successor-owned edge directly. It
 tracks:
 
 ```rust
-let mut incoming_setup_prefix: Option<GeneratedSetupPrefixInput>;
+let mut incoming_setup_prefix: Option<GeneratedFrozenGroup>;
 ```
 
 For each fold it:
 
 1. Expands the root, recursive folds, and terminal step from the generated row.
-2. If a recursive fold has `incoming_setup_prefix`, reconstructs that prefix
+2. If a recursive fold has `setup_prefix`, reconstructs that prefix
    group's own inner and outer commitment matrices. It must not clone the
    ordinary witness group's matrix parameters.
 3. Recomputes the predecessor's `natural_len` and full-prefix length and
@@ -1248,7 +1244,7 @@ batch APIs can combine it with the witness claim.
 
 The implementation is shipped. Durable behavior is folded into:
 
-- `book/src/roadmap/verifier-offloading.md`;
+- `book/src/how/setup-offloading.md`;
 - `book/src/how/configuration.md`;
 - `book/src/how/proving/sumcheck-stages.md`;
 - `book/src/how/recursion.md`;

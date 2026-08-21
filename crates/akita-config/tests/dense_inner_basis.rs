@@ -29,23 +29,23 @@ fn snapshot<Cfg: CommitmentConfig>() -> Snapshot {
         PolynomialGroupLayout::singleton(26),
     ))
     .expect("generated dense nv=26 schedule");
-    let root = &schedule.schedule().root.params.final_group.commitment;
+    let root = &schedule.schedule().root.params;
     Snapshot {
-        inner_basis: root.log_basis_inner,
-        opening_basis: root.log_basis_open,
-        positions: root.num_positions_per_block,
-        blocks: root.num_live_blocks,
-        outer_slices: root.outer_slice_count.get(),
-        inner_digits: root.num_digits_inner,
-        n_a: root.inner_commit_matrix.output_rank(),
-        n_b: root.outer_commit_matrix.output_rank(),
-        n_d: root.open_commit_matrix.output_rank(),
-        a_input_raw: root.inner_commit_matrix.raw_input_dimension().unwrap(),
-        a_output_raw: root.inner_commit_matrix.raw_output_dimension().unwrap(),
-        b_input_raw: root.outer_commit_matrix.raw_input_dimension().unwrap(),
-        b_output_raw: root.outer_commit_matrix.raw_output_dimension().unwrap(),
-        d_input_raw: root.open_commit_matrix.raw_input_dimension().unwrap(),
-        d_output_raw: root.open_commit_matrix.raw_output_dimension().unwrap(),
+        inner_basis: root.inner().digits.log_basis,
+        opening_basis: root.open().digits.log_basis,
+        positions: root.blocks().positions_per_block,
+        blocks: root.blocks().live_blocks,
+        outer_slices: root.outer_slice_count().get(),
+        inner_digits: root.inner().digits.num_digits,
+        n_a: root.inner().matrix.output_rank(),
+        n_b: root.outer().matrix.output_rank(),
+        n_d: root.open().matrix.output_rank(),
+        a_input_raw: root.inner().matrix.raw_input_dimension().unwrap(),
+        a_output_raw: root.inner().matrix.raw_output_dimension().unwrap(),
+        b_input_raw: root.outer().matrix.raw_input_dimension().unwrap(),
+        b_output_raw: root.outer().matrix.raw_output_dimension().unwrap(),
+        d_input_raw: root.open().matrix.raw_input_dimension().unwrap(),
+        d_output_raw: root.open().matrix.raw_output_dimension().unwrap(),
         next_witness: schedule.schedule().root.output_witness_len,
     }
 }

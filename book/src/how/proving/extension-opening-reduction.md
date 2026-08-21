@@ -56,12 +56,11 @@ committed witness relation. The early combination binds the logical EOR input
 claims to the terminal vector. The later combination binds that vector to the
 committed witness.
 
-**Sources to fold in**
+## Implementation map
 
 - `crates/akita-prover/src/protocol/extension_opening_reduction/`.
 - `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`.
 - `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs`.
 - `crates/akita-types/src/extension_opening_reduction.rs`.
-- Paper App B.4.1 `sec:akita-eor-sumcheck` (implemented prover paths, prefix-suffix tensor weight, streamed/staged prover).
 - Historical records under `specs/archive/2026-Q3/` document the removed root
   EOR implementations and the surviving suffix machinery's origin.

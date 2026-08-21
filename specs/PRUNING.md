@@ -144,7 +144,7 @@ Use these targets (not the pre-consolidation folder paths):
 | remove-fp16 | `book/src/foundations/rings-and-fields.md` |
 | CRT accumulation | `book/src/how/optimizations.md` |
 | SIMD / fp31 | `book/src/how/optimizations.md` |
-| ZK hiding specs | `book/src/foundations/zero-knowledge.md` |
+| ZK hiding specs | `book/src/roadmap/zero-knowledge.md` |
 | Profiling / CI timing | `book/src/usage/profiling.md` |
 | w-to-e notation | `book/src/foundations/glossary.md` |
 | Setup product sumcheck | `book/src/how/proving/sumcheck-stages.md` |

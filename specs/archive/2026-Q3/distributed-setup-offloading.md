@@ -430,7 +430,7 @@ verifies.
   mix, reporting proof bytes per level by `(mode, num_chunks)` and verifier
   cycles.
 - Fold durable behavior into `book/src/how/proving/distributed-prover.md` and
-  `book/src/roadmap/verifier-offloading.md`; note the combination and its
+  `book/src/how/setup-offloading.md`; note the combination and its
   cutover alignment.
 - Update the `Non-Goal` line in `specs/setup-offloading-planner.md`
   ("Distributed or multi-chunk setup offloading") to reference this spec once the

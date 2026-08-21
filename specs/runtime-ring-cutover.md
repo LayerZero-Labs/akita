@@ -156,7 +156,7 @@ implicit):
 
 Every function on the prove/verify path belongs to exactly one of two roles.
 
-- **Orchestration**: reads schedule types (`ExecutionSchedule`, `LevelParams`,
+- **Orchestration**: reads schedule types (`FoldSchedule`, `CommittedGroupParams`,
   `ValidatedScheduleContext`, `validate_schedule_ring_dims`), drives transcript flow between
   operations, moves D-free storage (`RingVec<F>`, `Commitment<F>`, flat digit
   blocks). Orchestration functions MUST NOT have `const D` in their signature
@@ -176,7 +176,7 @@ The bridge between the roles is the **operation adapter**: a D-free function
 that
 
 1. accepts schedule-derived inputs (`RingLevelContext` or extracted numbers
-   from `LevelParams` / `CommitmentRingDims` — not bare `lp.ring_dimension`
+   from `CommittedGroupParams` / `CommitmentRingDims` — not bare `lp.ring_dimension`
    reads for role-specific data),
 2. extracts the ring dimension of the **specific role** this operation
    touches (`d_a`, `d_b`, or `d_d` from [`CommitmentRingDims`]),
@@ -248,7 +248,7 @@ Mixed-D:
 - It is acceptable for initial generated schedules to remain uniform-D, but the
   protocol/storage/API shape must not prevent mixed-D schedules.
 - Per-role dimension *planner emission* inside one fold (schedules that set
-  `d_a ≠ d_b` or `d_d` on `LevelParams`) may remain deferred until setup/planner
+  `d_a ≠ d_b` or `d_d` on `CommittedGroupParams`) may remain deferred until setup/planner
   work lands (see `specs/mixed-row-ring-dimensions.md`, proposed). **Per-role
   operation dispatch and D-free orchestration on both prover and verifier are
   in scope for this cutover** — the architecture must be complete before
@@ -271,10 +271,10 @@ Mixed-D:
 | B (`d_b`, `outer`) | commitment | sent commitment rows, COMMIT segment of `y`, `commit_w`, next-witness commitment decode |
 | D (`d_d`, `opening`) | opening digits | `e_hat`, `v = D·e_hat`, D-block segment of `y`, D-matrix matvec |
 
-Orchestration obtains `CommitmentRingDims` from `LevelParams::role_dims` /
+Orchestration obtains `CommitmentRingDims` from `CommittedGroupParams::role_dims` /
 `RingLevelContext::role_dims` at each fold entry. **Role-specific buffers use
 `dims.d_a()`, `dims.d_b()`, or `dims.d_d()` — not bare
-`LevelParams::ring_dimension`.** Witness-borrow paths that still call
+`CommittedGroupParams::ring_dimension`.** Witness-borrow paths that still call
 `uniform_dim()` are deferred follow-on work (see Deferred below).
 
 `RingRelationInstance` and relation helpers (`generate_relation_rhs`,
