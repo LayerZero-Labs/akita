@@ -17,7 +17,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `glue/`      | lib  | Shared verifier-input blob format (`AkitaJoltInputs<F, D>`).     |
 | `artifact/`  | bin  | Runs the Akita prover and writes the verifier-input blob.        |
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
-| `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
+| `guest/`     | lib  | Declarative Jolt entrypoints plus Akita's recursion integration owner. |
 
 ## Quick start with an exact CI case
 
@@ -164,8 +164,11 @@ overrides for those values.
    The host then compiles the case-specific entrypoint to
    `riscv64imac-zero-linux-musl`, runs Jolt, and forwards each cycle count
    through `tracing`.
-3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
-   blob and invokes `akita_verifier::batched_verify` directly —
+3. **`guest`** (running inside the Jolt RISC-V emulator) declares one function
+   per case. Its private `integration` module decodes the blob, installs any
+   program-bound cache, constructs the statement and transcript, invokes
+   `akita_verifier::batched_verify`, and maps the result to the documented
+   status code. The integration calls the verifier directly,
    bypassing `AkitaCommitmentScheme::batched_verify`, which would otherwise
    call `Instant::now()` (the Jolt runtime doesn't implement
    `clock_gettime`, and the guest aborts there). Four
@@ -198,7 +201,15 @@ Jolt's Postcard-encoded byte-slice input. The decoder checks the padding count,
 every padding byte, and the alignment calculation before it reads the matrix.
 This keeps transcript domains independent of memory layout.
 
-The trusted benchmark decoders validate every field value canonically. On
+All knowledge of that outer Postcard length prefix lives in the private
+`wire/jolt_postcard_adapter.rs` module. This is a temporary adapter for the
+pinned Jolt argument ABI. It can be deleted, together with the padding record,
+after Jolt provides a first-class aligned borrowed byte argument. The
+allocation-free unaligned decoder remains correct if the framing changes, so
+this adapter affects load selection and performance rather than acceptance or
+the verifier trust boundary.
+
+One fixed-width trusted decoder validates every field value canonically. On
 aligned input, fp32 uses one `u32` source word, fp64 uses one `u64` source word,
 and fp128 uses two little-endian `u64` words. The resulting RISC V loops use one
 `lw`, one `ld`, and two `ld` instructions per field respectively. When an outer

@@ -25,13 +25,10 @@ use std::sync::Arc;
     feature = "trusted-benchmark-artifact",
     akita_trusted_benchmark_artifact
 ))]
-mod trusted_fp128;
+mod trusted_fixed_width;
 
-#[cfg(any(
-    feature = "trusted-benchmark-artifact",
-    akita_trusted_benchmark_artifact
-))]
-mod trusted_word_fields;
+mod jolt_postcard_adapter;
+use jolt_postcard_adapter::{setup_matrix_padding, SETUP_MATRIX_MAX_PADDING_BYTES};
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
 /// so the host and guest don't have to negotiate compression.
@@ -53,60 +50,11 @@ const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 const MAX_BLOB_GROUPS: usize = 16;
 const MAX_BLOB_OPENINGS_PER_GROUP: usize = 16;
-const SETUP_MATRIX_WIRE_ALIGNMENT: usize = 8;
-const SETUP_MATRIX_LENGTH_BYTES: usize = core::mem::size_of::<u64>();
-const SETUP_MATRIX_MAX_PADDING_BYTES: usize = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BlobEncodingLayout {
     encoded_size: usize,
     setup_matrix_padding: usize,
-}
-
-fn postcard_length_prefix_bytes(mut value: usize) -> usize {
-    let mut bytes = 1;
-    while value >= 0x80 {
-        value >>= 7;
-        bytes += 1;
-    }
-    bytes
-}
-
-fn setup_matrix_padding(
-    unpadded_blob_len: usize,
-    padding_record_offset: usize,
-) -> Result<usize, SerializationError> {
-    for padding in 0..=SETUP_MATRIX_MAX_PADDING_BYTES {
-        let record_len = padding.checked_add(1).ok_or_else(|| {
-            SerializationError::InvalidData(
-                "akita-jolt setup matrix padding length overflow".to_string(),
-            )
-        })?;
-        let encoded_blob_len = unpadded_blob_len.checked_add(record_len).ok_or_else(|| {
-            SerializationError::InvalidData("akita-jolt blob length overflow".to_string())
-        })?;
-        let matrix_payload_offset = padding_record_offset
-            .checked_add(record_len)
-            .and_then(|offset| offset.checked_add(SETUP_MATRIX_LENGTH_BYTES))
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "akita-jolt setup matrix payload offset overflow".to_string(),
-                )
-            })?;
-        let framed_matrix_offset = postcard_length_prefix_bytes(encoded_blob_len)
-            .checked_add(matrix_payload_offset)
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "akita-jolt framed setup matrix offset overflow".to_string(),
-                )
-            })?;
-        if framed_matrix_offset.is_multiple_of(SETUP_MATRIX_WIRE_ALIGNMENT) {
-            return Ok(padding);
-        }
-    }
-    Err(SerializationError::InvalidData(
-        "akita-jolt could not align the setup matrix in the Postcard input frame".to_string(),
-    ))
 }
 
 fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {

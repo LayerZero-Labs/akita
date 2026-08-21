@@ -86,30 +86,6 @@ fn previous_blob_version_is_rejected_at_the_magic_boundary() {
 }
 
 #[test]
-fn setup_matrix_padding_aligns_across_postcard_length_boundaries() {
-    assert_eq!(
-        SETUP_MATRIX_LENGTH_BYTES,
-        0usize.serialized_size(BLOB_COMPRESS)
-    );
-    for boundary in [128usize, 16_384, 2_097_152, 268_435_456] {
-        for unpadded_blob_len in (boundary - 16)..(boundary + 16) {
-            for padding_record_offset in 0..SETUP_MATRIX_WIRE_ALIGNMENT {
-                let padding = setup_matrix_padding(unpadded_blob_len, padding_record_offset)
-                    .expect("bounded alignment padding");
-                assert!(padding <= SETUP_MATRIX_MAX_PADDING_BYTES);
-                let encoded_blob_len = unpadded_blob_len + 1 + padding;
-                let matrix_payload_offset =
-                    padding_record_offset + 1 + padding + SETUP_MATRIX_LENGTH_BYTES;
-                assert!(
-                    (postcard_length_prefix_bytes(encoded_blob_len) + matrix_payload_offset)
-                        .is_multiple_of(SETUP_MATRIX_WIRE_ALIGNMENT)
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn setup_matrix_padding_record_is_canonical_and_zeroed() {
     let bytes =
         [u8::try_from(SETUP_MATRIX_MAX_PADDING_BYTES + 1).expect("test padding count fits u8")];
