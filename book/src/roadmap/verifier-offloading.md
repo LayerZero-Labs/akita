@@ -8,6 +8,11 @@ an opening of a precommitted setup prefix and a Stage 3 product sumcheck. The
 generated recursive schedule selects this mode. The caller cannot add or remove
 it after schedule selection.
 
+The current support envelope is limited to the generated fp128 one-hot and
+fp128 one-hot W8R2 recursive catalogs. Setup offloading uses the supported
+uniform D64 shape. Other configurations and setup ring dimensions do not expose
+a recursive offloading catalog.
+
 The prover emits `SetupSumcheckProof` for each selected producer. The proof
 contains the setup claim, the setup-prefix evaluation, and a degree-two
 sumcheck. The verifier resolves the same generated schedule, authenticates the

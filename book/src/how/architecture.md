@@ -37,8 +37,10 @@ Key structural facts:
   reusable exact `usize` formulas in `akita_error::checked`. These formulas
   return `Option`; each caller maps failure to the `AkitaError` variant that
   describes its protocol boundary. Field arithmetic remains in `akita-field`.
-- `akita-planner` owns offline schedule search and table emission. It names no
-  `CommitmentConfig` type and is not on the verifier runtime dependency path.
+- `akita-planner` owns offline schedule search and table emission. Normal
+  search is `Cfg`-free and is not on the verifier runtime dependency path. The
+  optional `catalog-gen` feature enables `akita-config`, so table-emission
+  binaries may name concrete `CommitmentConfig` presets.
 - `akita-verifier` depends on `akita-config`, which resolves rows through
   `akita-schedules`. Verification reaches generated row expansion, not planner
   search.
