@@ -3,10 +3,12 @@ use std::marker::PhantomData;
 #[cfg(target_arch = "aarch64")]
 use std::mem::size_of;
 
+use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-use crate::ntt::{butterfly::forward_ntt, NttTwiddles};
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::NttTwiddles;
 
 use super::CrtNttParamSet;
 
@@ -167,13 +169,13 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         &self,
         k: usize,
         digits: &[i8; D],
-        params: &CrtNttParamSet<W, K, D>,
+        _params: &CrtNttParamSet<W, K, D>,
         dst: &mut [MontCoeff<W>; D],
     ) {
         self.debug_assert_active_digits(digits);
         #[cfg(target_arch = "aarch64")]
-        if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
-            let prime = params.primes[k];
+        if _params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
+            let prime = _params.primes[k];
             // SAFETY: the width check proves the transparent i32
             // representation, and both arrays contain D elements.
             unsafe {
