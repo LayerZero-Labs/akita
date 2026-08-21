@@ -9,6 +9,7 @@ use akita_algebra::ntt::tables::{
 };
 use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
+    MontCoeff,
 };
 use akita_error::AkitaError;
 #[allow(unused_imports)]
@@ -29,11 +30,18 @@ use crate::{
 };
 
 mod exact;
+mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
 pub use exact::ntt_cache_requires_i16_tail;
 use exact::{exact_cache_plan, prepare_exact_ntt_cache};
+pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
+pub use prepared_artifact::{
+    build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
+    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+};
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1179,6 +1187,40 @@ impl VerifierNttCache {
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
         Ok(slots.values().map(|slot| slot.cache_bytes).sum())
+    }
+
+    pub(crate) fn install_trusted<const D: usize>(
+        &self,
+        metadata: PreparedVerifierNttCacheMetadata,
+        prepared: PreparedNttCache<D>,
+    ) -> Result<(), AkitaError> {
+        if metadata.ring_dimension != D
+            || !prepared.has_negacyclic()
+            || prepared.has_cyclic()
+            || prepared.has_i16_tail() != (metadata.tail_prefix_len > 0)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "trusted prepared verifier cache has inconsistent geometry".into(),
+            ));
+        }
+        let key = VerifierNttCacheKey {
+            ring_d: D,
+            width: metadata.width,
+            rhs_abs_bound: metadata.rhs_abs_bound,
+        };
+        let prepared = Arc::new(prepared);
+        let built = Arc::new(ErasedVerifierNttCache {
+            ring_d: D,
+            base_prefix_len: metadata.base_prefix_len,
+            tail_prefix_len: metadata.tail_prefix_len,
+            cache_bytes: prepared.cache_bytes(),
+            cache: prepared,
+        });
+        self.slots
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
+            .insert(key, built);
+        Ok(())
     }
 
     /// Build, erase, and atomically install an entry when needed.
