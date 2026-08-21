@@ -3,15 +3,17 @@
 The [semantic relations in an Akita fold](./akita-fold.md) start with one
 commitment group, one witness chunk, and one common ring dimension, while the
 [realizations page](./akita-fold-realizations.md) turns those relations into
-physical rows. This page develops the multi-group and multi-chunk extensions
-as two independent axes. Both preserve the four semantic relation families.
-Multiple groups add group-local rows around one level-owned D relation, whereas
-multiple chunks divide one group's witness columns across block ranges without
-duplicating those rows.
+physical rows. This page develops three independent extensions: multiple
+commitment groups, multiple witness chunks, and mixed commitment-ring
+dimensions. All three preserve the four semantic relation families. Multiple
+groups add group-local rows around one level-owned D relation, multiple chunks
+divide one group's witness columns across block ranges without duplicating
+those rows, and mixed rings assign each row family its role-native dimension.
 
 The physical opening-commitment relation remains distinct from the
-field-valued evaluation trace. This page derives the algebraic group and chunk
-layouts under the simplifying assumptions stated below.
+field-valued evaluation trace. Each section isolates one extension under its
+own simplifying assumptions before explaining how it composes with the other
+axes.
 
 ## Contents
 
@@ -27,6 +29,13 @@ layouts under the simplifying assumptions stated below.
   - [Chunk-local partial evaluations and opening commitment](#chunk-local-partial-evaluations-and-opening-commitment)
   - [Chunk-local folded responses and witness relations](#chunk-local-folded-responses-and-witness-relations)
   - [Semantic relations remain unchanged](#semantic-relations-remain-unchanged)
+- [Mixed commitment-ring dimensions](#mixed-commitment-ring-dimensions)
+  - [Why use different ring dimensions](#why-use-different-ring-dimensions)
+  - [Role-native projection and decomposition](#role-native-projection-and-decomposition)
+  - [The four relations in their native rings](#the-four-relations-in-their-native-rings)
+  - [Lift and switch the native rows](#lift-and-switch-the-native-rows)
+  - [Relation to compressed realization](#relation-to-compressed-realization)
+  - [Composition with groups and chunks](#composition-with-groups-and-chunks)
 
 ## Multiple commitment groups
 
@@ -606,3 +615,271 @@ reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-c
 When $C=1$, the sole range contains every live block, the single local response
 is $\mathbf z$, and every equation and witness layout above reduces to the
 basic single-chunk construction.
+
+## Mixed commitment-ring dimensions
+
+### Why use different ring dimensions
+
+The common-ring derivation gives $\mathbf A$, $\mathbf B$, and $\mathbf D$ one
+dimension because that is the simplest setting in which to see the four
+semantic relations. The three matrices perform different jobs, however, and
+need not have the same best dimension. The $\mathbf A$ matrix carries the
+source and folded witness, the $\mathbf B$ matrix binds the outer-commitment
+digits, and the $\mathbf D$ matrix binds the opening digits. A larger
+$\mathbf A$ ring may improve fold geometry or shorten the recursive schedule,
+while smaller $\mathbf B$ or $\mathbf D$ rings may give better commitment
+ranks, quotient sizes, setup cost, or verifier work.
+
+To isolate this axis, return to one commitment group, one witness chunk, and
+the `EvaluationTrace` opening method, but allow the three commitment matrices
+to use
+
+$$
+R_A=F[X]/(X^{d_A}+1),
+\qquad
+R_B=F[X]/(X^{d_B}+1),
+\qquad
+R_D=F[X]/(X^{d_D}+1).
+$$
+
+The supported dimensions are powers of two and satisfy
+
+$$
+d_B\mid d_A,
+\qquad
+d_D\mid d_A.
+$$
+
+There is no ordering requirement between $d_B$ and $d_D$. The uniform setting
+$d_A=d_B=d_D$ is the projection-ratio-one instance of the same protocol, not a
+separate relation path.
+
+Mixed rings preserve the meaning of the four semantic relations. They change
+the native ring in which each physical row is represented:
+
+| Semantic relation family | Native ring |
+|---|---|
+| fold-evaluation consistency | $R_A$ |
+| inner-commitment consistency | $R_A$ |
+| outer-commitment consistency | $R_B$ |
+| opening-commitment consistency | $R_D$ |
+
+Thus the four families do not each receive an arbitrary ring. The two
+consistency families remain $\mathbf A$-native, while the two commitment-image
+families use the native rings of $\mathbf B$ and $\mathbf D$.
+
+### Role-native projection and decomposition
+
+The source block $\mathbf s_b$, its inner image
+$\mathbf t_b=\mathbf A\mathbf s_b$, the partial evaluation $E_b$, and the
+folded response $\mathbf z$ are first formed over $R_A$. Before
+$\mathbf t_b$ is decomposed for $\mathbf B$, or $E_b$ is decomposed for
+$\mathbf D$, the implementation splits the $\mathbf A$-native value into exact
+role-native coefficient subcolumns.
+
+Let $r$ be either $d_B$ or $d_D$, and let $q=d_A/r$. For
+$y(X)\in R_A$, define
+
+$$
+y_s(X)
+=
+\sum_{k=0}^{r-1}y_{sr+k}X^k
+\in R_r,
+\qquad
+0\le s<q.
+$$
+
+Taking the canonical representative of degree less than $d_A$, $y$ has the
+exact decomposition
+
+$$
+\boxed{
+y(X)
+=
+\sum_{s=0}^{q-1}\sum_h
+X^{sr}G_h\hat y_{s,h}(X),
+\qquad
+\hat y_{s,h}\in R_r.
+}
+\tag{6}
+$$
+
+Here $y_s=\sum_hG_h\hat y_{s,h}$ is digit-decomposed inside its native role
+ring. Equation (6) is a coefficient identity, not an embedding of $R_r$ into
+$R_A$ and not padding to an $\mathbf A$-sized carrier. The physical digit order
+is
+
+```text
+[semantic value][role subcolumn][digit][native coefficient].
+```
+
+The $\mathbf B$ representation of an $\mathbf A$-native value therefore has
+$d_A/d_B$ subcolumns, and its $\mathbf D$ representation has $d_A/d_D$
+subcolumns. Write $\operatorname{Rec}_B$ and $\operatorname{Rec}_D$ for the
+corresponding recomposition maps, including the shifts $X^{s d_B}$ and
+$X^{s d_D}$ from Equation (6). They reconstruct $\mathbf A$-native values from
+the role-native digits used by the consistency relations.
+
+### The four relations in their native rings
+
+The fold still computes
+
+$$
+\mathbf z
+=
+\sum_b c_b\mathbf s_b
+=
+\mathbf G_{\mathrm{fold}}\hat{\mathbf z}
+\qquad\text{over }R_A.
+$$
+
+With role-native recomposition made explicit, the four semantic relations are
+
+$$
+\boxed{
+\begin{aligned}
+\sum_b c_b\operatorname{Rec}_D(\hat{\mathbf e}_b)
+&=
+\mathbf Q\mathbf G_{\mathrm{in}}
+\mathbf G_{\mathrm{fold}}\hat{\mathbf z}
+&&\text{over }R_A,
+\\
+\sum_b c_b\operatorname{Rec}_B(\hat{\mathbf t}_b)
+&=
+\mathbf A\mathbf G_{\mathrm{fold}}\hat{\mathbf z}
+&&\text{over }R_A,
+\\
+\mathbf B\hat{\mathbf t}
+&=
+\mathbf u
+&&\text{over }R_B,
+\\
+\mathbf D\hat{\mathbf e}
+&=
+\mathbf v_D
+&&\text{over }R_D.
+\end{aligned}
+}
+\tag{7}
+$$
+
+The first two rows compare values that originate from the $\mathbf A$-native
+source, so they recompose the $\mathbf B$- or $\mathbf D$-native digits back
+into $R_A$. The last two rows operate directly on those role-native digits.
+The physical columns of $\mathbf B$ and $\mathbf D$ include the subcolumn axis,
+so neither matrix pads its input back to $R_A$.
+
+The canonical row-family order and targets remain
+
+$$
+[\mathrm{consistency}\mid\mathbf A\mid\mathbf B\mid\mathbf D],
+\qquad
+[0\mid\mathbf 0_{\mathbf A}\mid\mathbf u\mid\mathbf v_D].
+$$
+
+This notation records the row order and semantic targets; in the mixed setting
+it is not one vector equation over a common ring. Each component is interpreted
+in the native ring shown in Equation (7).
+
+The ordinary witness is stored as one flat coefficient vector. Its
+$\hat{\mathbf z}$ segment is $\mathbf A$-native, its
+$\hat{\mathbf t}$ and $\hat{\mathbf e}$ segments use the role-native
+subcolumn layout, and every quotient row added by the physical realization is
+stored at that row's exact native dimension. No batch-wide carrier ring is
+introduced for witness storage.
+
+### Lift and switch the native rows
+
+Rows over different quotient rings cannot be combined directly. The physical
+realization first lifts each row from its native quotient ring to an exact
+polynomial identity. If row $i$ has native dimension $d_i$ and semantic form
+
+$$
+L_i(X)=y_i(X)
+\qquad\text{in }F[X]/(X^{d_i}+1),
+$$
+
+then the prover supplies a native quotient $r_i(X)$ such that
+
+$$
+L_i(X)
+-(X^{d_i}+1)r_i(X)
+=y_i(X).
+\tag{8}
+$$
+
+Consistency and $\mathbf A$ rows therefore have $R_A$-native quotients,
+$\mathbf B$ rows have $R_B$-native quotients, and $\mathbf D$ rows have
+$R_D$-native quotients. These quotient polynomials are digit-decomposed and
+included in the physical witness.
+
+Ring switching then samples one extension-field element $\alpha$ and evaluates
+every lifted row at that same point:
+
+$$
+\boxed{
+L_i(\alpha)
+-(\alpha^{d_i}+1)r_i(\alpha)
+=y_i(\alpha)
+\qquad\text{for every physical row }i.
+}
+\tag{9}
+$$
+
+After Equation (9), all rows are scalar identities over the same extension
+field even though they originated in different cyclotomic rings. Stage 2 can
+therefore batch them with its row challenge $\tau_1$.
+
+This is the precise role of ring switching in the mixed-ring protocol. It does
+not first convert all relations into one common quotient ring. Role-native
+projection makes each relation well formed in its own ring; the native
+quotient lift and evaluation at $\alpha$ then place all row checks in one
+common field. The [realizations page](./akita-fold-realizations.md#lift-the-physical-ring-relations-before-sumcheck)
+derives this lift for the complete physical witness.
+
+### Relation to compressed realization
+
+Compressed realization uses the same native-row quotient and ring-switch
+mechanism. In raw mode, the semantic commitment images
+$\mathbf u=\mathbf B\hat{\mathbf t}$ and
+$\mathbf v_D=\mathbf D\hat{\mathbf e}$ are public. In compressed mode they are
+private intermediate values, and additional $\mathbf F$ and $\mathbf H$ rows
+bind them to smaller public payloads. Those compression rows have their own
+native ring dimensions, quotients, and instances of Equation (9).
+
+The difference is structural. Mixed $\mathbf A$/$\mathbf B$/$\mathbf D$
+dimensions assign native rings to the existing four semantic relation
+families. Compression adds new $\mathbf F$/$\mathbf H$ physical row families.
+Once the rows have been formed, both constructions use the same native
+quotient lift and ring-switch evaluation before Stage 2.
+
+Choosing a smaller $d_B$ or $d_D$ is not automatically cheaper. The physical
+column counts expand by the projection ratios
+
+$$
+q_B=\frac{d_A}{d_B},
+\qquad
+q_D=\frac{d_A}{d_D},
+$$
+
+and, for fixed digit depths, splitting a value does not reduce the total number
+of its $\hat{\mathbf t}$ or $\hat{\mathbf e}$ coefficients. The benefit instead
+comes from the complete interaction among native commitment ranks, payload and
+quotient sizes, setup geometry, verifier arithmetic, and later fold levels.
+The planner therefore prices complete $(d_A,d_B,d_D)$ schedules rather than
+minimizing each dimension independently.
+
+### Composition with groups and chunks
+
+Mixed dimensions compose with the two earlier axes without changing their
+ownership rules. Each commitment group owns its $\mathbf A$ and $\mathbf B$
+dimensions, while the consuming level owns the shared $\mathbf D$ dimension.
+Each chunk retains the native layouts of its group's
+$[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$ unit; chunking changes
+the block ranges and column support, not the ring assigned to a relation row.
+
+The resulting physical witness remains one chunk-major flat coefficient vector
+followed by the shared native quotient rows and any compression suffix. Stage 2
+uses each row's own dimension in its powers of $\alpha$ and denominator
+$\alpha^{d_i}+1$, so group, chunk, and mixed-ring layouts can be combined
+without introducing a common carrier ring.
