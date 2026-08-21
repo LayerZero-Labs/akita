@@ -109,7 +109,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             transcript,
         )?;
         let setup_prefix_eval = next_fold_level_params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .map(|_| proof.setup_prefix_eval)
             .ok_or_else(|| {
@@ -177,15 +177,12 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    let selected_slot_id = next_fold_level_params
-        .setup_prefix
-        .as_ref()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
-        })?;
+    let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
+        AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+    })?;
     let slot = setup
         .prefix_slots
-        .get(&selected_slot_id.slot_id())
+        .get(&selected_slot_id.slot_id().expect("setup prefix group"))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "planned setup-prefix slot is missing from verifier setup".to_string(),
@@ -324,60 +321,62 @@ mod tests {
         );
 
         let full_prefix_len = padded_setup_prefix_len(natural_field_len);
-        let d_setup = level_params.inner_commit_matrix.ring_dimension();
-        let d_outer = level_params.outer_commit_matrix.ring_dimension();
+        let d_setup = level_params.inner().matrix.ring_dimension();
+        let d_outer = level_params.outer().matrix.ring_dimension();
         let ring_slots = full_prefix_len / d_setup;
         let setup_num_digits = akita_types::sis::compute_num_digits_field_width(
             level_params
-                .inner_commit_matrix
+                .inner()
+                .matrix
                 .sis_modulus_profile()
                 .field_bits(),
-            level_params.log_basis_inner,
+            level_params.inner().digits.log_basis,
         );
         let inner_width = ring_slots
             .checked_mul(setup_num_digits)
             .expect("setup-prefix A width");
-        level_params.inner_commit_matrix =
+        level_params.own_group_mut().profile.inner.matrix =
             akita_types::InnerCommitMatrixParams::try_new_with_min_rank(
                 level_params
-                    .inner_commit_matrix
+                    .inner()
+                    .matrix
                     .sis_table_key()
                     .expect("L-infinity setup-prefix A matrix"),
                 inner_width,
             )
             .expect("full-field setup-prefix A capacity");
         let outer_width = akita_types::CommitmentSliceGeometry::try_new(
-            level_params.outer_slice_count,
+            level_params.outer_slice_count(),
             ring_slots,
             1,
-            level_params.inner_commit_matrix.output_rank(),
-            level_params.num_digits_outer,
+            level_params.inner().matrix.output_rank(),
+            level_params.outer().digits.num_digits,
             d_setup,
             d_outer,
         )
         .expect("setup-prefix slice geometry")
         .physical_input_width();
-        level_params.outer_commit_matrix =
+        level_params.own_group_mut().profile.outer.matrix =
             akita_types::OuterCommitMatrixParams::try_new_with_min_rank(
-                level_params.outer_commit_matrix.sis_table_key(),
+                level_params.outer().matrix.sis_table_key(),
                 outer_width,
             )
             .expect("setup-prefix B capacity");
         let commitment_params = setup_prefix_precommitted_params(&level_params, full_prefix_len)
             .expect("setup-prefix parameters");
         let id = scheduled_setup_prefix(natural_field_len, commitment_params);
-        let matrix = &id.commitment_params.layout.outer_commit_matrix;
+        let matrix = &id.profile.outer.matrix;
         let payload_coefficients = CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        level_params.setup_prefix = Some(id.clone());
+        level_params.set_setup_prefix(Some(id)).unwrap();
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.seed.setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
-                id: id.slot_id(),
+                id: id.slot_id().expect("setup prefix group"),
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
                 },
@@ -396,13 +395,12 @@ mod tests {
         .schedule()
         .root
         .params
-        .final_group
-        .commitment
         .clone();
         let natural_field_len = level_params
-            .inner_commit_matrix
+            .inner()
+            .matrix
             .ring_dimension()
-            .checked_mul(level_params.outer_slice_count.get())
+            .checked_mul(level_params.outer_slice_count().get())
             .expect("unaligned setup length")
             + 1;
         let expected_setup_eval_len = padded_setup_prefix_len(natural_field_len) / RING_D;

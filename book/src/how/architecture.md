@@ -120,8 +120,8 @@ Mixed-dimension malformed proof rejection is covered by
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `CommittedGroupParams` | One committed group's matrices, ring dimensions, decomposition depths, opening method, and block geometry |
-| `FoldSchedule`, `RootFoldParams`, `RecursiveFoldParams`, `TerminalFoldParams` | Verifier-visible root, recursive, and terminal schedule structure |
+| `CommittedGroupParams` | One fold's ordered groups, shared D matrix, payload mode, source encoding, and witness chunk layout |
+| `FoldParams`, `TerminalFoldParams`, `FoldSchedule` | Verifier-visible nonterminal, terminal, and complete schedule structure |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |
@@ -129,7 +129,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `PolynomialGroupClaims` | One commitment group's complete opening point, evaluations, and commitment |
 | `OpeningClaims` | Ordered group-owned public claims in transcript order |
 | `OpeningClaimsLayout` | Value-free group arities and polynomial counts for setup and schedule lookup |
-| `CommittedGroupProfile`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
+| `GroupCommitPhaseParams`, `CommittedGroup` | Source-free public commitment geometry and its commitment rows |
 | `PreparedProverGroup` | Coarse borrowed prover group; applications may use one concrete enum polynomial type for heterogeneous representations |
 | `ProverOpeningData`, `SelectedProverOpeningData` | Private ordered group-local hint/polynomial records bound to public claims, then paired once with one exact schedule selection |
 | `OpeningScheduleSelection`, `GroupBatchStatement` | Exact generated-row identity and verifier-side self-describing opening statement |

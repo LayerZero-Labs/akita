@@ -66,7 +66,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
             2,
             SparseChallengeConfig::pm1_only(3),
         );
-        params.outer_slice_count = outer_slice_count;
+        params.own_group_mut().profile.outer_slice_count = outer_slice_count;
         params.with_decomp(1, 64, 2, 2, 2).expect("slice candidate")
     };
     let opening_layout = OpeningClaimsLayout::new(6, 1).expect("opening layout");
@@ -82,7 +82,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     let selected =
         prune_locally_unprofitable_slices(&policy, &opening_layout, candidates).expect("pruning");
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].outer_slice_count, CommitmentSliceCount::FOUR);
+    assert_eq!(selected[0].outer_slice_count(), CommitmentSliceCount::FOUR);
     let selected_capacity = padded_setup_prefix_len(
         active_setup_field_len(&selected[0], &opening_layout).expect("selected setup prefix"),
     );

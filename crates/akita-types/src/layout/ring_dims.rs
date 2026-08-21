@@ -199,69 +199,55 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
         }
         Ok(())
     };
-    let root_next_d = schedule.recursive_folds.first().map_or_else(
-        || schedule.terminal.params.witness.d_a(),
-        |next| next.params.witness.d_a(),
-    );
+    let root_next_d = schedule
+        .recursive_folds
+        .first()
+        .map_or_else(|| schedule.terminal.d_a(), |next| next.params.d_a());
     validate_step(
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.input_witness_len,
         Some(schedule.root.output_witness_len),
         Some(root_next_d),
     )?;
+    // The shared D matrix is stored once, so it cannot disagree with itself.
     let root = &schedule.root.params;
-    let final_params = &root.final_group.commitment;
-    if root.open_commit_matrix != final_params.open_commit_matrix {
-        return Err(AkitaError::InvalidSetup(
-            "root shared D matrix disagrees with final-group commitment params".to_string(),
-        ));
-    }
-    let shared_d = root.open_commit_matrix.ring_dimension();
-    for (group_index, group) in root.precommitted_groups.iter().enumerate() {
-        if group.descriptor != group.commitment.layout {
-            return Err(AkitaError::InvalidSetup(format!(
-                "root precommitted group {group_index} descriptor disagrees with its commitment params"
-            )));
-        }
-        group.descriptor.validate_frozen_precommit(
+    let final_params = &root;
+    let shared_d = root.open().matrix.ring_dimension();
+    for (group_index, group) in root.precommitted_groups().iter().enumerate() {
+        group.profile.validate_frozen_precommit(
             group
-                .commitment
-                .layout
-                .inner_commit_matrix
+                .profile
+                .inner
+                .matrix
                 .sis_modulus_profile()
                 .field_bits(),
         )?;
-        group.commitment.validate()?;
-        if group.commitment.opening.log_basis_open != final_params.log_basis_open {
+        group.validate()?;
+        if group.opening.log_basis_open != final_params.open().digits.log_basis {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
             )));
         }
-        if group.commitment.opening.fold_challenge_config.weight() == 0 {
+        if group.opening.fold_challenge_config.weight() == 0 {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} has an empty fold challenge"
             )));
         }
-        validate_role_dims(group.commitment.role_dims(shared_d))?;
+        validate_role_dims(group.role_dims(shared_d))?;
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {
-            return Err(AkitaError::InvalidSetup(format!(
-                "recursive fold {index} shared D matrix disagrees with its witness params"
-            )));
-        }
-        let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
-            || schedule.terminal.params.witness.d_a(),
-            |next| next.params.witness.d_a(),
-        );
+        let next_ring_d = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map_or_else(|| schedule.terminal.d_a(), |next| next.params.d_a());
         validate_step(
-            &step.params.witness,
+            &step.params,
             step.input_witness_len,
             Some(step.output_witness_len),
             Some(next_ring_d),
         )?;
     }
-    let terminal = &schedule.terminal.params.witness;
+    let terminal = &schedule.terminal;
     let terminal_d = terminal.d_a();
     if terminal_d == 0
         || !SUPPORTED_COMMITMENT_RING_DIMS.contains(&terminal_d)
@@ -269,7 +255,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             .terminal
             .input_witness_len
             .is_multiple_of(terminal_d)
-        || terminal.inner_commit_matrix.ring_dimension() != terminal_d
+        || terminal.inner.matrix.ring_dimension() != terminal_d
     {
         return Err(AkitaError::InvalidSetup(
             "terminal inner ring dimension is inconsistent with witness length".to_string(),
@@ -280,9 +266,9 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
 
 pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
     let dims = lp.role_dims();
-    let a_ring = lp.inner_commit_matrix.ring_dimension();
-    let b_ring = lp.outer_commit_matrix.sis_table_key().ring_dimension as usize;
-    let d_ring = lp.open_commit_matrix.sis_table_key().ring_dimension as usize;
+    let a_ring = lp.inner().matrix.ring_dimension();
+    let b_ring = lp.outer().matrix.sis_table_key().ring_dimension as usize;
+    let d_ring = lp.open().matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {
         return Err(AkitaError::InvalidSetup(format!(
             "A-key ring dimension {a_ring} disagrees with role_dims.d_a={}",
@@ -301,7 +287,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
             dims.opening
         )));
     }
-    lp.fold_challenge_config
+    lp.fold_challenge_config()
         .validate_for_ring_dim(lp.d_a())
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(())

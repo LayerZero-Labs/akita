@@ -8,9 +8,9 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
-    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute,
-    NttTransformDomain, OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout,
-    PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
+    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, GroupOpenPhaseParams,
+    InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams, OpeningMethod,
+    PolynomialGroupLayout, SetupSumcheckProof, SisModulusProfileId,
     SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
 
@@ -48,12 +48,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let t_bytes = t_field_elems.saturating_mul(field_sz);
         let z_wire_bytes = tail_bytes.saturating_sub(e_bytes.saturating_add(t_bytes));
         let z_prefix_bytes = z_wire_bytes.saturating_sub(z_golomb_bytes);
-        let z_budget_bytes = schedule
-            .terminal
-            .params
-            .response_shape
-            .layout
-            .z_payload_bytes();
+        let z_budget_bytes = schedule.terminal.response_shape.layout.z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = terminal_response_z_fold_stats(segment, schedule, field_bits).ok();
         let z_linf_cap = segment
@@ -90,7 +85,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_num_elems = num_elems,
             final_w_encoding = "terminal_response",
             final_w_policy = "non_zk_default",
-            tail_log_basis_inner = schedule.terminal.params.witness.log_basis_inner,
+            tail_log_basis_inner = schedule.terminal.inner.digits.log_basis,
             tail_z_prefix_bytes = z_prefix_bytes,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -144,7 +139,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         eprintln!(
             "[{label}]   final_w: encoding=terminal_response (non-zk default), total={tail_bytes} bytes, \
              logical_elems={num_elems}, inner_log_basis={}{}",
-            schedule.terminal.params.witness.log_basis_inner,
+            schedule.terminal.inner.digits.log_basis,
             golomb_line,
         );
         eprintln!(
@@ -166,7 +161,7 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     schedule: &FoldSchedule,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_error::AkitaError> {
-    let params = &schedule.terminal.params.witness;
+    let params = &schedule.terminal;
     let group = witness
         .layout
         .groups
@@ -185,14 +180,14 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     .collect::<Vec<_>>();
     let log_cap = u128::BITS - encoding_abs_bound.leading_zeros();
     let hypothetical_digits =
-        num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
+        num_digits_for_bound(log_cap, field_bits, params.inner.digits.log_basis).max(1);
     analyze_z_fold_golomb_encoding(
         &z_values,
         encoding_abs_bound,
         group.z_rice_low_bits,
         golomb_rice_zigzag_width(encoding_abs_bound),
         hypothetical_digits,
-        params.log_basis_inner,
+        params.inner.digits.log_basis,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
 }
@@ -320,6 +315,7 @@ struct PlannedGroupReport {
     num_live_ring_elements_per_claim: usize,
     num_live_blocks: usize,
     num_positions_per_block: usize,
+
     block_index_domain_size: usize,
     security_route: akita_types::InnerCommitSecurityRoute,
     response_l2_sq_cap: Option<u128>,
@@ -440,8 +436,8 @@ impl PlannedGroupReport {
     ) -> Result<Self, AkitaError> {
         let role_dims = params.role_dims();
         let opening =
-            opening_report_geometry(params.opening_method, extension_degree, role_dims.d_a())?;
-        let security_route = params.inner_commit_matrix.security_route();
+            opening_report_geometry(params.opening_method(), extension_degree, role_dims.d_a())?;
+        let security_route = params.inner().matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -453,19 +449,19 @@ impl PlannedGroupReport {
         let challenge_operator_norm_threshold = reported_operator_norm_threshold(
             security_route,
             role_dims.d_a(),
-            &params.fold_challenge_config,
+            &params.fold_challenge_config(),
         );
         let (public_num_vars, public_num_polynomials) = public_group
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
-        let n_b = params.outer_commit_matrix.output_rank();
+        let n_b = params.outer().matrix.output_rank();
         let b_geometry = b_slice_report_geometry(
             params.payload_mode,
-            params.outer_slice_count,
+            params.outer_slice_count(),
             n_b,
-            params.outer_commit_matrix.input_width(),
+            params.outer().matrix.input_width(),
             role_dims.d_b(),
-            params.outer_commit_matrix.sis_modulus_profile(),
+            params.outer().matrix.sis_modulus_profile(),
         )?;
         Ok(Self {
             group,
@@ -484,30 +480,32 @@ impl PlannedGroupReport {
             packing_factor: opening.packing_factor,
             packing_partial_width: opening.partial_width,
             packing_quotient_width: opening.quotient_width,
-            a_width: params.inner_commit_matrix.input_width(),
-            b_width: params.outer_commit_matrix.input_width(),
-            d_width: params.open_commit_matrix.input_width(),
-            n_a: params.inner_commit_matrix.output_rank(),
+            a_width: params.inner().matrix.input_width(),
+            b_width: params.outer().matrix.input_width(),
+            d_width: params.open().matrix.input_width(),
+            n_a: params.inner().matrix.output_rank(),
             n_b,
-            n_d: params.open_commit_matrix.output_rank(),
+            n_d: params.open().matrix.output_rank(),
             b_slice_count: b_geometry.slice_count,
             physical_b_input_width: b_geometry.physical_input_width,
             logical_b_rows: b_geometry.logical_rows,
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
-            log_basis_inner: params.log_basis_inner,
-            log_basis_outer: params.log_basis_outer,
-            log_basis_open: params.log_basis_open,
-            num_digits_inner: params.num_digits_inner,
-            num_digits_outer: params.num_digits_outer,
-            num_digits_open: params.num_digits_open,
+            log_basis_inner: params.inner().digits.log_basis,
+            log_basis_outer: params.outer().digits.log_basis,
+            log_basis_open: params.open().digits.log_basis,
+            num_digits_inner: params.inner().digits.num_digits,
+            num_digits_outer: params.outer().digits.num_digits,
+            num_digits_open: params.open().digits.num_digits,
             num_digits_fold: params.num_digits_fold(),
             challenge_l1_mass: params.challenge_l1_mass(),
-            challenge_count_pm1: params.fold_challenge_config.count_pm1,
-            challenge_count_pm2: params.fold_challenge_config.count_pm2,
+            challenge_count_pm1: params.fold_challenge_config().count_pm1,
+            challenge_count_pm2: params.fold_challenge_config().count_pm2,
             challenge_operator_norm_threshold,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_live_blocks: params.num_live_blocks,
-            num_positions_per_block: params.num_positions_per_block,
+
+            num_live_ring_elements_per_claim: params.blocks().live_ring_elements_per_claim,
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_live_blocks: params.blocks().live_blocks,
+
             block_index_domain_size: params.block_index_domain_size().unwrap_or(0),
             security_route,
             response_l2_sq_cap,
@@ -521,12 +519,12 @@ impl PlannedGroupReport {
         group: String,
         consumer_level: usize,
         witness_field_elements: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
         shared_open: &OpenCommitMatrixParams,
         setup_prefix_lengths: Option<(usize, usize)>,
         extension_degree: usize,
     ) -> Result<Self, AkitaError> {
-        let layout = params.layout;
+        let layout = params.profile;
         let role_dims = params.role_dims(shared_open.ring_dimension());
         let opening = opening_report_geometry(
             params.opening.opening_method,
@@ -540,7 +538,7 @@ impl PlannedGroupReport {
             .then_some(layout.group)
             .map(|layout| (layout.num_vars(), layout.num_polynomials()))
             .unwrap_or((0, 0));
-        let security_route = layout.inner_commit_matrix.security_route();
+        let security_route = layout.inner.matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -554,14 +552,14 @@ impl PlannedGroupReport {
             role_dims.d_a(),
             &params.opening.fold_challenge_config,
         );
-        let n_b = layout.outer_commit_matrix.output_rank();
+        let n_b = layout.outer.matrix.output_rank();
         let b_geometry = b_slice_report_geometry(
             CommitmentPayloadMode::Compressed,
             layout.outer_slice_count,
             n_b,
-            layout.outer_commit_matrix.input_width(),
+            layout.outer.matrix.input_width(),
             role_dims.d_b(),
-            layout.outer_commit_matrix.sis_modulus_profile(),
+            layout.outer.matrix.sis_modulus_profile(),
         )?;
         Ok(Self {
             group,
@@ -586,32 +584,35 @@ impl PlannedGroupReport {
             packing_factor: opening.packing_factor,
             packing_partial_width: opening.partial_width,
             packing_quotient_width: opening.quotient_width,
-            a_width: layout.inner_commit_matrix.input_width(),
-            b_width: layout.outer_commit_matrix.input_width(),
+            a_width: layout.inner.matrix.input_width(),
+            b_width: layout.outer.matrix.input_width(),
             d_width: shared_open.input_width(),
-            n_a: layout.inner_commit_matrix.output_rank(),
+            n_a: layout.inner.matrix.output_rank(),
             n_b,
             n_d: shared_open.output_rank(),
             b_slice_count: b_geometry.slice_count,
             physical_b_input_width: b_geometry.physical_input_width,
             logical_b_rows: b_geometry.logical_rows,
             complete_b_compression_bytes: b_geometry.complete_compression_bytes,
-            log_basis_inner: layout.log_basis_inner,
-            log_basis_outer: layout.log_basis_outer,
+            log_basis_inner: layout.inner.digits.log_basis,
+            log_basis_outer: layout.outer.digits.log_basis,
             log_basis_open: params.opening.log_basis_open,
-            num_digits_inner: layout.num_digits_inner,
-            num_digits_outer: layout.num_digits_outer,
+            num_digits_inner: layout.inner.digits.num_digits,
+            num_digits_outer: layout.outer.digits.num_digits,
             num_digits_open: params.opening.num_digits_open,
             num_digits_fold: params.opening.num_digits_fold,
             challenge_l1_mass: params.challenge_l1_mass(),
             challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
             challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
             challenge_operator_norm_threshold,
-            num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
-            num_live_blocks: layout.num_live_blocks,
-            num_positions_per_block: layout.num_positions_per_block,
+
+            num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
+            num_positions_per_block: layout.blocks.positions_per_block,
+            num_live_blocks: layout.blocks.live_blocks,
+
             block_index_domain_size: layout
-                .num_live_blocks
+                .blocks
+                .live_blocks
                 .checked_next_power_of_two()
                 .unwrap_or(0),
             security_route,
@@ -700,7 +701,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     let selected_offload_edges = schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
     tracing::info!(
         label,
@@ -712,16 +713,22 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
 
     let root_current_w_groups = root_current_w_groups(schedule, final_group);
-    let root_open = &schedule.root.params.open_commit_matrix;
-    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
-        let layout = group.descriptor.group;
+    let root_open = &schedule.root.params.open().matrix;
+    for (index, group) in schedule
+        .root
+        .params
+        .precommitted_groups()
+        .iter()
+        .enumerate()
+    {
+        let layout = group.profile.group;
         let witness_field_elements =
             group_field_elements(layout.num_vars(), layout.num_polynomials());
         PlannedGroupReport::precommitted(
             format!("pre{index}"),
             0,
             witness_field_elements,
-            &group.commitment,
+            group,
             root_open,
             None,
             extension_degree,
@@ -734,7 +741,7 @@ pub(crate) fn emit_runtime_schedule_summary(
         0,
         group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
         Some(final_group),
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         extension_degree,
     )?
     .emit(label, 0, field_bits);
@@ -745,18 +752,21 @@ pub(crate) fn emit_runtime_schedule_summary(
             index + 1,
             fold.input_witness_len,
             None,
-            &fold.params.witness,
+            &fold.params,
             extension_degree,
         )?
         .emit(label, index + 1, field_bits);
-        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+        if let Some(prefix) = &fold.params.setup_prefix() {
             PlannedGroupReport::precommitted(
                 format!("setup_to_L{}", index + 1),
                 index + 1,
-                prefix.natural_len,
-                &prefix.commitment_params,
-                &fold.params.open_commit_matrix,
-                Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
+                prefix.setup_natural_len.expect("setup prefix group"),
+                prefix,
+                &fold.params.open().matrix,
+                Some((
+                    prefix.setup_natural_len.expect("setup prefix group"),
+                    prefix.n_prefix().unwrap_or(0),
+                )),
                 extension_degree,
             )?
             .emit(label, index, field_bits);
@@ -764,7 +774,7 @@ pub(crate) fn emit_runtime_schedule_summary(
     }
     let nonterminal = std::iter::once((
         0usize,
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
         root_current_w_groups,
@@ -777,7 +787,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             .map(|(index, level)| {
                 (
                     index + 1,
-                    &level.params.witness,
+                    &level.params,
                     level.input_witness_len,
                     level.output_witness_len,
                     format!("folded={}", level.input_witness_len),
@@ -787,9 +797,9 @@ pub(crate) fn emit_runtime_schedule_summary(
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
         let opening =
-            opening_report_geometry(lp.opening_method, extension_degree, role_dims.d_a())?;
+            opening_report_geometry(lp.opening_method(), extension_degree, role_dims.d_a())?;
         let extension_opening_reduction_bytes =
-            if matches!(lp.opening_method, OpeningMethod::EvaluationTrace) {
+            if matches!(lp.opening_method(), OpeningMethod::EvaluationTrace) {
                 let final_group = akita_types::PolynomialGroupLayout::singleton(
                     akita_types::padded_boolean_opening_vars(input_witness_len)?,
                 );
@@ -809,18 +819,19 @@ pub(crate) fn emit_runtime_schedule_summary(
         let setup_prefix = schedule
             .recursive_folds
             .get(level_idx)
-            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
-        let setup_prefix_natural_field_elements =
-            setup_prefix.map_or(0, |prefix| prefix.natural_len);
+            .and_then(|fold| fold.params.setup_prefix());
+        let setup_prefix_natural_field_elements = setup_prefix.map_or(0, |prefix| {
+            prefix.setup_natural_len.expect("setup prefix group")
+        });
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
-        let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
-        let a_output_raw_dimension = lp.inner_commit_matrix.raw_output_dimension();
-        let b_input_raw_dimension = lp.outer_commit_matrix.raw_input_dimension();
-        let b_output_raw_dimension = lp.outer_commit_matrix.raw_output_dimension();
-        let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
-        let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
-        let security_route = lp.inner_commit_matrix.security_route();
+        let a_input_raw_dimension = lp.inner().matrix.raw_input_dimension();
+        let a_output_raw_dimension = lp.inner().matrix.raw_output_dimension();
+        let b_input_raw_dimension = lp.outer().matrix.raw_input_dimension();
+        let b_output_raw_dimension = lp.outer().matrix.raw_output_dimension();
+        let d_input_raw_dimension = lp.open().matrix.raw_input_dimension();
+        let d_output_raw_dimension = lp.open().matrix.raw_output_dimension();
+        let security_route = lp.inner().matrix.security_route();
         let (response_l2_sq_cap, norm_proof_shape) = match security_route {
             akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
             akita_types::InnerCommitSecurityRoute::L2 {
@@ -832,15 +843,15 @@ pub(crate) fn emit_runtime_schedule_summary(
         let challenge_operator_norm_threshold = reported_operator_norm_threshold(
             security_route,
             role_dims.d_a(),
-            &lp.fold_challenge_config,
+            &lp.fold_challenge_config(),
         );
         let b_geometry = b_slice_report_geometry(
             lp.payload_mode,
-            lp.outer_slice_count,
-            lp.outer_commit_matrix.output_rank(),
-            lp.outer_commit_matrix.input_width(),
+            lp.outer_slice_count(),
+            lp.outer().matrix.output_rank(),
+            lp.outer().matrix.input_width(),
             role_dims.d_b(),
-            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer().matrix.sis_modulus_profile(),
         )?;
         tracing::info!(
             label,
@@ -861,12 +872,12 @@ pub(crate) fn emit_runtime_schedule_summary(
             packing_quotient_width = ?opening.quotient_width,
             extension_opening_reduction_present = extension_opening_reduction_bytes != 0,
             extension_opening_reduction_bytes,
-            a_width = lp.inner_commit_matrix.input_width(),
-            b_width = lp.outer_commit_matrix.input_width(),
-            d_width = lp.open_commit_matrix.input_width(),
-            n_a = lp.inner_commit_matrix.output_rank(),
-            n_b = lp.outer_commit_matrix.output_rank(),
-            n_d = lp.open_commit_matrix.output_rank(),
+            a_width = lp.inner().matrix.input_width(),
+            b_width = lp.outer().matrix.input_width(),
+            d_width = lp.open().matrix.input_width(),
+            n_a = lp.inner().matrix.output_rank(),
+            n_b = lp.outer().matrix.output_rank(),
+            n_d = lp.open().matrix.output_rank(),
             b_slice_count = b_geometry.slice_count,
             physical_b_input_width = b_geometry.physical_input_width,
             logical_b_rows = b_geometry.logical_rows,
@@ -881,23 +892,23 @@ pub(crate) fn emit_runtime_schedule_summary(
             ?d_input_raw_dimension,
             ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
-            challenge_count_pm1 = lp.fold_challenge_config.count_pm1,
-            challenge_count_pm2 = lp.fold_challenge_config.count_pm2,
+            challenge_count_pm1 = lp.fold_challenge_config().count_pm1,
+            challenge_count_pm2 = lp.fold_challenge_config().count_pm2,
             challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
-            log_basis_inner = lp.log_basis_inner,
-            log_basis_outer = lp.log_basis_outer,
-            log_basis_open = lp.log_basis_open,
+            log_basis_inner = lp.inner().digits.log_basis,
+            log_basis_outer = lp.outer().digits.log_basis,
+            log_basis_open = lp.open().digits.log_basis,
             position_index_bits = lp.position_index_bits(),
             block_index_bits = lp.block_index_bits(),
-            num_live_ring_elements_per_claim = lp.num_live_ring_elements_per_claim,
-            num_live_blocks = lp.num_live_blocks,
+            num_live_ring_elements_per_claim = lp.blocks().live_ring_elements_per_claim,
+            num_live_blocks = lp.blocks().live_blocks,
             block_index_domain_size = lp.block_index_domain_size().unwrap_or(0),
-            num_positions_per_block = lp.num_positions_per_block,
-            num_digits_inner = lp.num_digits_inner,
-            num_digits_outer = lp.num_digits_outer,
-            num_digits_open = lp.num_digits_open,
+            num_positions_per_block = lp.blocks().positions_per_block,
+            num_digits_inner = lp.inner().digits.num_digits,
+            num_digits_outer = lp.outer().digits.num_digits,
+            num_digits_open = lp.open().digits.num_digits,
             delta_fold = lp.num_digits_fold(),
-            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.log_basis_open),
+            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.open().digits.log_basis),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -910,12 +921,11 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     let terminal_level = levels - 1;
     let terminal = &schedule.terminal;
-    let witness = &terminal.params.witness;
-    let challenge = &terminal.params.sparse_challenge_config;
-    let security_route = witness.inner_commit_matrix.security_route();
+    let witness = &terminal;
+    let challenge = &terminal.fold_challenge_config;
+    let security_route = witness.inner.matrix.security_route();
     let response_l2_sq_cap = witness.response_l2_sq_cap();
     let z_linf_cap = terminal
-        .params
         .response_shape
         .layout
         .groups
@@ -928,14 +938,14 @@ pub(crate) fn emit_runtime_schedule_summary(
         level = terminal_level,
         input_witness_len = terminal.input_witness_len,
         d_a = witness.d_a(),
-        n_a = witness.inner_commit_matrix.output_rank(),
+        n_a = witness.inner.matrix.output_rank(),
         inner_width = witness.inner_width(),
-        a_input_raw_dimension = ?witness.inner_commit_matrix.raw_input_dimension(),
-        a_output_raw_dimension = ?witness.inner_commit_matrix.raw_output_dimension(),
-        log_basis_inner = witness.log_basis_inner,
-        num_digits_inner = witness.num_digits_inner,
-        fold_log_basis = witness.fold_log_basis,
-        fold_digit_count = witness.fold_digit_count,
+        a_input_raw_dimension = ?witness.inner.matrix.raw_input_dimension(),
+        a_output_raw_dimension = ?witness.inner.matrix.raw_output_dimension(),
+        log_basis_inner = witness.inner.digits.log_basis,
+        num_digits_inner = witness.inner.digits.num_digits,
+        fold_log_basis = witness.fold.log_basis,
+        fold_digit_count = witness.fold.num_digits,
         challenge_l1_mass = challenge.l1_norm(),
         challenge_count_pm1 = challenge.count_pm1,
         challenge_count_pm2 = challenge.count_pm2,
@@ -943,11 +953,11 @@ pub(crate) fn emit_runtime_schedule_summary(
         security_route = ?security_route,
         response_l2_sq_cap = ?response_l2_sq_cap,
         z_linf_cap = ?z_linf_cap,
-        num_live_ring_elements_per_claim = witness.num_live_ring_elements_per_claim,
-        num_positions_per_block = witness.num_positions_per_block,
-        num_live_blocks = witness.num_live_blocks,
+        num_live_ring_elements_per_claim = witness.blocks.live_ring_elements_per_claim,
+        num_positions_per_block = witness.blocks.positions_per_block,
+        num_live_blocks = witness.blocks.live_blocks,
         block_index_domain_size = witness
-            .num_live_blocks
+            .blocks.live_blocks
             .checked_next_power_of_two()
             .unwrap_or(0),
         "planned terminal state"
@@ -966,11 +976,11 @@ fn root_current_w_groups(schedule: &FoldSchedule, final_group: PolynomialGroupLa
     let mut groups = schedule
         .root
         .params
-        .precommitted_groups
+        .precommitted_groups()
         .iter()
         .enumerate()
         .map(|(index, group)| {
-            let layout = group.descriptor.group;
+            let layout = group.profile.group;
             format!(
                 "pre{index}={}",
                 group_field_elements(layout.num_vars(), layout.num_polynomials())
@@ -1307,11 +1317,11 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     let level_ring_dimension = |level_idx: usize| {
         schedule.map_or(D, |schedule| {
             if level_idx == 0 {
-                schedule.root.params.final_group.commitment.d_a()
+                schedule.root.params.d_a()
             } else if let Some(fold) = schedule.recursive_folds.get(level_idx - 1) {
-                fold.params.witness.d_a()
+                fold.params.d_a()
             } else {
-                schedule.terminal.params.witness.d_a()
+                schedule.terminal.d_a()
             }
         })
     };
@@ -1335,29 +1345,29 @@ pub(crate) fn print_layout(
 ) -> Result<(), AkitaError> {
     let b_geometry = b_slice_report_geometry(
         layout.payload_mode,
-        layout.outer_slice_count,
-        layout.outer_commit_matrix.output_rank(),
-        layout.outer_commit_matrix.input_width(),
-        layout.outer_commit_matrix.ring_dimension(),
-        layout.outer_commit_matrix.sis_modulus_profile(),
+        layout.outer_slice_count(),
+        layout.outer().matrix.output_rank(),
+        layout.outer().matrix.input_width(),
+        layout.outer().matrix.ring_dimension(),
+        layout.outer().matrix.sis_modulus_profile(),
     )?;
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
-        num_live_ring_elements_per_claim = layout.num_live_ring_elements_per_claim,
-        num_live_blocks = layout.num_live_blocks,
+        num_live_ring_elements_per_claim = layout.blocks().live_ring_elements_per_claim,
+        num_live_blocks = layout.blocks().live_blocks,
         block_index_domain_size = layout.block_index_domain_size().unwrap_or(0),
-        num_positions_per_block = layout.num_positions_per_block,
-        num_digits_inner = layout.num_digits_inner,
-        num_digits_outer = layout.num_digits_outer,
-        num_digits_open = layout.num_digits_open,
+        num_positions_per_block = layout.blocks().positions_per_block,
+        num_digits_inner = layout.inner().digits.num_digits,
+        num_digits_outer = layout.outer().digits.num_digits,
+        num_digits_open = layout.open().digits.num_digits,
         delta_fold = layout.num_digits_fold(),
-        log_basis_inner = layout.log_basis_inner,
-        log_basis_outer = layout.log_basis_outer,
-        log_basis_open = layout.log_basis_open,
-        n_a = layout.inner_commit_matrix.output_rank(),
-        n_b = layout.outer_commit_matrix.output_rank(),
-        n_d = layout.open_commit_matrix.output_rank(),
+        log_basis_inner = layout.inner().digits.log_basis,
+        log_basis_outer = layout.outer().digits.log_basis,
+        log_basis_open = layout.open().digits.log_basis,
+        n_a = layout.inner().matrix.output_rank(),
+        n_b = layout.outer().matrix.output_rank(),
+        n_d = layout.open().matrix.output_rank(),
         b_slice_count = b_geometry.slice_count,
         physical_b_input_width = b_geometry.physical_input_width,
         logical_b_rows = b_geometry.logical_rows,

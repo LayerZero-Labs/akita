@@ -9,20 +9,27 @@ use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 fn synthetic_profile(
     group: PolynomialGroupLayout,
     params: &CommittedGroupParams,
-) -> CommittedGroupProfile {
-    CommittedGroupProfile {
-        version: CommittedGroupProfile::VERSION,
+) -> GroupCommitPhaseParams {
+    GroupCommitPhaseParams {
+        version: GroupCommitPhaseParams::VERSION,
         group,
-        num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-        num_positions_per_block: params.num_positions_per_block,
-        num_live_blocks: params.num_live_blocks,
-        outer_slice_count: params.outer_slice_count,
-        log_basis_inner: params.log_basis_inner,
-        num_digits_inner: params.num_digits_inner,
-        inner_commit_matrix: params.inner_commit_matrix,
-        log_basis_outer: params.log_basis_outer,
-        num_digits_outer: params.num_digits_outer,
-        outer_commit_matrix: params.outer_commit_matrix,
+        blocks: params.blocks(),
+
+        outer_slice_count: params.outer_slice_count(),
+        inner: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(
+                params.inner().digits.log_basis,
+                params.inner().digits.num_digits,
+            ),
+            params.inner().matrix,
+        ),
+        outer: akita_types::RoleParams::new(
+            akita_types::GadgetDigits::new(
+                params.outer().digits.log_basis,
+                params.outer().digits.num_digits,
+            ),
+            params.outer().matrix,
+        ),
     }
 }
 
@@ -50,15 +57,18 @@ fn grouped_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
-    params.precommitted_groups = vec![PrecommittedLevelParams {
-        layout: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
-        opening: akita_types::GroupOpeningPlan::evaluation_trace(
-            precommitted.fold_challenge_config,
-            precommitted.log_basis_open,
-            precommitted.num_digits_open,
-            precommitted.num_digits_fold,
-        ),
-    }];
+    params
+        .set_precommitted_groups(vec![GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                precommitted.fold_challenge_config(),
+                precommitted.open().digits.log_basis,
+                precommitted.open().digits.num_digits,
+                precommitted.num_digits_fold(),
+            ),
+        }])
+        .expect("valid precommitted group topology");
     params
 }
 
@@ -177,7 +187,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
@@ -186,7 +196,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -197,7 +207,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter_map(|(params, _)| {
             matches!(
-                params.inner_commit_matrix.security_route(),
+                params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
             .then_some(params.block_index_bits())
@@ -243,7 +253,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     assert!(!candidates.is_empty());
     for (params, next_witness_len) in &candidates {
         assert_eq!(
-            params.opening_method,
+            params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
@@ -253,18 +263,18 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         assert!(matches!(
-            params.inner_commit_matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
-            params.open_commit_matrix.input_width(),
+            params.open().matrix.input_width(),
             akita_types::opening_d_segment_width(
-                params.opening_method,
+                params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
                 dimensions.d_d(),
-                params.num_digits_open,
-                params.num_live_blocks,
+                params.open().digits.num_digits,
+                params.blocks().live_blocks,
                 1,
             )
             .unwrap()
@@ -294,34 +304,33 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
     for (params, next_witness_len) in with_prefix {
-        let prefix = params.setup_prefix.as_ref().expect("attached setup prefix");
+        let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
-            prefix.commitment_params.opening.opening_method,
+            prefix.opening.opening_method,
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
         assert_eq!(
-            akita_types::LevelParamsLike::source_encoding(&prefix.commitment_params),
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             akita_types::CommittedSourceEncoding::CanonicalCoefficientTable
         );
         let d_d = params.role_dims().d_d();
         let witness_width = akita_types::opening_d_segment_width(
-            params.opening_method,
+            params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
             d_d,
-            params.num_digits_open,
-            params.num_live_blocks,
+            params.open().digits.num_digits,
+            params.blocks().live_blocks,
             1,
         )
         .unwrap();
         let prefix_width = prefix
-            .commitment_params
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
-            params.open_commit_matrix.input_width(),
+            params.open().matrix.input_width(),
             witness_width + prefix_width
         );
         assert_eq!(
@@ -493,24 +502,24 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     );
     for (params, next_witness_len) in &candidates {
         assert_eq!(
-            params.opening_method,
+            params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 64
             }
         );
         assert!(matches!(
-            params.inner_commit_matrix.security_route(),
+            params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::Linf(_)
         ));
         assert_eq!(
-            params.open_commit_matrix.input_width(),
+            params.open().matrix.input_width(),
             akita_types::opening_d_segment_width(
-                params.opening_method,
+                params.opening_method(),
                 policy.claim_ext_degree,
                 dimensions.d_a(),
                 dimensions.d_d(),
-                params.num_digits_open,
-                params.num_live_blocks,
+                params.open().digits.num_digits,
+                params.blocks().live_blocks,
                 key.final_group.num_polynomials(),
             )
             .unwrap()
@@ -550,29 +559,29 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     .expect("group-local packing candidates");
     assert!(!grouped.is_empty());
     for (params, _) in grouped {
-        assert_eq!(params.precommitted_groups.len(), 1);
+        assert_eq!(params.precommitted_groups().len(), 1);
         assert_eq!(
-            params.precommitted_groups[0].opening.opening_method,
+            params.precommitted_groups()[0].opening.opening_method,
             OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension: 128
             }
         );
         let d_d = params.role_dims().d_d();
         let final_width = akita_types::opening_d_segment_width(
-            params.opening_method,
+            params.opening_method(),
             policy.claim_ext_degree,
             params.d_a(),
             d_d,
-            params.num_digits_open,
-            params.num_live_blocks,
+            params.open().digits.num_digits,
+            params.blocks().live_blocks,
             grouped_key.final_group.num_polynomials(),
         )
         .unwrap();
-        let precommit_width = params.precommitted_groups[0]
+        let precommit_width = params.precommitted_groups()[0]
             .d_segment_width(policy.claim_ext_degree, d_d)
             .unwrap();
         assert_eq!(
-            params.open_commit_matrix.input_width(),
+            params.open().matrix.input_width(),
             final_width + precommit_width
         );
     }
@@ -666,7 +675,7 @@ fn tensor_params_cannot_be_frozen_as_a_precommit_profile() {
         akita_types::CommittedSourceEncoding::TensorSubfieldProjection {
             extension_degree: 2,
         };
-    let error = CommittedGroupProfile::try_from_params(pre_group, &tensor_params)
+    let error = GroupCommitPhaseParams::try_from_params(pre_group, &tensor_params)
         .expect_err("tensor params cannot be frozen into canonical commitment identity");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
 }
@@ -732,11 +741,16 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
     let mut params = grouped_level_params();
-    let prefix_params = params
-        .precommitted_groups
-        .pop()
+    let prefix_params = *params
+        .precommitted_groups()
+        .last()
         .expect("synthetic prefix params");
-    params.setup_prefix = Some(akita_types::scheduled_setup_prefix(1 << 6, prefix_params));
+    params
+        .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
+            1 << 6,
+            prefix_params,
+        )))
+        .expect("valid setup-prefix topology");
     let witness_len = 1 << 4;
     let output_witness_len = 1 << 4;
     let final_group = PolynomialGroupLayout::singleton(4);
@@ -801,7 +815,9 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
         .expect("setup-prefix frontier");
         for params in groups {
             akita_types::setup_prefix_slot_field_elements(
-                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params).slot_id(),
+                &akita_types::scheduled_setup_prefix(1usize << log_prefix, params)
+                    .slot_id()
+                    .expect("setup prefix group"),
             )
             .expect("frontier candidate must support its compression source");
         }
@@ -832,9 +848,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count,
             witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
@@ -876,9 +894,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
@@ -907,9 +927,11 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 64,
-            num_live_blocks: 8,
             num_positions_per_block: 8,
+            num_live_blocks: 8,
+
             num_chunks: 1,
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             witness_norms: FoldWitnessNorms::bounded(3, 64),
@@ -949,9 +971,11 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
         dimensions,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
         num_claims,
+
         num_live_ring_elements_per_claim: 64,
-        num_live_blocks: 8,
         num_positions_per_block: 8,
+        num_live_blocks: 8,
+
         num_chunks: 1,
         outer_slice_count: akita_types::CommitmentSliceCount::ONE,
         witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
@@ -989,9 +1013,10 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     .with_decomp(width_s, width_s * 8, 1, 2, 2)
     .unwrap();
     params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.inner_commit_matrix = raw_candidate.inner_commit_matrix;
-    params.outer_commit_matrix = raw_candidate.outer_commit_matrix;
-    params.num_digits_fold = raw_candidate.num_digits_fold;
+    params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
+    params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
+    params.own_group_mut().profile.group = PolynomialGroupLayout::singleton(14);
+    params.own_group_mut().opening.num_digits_fold = raw_candidate.num_digits_fold;
     assert!(params.compression_sources_supported().unwrap());
     params
         .validate_commitment_request(2, num_claims)
