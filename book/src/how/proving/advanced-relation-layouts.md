@@ -11,8 +11,7 @@ duplicating those rows.
 
 The physical opening-commitment relation remains distinct from the
 field-valued evaluation trace. This page derives the algebraic group and chunk
-layouts; the canonical pages for exact chunk addresses, their physical order,
-and mixed ring dimensions are linked in [Related layouts](#related-layouts).
+layouts under the simplifying assumptions stated below.
 
 ## Contents
 
@@ -28,7 +27,6 @@ and mixed ring dimensions are linked in [Related layouts](#related-layouts).
   - [Chunk-local partial evaluations and opening commitment](#chunk-local-partial-evaluations-and-opening-commitment)
   - [Chunk-local folded responses and witness relations](#chunk-local-folded-responses-and-witness-relations)
   - [Semantic relations remain unchanged](#semantic-relations-remain-unchanged)
-- [Related layouts](#related-layouts)
 
 ## Multiple commitment groups
 
@@ -608,20 +606,3 @@ reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-c
 When $C=1$, the sole range contains every live block, the single local response
 is $\mathbf z$, and every equation and witness layout above reduces to the
 basic single-chunk construction.
-
-## Related layouts
-
-This page owns the multi-group relation layout and the single-group
-multi-chunk relation derivation. Exact physical geometry and the other layout
-axes have canonical explanations elsewhere:
-
-- [Chunks and fold challenges](./opening-points-layout.md#chunks-and-fold-challenges)
-  defines exact chunk ranges and opening-point coordinates.
-- [Canonical walk](../verifying/matrix_evaluation.md#canonical-walk) defines
-  chunk-major witness order and the shared quotient and compression suffix.
-- [Setup roles and mixed rings](../verifying/matrix_evaluation.md#setup-roles-and-mixed-rings)
-  explains native A, B, and D dimensions. The current address authority is
-  `RelationAddressGeometry`, including
-  `relation_coefficient_block_len()` and
-  `outgoing_witness_ring_dimension()` in
-  `crates/akita-types/src/proof/relation_address.rs`.
