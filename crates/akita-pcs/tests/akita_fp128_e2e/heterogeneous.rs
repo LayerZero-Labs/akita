@@ -164,7 +164,7 @@ fn heterogeneous_group_types() {
             .schedule()
             .clone();
         assert_eq!(
-            schedule.root.params.precommitted_groups.len(),
+            schedule.root.params.precommitted_groups().len(),
             2,
             "heterogeneous selection must resolve to the two-precommit entry"
         );
@@ -280,10 +280,11 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         )
         .expect("full-width dense profile");
         assert!(
-            bounded_commitment.profile.num_digits_inner < full_width_profile.num_digits_inner,
+            bounded_commitment.profile.inner.digits.num_digits
+                < full_width_profile.inner.digits.num_digits,
             "bounded precommit digit depth {} must be below full-width {}",
-            bounded_commitment.profile.num_digits_inner,
-            full_width_profile.num_digits_inner,
+            bounded_commitment.profile.inner.digits.num_digits,
+            full_width_profile.inner.digits.num_digits,
         );
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)
@@ -350,21 +351,18 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let precommitted = schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .first()
             .expect("mixed-bound selection must resolve the one-precommit entry");
-        assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
+        assert_eq!(schedule.root.params.precommitted_groups().len(), 1);
         assert_eq!(
-            precommitted.commitment.layout.num_digits_inner,
-            bounded_commitment.profile.num_digits_inner,
+            precommitted.profile.inner.digits.num_digits,
+            bounded_commitment.profile.inner.digits.num_digits,
             "the resolved row must carry the bounded producer's own digit depth"
         );
         // The root itself is planned at the one-hot bound, so the two groups
         // really do disagree on their committed-source depth.
-        assert_eq!(
-            schedule.root.params.final_group.commitment.num_digits_inner,
-            1,
-        );
+        assert_eq!(schedule.root.params.inner().digits.num_digits, 1,);
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
@@ -503,7 +501,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         .map(|_| ())
         .expect_err("a dense source must not commit under a one-hot schedule");
         assert!(
-            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            matches!(error, akita_error::AkitaError::InvalidInput(_)),
             "expected InvalidInput, got {error:?}"
         );
 
@@ -511,8 +509,10 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         // check doing work rather than the interval check catching it anyway.
         let contract = OneHotCfg::committed_source_contract()
             .expect("the one-hot preset declares a valid producer contract");
-        let (negative, positive) =
-            contract.accepted_bounds(profile.log_basis_inner, profile.num_digits_inner);
+        let (negative, positive) = contract.accepted_bounds(
+            profile.inner.digits.log_basis,
+            profile.inner.digits.num_digits,
+        );
         assert!(
             negative.is_some_and(|reach| reach >= 1) && positive.is_some_and(|reach| reach >= 1),
             "the all-ones dense source fits the accepted magnitude interval [{negative:?}, {positive:?}]"
@@ -644,7 +644,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         let error = commit(&over_positive)
             .expect_err("a coefficient above the declared bound must be rejected");
         assert!(
-            matches!(error, akita_field::AkitaError::InvalidInput(_)),
+            matches!(error, akita_error::AkitaError::InvalidInput(_)),
             "expected InvalidInput, got {error:?}"
         );
 
@@ -664,8 +664,8 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         )
         .expect("bounded profile");
         let (_, representable) = akita_types::sis::checked_balanced_digit_representable_bounds(
-            profile.log_basis_inner,
-            profile.num_digits_inner,
+            profile.inner.digits.log_basis,
+            profile.inner.digits.num_digits,
         );
         assert!(
             representable.expect("shipped geometry fits u128") > positive_bound,

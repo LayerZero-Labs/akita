@@ -15,9 +15,9 @@ pub(crate) use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::{IndexedXofPrefix, XofCursor};
 
+use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
 use akita_field::parallel::*;
-use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;

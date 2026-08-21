@@ -3,7 +3,8 @@
 use super::{FlatRelationContext, RelationMatrixEvaluator, RelationMatrixGroupEvaluator};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{AkitaError, Prime128OffsetA7F7};
+use akita_error::AkitaError;
+use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupDescriptor,
     CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
@@ -81,8 +82,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         DEPTH_OPEN,
         DEPTH_OPEN,
     )?;
-    let inner = &level_params.inner_commit_matrix;
-    level_params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &level_params.inner.matrix;
+    level_params.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -91,8 +92,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         inner.coeff_linf_bound().max(1),
         role_dims.d_a(),
     );
-    let outer = &level_params.outer_commit_matrix;
-    level_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &level_params.outer.matrix;
+    level_params.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -101,8 +102,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         outer.coeff_linf_bound().max(1),
         role_dims.d_b(),
     );
-    let open = &level_params.open_commit_matrix;
-    level_params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let open = &level_params.open.matrix;
+    level_params.open.matrix = OpenCommitMatrixParams::new_unchecked(
         open.security_policy(),
         open.sis_table_key().table_digest,
         open.sis_modulus_profile(),

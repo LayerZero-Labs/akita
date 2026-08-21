@@ -30,9 +30,6 @@ pub fn avx_ntt_mode() -> Option<AvxNttMode> {
 }
 
 /// Whether the host may use x86 `i32` transform kernels at all.
-///
-/// `D = 32` uses the dedicated small-degree kernel; wider degrees use the
-/// measured 256-bit AVX2 transform.
 pub fn use_avx2_transform_ntt() -> bool {
     avx_ntt_mode().is_some() && std::is_x86_feature_detected!("avx2")
 }

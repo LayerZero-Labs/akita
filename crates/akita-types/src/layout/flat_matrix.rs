@@ -10,7 +10,8 @@
 //! the same underlying vector to serve multiple roles with different shapes.
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };

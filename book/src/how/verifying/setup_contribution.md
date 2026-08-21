@@ -1,5 +1,9 @@
 # Setup contribution and Stage 3
 
+This chapter gives the verifier details. Read
+[Setup offloading](../setup-offloading.md) first for the complete lifecycle and
+the planner decision.
+
 The relation matrix contains products with the public A, B, and D setup
 matrices. The verifier can check those products directly during Stage 2 or
 defer the public setup inner product to Stage 3. Both modes use one

@@ -107,8 +107,8 @@ pub use setup_envelope::{
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
     setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
-    ScheduledSetupPrefix, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    validate_setup_prefix_domain, SetupPrefixProverRegistry, SetupPrefixPublicCommitment,
+    SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
@@ -133,7 +133,7 @@ pub use terminal_witness::TerminalWitnessTranscriptParts;
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};

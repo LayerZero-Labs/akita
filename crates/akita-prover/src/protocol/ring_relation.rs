@@ -12,9 +12,9 @@ use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
@@ -473,7 +473,10 @@ impl RingRelationProver {
         BindClaims: FnOnce(&mut T) -> Result<(RingVec<F>, BoundClaims), AkitaError>,
     {
         let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
-        validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
+        validate_i8_setup_log_basis(
+            lp.open().digits.log_basis,
+            "for i8 prover opening decomposition",
+        )?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
         let opening_batch = block_claims.opening_layout()?;
@@ -498,7 +501,7 @@ impl RingRelationProver {
         // suffix commitments already contain those B images directly.
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         let mut group_payloads = Vec::with_capacity(num_groups);
-        let commit_group_order = if lp.has_precommitted_groups() {
+        let commit_group_order = if lp.has_preceding_groups() {
             opening_batch.root_group_order()?
         } else {
             (0..num_groups).collect()
@@ -578,7 +581,7 @@ impl RingRelationProver {
         // Extracted level numbers for the D-role and fused-y operations below;
         // the kernels inside the dispatch arms must not read schedule types.
         let d_log_basis = lp.shared_d_digit_log_basis();
-        let d_row_len = lp.open_commit_matrix.output_rank();
+        let d_row_len = lp.open().matrix.output_rank();
         drop(prepare_span);
 
         // D-role operations: decompose the folded opening rows into `e_hat`
@@ -692,7 +695,7 @@ impl RingRelationProver {
             group_openings.push(opening);
             offset = end;
         }
-        let e_hat_concat = if lp.has_precommitted_groups() {
+        let e_hat_concat = if lp.has_preceding_groups() {
             Some(concatenate_group_d_inputs(
                 &opening_batch,
                 &group_openings

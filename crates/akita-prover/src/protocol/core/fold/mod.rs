@@ -317,7 +317,7 @@ where
     // Recursive suffixes still omit the public row coefficients from ring-switch
     // finalization. Evaluation-trace coefficients are normalized independently and
     // therefore do not inherit that path distinction.
-    let clear_recursive_trace = pad_base_evals && !level_params.has_precommitted_groups();
+    let clear_recursive_trace = pad_base_evals && !level_params.has_preceding_groups();
     let row_coefficients = if clear_recursive_trace {
         None
     } else {
@@ -340,26 +340,26 @@ where
 /// fold. The terminal variant exposes only its inner commitment.
 #[derive(Clone, Copy)]
 pub(in crate::protocol::core) enum FoldSuccessorParams<'a> {
-    Recursive(&'a RecursiveFoldParams),
-    Terminal(&'a TerminalCommittedGroupParams),
+    Recursive(&'a FoldParams),
+    Terminal(&'a TerminalFoldParams),
 }
 
 impl<'a> FoldSuccessorParams<'a> {
     fn inner_ring_dimension(self) -> usize {
         match self {
-            Self::Recursive(params) => params.witness.d_a(),
+            Self::Recursive(params) => params.params.d_a(),
             Self::Terminal(params) => params.d_a(),
         }
     }
 
     fn log_basis_inner(self) -> u32 {
         match self {
-            Self::Recursive(params) => params.witness.log_basis_open,
-            Self::Terminal(params) => params.log_basis_inner,
+            Self::Recursive(params) => params.params.open().digits.log_basis,
+            Self::Terminal(params) => params.inner.digits.log_basis,
         }
     }
 
-    fn recursive(self) -> Option<&'a RecursiveFoldParams> {
+    fn recursive(self) -> Option<&'a FoldParams> {
         match self {
             Self::Recursive(params) => Some(params),
             Self::Terminal(_) => None,
@@ -459,7 +459,7 @@ where
                 ));
             }
             crate::commit_w::<Cfg, C>(
-                &params.witness,
+                &params.params,
                 level
                     .checked_add(1)
                     .ok_or_else(|| AkitaError::InvalidSetup("fold level overflow".into()))?,
@@ -674,7 +674,7 @@ where
             expanded.as_ref(),
             prefix_slots,
             lp,
-            &next_fold_params.witness,
+            &next_fold_params.params,
             &prepared_fold.instance,
             &tau1,
             alpha,

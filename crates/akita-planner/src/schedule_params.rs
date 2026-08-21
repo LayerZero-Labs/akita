@@ -9,7 +9,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_for_linf_cap, num_digits_inner_for_bound,
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
@@ -19,8 +19,8 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
-    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 #[cfg(test)]
 use akita_types::{
@@ -64,12 +64,13 @@ pub(crate) fn root_inner_basis_source(
 }
 
 pub(crate) fn precommitted_groups_support_opening_dimension<'a>(
-    profiles: impl IntoIterator<Item = &'a CommittedGroupProfile>,
+    profiles: impl IntoIterator<Item = &'a GroupCommitPhaseParams>,
     opening_ring_dimension: usize,
 ) -> bool {
     profiles.into_iter().all(|profile| {
         profile
-            .inner_commit_matrix
+            .inner
+            .matrix
             .ring_dimension()
             .is_multiple_of(opening_ring_dimension)
     })
@@ -367,13 +368,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
     let started = diagnostics.map(|_| std::time::Instant::now());
     let result = (|| {
         if choice.folds.is_empty() {
-            return Ok(akita_types::TerminalFoldDescriptor {
-                witness: &choice.terminal.params,
-                sparse_challenge_config: &choice.terminal.sparse_challenge_config,
-                response_shape: &choice.terminal.response_shape,
-                input_witness_len: choice.terminal.input_witness_len,
-            }
-            .canonical_descriptor_bytes());
+            return Ok(choice.terminal.params.canonical_descriptor_bytes());
         }
         let carrier_prefix_len = choice.folds.len().min(2);
         let mut bytes = Vec::new();
@@ -397,12 +392,7 @@ pub(crate) fn candidate_schedule_descriptor_bytes(
                 output_witness_len: fold.output_witness_len,
             }
         });
-        let terminal = akita_types::TerminalFoldDescriptor {
-            witness: &choice.terminal.params,
-            sparse_challenge_config: &choice.terminal.sparse_challenge_config,
-            response_shape: &choice.terminal.response_shape,
-            input_witness_len: choice.terminal.input_witness_len,
-        };
+        let terminal = &choice.terminal.params;
         akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
             &mut bytes,
             descriptor_steps,
@@ -437,7 +427,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
     for params in candidates {
         let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
-        let score = (setup_score, params.outer_slice_count.get());
+        let score = (setup_score, params.outer_slice_count().get());
         if best
             .as_ref()
             .is_none_or(|(best_score, _)| score < *best_score)

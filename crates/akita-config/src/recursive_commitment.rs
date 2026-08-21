@@ -2,7 +2,7 @@
 
 use crate::CommitmentConfig;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, DecompositionParams, SetupMatrixCapacity, SisModulusProfileId,
 };
@@ -142,14 +142,17 @@ mod tests {
         })
         .expect("recursive schedule");
 
-        assert_eq!(schedule.schedule().root.params.precommitted_groups.len(), 2);
+        assert_eq!(
+            schedule.schedule().root.params.precommitted_groups().len(),
+            2
+        );
         assert!(schedule
             .schedule()
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
-            .all(|group| group.descriptor == expected));
+            .all(|group| group.profile == expected));
     }
 
     #[test]
@@ -164,12 +167,12 @@ mod tests {
             .schedule()
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .is_empty());
         assert!(schedule
             .schedule()
             .recursive_folds
             .iter()
-            .any(|fold| fold.params.incoming_setup_prefix.is_some()));
+            .any(|fold| fold.params.setup_prefix().is_some()));
     }
 }

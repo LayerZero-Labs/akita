@@ -48,10 +48,10 @@ pub use compression::{
 };
 pub use config::{DecompositionParams, SetupContributionMode};
 pub use extension_opening_reduction::{
-    check_extension_opening_reduction_output, checked_table_len,
-    derive_tensor_extension_opening_claim, derive_tensor_extension_opening_claim_from_partials,
-    extension_opening_reduction_claim, extension_opening_reduction_eval_at_point,
-    num_rounds_from_table_len, project_tensor_factor_value, tensor_column_partials_from_base_evals,
+    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim,
+    derive_tensor_extension_opening_claim_from_partials, extension_opening_reduction_claim,
+    extension_opening_reduction_eval_at_point, num_rounds_from_table_len,
+    project_tensor_factor_value, reduction_table_len, tensor_column_partials_from_base_evals,
     tensor_column_partials_split_fold, tensor_equality_factor_eval_at_point,
     tensor_equality_factor_evals, tensor_opening_split, tensor_packed_witness_evals,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, validate_reduction_tables,
@@ -84,10 +84,11 @@ pub use layout::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
     sumcheck_rounds, terminal_response_bytes, terminal_response_planner_bytes,
     try_extension_opening_reduction_level_bytes, validate_role_dims, validate_schedule_ring_dims,
-    witness_commitment_domain_len, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    GroupOpeningPlan, LevelParamsLike, OpeningFamily, OpeningMethod,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint,
-    RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
+    witness_commitment_domain_len, BasisMode, BlockGeometry, CommitmentRingDims,
+    CommittedGroupParams, FlatMatrix, GadgetDigits, GroupOpenPhaseParams, GroupOpeningPlan,
+    InnerRoleParams, OpenRoleParams, OpeningFamily, OpeningMethod, OuterRoleParams,
+    PrecommittedGroupAdmissionPolicy, RingMatrixView, RingOpeningPoint, RingRole, RoleParams,
+    MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
     SUPPORTED_COMMITMENT_RING_DIMS,
 };
 pub use ntt_cache::{
@@ -119,7 +120,7 @@ pub use proof::{
     setup_prefix_slot_field_elements, suffix_opening_layout,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
-    validate_batched_inputs, validate_public_matrix_matches_seed,
+    validate_batched_inputs, validate_public_matrix_matches_seed, validate_setup_prefix_domain,
     validate_terminal_response_z_payload, verifier_setup_matrix_capacity_for_schedule,
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof,
@@ -138,12 +139,12 @@ pub use proof::{
     RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
     RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, ScheduledSetupPrefix, SetupMatrixCapacity,
-    SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot, SetupProductSumcheckShape,
-    SetupSumcheckProof, SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
-    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
+    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof,
+    SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
+    TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
     MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
@@ -153,12 +154,9 @@ pub use proof::{
 pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    CommittedSourceEncoding, FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldDescriptor,
-    TerminalFoldParams, TerminalFoldStep, WitnessPartition,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
+    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
+    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, TerminalFoldParams,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};

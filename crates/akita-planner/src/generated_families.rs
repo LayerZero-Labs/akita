@@ -17,11 +17,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -290,9 +290,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -408,9 +408,9 @@ fn fp32_onehot_grouped_requests(
 fn fp32_dense_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    // The precommit half is 20 rather than 14: `fp32::Dense` has no schedule
-    // with at least two folds below 20, so 14 cannot produce the row this
-    // group's frozen profile is read from.
+    // The precommit half is 20 rather than 14 because the shipped fp32 dense
+    // catalog begins at 20. The group's frozen profile must come from a
+    // generated row in that catalog.
     single_pre_grouped_requests::<fp32::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),

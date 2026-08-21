@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::suffix_opening_layout;
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,
@@ -42,30 +42,27 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         let successor_prefix = schedule
             .recursive_folds
             .get(producer_index)
-            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
+            .and_then(|fold| fold.params.setup_prefix());
         let Some(slot_id) = successor_prefix else {
             continue;
         };
         let (params, opening_layout) = if producer_index == 0 {
-            (
-                &schedule.root.params.final_group.commitment,
-                root_layout.clone(),
-            )
+            (&schedule.root.params, root_layout.clone())
         } else {
             let producer = &schedule.recursive_folds[producer_index - 1];
             let incoming_len = producer
                 .params
-                .incoming_setup_prefix
+                .setup_prefix()
                 .as_ref()
-                .map(|slot| slot.natural_len);
+                .map(|slot| slot.setup_natural_len.expect("setup prefix group"));
             (
-                &producer.params.witness,
+                &producer.params,
                 suffix_opening_layout(producer.input_witness_len, incoming_len)?,
             )
         };
         let natural_len = active_setup_field_len(params, &opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        let commitment_id = slot_id.slot_id();
+        let commitment_id = slot_id.slot_id().expect("setup prefix group");
         setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;
         if !ids.insert(commitment_id) {
             continue;
@@ -133,12 +130,12 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
             let candidate = AkitaScheduleLookupKey {
-                final_group: entry.root.final_group.layout,
+                final_group: entry.final_group,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.descriptor)
+                    .map(|group| group.group.profile)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
@@ -234,12 +231,12 @@ mod tests {
                 one_slot_field_elements >= slot.natural_len,
                 "slot capacity must cover the natural public-matrix prefix"
             );
-            let a_coeff_len = slot.commitment_profile.inner_commit_matrix.output_rank()
-                * slot.commitment_profile.inner_commit_matrix.input_width()
-                * slot.commitment_profile.inner_commit_matrix.ring_dimension();
-            let b_coeff_len = slot.commitment_profile.outer_commit_matrix.output_rank()
-                * slot.commitment_profile.outer_commit_matrix.input_width()
-                * slot.commitment_profile.outer_commit_matrix.ring_dimension();
+            let a_coeff_len = slot.commitment_profile.inner.matrix.output_rank()
+                * slot.commitment_profile.inner.matrix.input_width()
+                * slot.commitment_profile.inner.matrix.ring_dimension();
+            let b_coeff_len = slot.commitment_profile.outer.matrix.output_rank()
+                * slot.commitment_profile.outer.matrix.input_width()
+                * slot.commitment_profile.outer.matrix.ring_dimension();
             assert!(one_slot_field_elements >= a_coeff_len);
             assert!(one_slot_field_elements >= b_coeff_len);
             slot_field_elements = slot_field_elements.max(one_slot_field_elements);

@@ -11,8 +11,9 @@ mod utils;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_algebra::uni_poly::UniPoly;
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+    CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
@@ -188,14 +189,11 @@ where
     .entered();
     ensure_setup_envelope(expanded, active_weight_rows, ring_d)?;
     let natural_field_len = geometry.natural_field_len();
-    let selected_slot_id = next_fold_level_params
-        .setup_prefix
-        .as_ref()
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
-        })?;
+    let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
+        AkitaError::InvalidSetup("Stage 3 requires a selected setup-prefix slot".to_string())
+    })?;
     let slot = prefix_slots
-        .get(&selected_slot_id.slot_id())
+        .get(&selected_slot_id.slot_id().expect("setup prefix group"))
         .ok_or_else(|| {
             AkitaError::InvalidSetup(
                 "planned setup-prefix slot is missing from prover setup".to_string(),

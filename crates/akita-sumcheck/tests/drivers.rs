@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_field::Prime128Offset275;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,

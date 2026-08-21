@@ -12,7 +12,8 @@ use crate::kernels::linear::{
     fused_split_eq_quotients_streamed_prover_bounds,
 };
 use crate::AkitaProverSetup;
-use akita_field::{AkitaError, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use akita_error::AkitaError;
+use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 use std::sync::atomic::Ordering;
 

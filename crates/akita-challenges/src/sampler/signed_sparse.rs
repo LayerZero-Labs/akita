@@ -39,7 +39,7 @@ impl SignedSparseScratch {
         d: usize,
         count_pm1: usize,
         count_pm2: usize,
-    ) -> Result<(), akita_field::AkitaError> {
+    ) -> Result<(), akita_error::AkitaError> {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
         sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);

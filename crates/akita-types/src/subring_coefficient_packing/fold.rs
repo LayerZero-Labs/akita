@@ -1,17 +1,10 @@
 use super::SubringCoefficientPackingGeometry;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::{checked, AkitaError};
+use akita_field::{ExtField, FieldCore, FromPrimitiveInt};
 use std::mem;
 
 const MAX_REFERENCE_ALLOCATION_BYTES: usize = 1 << 30;
-
-fn checked_product(label: &str, factors: &[usize]) -> Result<usize, AkitaError> {
-    factors.iter().try_fold(1usize, |product, &factor| {
-        product.checked_mul(factor).ok_or_else(|| {
-            AkitaError::InvalidInput(format!("subring packing {label} length overflow"))
-        })
-    })
-}
 
 fn require_len(label: &str, actual: usize, expected: usize) -> Result<(), AkitaError> {
     if actual != expected {
@@ -145,10 +138,10 @@ where
         position_weights.len(),
         num_positions_per_block,
     )?;
-    let expected_source = checked_product(
-        "source coefficient",
-        &[num_live_positions, geometry.a_ring_dimension()],
-    )?;
+    let expected_source = checked::product([num_live_positions, geometry.a_ring_dimension()])
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("subring packing source coefficient length overflow".into())
+        })?;
     require_len(
         "source coefficient vector",
         a_ring_coefficients.len(),
@@ -161,10 +154,10 @@ where
     )?;
 
     let num_blocks = num_live_positions.div_ceil(num_positions_per_block);
-    let output_len = checked_product(
-        "partial opening",
-        &[num_blocks, geometry.partial_base_field_width()],
-    )?;
+    let output_len = checked::product([num_blocks, geometry.partial_base_field_width()])
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("subring packing partial opening length overflow".into())
+        })?;
     let mut output = zero_vec::<F>("partial opening", output_len)?;
     let mut source_offset = 0usize;
     for block_index in 0..num_blocks {
@@ -275,10 +268,12 @@ where
         tail_weights.len(),
         geometry.challenge_subring_dimension(),
     )?;
-    let expected_claim_partials = checked_product(
-        "scalar opening partial",
-        &[num_blocks, geometry.partial_base_field_width()],
-    )?;
+    let expected_claim_partials =
+        checked::product([num_blocks, geometry.partial_base_field_width()]).ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "subring packing scalar opening partial length overflow".into(),
+            )
+        })?;
     for partial_coordinates in partial_coordinates_by_claim {
         require_len(
             "scalar opening claim partial vector",
@@ -503,10 +498,10 @@ pub fn fold_coefficient_packing_partials<F: FieldCore + FromPrimitiveInt>(
     for challenge in challenges {
         challenge.validate_dyn(geometry.challenge_subring_dimension())?;
     }
-    let partial_len = checked_product(
-        "folded partial",
-        &[challenges.len(), geometry.partial_base_field_width()],
-    )?;
+    let partial_len = checked::product([challenges.len(), geometry.partial_base_field_width()])
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("subring packing folded partial length overflow".into())
+        })?;
     require_len(
         "folded partial vector",
         partial_coordinates.len(),

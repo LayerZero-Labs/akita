@@ -20,6 +20,11 @@ consumed through the scalar direct path, including a scalar `F = 1` handoff.
 Its physical relation is `consistency | A`: the terminal has no outer `u`, B
 block, or D block.
 
+The setup prefix appears only when the selected recursive schedule offloads the
+preceding setup contribution. [Setup offloading](./setup-offloading.md)
+explains how Stage 3 creates this second opening claim and how the successor
+authenticates it beside the folded witness.
+
 The transcript binds the schedule and exact group geometry before challenges
 that depend on them. Changing a terminal or recursive handoff is therefore a
 protocol change, not a serialization-only change.
@@ -32,9 +37,16 @@ uses `TerminalInnerState` and carries no duplicate compression payload.
 ## Proof anatomy
 
 `AkitaBatchedProof` stores one `FoldLevelProof` root, zero or more recursive
-`FoldLevelProof` records, and one `TerminalLevelProof`. Supported schedules
-always contain at least two fold records, so the terminal state is bound by its
-predecessor and there is no root-terminal proof variant. Each level's
+`FoldLevelProof` records, and one `TerminalLevelProof`. The root or final
+recursive fold binds the terminal state as its successor. A schedule with no
+recursive folds uses the same proof types and transcript rules. Each level's
 descriptor binds the resolved `L`, exact `F`, chunk count, and
 decomposition parameters. Singleton openings and terminal folds are ordinary
 one-group, one-chunk cases; there is no alternate block order.
+
+The offline planner runs one root search. Root contraction can change candidate
+order, but it is not a feasibility rule or part of the final objective.
+Contractive and noncontractive roots share the same suffix memo and frontier.
+The configured `SelectionPolicyId` comparator selects the final complete
+schedule. Recursive folds still require strict progress, and offloaded edges
+still enforce their explicit minimum contraction policy.

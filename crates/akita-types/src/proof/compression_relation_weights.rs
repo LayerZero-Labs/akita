@@ -6,9 +6,8 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBaseUnreduced};
 use std::ops::Range;
 
 use crate::{
@@ -580,10 +579,12 @@ where
             .ok_or(AkitaError::InvalidProof)?
             * alpha
             + E::one();
-        for (digit, gadget) in
-            gadget_row_scalars::<F>(r_decomp_levels::<F>(lp.log_basis_open), lp.log_basis_open)
-                .into_iter()
-                .enumerate()
+        for (digit, gadget) in gadget_row_scalars::<F>(
+            r_decomp_levels::<F>(lp.open().digits.log_basis),
+            lp.open().digits.log_basis,
+        )
+        .into_iter()
+        .enumerate()
         {
             weights.push(
                 witness_layout.r_coefficient_index(row_index, digit, 0, 0)?,

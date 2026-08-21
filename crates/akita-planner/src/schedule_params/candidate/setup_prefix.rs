@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ struct SetupPrefixSearchKey {
 
 #[derive(Default)]
 pub(crate) struct SetupPrefixSearchCache {
-    entries: HashMap<SetupPrefixSearchKey, Arc<[PrecommittedLevelParams]>>,
+    entries: HashMap<SetupPrefixSearchKey, Arc<[GroupOpenPhaseParams]>>,
     hits: usize,
     misses: usize,
 }
@@ -40,7 +41,7 @@ type SetupPrefixFrontierEntry = (
     [usize; 2],
     Vec<u8>,
     LayoutCandidateScore,
-    PrecommittedLevelParams,
+    GroupOpenPhaseParams,
 );
 
 #[derive(Clone, Copy)]
@@ -101,8 +102,9 @@ impl SetupPrefixCandidateContext<'_> {
             dimensions: self.dimensions,
             num_claims: 1,
             num_live_ring_elements_per_claim: self.ring_slots,
-            num_live_blocks: split.num_live_blocks,
             num_positions_per_block: split.num_positions_per_block,
+            num_live_blocks: split.num_live_blocks,
+
             num_chunks: self.num_chunks,
             witness_norms: FoldWitnessNorms::bounded(split.log_basis_inner, d_a),
             log_basis_open: self.log_basis_open,
@@ -132,22 +134,29 @@ impl SetupPrefixCandidateContext<'_> {
         else {
             return Ok(None);
         };
-        let layout = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+        let profile = GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(self.prefix_num_vars),
-            num_live_ring_elements_per_claim: self.ring_slots,
-            num_positions_per_block: split.num_positions_per_block,
-            num_live_blocks: split.num_live_blocks,
+
+            blocks: akita_types::BlockGeometry::new(
+                self.ring_slots,
+                split.num_positions_per_block,
+                split.num_live_blocks,
+            ),
+
             outer_slice_count,
-            log_basis_inner: split.log_basis_inner,
-            num_digits_inner: split.num_digits_inner,
-            inner_commit_matrix: inner_candidate.inner_commit_matrix,
-            log_basis_outer: self.log_basis_open,
-            num_digits_outer: self.num_digits_outer,
-            outer_commit_matrix,
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(split.log_basis_inner, split.num_digits_inner),
+                inner_candidate.inner_commit_matrix,
+            ),
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(self.log_basis_open, self.num_digits_outer),
+                outer_commit_matrix,
+            ),
         };
-        let params = PrecommittedLevelParams {
-            layout,
+        let params = GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile,
             opening: akita_types::GroupOpeningPlan {
                 opening_method: self.opening.method(),
                 fold_challenge_config: self.opening.challenge_config(),
@@ -158,6 +167,9 @@ impl SetupPrefixCandidateContext<'_> {
         };
         let physical_width = akita_types::grouped_witness_body_coefficients(
             &params,
+            // A setup prefix is a frozen standalone commitment, so canonical by
+            // admission.
+            akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             self.dimensions,
             self.policy.claim_ext_degree,
             1,
@@ -165,7 +177,9 @@ impl SetupPrefixCandidateContext<'_> {
         )?;
         let score = layout_candidate_score(physical_width, split.num_live_blocks, self.num_chunks)?;
         let setup_fields = akita_types::setup_prefix_slot_field_elements(
-            &akita_types::scheduled_setup_prefix(self.n_prefix, params.clone()).slot_id(),
+            &akita_types::scheduled_setup_prefix(self.n_prefix, params)
+                .slot_id()
+                .expect("setup prefix group"),
         )?;
         let coords = [physical_width, padded_setup_prefix_len(setup_fields)];
         let descriptor = params.canonical_descriptor_bytes();
@@ -189,22 +203,10 @@ fn setup_prefix_slice_counts(
         })
 }
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
-    if field_len == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} must be nonzero"
-        )));
-    }
-    let padded = field_len.checked_next_power_of_two().ok_or_else(|| {
-        AkitaError::InvalidSetup(format!("{context} power-of-two padding overflow"))
-    })?;
-    Ok(padded.trailing_zeros() as usize)
-}
-
 pub(in crate::schedule_params) fn derive_setup_prefix_groups(
     cache: &mut SetupPrefixSearchCache,
     request: SetupPrefixSearchRequest<'_>,
-) -> Result<Vec<PrecommittedLevelParams>, AkitaError> {
+) -> Result<Vec<GroupOpenPhaseParams>, AkitaError> {
     let SetupPrefixSearchRequest {
         policy,
         opening,
@@ -248,8 +250,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         ));
     }
     let ring_slots = n_prefix / inner_ring_dimension;
-    let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
-    let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
+    let reduced_vars = checked::ceil_log2(ring_slots).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix ring slots are zero or too large".into())
+    })?;
+    let prefix_num_vars = checked::ceil_log2(n_prefix).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup prefix field length is zero or too large".into())
+    })?;
     let open_decomp = DecompositionParams {
         log_basis: log_basis_open,
         ..policy.decomposition
@@ -345,11 +351,11 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
             coords[0],
             coords[1],
             *score,
-            params.layout.log_basis_inner,
-            params.layout.num_live_blocks,
+            params.profile.inner.digits.log_basis,
+            params.profile.blocks.live_blocks,
         )
     });
-    let result: Arc<[PrecommittedLevelParams]> = frontier
+    let result: Arc<[GroupOpenPhaseParams]> = frontier
         .into_iter()
         .map(|(_, _, _, params)| params)
         .collect();

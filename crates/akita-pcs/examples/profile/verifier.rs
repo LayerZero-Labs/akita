@@ -1,6 +1,6 @@
 use crate::parallel::ProfileThreadPools;
 use crate::report::report_timing;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use std::time::Instant;
 
 pub(crate) fn run_timings<S, P, F>(

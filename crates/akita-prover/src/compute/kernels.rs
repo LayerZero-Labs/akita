@@ -6,9 +6,8 @@ use crate::compute::operation_plans::{
 use crate::compute::plans::RingSwitchRelationRows;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced};
 
 /// Tensor-packed root witness alternatives produced by a tensor kernel.
 ///

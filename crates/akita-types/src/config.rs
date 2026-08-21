@@ -1,12 +1,14 @@
 //! Shared commitment-config data shapes.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Parameters controlling the gadget decomposition depth (called delta in the paper).
 ///
-/// The gadget base is `b = 2^log_basis`. Each ring coefficient with centered
-/// magnitude fitting in `log_commit_bound` bits is decomposed into
-/// `ceil(log_commit_bound / log_basis)` balanced digits in `[-b/2, b/2)`.
+/// The gadget base is `b = 2^log_basis`. Each ring coefficient is decomposed
+/// into balanced digits in `[-b/2, b/2)`. The exact depth comes from
+/// [`crate::sis::num_digits_for_bound`]. A bounded signed width can need one
+/// more digit than `ceil(log_commit_bound / log_basis)` because the balanced
+/// interval reaches one value farther on the negative side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DecompositionParams {
     /// Base-2 logarithm of the gadget base (e.g. 3 for base-8 digits in [-4, 3]).

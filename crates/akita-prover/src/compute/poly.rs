@@ -9,9 +9,10 @@ use super::runtime_capabilities::{
     RuntimeTensorBackendFor, SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
 use crate::backend::{RecursiveFoldSource, RingSwitchRelationView};
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

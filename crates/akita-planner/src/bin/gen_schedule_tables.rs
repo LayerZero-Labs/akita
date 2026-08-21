@@ -21,11 +21,10 @@ use akita_planner::generated_families::{
 };
 use akita_planner::{
     publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
-    RingDimensionScheduleMode,
 };
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
+    GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use std::env;
 use std::fs;
@@ -96,15 +95,6 @@ fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
     ALL_GENERATED_FAMILIES
         .iter()
         .find(|family| family.module_name == name)
-}
-
-fn explicit_family_is_d64(name: &str) -> bool {
-    family_by_name(name).is_some_and(|family| {
-        matches!(
-            (family.policy)().ring_dimension_schedule_mode,
-            RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 }
-        )
-    })
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {
@@ -242,19 +232,6 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if !explicit_rows.precommitted_groups.is_empty() && explicit_rows.final_group.is_none() {
         return Err("--precommitted-group requires --final-group".to_string());
     }
-    let explicit_families = explicit_rows.family_names();
-    let mut non_d64_families = explicit_families
-        .iter()
-        .filter(|family| !explicit_family_is_d64(family.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    non_d64_families.sort();
-    if !non_d64_families.is_empty() {
-        return Err(format!(
-            "explicit rows require D64 schedule families; got {}",
-            non_d64_families.join(", ")
-        ));
-    }
     if let Some(final_group) = &explicit_rows.final_group {
         if !family_args.is_empty()
             && (family_args.len() != 1 || family_args[0] != final_group.family)
@@ -268,11 +245,7 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let family_filter = if let Some(final_group) = &explicit_rows.final_group {
         Some(vec![final_group.family.clone()])
     } else if family_args.is_empty() {
-        if explicit_families.is_empty() {
-            None
-        } else {
-            Some(explicit_families.into_iter().collect())
-        }
+        None
     } else {
         Some(family_args)
     };
@@ -348,11 +321,9 @@ struct CatalogRowMetrics {
 const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
-    let final_group = CommittedGroupProfile::try_from_params(
-        key.final_group,
-        &schedule.root.params.final_group.commitment,
-    )
-    .map_err(|error| format!("derive final committed profile: {error}"))?;
+    let final_group =
+        GroupCommitPhaseParams::try_from_params(key.final_group, &schedule.root.params)
+            .map_err(|error| format!("derive final committed profile: {error}"))?;
     let profiles = CommittedGroupBatchProfile {
         final_group,
         precommitteds: key.precommitteds.clone(),
@@ -647,17 +618,6 @@ fn catalog_snapshot_rows(
 }
 
 impl ExplicitRows {
-    fn family_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let Some(final_group) = &self.final_group {
-            push_unique_name(&mut names, &final_group.family);
-        }
-        for group in &self.precommitted_groups {
-            push_unique_name(&mut names, &group.family);
-        }
-        names
-    }
-
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
             .as_ref()
@@ -680,12 +640,6 @@ impl ExplicitGroup {
 impl ExplicitRange {
     fn values(&self) -> impl Iterator<Item = usize> {
         self.start..=self.end
-    }
-}
-
-fn push_unique_name(names: &mut Vec<String>, name: &str) {
-    if !names.iter().any(|existing| existing == name) {
-        names.push(name.to_string());
     }
 }
 

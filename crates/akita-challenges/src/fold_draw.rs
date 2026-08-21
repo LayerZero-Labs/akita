@@ -2,7 +2,8 @@
 
 use crate::sampler::MAX_STACK_RING_DIM;
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript, FOLD_CHALLENGE_SEED_LEN};
 use std::marker::PhantomData;

@@ -47,8 +47,8 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
                 actual: materialize_at,
             });
         }
-        checked_table_len(tail_point.len())?;
-        checked_table_len(tail_point.len() - materialize_at)?;
+        reduction_table_len(tail_point.len())?;
+        reduction_table_len(tail_point.len() - materialize_at)?;
 
         let eta_weights = EqPolynomial::evals(&eta)?;
         let basis = (0..width)

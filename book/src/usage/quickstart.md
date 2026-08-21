@@ -1,70 +1,208 @@
-# Quickstart and configuration
+# Your first proof
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+The quickest way to understand Akita is to run one complete commitment and
+opening proof. The repository includes a checked example that uses the real
+production API from setup through verification.
 
-The smallest path to a working
-`commit(GroupContext::scheduler_without_precommitted_groups())` → `batched_prove` →
-`batched_verify`, then how to pick the `CommitmentConfig` preset that matches
-your field and proof-size goals.
+Run this command from the repository root:
 
-## Quickstart
+```bash
+cargo run -p akita-pcs --release --example quickstart
+```
 
-Build/test commands, the smallest end-to-end template, and the profile default
-a newcomer should reach for first.
+The first release build compiles the complete proving stack. Later runs reuse
+those build results. A successful run ends with output of this form:
 
-**Sources to fold in**
+```text
+Akita proof verified (... bytes)
+```
 
-- `crates/akita-pcs/tests/akita_fp128_e2e.rs` (smallest E2E template).
-- `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
-  (`AKITA_MODE=onehot_fp128`, `AKITA_NUM_VARS=32`).
+The complete source is
+[`crates/akita-pcs/examples/quickstart.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-pcs/examples/quickstart.rs).
+The normal Cargo checks compile this example with the public API. The chapter
+therefore stays tied to code that works.
 
-## Choosing a configuration
+## The statement being proved
 
-How the `fp32` / `fp64` / `fp128` preset families differ, when to choose one-hot
-vs dense, and how ring dimension `D` trades proof size against prover time
-and setup memory.
+The example uses `fp128::Dense`, Akita's direct configuration for arbitrary
+values in its 128 bit field. It creates a table with $2^{14}$ field elements.
+That table represents a multilinear polynomial with 14 variables.
 
-**Paper framing (§3.5 `sec:akita-params`).** The uniform production profile uses
-**d=64** with the signed-sparse challenge family. The default direct fp128
-one-hot preset now chooses dimensions per fold from generated adaptive tables;
-**d=32** remains invalid for the A-role fold degree (`d_a ≥ 64`).
+The example then chooses a point with 14 coordinates and evaluates the
+multilinear polynomial there. This value is the public claim. In a larger proof
+system, the host protocol usually produces the table, point, and claimed value.
 
-**Proof-size / CI reality (committed-fold A-role SIS pricing).**
+```rust
+type Config = fp128::Dense;
+type F = fp128::Field;
 
-| Field | Typical production choice | Notes |
-|-------|---------------------------|--------|
-| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** Generated schedules choose dimensions for the first two fold levels and use the D64 suffix domain. Direct dense uses `fp128::Dense`; recursive and multi-chunk companions inherit the adaptive policy and have their own generated catalog keys. |
-| **fp32** | **Adaptive one-hot** (`fp32::OneHot`) | Searches A at D64 through D1024, B/D at D64 through D256, and the monotone D64/D128 suffix domain. CI benches at **nv=30**. |
-| **fp64** | **Adaptive one-hot** (`fp64::OneHot`) | Searches A at D64 through D512, B/D at D64 through D256, and the D64 suffix domain. CI benches at **nv=30**. |
+const NUM_VARS: usize = 14;
 
-Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
+let polynomial = DensePoly::from_field_evals(NUM_VARS, &evaluations)?;
+let evaluation = evaluate_multilinear(&evaluations, &point);
+```
 
-**Bounded dense.** If every coefficient of your dense polynomial is `u64`-valued,
-`fp128::DenseBounded` (behind `schedules-fp128-dense-bounded`) sizes the
-commitment for that range instead of the full 128-bit field. It roughly halves the
-A-role digit depth, and with it the shared setup matrix and the prover-side
-witness the recursion suffix inherits; proof size is roughly unchanged.
+The helper that computes `evaluation` is independent of the Akita prover. It
+exists to give the verifier a concrete public value to check.
 
-The declared bound is `DenseBounded::LOG_COMMIT_BOUND = 65`, a **signed** bit
-width spanning `[-2^64, 2^64 - 1]`. It is 65 rather than 64 because the bound
-counts a sign bit, and `u64::MAX = 2^64 - 1` needs 64 magnitude bits on top of it;
-`DenseBounded::MAX_CENTERED_MAGNITUDE` states the accepted positive endpoint
-directly.
+## Build reusable setup
 
-The trade is that `commit` **rejects** a coefficient outside the declared range
-rather than committing a truncated value, so use `fp128::Dense` when the bound
-cannot be guaranteed. See
-[Bounded committed sources](../how/configuration.md#bounded-committed-sources).
+The configuration determines which generated schedules the application may
+use. `setup_prover` allocates enough public matrix data for the declared maximum
+number of variables and polynomials in one group.
 
-**Test harness vs profile defaults.** Direct protocol tests should use
-`fp128::OneHot` and `fp128::Dense`. Recursive and multi-chunk tests use their
-dedicated companion configs and generated catalogs.
+```rust
+let setup = AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1)?;
+let backend = CpuBackend::DEFAULT;
+let prepared = backend.prepare_setup(&setup)?;
+let stack = UniformProverStack::uniform(
+    &backend,
+    &prepared,
+    setup.expanded.as_ref(),
+)?;
+```
 
-**Sources to fold in**
+The prepared backend holds reproducible compute state such as transformed
+matrix prefixes. Applications should reuse it across commitments and proofs.
+Setup is public. Akita does not require a secret trapdoor or a trusted setup
+ceremony.
 
-- `crates/akita-config/src/proof_optimized/` and `crates/akita-planner/src/generated_families.rs`.
-- `crates/akita-schedules/src/resolve.rs` and `crates/akita-schedules/src/generated/`.
-- Paper §3.5 `sec:akita-params`.
-- Paper §3.11 `sec:akita-planner` (generated tables + offline DP parity guard).
-- `.github/workflows/profile-bench.yml` and [`profiling.md`](profiling.md).
-- `AGENTS.md` (Profiling).
+## Commit to the polynomial
+
+One call commits to one group of polynomials. This example has one polynomial
+and no earlier groups.
+
+```rust
+let commit_output = AkitaCommitmentScheme::<Config>::commit(
+    &setup,
+    std::slice::from_ref(&polynomial),
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+```
+
+The call returns two values:
+
+- `committed_group` is public. The verifier receives it.
+- `hint` is private prover data. The prover keeps it with the polynomial.
+
+The group context tells Akita which catalog row to use for the commitment. A
+later chapter explains how earlier commitment groups change this context.
+
+## Assemble the opening claim
+
+An opening claim joins the point, claimed value, and commitment. The prover also
+supplies the original polynomial and its private hint.
+
+```rust
+let prover_claims = OpeningClaims::from_groups(vec![
+    PolynomialGroupClaims::new(
+        point.clone(),
+        vec![evaluation],
+        commit_output.committed_group.clone(),
+    )?,
+])?;
+
+let polynomial_group = [&polynomial];
+let prover_data = SelectedProverOpeningData::from_committed_claims::<Config>(
+    prover_claims,
+    vec![commit_output.hint],
+    vec![&polynomial_group],
+)?;
+let selection = prover_data.selection();
+```
+
+`SelectedProverOpeningData` checks that the public claims, commitment profiles,
+private hints, and polynomial groups have the same order and shape. It also
+selects the exact generated proof schedule for the complete batch.
+
+## Produce the proof
+
+The prover starts a transcript with an application specific domain. This domain
+separates the proof from every other protocol that may use the same transcript
+construction.
+
+```rust
+const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
+
+let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
+let proof = AkitaCommitmentScheme::<Config>::batched_prove(
+    &setup,
+    prover_data,
+    &stack,
+    &mut prover_transcript,
+    BasisMode::Lagrange,
+)?;
+```
+
+`BasisMode::Lagrange` means that the committed table contains values on the
+Boolean cube. This is the standard representation for multilinear extensions
+in proof systems.
+
+## Encode and decode the proof
+
+Applications send bytes, not Rust objects. The example therefore performs a
+real compressed serialization round trip before verification.
+
+```rust
+let proof_shape = proof.shape();
+let mut proof_bytes = Vec::new();
+proof.serialize_compressed(&mut proof_bytes)?;
+
+let decoded_proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
+    &mut std::io::Cursor::new(&proof_bytes),
+    &proof_shape,
+)?;
+```
+
+The shape gives the decoder explicit limits and structure. A deployment should
+derive or authenticate that shape from its supported configuration and public
+statement before allocating for an incoming proof.
+
+## Verify with fresh public state
+
+The verifier needs public setup, the commitment, the point, the claimed value,
+and the selected schedule row. It does not receive the polynomial or commitment
+hint.
+
+```rust
+let verifier_setup = AkitaCommitmentScheme::<Config>::setup_verifier(&setup)?;
+let verifier_claims = OpeningClaims::from_groups(vec![
+    PolynomialGroupClaims::new(
+        point,
+        vec![evaluation],
+        &commit_output.committed_group,
+    )?,
+])?;
+let statement = GroupBatchStatement::new(selection, verifier_claims)?;
+
+let mut verifier_transcript =
+    AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
+akita_verifier::batched_verify::<Config, _>(
+    &decoded_proof,
+    &verifier_setup,
+    &mut verifier_transcript,
+    statement,
+    BasisMode::Lagrange,
+)?;
+```
+
+The prover and verifier each create a fresh transcript for their side of the
+protocol. Akita binds the complete public statement before deriving proof
+challenges, so a change to the group order, point, value, commitment,
+configuration, or schedule causes verification to fail.
+
+## What to change next
+
+The example fixes its choices so that the lifecycle stays easy to follow. A
+real integration will choose them from the host protocol.
+
+- Use [Choosing a configuration](./configuration.md) to select the field and
+  polynomial representation.
+- Use [Integrating the PCS](./integration.md) for several polynomials, several
+  opening points, or earlier commitment groups.
+- Use [Verifier only integration](./verifier-only.md) when verification must
+  compile without the prover backend.
+- Use [Integrating with a proof system](./integrations.md) to connect Akita to
+  a host protocol or recursive verifier.
+- Use [Profiling](./profiling.md) to measure a production size workload.

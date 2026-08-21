@@ -1,17 +1,30 @@
 # Summary
 
-[Introduction](./intro.md)
+# Introduction
 
-# Usage
+- [Introduction](./intro.md)
+  - [Why lattices?](./introduction/why-lattices.md)
+  - [Built for production](./introduction/built-for-production.md)
+  - [Reviewing and auditing Akita](./introduction/reviewing-akita.md)
 
-- [Overview](./usage/usage.md)
-  - [Quickstart and configuration](./usage/quickstart.md)
-  - [The commitment API](./usage/commitment-api.md)
-  - [Verifier-only integration](./usage/verifier-only.md)
-  - [Feature flags](./usage/feature-flags.md)
-  - [Profiling](./usage/profiling.md)
-  - [Troubleshooting](./usage/troubleshooting.md)
-  - [Jolt recursion](./usage/jolt-recursion.md)
+# Using Akita
+
+- [Using Akita](./usage/usage.md)
+  - [Your first proof](./usage/quickstart.md)
+  - [Choosing a configuration](./usage/configuration.md)
+  - [Integrating the PCS](./usage/integration.md)
+    - [Commitment groups and opening claims](./usage/commitment-api.md)
+    - [Setup and prepared compute state](./usage/setup-runtime.md)
+    - [Proof encoding and transcripts](./usage/proof-artifacts.md)
+    - [Verifier only integration](./usage/verifier-only.md)
+  - [Operating Akita](./usage/operating.md)
+    - [Feature flags and build recipes](./usage/feature-flags.md)
+    - [Profiling a workload](./usage/profiling.md)
+    - [Reading benchmark reports](./usage/benchmark-reports.md)
+    - [Arithmetic microbenchmarks](./usage/arithmetic-benchmarks.md)
+    - [Troubleshooting](./usage/troubleshooting.md)
+  - [Integrating with a proof system](./usage/integrations.md)
+    - [Jolt recursion](./usage/jolt-recursion.md)
 
 # How it works
 
@@ -30,8 +43,9 @@
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
     - [Extension-opening reduction](./how/proving/extension-opening-reduction.md)
-    - [The distributed prover](./how/proving/distributed-prover.md)
+  - [The distributed prover](./how/proving/distributed-prover.md)
   - [Recursion and proof shape](./how/recursion.md)
+  - [Setup offloading](./how/setup-offloading.md)
   - [Verification](./how/verification.md)
     - [Matrix evaluation at a point](./how/verifying/matrix_evaluation.md)
     - [The Stage 2 fused check](./how/verifying/stage2.md)
@@ -48,12 +62,11 @@
   - [Cyclotomic rings and extension fields](./foundations/rings-and-fields.md)
   - [NTT, CRT, and fast ring arithmetic](./foundations/ntt-crt.md)
   - [Gadget decomposition](./foundations/gadget-decomposition.md)
-  - [Lattices, Module-SIS, and discrete Gaussians](./foundations/lattices-sis.md)
+  - [Lattices and Module-SIS](./foundations/lattices-sis.md)
   - [Multilinear extensions and sum-check](./foundations/multilinear-sumcheck.md)
   - [Equality-factored sum-check](./foundations/eq-factored-sumcheck.md)
   - [Extension-opening reduction](./foundations/extension-opening-reduction.md)
   - [Polynomial commitments and binding](./foundations/pcs-and-binding.md)
-  - [Zero-knowledge background](./foundations/zero-knowledge.md)
   - [Glossary and notation](./foundations/glossary.md)
   - [Spec index](./foundations/spec-index.md)
   - [References](./foundations/references.md)
@@ -61,6 +74,5 @@
 # Roadmap
 
 - [Roadmap](./roadmap/roadmap.md)
-  - [Verifier offloading](./roadmap/verifier-offloading.md)
-  - [Zero-knowledge](./roadmap/zero-knowledge.md)
+  - [Zero knowledge](./roadmap/zero-knowledge.md)
   - [Compute backends (GPU/Metal)](./roadmap/compute-backends.md)

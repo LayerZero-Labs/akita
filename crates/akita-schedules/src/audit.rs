@@ -1,6 +1,6 @@
 //! Canonical security audit for one fully expanded schedule row.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     num_digits_inner, num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
@@ -9,7 +9,7 @@ use akita_types::sis::{
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    PrecommittedLevelParams, TerminalCommittedGroupParams, TerminalResponseShape,
+    GroupOpenPhaseParams, TerminalFoldParams, TerminalResponseShape,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
@@ -95,12 +95,12 @@ fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<()
 
 fn audit_precommitted_group(
     label: &str,
-    params: &PrecommittedLevelParams,
+    params: &GroupOpenPhaseParams,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     params.validate()?;
-    audit_inner_matrix(label, &params.layout.inner_commit_matrix, policy)?;
-    audit_outer_matrix(label, &params.layout.outer_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.profile.inner.matrix, policy)?;
+    audit_outer_matrix(label, &params.profile.outer.matrix, policy)?;
 
     let expected_open_digits = num_digits_open(DecompositionParams {
         log_basis: params.opening.log_basis_open,
@@ -114,8 +114,9 @@ fn audit_precommitted_group(
     }
 
     let declared_a_bound = params
-        .layout
-        .inner_commit_matrix
+        .profile
+        .inner
+        .matrix
         .coeff_linf_bound()
         .ok_or_else(|| {
             invalid(
@@ -130,7 +131,7 @@ fn audit_precommitted_group(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            params.layout.inner_commit_matrix.ring_dimension(),
+            params.profile.inner.matrix.ring_dimension(),
             params.opening.log_basis_open,
             &params.opening.fold_challenge_config,
             params.opening.num_digits_fold,
@@ -138,12 +139,12 @@ fn audit_precommitted_group(
     )?;
     audit_bound(
         label,
-        params.layout.outer_commit_matrix.coeff_linf_bound(),
+        params.profile.outer.matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            params.layout.outer_commit_matrix.ring_dimension(),
+            params.profile.outer.matrix.ring_dimension(),
             params.opening.log_basis_open,
         ),
     )
@@ -157,28 +158,24 @@ fn expected_d_width(
 ) -> Result<usize, AkitaError> {
     let dims = params.role_dims();
     let mut width = akita_types::opening_d_segment_width(
-        params.opening_method,
+        params.opening_method(),
         extension_degree,
         dims.d_a(),
         dims.d_d(),
-        params.num_digits_open,
-        params.num_live_blocks,
+        params.open().digits.num_digits,
+        params.blocks().live_blocks,
         num_claims,
     )
     .map_err(|_| invalid(label, "main D width is incompatible with opening geometry"))?;
 
-    for group in &params.precommitted_groups {
+    for group in params.precommitted_groups() {
         width = width
             .checked_add(group.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "precommitted D width overflow"))?;
     }
-    if let Some(prefix) = &params.setup_prefix {
+    if let Some(prefix) = params.setup_prefix() {
         width = width
-            .checked_add(
-                prefix
-                    .commitment_params
-                    .d_segment_width(extension_degree, dims.d_d())?,
-            )
+            .checked_add(prefix.d_segment_width(extension_degree, dims.d_d())?)
             .ok_or_else(|| invalid(label, "setup-prefix D width overflow"))?;
     }
     Ok(width)
@@ -198,19 +195,19 @@ fn audit_committed_params(
     params.witness_chunk.validate()?;
     validate_role_dims(params.role_dims())?;
     params
-        .fold_challenge_config
+        .fold_challenge_config()
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    audit_inner_matrix(label, &params.inner_commit_matrix, policy)?;
-    audit_outer_matrix(label, &params.outer_commit_matrix, policy)?;
-    audit_open_matrix(label, &params.open_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.inner().matrix, policy)?;
+    audit_outer_matrix(label, &params.outer().matrix, policy)?;
+    audit_open_matrix(label, &params.open().matrix, policy)?;
 
     let expected_outer_digits = num_digits_open(DecompositionParams {
-        log_basis: params.log_basis_outer,
+        log_basis: params.outer().digits.log_basis,
         ..policy.decomposition
     });
     let expected_open_digits = num_digits_open(DecompositionParams {
-        log_basis: params.log_basis_open,
+        log_basis: params.open().digits.log_basis,
         ..policy.decomposition
     });
     // A generated row stores its own `num_digits_inner` and expansion replays it
@@ -222,38 +219,39 @@ fn audit_committed_params(
     // under a possibly different producer bound and are not covered here.
     let expected_inner_digits = num_digits_inner(
         DecompositionParams {
-            log_basis: params.log_basis_inner,
+            log_basis: params.inner().digits.log_basis,
             ..policy.decomposition
         },
         fold_level == 0,
     );
-    if params.num_digits_inner != expected_inner_digits
-        || params.num_digits_fold == 0
-        || params.num_digits_outer != expected_outer_digits
-        || params.num_digits_open != expected_open_digits
+    if params.inner().digits.num_digits != expected_inner_digits
+        || params.num_digits_fold() == 0
+        || params.outer().digits.num_digits != expected_outer_digits
+        || params.open().digits.num_digits != expected_open_digits
     {
         return Err(invalid(label, "digit depths are missing or noncanonical"));
     }
 
     let dims = params.role_dims();
     let expected_a_width = params
-        .num_positions_per_block
-        .checked_mul(params.num_digits_inner)
+        .blocks()
+        .positions_per_block
+        .checked_mul(params.inner().digits.num_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
     let expected_b_width = CommitmentSliceGeometry::try_new(
-        params.outer_slice_count,
-        params.num_live_blocks,
+        params.outer_slice_count(),
+        params.blocks().live_blocks,
         num_claims,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_outer,
+        params.inner().matrix.output_rank(),
+        params.outer().digits.num_digits,
         dims.d_a(),
         dims.d_b(),
     )?
     .physical_input_width();
     let expected_d_width = expected_d_width(label, params, num_claims, policy.claim_ext_degree)?;
-    if params.inner_commit_matrix.input_width() != expected_a_width
-        || params.outer_commit_matrix.input_width() != expected_b_width
-        || params.open_commit_matrix.input_width() != expected_d_width
+    if params.inner().matrix.input_width() != expected_a_width
+        || params.outer().matrix.input_width() != expected_b_width
+        || params.open().matrix.input_width() != expected_d_width
     {
         return Err(invalid(
             label,
@@ -261,7 +259,7 @@ fn audit_committed_params(
         ));
     }
 
-    match params.inner_commit_matrix.security_route() {
+    match params.inner().matrix.security_route() {
         InnerCommitSecurityRoute::Linf(key) => audit_bound(
             label,
             key.coeff_linf_bound,
@@ -270,16 +268,16 @@ fn audit_committed_params(
                 policy.sis_table_digest,
                 policy.sis_modulus_profile,
                 dims.d_a(),
-                params.log_basis_open,
-                &params.fold_challenge_config,
-                params.num_digits_fold,
+                params.open().digits.log_basis,
+                &params.fold_challenge_config(),
+                params.num_digits_fold(),
             ),
         )?,
         InnerCommitSecurityRoute::L2 {
             response_l2_sq_cap, ..
         } => {
             let fold_basis = 1usize
-                .checked_shl(params.log_basis_open)
+                .checked_shl(params.open().digits.log_basis)
                 .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
             let expected = selective_l2_inner_matrix(
                 policy,
@@ -290,8 +288,8 @@ fn audit_committed_params(
                     inner_width: expected_a_width,
                     ring_dimension: dims.d_a(),
                     fold_basis,
-                    fold_digit_count: params.num_digits_fold,
-                    fold_challenge_config: &params.fold_challenge_config,
+                    fold_digit_count: params.num_digits_fold(),
+                    fold_challenge_config: &params.fold_challenge_config(),
                     response_l2_sq_cap: Some(response_l2_sq_cap),
                     norm_proof_shape: None,
                 },
@@ -302,7 +300,7 @@ fn audit_committed_params(
                     "L2 route is not admitted by the frozen suffix response cap",
                 )
             })?;
-            if params.inner_commit_matrix != expected {
+            if params.inner().matrix != expected {
                 return Err(invalid(
                     label,
                     "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
@@ -312,24 +310,24 @@ fn audit_committed_params(
     }
     audit_bound(
         label,
-        params.outer_commit_matrix.coeff_linf_bound(),
+        params.outer().matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
             dims.d_b(),
-            params.log_basis_outer,
+            params.outer().digits.log_basis,
         ),
     )?;
     audit_bound(
         label,
-        params.open_commit_matrix.coeff_linf_bound(),
+        params.open().matrix.coeff_linf_bound(),
         rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Open,
             dims.d_d(),
-            shared_d_digit_log_basis(params.log_basis_open, &params.precommitted_groups),
+            shared_d_digit_log_basis(params.open().digits.log_basis, params.precommitted_groups()),
         ),
     )
 }
@@ -340,43 +338,45 @@ struct TerminalL2ModelState {
 }
 
 fn audit_terminal(
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     response_shape: &TerminalResponseShape,
     model_state: TerminalL2ModelState,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
-    audit_inner_matrix(label, &params.inner_commit_matrix, policy)?;
+    audit_inner_matrix(label, &params.inner.matrix, policy)?;
     sparse
         .validate_for_ring_dim(params.d_a())
         .map_err(|message| invalid(label, message))?;
-    if params.fold_log_basis == 0
-        || params.fold_digit_count == 0
-        || params.num_live_ring_elements_per_claim == 0
-        || params.num_positions_per_block == 0
-        || !params.num_positions_per_block.is_power_of_two()
-        || params.num_live_blocks
+    if params.fold.log_basis == 0
+        || params.fold.num_digits == 0
+        || params.blocks.live_ring_elements_per_claim == 0
+        || params.blocks.positions_per_block == 0
+        || !params.blocks.positions_per_block.is_power_of_two()
+        || params.blocks.live_blocks
             != params
-                .num_live_ring_elements_per_claim
-                .div_ceil(params.num_positions_per_block)
+                .blocks
+                .live_ring_elements_per_claim
+                .div_ceil(params.blocks.positions_per_block)
     {
         return Err(invalid(label, "invalid terminal fold or block geometry"));
     }
 
     let expected_digits = num_digits_inner(
         DecompositionParams {
-            log_basis: params.log_basis_inner,
+            log_basis: params.inner.digits.log_basis,
             ..policy.decomposition
         },
         false,
     );
     let expected_width = params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .checked_mul(expected_digits)
         .ok_or_else(|| invalid(label, "A width overflow"))?;
-    if params.num_digits_inner != expected_digits
-        || params.inner_commit_matrix.input_width() != expected_width
+    if params.inner.digits.num_digits != expected_digits
+        || params.inner.matrix.input_width() != expected_width
     {
         return Err(invalid(
             label,
@@ -395,12 +395,14 @@ fn audit_terminal(
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal z coordinates overflow"))?;
     let expected_e_field_elems = params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .checked_mul(d)
         .ok_or_else(|| invalid(label, "terminal e coordinates overflow"))?;
     let expected_t_field_elems = params
-        .num_live_blocks
-        .checked_mul(params.inner_commit_matrix.output_rank())
+        .blocks
+        .live_blocks
+        .checked_mul(params.inner.matrix.output_rank())
         .and_then(|value| value.checked_mul(d))
         .ok_or_else(|| invalid(label, "terminal t coordinates overflow"))?;
     let expected_logical_num_elems = expected_z_coords
@@ -408,14 +410,14 @@ fn audit_terminal(
         .and_then(|value| value.checked_add(expected_t_field_elems))
         .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
     if matches!(
-        params.inner_commit_matrix.security_route(),
+        params.inner.matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ) {
         if akita_challenges::selective_l2_operator_norm_rejection(d, sparse).is_none() {
             return Err(invalid(label, "terminal L2 challenge is not certified"));
         }
         let fold_basis = 1usize
-            .checked_shl(params.fold_log_basis)
+            .checked_shl(params.fold.log_basis)
             .ok_or_else(|| invalid(label, "L2 balanced digit basis overflow"))?;
         let expected = selective_l2_inner_matrix(
             policy,
@@ -426,7 +428,7 @@ fn audit_terminal(
                 inner_width: expected_width,
                 ring_dimension: d,
                 fold_basis,
-                fold_digit_count: params.fold_digit_count,
+                fold_digit_count: params.fold.num_digits,
                 fold_challenge_config: sparse,
                 response_l2_sq_cap: params.response_l2_sq_cap(),
                 norm_proof_shape: Some(akita_types::PhysicalL2NormProofShape::Direct {
@@ -440,7 +442,7 @@ fn audit_terminal(
                 "L2 route is not admitted by the frozen terminal response cap",
             )
         })?;
-        if params.inner_commit_matrix != expected {
+        if params.inner.matrix != expected {
             return Err(invalid(
                 label,
                 "L2 A matrix disagrees with canonical cap, proof shape, table, or rank",
@@ -459,9 +461,7 @@ fn audit_terminal(
             "terminal response shape disagrees with the committed witness geometry",
         ));
     }
-    if params
-        .validate_terminal_linf_cap(sparse, group.z_linf_cap)
-        .is_err()
+    if params.validate_terminal_linf_cap(group.z_linf_cap).is_err()
         || group.z_rice_low_bits >= 64
         || group.z_payload_bytes == 0
     {
@@ -484,9 +484,9 @@ pub(crate) fn audit_resolved_schedule(
     schedule.validate_structure()?;
 
     let root = &schedule.root.params;
-    let final_params = &root.final_group.commitment;
+    let final_params = &root;
     if !matches!(
-        final_params.inner_commit_matrix.security_route(),
+        final_params.inner().matrix.security_route(),
         InnerCommitSecurityRoute::Linf(_)
     ) {
         return Err(invalid(
@@ -494,42 +494,34 @@ pub(crate) fn audit_resolved_schedule(
             "root cannot use an L2 A security route",
         ));
     }
-    let expected_final_profile = akita_types::CommittedGroupProfile::try_from_params(
-        profiles.final_group.group,
-        final_params,
-    )?;
-    if profiles.final_group != expected_final_profile
-        || profiles.precommitteds.len() != root.precommitted_groups.len()
-        || root.open_commit_matrix != final_params.open_commit_matrix
-        || final_params.precommitted_groups.len() != root.precommitted_groups.len()
+    // Four of the five comparisons that used to live here compared a field with
+    // a copy of itself and are deleted with the merge: the shared D matrix, the
+    // precommitted-group count (twice over), and each group's `descriptor`
+    // against its own `commitment.profile`. What survives is the only one that
+    // relates two independent sources: the ordered profiles from the lookup key
+    // against the expanded row.
+    if profiles.final_group != final_params.own_group().profile
+        || profiles.precommitteds.len() != final_params.precommitted_groups().len()
     {
         return Err(invalid(
             "root fold",
-            "ordered profiles or shared D metadata disagree with the expanded row",
+            "ordered profiles disagree with the expanded row",
         ));
     }
 
-    for (index, ((profile, root_group), params_group)) in profiles
+    for (index, (profile, group)) in profiles
         .precommitteds
         .iter()
-        .zip(&root.precommitted_groups)
-        .zip(&final_params.precommitted_groups)
+        .zip(final_params.precommitted_groups())
         .enumerate()
     {
-        if profile != &root_group.descriptor
-            || profile != &root_group.commitment.layout
-            || root_group.commitment != *params_group
-        {
+        if profile != &group.profile {
             return Err(invalid(
                 &format!("root precommitted group {index}"),
                 "profile and consuming parameters disagree",
             ));
         }
-        audit_precommitted_group(
-            &format!("root precommitted group {index}"),
-            &root_group.commitment,
-            policy,
-        )?;
+        audit_precommitted_group(&format!("root precommitted group {index}"), group, policy)?;
     }
 
     audit_committed_params(
@@ -542,22 +534,16 @@ pub(crate) fn audit_resolved_schedule(
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         audit_committed_params(
             &format!("recursive fold {index}"),
-            &step.params.witness,
+            &step.params,
             1,
             index + 1,
             policy,
         )?;
-        if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {
-            return Err(invalid(
-                &format!("recursive fold {index}"),
-                "shared D matrix disagrees with the witness parameters",
-            ));
-        }
     }
     audit_terminal(
-        &schedule.terminal.params.witness,
-        &schedule.terminal.params.sparse_challenge_config,
-        &schedule.terminal.params.response_shape,
+        &schedule.terminal,
+        &schedule.terminal.fold_challenge_config,
+        &schedule.terminal.response_shape,
         TerminalL2ModelState {
             fold_level: schedule.recursive_folds.len() + 1,
         },
@@ -568,9 +554,7 @@ pub(crate) fn audit_resolved_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{
-        GeneratedBlockGeometry, GeneratedInnerCommitMatrix, GeneratedTerminalFold,
-    };
+    use crate::generated::{GeneratedMatrix, GeneratedTerminalFold};
     use crate::{PlannerCostModelId, RingDimensionScheduleMode, SelectionPolicyId};
     use akita_types::{
         ChunkedWitnessCfg, SisL2TableDigest, SisModulusProfileId, SisSecurityPolicyId,
@@ -634,12 +618,8 @@ mod tests {
         .expect("candidate construction")
         .expect("exact terminal calibration");
         let generated = GeneratedTerminalFold {
-            geometry: GeneratedBlockGeometry {
-                live_ring_elements_per_claim: 16,
-                positions_per_block: 16,
-                live_blocks: 1,
-            },
-            inner_commit_matrix: GeneratedInnerCommitMatrix {
+            geometry: akita_types::BlockGeometry::new(16, 16, 1),
+            inner_commit_matrix: GeneratedMatrix {
                 ring_dimension: 64,
                 log_basis: 4,
             },
@@ -667,12 +647,12 @@ mod tests {
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
             .expect("frozen cap expansion must preserve stored fold digits");
         assert_eq!(
-            expanded_wrong_fold_digits.fold_digit_count,
+            expanded_wrong_fold_digits.fold.num_digits,
             wrong_fold_digits.fold_digit_count as usize
         );
         assert_ne!(
-            expanded_wrong_fold_digits.fold_digit_count,
-            terminal.fold_digit_count
+            expanded_wrong_fold_digits.fold.num_digits,
+            terminal.fold.num_digits
         );
         let alternate_fold_basis = GeneratedTerminalFold {
             fold_log_basis: 3,
@@ -681,10 +661,10 @@ mod tests {
         let expanded_alternate_fold_basis = alternate_fold_basis
             .expand_to_level_params(&policy, |_| Ok(sparse), 3, INPUT_WITNESS_LEN)
             .expect("basis-eight L2 geometry must remain eligible");
-        assert_eq!(expanded_alternate_fold_basis.fold_log_basis, 3);
+        assert_eq!(expanded_alternate_fold_basis.fold.log_basis, 3);
         assert_ne!(
-            expanded_alternate_fold_basis.fold_log_basis,
-            terminal.fold_log_basis
+            expanded_alternate_fold_basis.fold.log_basis,
+            terminal.fold.log_basis
         );
 
         let response_shape =
@@ -698,7 +678,7 @@ mod tests {
         )
         .expect("canonical terminal matrix");
 
-        let (table_key, norm_proof_shape) = match terminal.inner_commit_matrix.security_route() {
+        let (table_key, norm_proof_shape) = match terminal.inner.matrix.security_route() {
             InnerCommitSecurityRoute::L2 {
                 table_key,
                 norm_proof_shape,
@@ -706,7 +686,7 @@ mod tests {
             } => (table_key, norm_proof_shape),
             InnerCommitSecurityRoute::Linf(_) => panic!("expected L2 terminal"),
         };
-        terminal.inner_commit_matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
+        terminal.inner.matrix = InnerCommitMatrixParams::try_new_l2_with_min_rank(
             table_key,
             INNER_WIDTH,
             RESPONSE_CAP * 16,

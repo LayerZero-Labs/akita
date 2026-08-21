@@ -124,7 +124,7 @@ where
     let relation_plan = akita_types::RelationRangeImagePlan::new(
         relation_geometry,
         geometry,
-        akita_types::DigitRangePlan::new(1usize << lp.log_basis_open)?,
+        akita_types::DigitRangePlan::new(1usize << lp.open().digits.log_basis)?,
         witness_layout.clone(),
         opening_batch,
     )?;
@@ -247,7 +247,7 @@ where
             digit_range_equality_low_variable_count,
             tau0,
             tau1,
-            b: 1usize << lp.log_basis_open,
+            b: 1usize << lp.open().digits.log_basis,
             alpha,
         },
         relation_plan,

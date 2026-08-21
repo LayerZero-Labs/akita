@@ -2,7 +2,8 @@
 
 use crate::proof::PhysicalL2NormProofWireShape;
 use crate::{AkitaStage1Proof, AkitaStage1StageShape, InnerCommitSecurityRoute};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{append_ext_field, labels, Transcript};
 
 /// Absorb digit-range product child claims in their canonical transcript order.

@@ -4,7 +4,8 @@ use std::marker::PhantomData;
 
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 
 use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
@@ -70,7 +71,7 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
 /// Derive the trace-weight layout for the `e_hat` digit segment.
 ///
 /// `num_trace_blocks` is the logical number of folded opening blocks addressed
-/// by the trace term. Recursive singleton folds use `lp.num_live_blocks`; batched
+/// by the trace term. Recursive singleton folds use `lp.blocks.live_blocks`; batched
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
     lp: &CommittedGroupParams,
@@ -97,16 +98,17 @@ pub fn trace_weight_layout_from_segment(
             "trace block count disagrees with witness layout".to_string(),
         ));
     }
-    let block_index_bits = num_trace_blocks.next_power_of_two().trailing_zeros() as usize;
+    let block_index_bits = checked::ceil_log2(num_trace_blocks)
+        .ok_or_else(|| AkitaError::InvalidInput("trace-weight block count is too large".into()))?;
     let layout = TraceWeightLayout {
         ring_bits,
         col_bits,
         num_live_blocks: num_trace_blocks,
-        num_digits_open: lp.num_digits_open,
+        num_digits_open: lp.open().digits.num_digits,
         source_ring_dim: lp.role_dims().d_a(),
         opening_ring_dim: lp.role_dims().d_d(),
         block_index_bits,
-        log_basis_open: lp.log_basis_open,
+        log_basis_open: lp.open().digits.log_basis,
         witness_layout: witness_layout.clone(),
         opening_source_len,
         group_id,
@@ -349,11 +351,10 @@ pub fn root_trace_block_opening<X: FieldCore>(
             "trace opening requires power-of-two M and positive B".to_string(),
         ));
     }
-    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
-    let block_index_bits = num_live_blocks
-        .checked_next_power_of_two()
-        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?
-        .trailing_zeros() as usize;
+    let position_index_bits =
+        crate::BlockGeometry::position_index_bits_for(num_positions_per_block);
+    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
     let target = position_index_bits
         .checked_add(block_index_bits)
         .and_then(|n| n.checked_add(alpha_bits))
@@ -392,7 +393,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
 {
     let inputs = RootTraceClaimInputs {
-        num_live_blocks: lp.num_live_blocks,
+        num_live_blocks: lp.blocks().live_blocks,
         opening_batch,
         prepared_point,
         row_coefficients,
@@ -507,7 +508,11 @@ where
             num_digits_open: group_lp.num_digits_open(),
             source_ring_dim: group_dims.d_a(),
             opening_ring_dim: group_dims.d_d(),
-            block_index_bits: num_live_blocks.next_power_of_two().trailing_zeros() as usize,
+            block_index_bits: checked::ceil_log2(num_live_blocks).ok_or_else(|| {
+                AkitaError::InvalidInput(
+                    "trace-weight group block count is zero or too large".into(),
+                )
+            })?,
             log_basis_open: group_lp.log_basis_open(),
             witness_layout: layout.witness_layout.clone(),
             opening_source_len: layout.opening_source_len,

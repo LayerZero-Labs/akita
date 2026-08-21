@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile, FoldSchedule,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
     OpeningScheduleSelection,
 };
 
@@ -109,7 +109,7 @@ fn validate_canonical_transition_lengths(
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let field_bits = policy.decomposition.field_bits();
-    let root_params = &schedule.root.params.final_group.commitment;
+    let root_params = &schedule.root.params;
     let expected_root_input = root_input_witness_len(root_params);
     if schedule.root.input_witness_len != expected_root_input {
         return Err(AkitaError::InvalidSetup(format!(
@@ -117,7 +117,7 @@ fn validate_canonical_transition_lengths(
             schedule.root.input_witness_len
         )));
     }
-    let expected_root_output = if root_params.has_precommitted_groups() {
+    let expected_root_output = if root_params.has_preceding_groups() {
         root_params.output_witness_len_for_field_bits(
             field_bits,
             policy.claim_ext_degree,
@@ -155,9 +155,9 @@ fn validate_canonical_transition_lengths(
         let expected_output = planned_next_witness_len(
             field_bits,
             policy.claim_ext_degree,
-            &step.params.witness,
+            &step.params,
             1,
-            step.params.witness.witness_chunk.num_chunks,
+            step.params.witness_chunk.num_chunks,
         )?
         .ok_or_else(|| {
             AkitaError::InvalidSetup(format!(
@@ -186,15 +186,15 @@ fn profiles_for_entry(
     schedule: &FoldSchedule,
 ) -> Result<CommittedGroupBatchProfile, AkitaError> {
     Ok(CommittedGroupBatchProfile {
-        final_group: CommittedGroupProfile::try_from_params(
-            entry.root.final_group.layout,
-            &schedule.root.params.final_group.commitment,
+        final_group: GroupCommitPhaseParams::try_from_params(
+            entry.final_group,
+            &schedule.root.params,
         )?,
         precommitteds: entry
             .root
             .precommitted_groups
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.group.profile)
             .collect(),
     })
 }

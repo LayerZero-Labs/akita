@@ -1,8 +1,9 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use akita_types::{
-    CommittedGroupParams, CommittedGroupProfile, PreparedSubringCoefficientPackingPoint,
+    CommittedGroupParams, GroupCommitPhaseParams, PreparedSubringCoefficientPackingPoint,
     SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
 };
 
@@ -49,20 +50,20 @@ impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
     pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
-            n_a: params.inner_commit_matrix.output_rank(),
-            num_positions_per_block: params.num_positions_per_block,
-            num_digits_inner: params.num_digits_inner,
-            log_basis_inner: params.log_basis_inner,
+            n_a: params.inner().matrix.output_rank(),
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_digits_inner: params.inner().digits.num_digits,
+            log_basis_inner: params.inner().digits.log_basis,
         }
     }
 
     /// Build inner-commit parameters from a frozen standalone precommit profile.
-    pub fn from_profile(profile: &CommittedGroupProfile) -> Self {
+    pub fn from_profile(profile: &GroupCommitPhaseParams) -> Self {
         Self {
-            n_a: profile.inner_commit_matrix.output_rank(),
-            num_positions_per_block: profile.num_positions_per_block,
-            num_digits_inner: profile.num_digits_inner,
-            log_basis_inner: profile.log_basis_inner,
+            n_a: profile.inner.matrix.output_rank(),
+            num_positions_per_block: profile.blocks.positions_per_block,
+            num_digits_inner: profile.inner.digits.num_digits,
+            log_basis_inner: profile.inner.digits.log_basis,
         }
     }
 }

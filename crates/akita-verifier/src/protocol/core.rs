@@ -14,9 +14,10 @@ use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Ver
 use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
+    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
+    MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
@@ -36,9 +37,9 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, sample_row_coefficients,
     tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
-    FoldLevelProof, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute, OpeningClaims,
-    OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims, PreparedOpeningPoint,
-    RecursiveFoldParams, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
+    PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
     RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
     TerminalResponse, TerminalWitnessTranscriptParts,
 };
