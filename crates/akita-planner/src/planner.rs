@@ -624,7 +624,7 @@ pub fn find_schedule(
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.total_bytes,
+        best.proof_bytes,
         best.setup_field_elements,
         first_direct_setup_field_len,
         active_policy,

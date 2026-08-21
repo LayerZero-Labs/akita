@@ -80,6 +80,8 @@ fn setup_first_score_compares_padded_capacity_not_natural_length() {
 fn objective_bounds_prune_only_strict_numeric_losses() {
     let incumbent = super::super::CandidateMetrics {
         first_direct_setup_capacity: super::super::SetupPrefixCapacity::for_natural_len(10),
+        payload_bytes: 20,
+        nonce_bits: 0,
         proof_bytes: 20,
         setup_field_elements: 30,
     };
@@ -164,7 +166,9 @@ fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::S
     };
     super::ScheduleCandidate {
         first_direct_setup_field_len: NonZeroUsize::new(1),
-        total_bytes: proof_bytes,
+        payload_bytes: proof_bytes,
+        nonce_bits: 0,
+        proof_bytes,
         setup_field_elements: 64,
         folds: CandidateFoldChain::default().prepend(
             akita_schedules::planner_support::CandidateFoldStep {

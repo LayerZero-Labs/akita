@@ -3,8 +3,8 @@
 use crate::{
     multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    CommittedGroupParams, DigitRangePlan, FoldParams, FoldSchedule, GrindingPlan, GrindingRun,
-    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    CommittedGroupParams, DigitRangePlan, FoldSchedule, GrindingPlan, GrindingRun, GrindingSite,
+    OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
 };
 use akita_error::AkitaError;
 
@@ -16,13 +16,102 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
     extension_degree: usize,
 ) -> Result<GrindingPlan, AkitaError> {
     schedule.validate_structure()?;
+    schedule.validate_nonterminal_opening_execution(extension_degree)?;
+    derive_transcript_grinding_plan(schedule, root_layout, modulus_bits, extension_degree)
+}
+
+/// Price a planner fold sequence with the canonical query schedule.
+///
+/// A recursive suffix may legally start with a raw payload, so it is not a
+/// standalone [`FoldSchedule`] and must not pass root-only structure checks.
+/// The planner separately validates candidate geometry before calling this
+/// pricing entry point.
+#[doc(hidden)]
+pub fn transcript_grinding_nonce_bits_for_planner_candidate(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+    modulus_bits: u32,
+    extension_degree: usize,
+) -> Result<usize, AkitaError> {
+    Ok(
+        derive_transcript_grinding_plan(schedule, root_layout, modulus_bits, extension_degree)?
+            .total_nonce_bits(),
+    )
+}
+
+/// Price one planner edge using the canonical query builders.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn transcript_grinding_nonce_bits_for_planner_edge(
+    params: &CommittedGroupParams,
+    output_witness_len: usize,
+    layout: &OpeningClaimsLayout,
+    recursive_successor: Option<&CommittedGroupParams>,
+    terminal_successor: Option<&crate::TerminalFoldParams>,
+    modulus_bits: u32,
+    extension_degree: usize,
+    level: u32,
+    include_evaluation_batch: bool,
+) -> Result<usize, AkitaError> {
+    if recursive_successor.is_some() == terminal_successor.is_some() {
+        return Err(AkitaError::InvalidSetup(
+            "planner grinding edge requires exactly one successor".into(),
+        ));
+    }
+    layout.check()?;
+    if extension_degree == 0 || !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "grinding extension degree must be a nonzero power of two".into(),
+        ));
+    }
+    let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
+    let mut runs = Vec::new();
+    if include_evaluation_batch {
+        runs.push(GrindingRun::proof_of_work(
+            GrindingSite::EvaluationBatch,
+            1,
+            capacity,
+        )?);
+    }
+    append_nonterminal(
+        &mut runs,
+        capacity,
+        extension_degree,
+        level,
+        params,
+        output_witness_len,
+        layout,
+        recursive_successor,
+        terminal_successor,
+    )?;
+    if let Some(terminal) = terminal_successor {
+        append_terminal(
+            &mut runs,
+            capacity,
+            extension_degree,
+            level.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("terminal grinding level overflow".into())
+            })?,
+            params,
+            output_witness_len,
+            terminal,
+        )?;
+    }
+    Ok(GrindingPlan::new(runs, capacity)?.total_nonce_bits())
+}
+
+fn derive_transcript_grinding_plan(
+    schedule: &FoldSchedule,
+    root_layout: &OpeningClaimsLayout,
+    modulus_bits: u32,
+    extension_degree: usize,
+) -> Result<GrindingPlan, AkitaError> {
     root_layout.check()?;
     if extension_degree == 0 || !extension_degree.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "grinding extension degree must be a nonzero power of two".into(),
         ));
     }
-    schedule.validate_nonterminal_opening_execution(extension_degree)?;
     let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
     let mut runs = vec![GrindingRun::proof_of_work(
         GrindingSite::EvaluationBatch,
@@ -36,7 +125,8 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
         capacity,
         extension_degree,
         0,
-        predecessor,
+        &predecessor.params,
+        predecessor.output_witness_len,
         root_layout,
         schedule.recursive_folds.first().map(|step| &step.params),
         schedule
@@ -46,7 +136,11 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        let layout = recursive_layout(predecessor, &fold.params)?;
+        let layout = recursive_layout(
+            &predecessor.params,
+            predecessor.output_witness_len,
+            &fold.params,
+        )?;
         let successor = schedule
             .recursive_folds
             .get(index + 1)
@@ -56,7 +150,8 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
             capacity,
             extension_degree,
             usize_to_u32(index + 1, "grinding level")?,
-            fold,
+            &fold.params,
+            fold.output_witness_len,
             &layout,
             successor,
             successor.is_none().then_some(&schedule.terminal),
@@ -72,8 +167,9 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
             schedule.recursive_folds.len() + 1,
             "terminal grinding level",
         )?,
-        predecessor,
-        schedule,
+        &predecessor.params,
+        predecessor.output_witness_len,
+        &schedule.terminal,
     )?;
     GrindingPlan::new(runs, capacity)
 }
@@ -84,12 +180,12 @@ fn append_nonterminal(
     capacity: u32,
     extension_degree: usize,
     level: u32,
-    fold: &FoldParams,
+    params: &CommittedGroupParams,
+    output_witness_len: usize,
     layout: &OpeningClaimsLayout,
     recursive_successor: Option<&CommittedGroupParams>,
     terminal_successor: Option<&crate::TerminalFoldParams>,
 ) -> Result<(), AkitaError> {
-    let params = &fold.params;
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
         append_eor(runs, capacity, extension_degree, level, layout)?;
@@ -120,12 +216,7 @@ fn append_nonterminal(
         (terminal.d_a(), terminal.recursive_opening_num_vars()?)
     };
     let tau0_width = params
-        .relation_address_geometry(
-            layout,
-            extension_degree,
-            successor_d,
-            fold.output_witness_len,
-        )?
+        .relation_address_geometry(layout, extension_degree, successor_d, output_witness_len)?
         .relation_point_variable_count();
     if tau0_width > successor_opening_vars {
         return Err(AkitaError::InvalidSetup(
@@ -143,7 +234,7 @@ fn append_nonterminal(
         capacity,
     )?);
 
-    let rounds = crate::sumcheck_rounds(params.d_a(), fold.output_witness_len);
+    let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
     let basis = 1usize
         .checked_shl(params.open().digits.log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("digit-range basis exceeds usize".into()))?;
@@ -231,10 +322,11 @@ fn append_terminal(
     capacity: u32,
     extension_degree: usize,
     level: u32,
-    predecessor: &FoldParams,
-    schedule: &FoldSchedule,
+    predecessor_params: &CommittedGroupParams,
+    predecessor_output_witness_len: usize,
+    terminal: &crate::TerminalFoldParams,
 ) -> Result<(), AkitaError> {
-    let width = crate::sumcheck_rounds(predecessor.params.d_a(), predecessor.output_witness_len);
+    let width = crate::sumcheck_rounds(predecessor_params.d_a(), predecessor_output_witness_len);
     let layout = OpeningClaimsLayout::new(width, 1)?;
     if extension_degree > 1 {
         append_eor(runs, capacity, extension_degree, level, &layout)?;
@@ -244,10 +336,7 @@ fn append_terminal(
     runs.push(GrindingRun::fold_challenge_coordinates(
         level,
         0,
-        usize_to_u64(
-            schedule.terminal.blocks.live_blocks,
-            "terminal fold coordinates",
-        )?,
+        usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
     ));
     Ok(())
 }
@@ -336,7 +425,8 @@ fn append_sumcheck(
 }
 
 fn recursive_layout(
-    predecessor: &FoldParams,
+    predecessor_params: &CommittedGroupParams,
+    predecessor_output_witness_len: usize,
     current: &CommittedGroupParams,
 ) -> Result<OpeningClaimsLayout, AkitaError> {
     let mut groups = Vec::with_capacity(2);
@@ -346,8 +436,8 @@ fn recursive_layout(
         )?));
     }
     groups.push(PolynomialGroupLayout::singleton(crate::sumcheck_rounds(
-        predecessor.params.d_a(),
-        predecessor.output_witness_len,
+        predecessor_params.d_a(),
+        predecessor_output_witness_len,
     )));
     OpeningClaimsLayout::from_groups(groups)
 }

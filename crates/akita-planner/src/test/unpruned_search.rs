@@ -148,7 +148,16 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                total_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
+                                payload_bytes: direct_bytes
+                                    .checked_add(terminal_bytes)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "unpruned traversal terminal proof size overflow"
+                                                .into(),
+                                        )
+                                    })?,
+                                nonce_bits: 0,
+                                proof_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
                                     || {
                                         AkitaError::InvalidSetup(
                                             "unpruned traversal terminal proof size overflow"
@@ -242,8 +251,16 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                total_bytes: direct_bytes
-                                    .checked_add(child.total_bytes)
+                                payload_bytes: direct_bytes
+                                    .checked_add(child.payload_bytes)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "unpruned traversal proof size overflow".into(),
+                                        )
+                                    })?,
+                                nonce_bits: 0,
+                                proof_bytes: direct_bytes
+                                    .checked_add(child.payload_bytes)
                                     .ok_or_else(|| {
                                         AkitaError::InvalidSetup(
                                             "unpruned traversal proof size overflow".into(),
@@ -382,10 +399,18 @@ pub(super) fn find_schedule(
                                 estimated_direct_payload_bytes: root_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
-                            complete.push(ScheduleCandidate {
+                            let mut candidate = ScheduleCandidate {
                                 first_direct_setup_field_len: Some(first_direct_setup_field_len),
-                                total_bytes: root_bytes
-                                    .checked_add(suffix.total_bytes)
+                                payload_bytes: root_bytes
+                                    .checked_add(suffix.payload_bytes)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "unpruned traversal proof size overflow".into(),
+                                        )
+                                    })?,
+                                nonce_bits: 0,
+                                proof_bytes: root_bytes
+                                    .checked_add(suffix.payload_bytes)
                                     .ok_or_else(|| {
                                         AkitaError::InvalidSetup(
                                             "unpruned traversal proof size overflow".into(),
@@ -395,7 +420,30 @@ pub(super) fn find_schedule(
                                     .max(suffix.setup_field_elements),
                                 folds,
                                 terminal: Arc::clone(&suffix.terminal),
-                            });
+                            };
+                            candidate.nonce_bits =
+                                akita_schedules::planner_support::candidate_grinding_nonce_bits(
+                                    policy,
+                                    &schedule_key.opening_layout()?,
+                                    &candidate.folds.to_vec(),
+                                    candidate.terminal.as_ref(),
+                                )?;
+                            let nonce_bytes =
+                                akita_error::checked::div_ceil(candidate.nonce_bits, 8)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "invalid unpruned nonce stream byte width".into(),
+                                        )
+                                    })?;
+                            candidate.proof_bytes = candidate
+                                .payload_bytes
+                                .checked_add(nonce_bytes)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "unpruned candidate proof size overflow".into(),
+                                    )
+                                })?;
+                            complete.push(candidate);
                         }
                     }
                 }
@@ -418,7 +466,7 @@ pub(super) fn find_schedule(
             None
         };
     materialize_candidate_schedule(
-        selected.total_bytes,
+        selected.proof_bytes,
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
         policy,

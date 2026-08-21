@@ -315,7 +315,9 @@ impl CandidateFoldChain {
 #[derive(Clone, Debug)]
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
-    pub(crate) total_bytes: usize,
+    pub(crate) payload_bytes: usize,
+    pub(crate) nonce_bits: usize,
+    pub(crate) proof_bytes: usize,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
@@ -339,6 +341,8 @@ impl SetupPrefixCapacity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
+    pub(crate) payload_bytes: usize,
+    pub(crate) nonce_bits: usize,
     pub(crate) proof_bytes: usize,
     pub(crate) setup_field_elements: usize,
 }
@@ -355,7 +359,9 @@ impl ScheduleCandidate {
                 .map_or(SetupPrefixCapacity::MAX, |natural_len| {
                     SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            proof_bytes: self.total_bytes,
+            payload_bytes: self.payload_bytes,
+            nonce_bits: self.nonce_bits,
+            proof_bytes: self.proof_bytes,
             setup_field_elements: self.setup_field_elements,
         }
     }
