@@ -1,13 +1,15 @@
 use std::array::from_fn;
 use std::marker::PhantomData;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use std::mem::size_of;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::avx;
 use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::NttTwiddles;
 
 use super::CrtNttParamSet;
@@ -206,6 +208,41 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         dst: &mut [MontCoeff<W>; D],
     ) {
         self.debug_assert_active_digits(digits);
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i32>() {
+            let prime = params.primes[k];
+            let tw = &params.twiddles[k];
+            // SAFETY: the width check proves transparent i32 storage for the
+            // destination, prime, and twiddle table. Both arrays contain D
+            // elements, do not overlap, and the prepared plan proves AVX2.
+            unsafe {
+                avx::forward_ntt_i8_i32(
+                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
+                    digits,
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i16>() {
+            let prime = params.primes[k];
+            let tw = &params.twiddles[k];
+            // SAFETY: the width check proves transparent i16 storage for the
+            // destination, prime, and twiddle table. Both arrays contain D
+            // elements, do not overlap, and the prepared plan proves AVX2.
+            unsafe {
+                avx::forward_ntt_i8_i16(
+                    &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
+                    digits,
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
             let prime = params.primes[k];

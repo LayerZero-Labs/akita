@@ -35,7 +35,7 @@ pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Fused conversion factors `psi^i * R^2 mod p`, in centered raw form.
     /// Multiplying a canonical coefficient by this table enters Montgomery
     /// form and applies the negacyclic twist in one Montgomery product.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
     pub(crate) psi_pows_r2: [W; D],
     /// Untwist factors `psi^{-i}`, in Montgomery form.
     pub(crate) psi_inv_pows: [MontCoeff<W>; D],
@@ -75,14 +75,14 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
 
         let psi_inv = pow_mod(psi, p - 2, p);
         let mut psi_pows = [MontCoeff::from_raw(W::default()); D];
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
         let mut psi_pows_r2 = [W::default(); D];
         let mut psi_inv_pows = [MontCoeff::from_raw(W::default()); D];
         let mut cur = 1i64;
         let mut cur_inv = 1i64;
         for i in 0..D {
             psi_pows[i] = prime.from_canonical(W::from_i64(cur));
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             {
                 let raw_r2 = (i128::from(cur) * i128::from(prime.montsq.to_i64()))
                     .rem_euclid(i128::from(p)) as i64;
@@ -135,7 +135,7 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             inv_wlen,
             num_stages,
             psi_pows,
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             psi_pows_r2,
             psi_inv_pows,
             d_inv,
