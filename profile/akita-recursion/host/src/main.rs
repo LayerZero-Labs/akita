@@ -145,9 +145,12 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
     let statement = decoded
         .verifier_statement(&openings)
         .map_err(|err| format!("strict input statement failed: {err}"))?;
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .map_err(|err| format!("failed to load trusted schedule catalog: {err}"))?;
     batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
+        &schedules,
         &mut transcript,
         statement,
         BasisMode::Lagrange,

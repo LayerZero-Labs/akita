@@ -102,9 +102,15 @@ fn akita_verify(input: &[u8]) -> u32 {
     // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
     // `clock_gettime` support), so the scheme entry point would abort
     // before any real verifier work runs. The new `batched_verify`
-    // surface is `<Cfg>`-generic and routes every policy through `Cfg`
-    // internally — no closures to thread through.
+    // surface is `<Cfg>`-generic and receives the trusted catalog explicitly.
     start_cycle_tracking("akita_verify");
+    let schedules = match akita_config::trusted_schedule_catalog_from_embedded::<Cfg>() {
+        Ok(schedules) => schedules,
+        Err(_) => {
+            end_cycle_tracking("akita_verify");
+            return 2;
+        }
+    };
     let statement = match decoded.verifier_statement(&openings) {
         Ok(statement) => statement,
         Err(_) => {
@@ -115,6 +121,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     let result = batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
+        &schedules,
         &mut transcript,
         statement,
         BasisMode::Lagrange,

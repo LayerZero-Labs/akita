@@ -80,15 +80,6 @@ impl TrustedScheduleCatalog {
             )?);
         }
         resolved.sort_by_key(|row| row.selection().row_digest);
-        if resolved
-            .windows(2)
-            .any(|pair| pair[0].selection() == pair[1].selection())
-        {
-            return Err(AkitaError::InvalidSetup(
-                "trusted schedule catalog contains duplicate row identities".to_string(),
-            ));
-        }
-
         let mut rows_by_key = (0..resolved.len()).collect::<Vec<_>>();
         rows_by_key.sort_by(|left_index, right_index| {
             profiles_key_cmp(
@@ -102,6 +93,28 @@ impl TrustedScheduleCatalog {
                     .cmp(&resolved[*right_index].selection().row_digest)
             })
         });
+        let has_duplicate_lookup_key = rows_by_key.windows(2).any(|pair| {
+            let Some(left) = pair.first().and_then(|index| resolved.get(*index)) else {
+                return false;
+            };
+            let Some(right) = pair.get(1).and_then(|index| resolved.get(*index)) else {
+                return false;
+            };
+            profiles_key_cmp(left.profiles(), right.profiles()).is_eq()
+        });
+        if has_duplicate_lookup_key {
+            return Err(AkitaError::InvalidSetup(
+                "trusted schedule catalog contains a duplicate prover lookup key".to_string(),
+            ));
+        }
+        if resolved
+            .windows(2)
+            .any(|pair| pair[0].selection() == pair[1].selection())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "trusted schedule catalog contains duplicate row identities".to_string(),
+            ));
+        }
 
         let policy_digest = policy_digest(policy);
         let catalog_digest = catalog_digest(&family_name, policy_digest, &resolved);
@@ -560,6 +573,28 @@ mod tests {
                 .selection(),
             selection
         );
+    }
+
+    #[test]
+    fn catalog_rejects_duplicate_prover_lookup_keys() {
+        let policy = policy();
+        let challenge = |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+        let catalog = trusted_catalog_from_generated(fp128_dense_table(), &policy, challenge)
+            .expect("materialize generated catalog");
+        let row = catalog.rows().next().expect("generated catalog row");
+        let duplicate = (row.profiles().clone(), row.schedule().clone());
+        let error = TrustedScheduleCatalog::try_new(
+            "duplicate-key-test",
+            [duplicate.clone(), duplicate],
+            &policy,
+            challenge,
+        )
+        .expect_err("a prover lookup key must identify exactly one row");
+        assert!(error.to_string().contains("duplicate prover lookup key"));
     }
 
     #[test]

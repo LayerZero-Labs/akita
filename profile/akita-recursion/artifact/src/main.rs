@@ -193,12 +193,14 @@ fn publish_blob(output_path: &std::path::Path, blob: &[u8]) -> Result<(), String
 fn verify_proof(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
+    schedules: &akita_config::TrustedScheduleCatalog,
     transcript: &mut AkitaTranscript<F>,
     statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _>(
         proof,
         verifier_setup,
+        schedules,
         transcript,
         statement,
         BasisMode::Lagrange,
@@ -238,6 +240,8 @@ fn run() -> Result<(), String> {
         "AKITA_RECURSION_BLOB",
         "target/akita_recursion_inputs.bin",
     )?);
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .map_err(|err| format!("failed to load trusted schedule catalog: {err}"))?;
 
     let prime = fp128_prime_label();
     tracing::info!(
@@ -249,11 +253,19 @@ fn run() -> Result<(), String> {
     );
 
     let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
-    let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::resolve_catalog_row_for_opening(&opening_layout)
-            .map(|row| row.schedule().root.params.final_group.commitment.clone())
-            .expect("layout");
-    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout).expect("proof schedule");
+    let schedule_key =
+        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(nv, 1));
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&schedule_key)
+        .map_err(|err| format!("proof schedule lookup failed: {err}"))?;
+    let layout: CommittedGroupParams = schedule
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
     let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -294,7 +306,8 @@ fn run() -> Result<(), String> {
     let opening = opening_from_poly(&onehot_poly, &opening_point, &layout, BasisMode::Lagrange)?;
 
     let t0 = Instant::now();
-    let prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+    let prover_setup = scheme
+        .setup_prover(nv, 1)
         .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
@@ -314,13 +327,14 @@ fn run() -> Result<(), String> {
     let CommitOutput {
         committed_group: commitment,
         hint,
-    } = AkitaCommitmentScheme::<Cfg>::commit(
-        &prover_setup,
-        std::slice::from_ref(&onehot_poly),
-        &stack,
-        GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .map_err(|err| format!("commit failed: {err}"))?;
+    } = scheme
+        .commit(
+            &prover_setup,
+            std::slice::from_ref(&onehot_poly),
+            &stack,
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .map_err(|err| format!("commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
@@ -335,25 +349,24 @@ fn run() -> Result<(), String> {
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
         vec![&poly_refs[..]],
+        scheme.schedules(),
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let schedule_selection = prove_input.selection();
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
-        &prover_setup,
-        prove_input,
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .map_err(|err| format!("batched_prove failed: {err}"))?;
+    let proof = scheme
+        .batched_prove(
+            &prover_setup,
+            prove_input,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("batched_prove failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
 
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier_for_schedule(
-        &prover_setup,
-        schedule.schedule(),
-        &opening_layout,
-    )
-    .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
+    let verifier_setup = scheme
+        .setup_verifier_for_schedule(&prover_setup, schedule.schedule(), &opening_layout)
+        .map_err(|err| format!("setup_verifier_for_schedule failed: {err}"))?;
 
     // Sanity check: the proof should verify with the same domain label.
     let t0 = Instant::now();
@@ -361,6 +374,7 @@ fn run() -> Result<(), String> {
     verify_proof(
         &proof,
         &verifier_setup,
+        scheme.schedules(),
         &mut verifier_transcript,
         GroupBatchStatement::new(
             schedule_selection,
@@ -406,6 +420,7 @@ fn run() -> Result<(), String> {
     verify_proof(
         &decoded.proof,
         &decoded.verifier_setup,
+        scheme.schedules(),
         &mut roundtrip_transcript,
         decoded
             .verifier_statement(&openings_rt)
