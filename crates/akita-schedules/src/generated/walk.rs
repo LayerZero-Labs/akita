@@ -66,17 +66,17 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let mut root_params = entry.root.core.group.expand_group(
         policy,
-        akita_types::CommitmentPayloadMode::Compressed,
-        entry.root.core.group.opening_method,
         ring_challenge_config,
-        0,
-        Some(entry.root.num_digits_inner),
-        entry.root.core.group.num_digits_fold,
-        None,
-        entry.root.core.open_commit_matrix,
-        // The root's own group *is* the row's lookup key.
-        key.final_group,
-        length_source,
+        crate::generated::expand::GeneratedGroupExpansion {
+            role: crate::generated::expand::GeneratedFoldExpansionRole::Root {
+                num_digits_inner: entry.root.num_digits_inner,
+            },
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            open_commit_matrix: entry.root.core.open_commit_matrix,
+            // The root's own group *is* the row's lookup key.
+            group: key.final_group,
+            source: length_source,
+        },
     )?;
     let distributed_levels = distributed_activation_depth(
         entry.root.core.witness_chunks,
@@ -113,23 +113,24 @@ pub(crate) fn walk_generated_schedule_entry(
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
         let mut params = fold.core.group.expand_group(
             policy,
-            fold.payload_mode,
-            fold.core.group.opening_method,
             ring_challenge_config,
-            index + 1,
-            None,
-            fold.core.group.num_digits_fold,
-            fold.response_l2_sq_cap,
-            fold.core.open_commit_matrix,
-            // A recursive fold commits one polynomial over the witness it
-            // receives, so its layout follows from that length.
-            akita_types::PolynomialGroupLayout::singleton(
-                akita_types::padded_boolean_opening_vars(input_witness_len)?,
-            ),
-            crate::generated::expand::GroupLengthSource::IncomingWitness {
-                input_witness_len,
-                num_claims: 1,
-                setup_prefix: fold.setup_prefix,
+            crate::generated::expand::GeneratedGroupExpansion {
+                role: crate::generated::expand::GeneratedFoldExpansionRole::Recursive {
+                    fold_level: index + 1,
+                    response_l2_sq_cap: fold.response_l2_sq_cap,
+                },
+                payload_mode: fold.payload_mode,
+                open_commit_matrix: fold.core.open_commit_matrix,
+                // A recursive fold commits one polynomial over the witness it
+                // receives, so its layout follows from that length.
+                group: akita_types::PolynomialGroupLayout::singleton(
+                    akita_types::padded_boolean_opening_vars(input_witness_len)?,
+                ),
+                source: crate::generated::expand::GroupLengthSource::IncomingWitness {
+                    input_witness_len,
+                    num_claims: 1,
+                    setup_prefix: fold.setup_prefix,
+                },
             },
         )?;
         params.witness_chunk = partition_to_chunk(fold.core.witness_chunks, distributed_levels)?;

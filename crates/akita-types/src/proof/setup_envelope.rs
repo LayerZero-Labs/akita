@@ -204,7 +204,7 @@ fn accumulate_compression_matrix_field_elements_for_level(
         params.role_dims().d_b(),
         "outer compression setup",
     )?;
-    for group in params.precommitted_group_iter() {
+    for group in params.preceding_group_iter() {
         include_compression_setup(
             max_field_elements,
             group.profile.outer.matrix.sis_modulus_profile(),

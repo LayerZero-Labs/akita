@@ -362,7 +362,7 @@ fn build_relation_rhs_layout(
             )
         })
         .transpose()?;
-    if !lp.has_precommitted_groups() {
+    if !lp.has_preceding_groups() {
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
         let group_indices = opening_batch.root_group_order()?;
@@ -408,9 +408,9 @@ fn build_relation_rhs_layout(
         return Ok(layout);
     }
     let final_role_dims = lp.group_role_dims_geometry(opening_batch, final_group_index)?;
-    let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
-    let mut group_indices = Vec::with_capacity(lp.precommitted_group_count() + 1);
-    let mut group_plans = Vec::with_capacity(lp.precommitted_group_count() + 1);
+    let mut groups = Vec::with_capacity(lp.preceding_group_count() + 1);
+    let mut group_indices = Vec::with_capacity(lp.preceding_group_count() + 1);
+    let mut group_plans = Vec::with_capacity(lp.preceding_group_count() + 1);
     groups.push(RelationGroupRows {
         group_index: final_group_index,
         role_dims: final_role_dims,
@@ -433,7 +433,7 @@ fn build_relation_rhs_layout(
             final_role_dims.d_b(),
         )?);
     }
-    for (group_index, group) in lp.precommitted_group_iter().enumerate() {
+    for (group_index, group) in lp.preceding_group_iter().enumerate() {
         let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         groups.push(RelationGroupRows {
             group_index,

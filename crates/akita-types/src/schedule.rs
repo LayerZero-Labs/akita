@@ -435,11 +435,12 @@ impl FoldSchedule {
                         "incoming setup prefix carries no active support length".to_string(),
                     )
                 })?;
-                if natural_len == 0
-                    || natural_len > n_prefix
-                    || prefix.d_setup() == 0
-                    || !n_prefix.is_multiple_of(prefix.d_setup())
-                {
+                crate::validate_setup_prefix_domain(natural_len, n_prefix).map_err(|_| {
+                    AkitaError::InvalidSetup(format!(
+                        "recursive fold {index} setup-prefix geometry is invalid"
+                    ))
+                })?;
+                if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
                     return Err(AkitaError::InvalidSetup(format!(
                         "recursive fold {index} setup-prefix geometry is invalid"
                     )));
@@ -507,7 +508,7 @@ impl FoldSchedule {
             ));
         }
         // Canonical transcript order: earlier groups first, the fold's own
-        // final/new group last. This is the ordering `precommitted_group_iter`
+        // final/new group last. This is the ordering `preceding_group_iter`
         // already uses, and the one `FoldParams::groups` makes structural.
         let root_final = &self.root.params;
         let mut root_groups: Vec<OpeningExecutionGroup> = self
@@ -626,7 +627,7 @@ fn validate_level_opening_execution(
     // the same answer; for a fold that fails, both orderings reject. That is why
     // moving the prefix to index 0 is behaviour-preserving here, and it settles
     // the ordering disagreement between this check and
-    // `precommitted_group_iter`, which already put the prefix first.
+    // `preceding_group_iter`, which already put the prefix first.
     let first = groups
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
@@ -751,7 +752,7 @@ fn validate_stage2_successor_capacity(
         relation_coefficient_block_len =
             relation_coefficient_block_len.min(challenge_subring_dimension);
     }
-    for group in predecessor.precommitted_group_iter() {
+    for group in predecessor.preceding_group_iter() {
         let group_dims = group.role_dims(shared_d);
         relation_coefficient_block_len =
             relation_coefficient_block_len.min(group_dims.common_relation_coeff_count());

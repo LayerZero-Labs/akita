@@ -29,7 +29,7 @@ impl WitnessLayout {
                 "scalar witness sizing requires exactly one opening group".into(),
             ));
         }
-        if lp.has_precommitted_groups() {
+        if lp.has_preceding_groups() {
             return Err(AkitaError::InvalidSetup(
                 "scalar witness sizing does not accept precommitted groups".into(),
             ));

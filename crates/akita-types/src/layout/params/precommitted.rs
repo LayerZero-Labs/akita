@@ -285,10 +285,8 @@ impl GroupOpenPhaseParams {
             let n_prefix = 1usize
                 .checked_shl(layout.group.num_vars() as u32)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
-            if natural_len == 0
-                || natural_len > n_prefix
-                || natural_len.div_ceil(d_a) != layout.blocks.live_ring_elements_per_claim
-            {
+            crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
+            if natural_len.div_ceil(d_a) != layout.blocks.live_ring_elements_per_claim {
                 return Err(AkitaError::InvalidSetup(
                     "setup-prefix natural length disagrees with its frozen commitment".into(),
                 ));

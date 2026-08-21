@@ -102,6 +102,20 @@ fn n_prefix_from_commitment_profile(
         })
 }
 
+/// Validate that a setup prefix uses the smallest power-of-two commitment
+/// domain covering its active support.
+pub fn validate_setup_prefix_domain(natural_len: usize, n_prefix: usize) -> Result<(), AkitaError> {
+    let expected = natural_len.checked_next_power_of_two().ok_or_else(|| {
+        AkitaError::InvalidSetup("setup-prefix natural length overflows its padded domain".into())
+    })?;
+    if natural_len == 0 || n_prefix != expected {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix commitment domain is not the canonical padded natural length".into(),
+        ));
+    }
+    Ok(())
+}
+
 impl Ord for SetupPrefixSlotId {
     fn cmp(&self, other: &Self) -> Ordering {
         self.natural_len.cmp(&other.natural_len).then_with(|| {
@@ -134,11 +148,8 @@ impl Valid for SetupPrefixSlotId {
             ));
         }
         let n_prefix = n_prefix_from_commitment_profile(&self.commitment_profile)?;
-        if self.natural_len == 0 || self.natural_len > n_prefix {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot natural_len must be in 1..=n_prefix".to_string(),
-            ));
-        }
+        validate_setup_prefix_domain(self.natural_len, n_prefix)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if n_prefix == 0 || !n_prefix.is_power_of_two() {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot n_prefix must be a non-zero power of two".to_string(),

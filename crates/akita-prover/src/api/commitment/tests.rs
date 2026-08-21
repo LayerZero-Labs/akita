@@ -4,13 +4,128 @@ use crate::{AkitaProverSetup, CommitInnerWitness, CpuBackend, DensePoly};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp64;
+use akita_types::sis::{
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
+    SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+};
 use akita_types::{
-    CommittedSourceEncoding, GroupCommitPhaseParams, OpenCommitMatrixParams, OpeningMethod,
-    PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
+    CommittedSourceEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 
 type F = Fp64<4294967197>;
 const D: usize = 64;
+
+fn audited_commit_params(
+    slice_count: akita_types::CommitmentSliceCount,
+    positions_per_block: usize,
+    live_ring_elements: usize,
+    num_digits_inner: usize,
+    num_digits_outer: usize,
+    num_digits_open: usize,
+) -> CommittedGroupParams {
+    let mut params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q32Offset99,
+        D,
+        2,
+        1,
+        1,
+        1,
+        SparseChallengeConfig::pm1_only(1),
+    );
+    params.own_group_mut().profile.outer_slice_count = slice_count;
+    params = params
+        .with_decomp(
+            positions_per_block,
+            live_ring_elements,
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open,
+        )
+        .expect("commitment fixture geometry");
+    let source_len = live_ring_elements
+        .checked_mul(D)
+        .expect("commitment fixture source length");
+    assert!(source_len.is_power_of_two());
+    params.own_group_mut().profile.group =
+        PolynomialGroupLayout::singleton(source_len.trailing_zeros() as usize);
+
+    let a_bucket = rounded_up_role_a_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q32Offset99,
+        D,
+        params.open().digits.log_basis,
+        &params.fold_challenge_config(),
+        params.num_digits_fold(),
+    )
+    .expect("audited fixture A bucket");
+    params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Inner,
+            ring_dimension: D as u32,
+            coeff_linf_bound: a_bucket,
+        },
+        params.inner().matrix.input_width(),
+    )
+    .expect("audited fixture A matrix");
+    params = params
+        .with_decomp(
+            positions_per_block,
+            live_ring_elements,
+            num_digits_inner,
+            num_digits_outer,
+            num_digits_open,
+        )
+        .expect("fixture geometry after A rank");
+
+    let b_bucket = rounded_up_collision_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisModulusProfileId::Q32Offset99,
+        SisMatrixRole::Outer,
+        D,
+        params.outer().digits.log_basis,
+    )
+    .expect("audited fixture B bucket");
+    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Outer,
+            ring_dimension: D as u32,
+            coeff_linf_bound: b_bucket,
+        },
+        params.outer().matrix.input_width(),
+    )
+    .expect("audited fixture B matrix");
+
+    let d_bucket = rounded_up_collision_inf_norm(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisModulusProfileId::Q32Offset99,
+        SisMatrixRole::Open,
+        D,
+        params.open().digits.log_basis,
+    )
+    .expect("audited fixture D bucket");
+    params.open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: SisMatrixRole::Open,
+            ring_dimension: D as u32,
+            coeff_linf_bound: d_bucket,
+        },
+        params.open().matrix.input_width(),
+    )
+    .expect("audited fixture D matrix");
+    params
+}
 
 fn inner_witness(recomposed_blocks: usize, rows_per_block: usize) -> CommitInnerWitness<F> {
     CommitInnerWitness::from_rows(vec![
@@ -75,17 +190,7 @@ fn commit_level_params_reject_log_basis_above_i8_range() {
 
 #[test]
 fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
-    let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q32Offset99,
-        D,
-        2,
-        1,
-        1,
-        1,
-        SparseChallengeConfig::pm1_only(1),
-    )
-    .with_decomp(1, 1, 1, 1, 1)
-    .unwrap();
+    let mut params = audited_commit_params(akita_types::CommitmentSliceCount::ONE, 1, 1, 1, 1, 1);
     let d_key = params.open().matrix.sis_table_key();
     params.open_matrix = OpenCommitMatrixParams::new_unchecked(
         d_key.policy,
@@ -117,17 +222,7 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
 }
 
 fn sliced_commit_params() -> CommittedGroupParams {
-    let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q32Offset99,
-        D,
-        2,
-        1,
-        1,
-        1,
-        SparseChallengeConfig::pm1_only(1),
-    );
-    params.own_group_mut().profile.outer_slice_count = akita_types::CommitmentSliceCount::FOUR;
-    params.with_decomp(2, 16, 1, 1, 1).unwrap()
+    audited_commit_params(akita_types::CommitmentSliceCount::FOUR, 2, 16, 1, 1, 1)
 }
 
 fn set_outer_width(params: &mut CommittedGroupParams, input_width: usize) {
@@ -179,6 +274,7 @@ fn commitment_request_binds_polynomial_count_in_both_directions() {
     ));
 
     let mut two_polynomials = one_polynomial.clone();
+    two_polynomials.own_group_mut().profile.group = PolynomialGroupLayout::new(10, 2);
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         two_polynomials.outer_slice_count(),
         two_polynomials.blocks().live_blocks,
@@ -390,19 +486,7 @@ fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
 fn commitment_params_for_slice_count(
     slice_count: akita_types::CommitmentSliceCount,
 ) -> CommittedGroupParams {
-    let mut params = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q32Offset99,
-        D,
-        2,
-        1,
-        1,
-        1,
-        SparseChallengeConfig::pm1_only(1),
-    );
-    params.own_group_mut().profile.outer_slice_count = slice_count;
-    params
-        .with_decomp(2, 16, slice_fixture_num_digits_inner(), 1, 1)
-        .expect("unsliced commitment geometry")
+    audited_commit_params(slice_count, 2, 16, slice_fixture_num_digits_inner(), 1, 1)
 }
 
 fn commit_unsliced_reference(

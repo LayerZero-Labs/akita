@@ -315,7 +315,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
-    if lp.has_precommitted_groups() {
+    if lp.has_preceding_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E>(
             replay,
             alpha,

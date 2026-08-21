@@ -317,7 +317,7 @@ where
     // Recursive suffixes still omit the public row coefficients from ring-switch
     // finalization. Evaluation-trace coefficients are normalized independently and
     // therefore do not inherit that path distinction.
-    let clear_recursive_trace = pad_base_evals && !level_params.has_precommitted_groups();
+    let clear_recursive_trace = pad_base_evals && !level_params.has_preceding_groups();
     let row_coefficients = if clear_recursive_trace {
         None
     } else {

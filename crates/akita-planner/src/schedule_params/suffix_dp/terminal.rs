@@ -69,7 +69,7 @@ pub(crate) fn terminal_direct_suffix_cost(
             "terminal-direct input length must be divisible by its A-ring dimension".to_string(),
         ));
     }
-    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
+    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_preceding_groups() {
         return Err(AkitaError::InvalidSetup(
             "terminal direct response must be a scalar flat fold".to_string(),
         ));

@@ -120,7 +120,7 @@ pub use proof::{
     setup_prefix_slot_field_elements, suffix_opening_layout,
     tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
     terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
-    validate_batched_inputs, validate_public_matrix_matches_seed,
+    validate_batched_inputs, validate_public_matrix_matches_seed, validate_setup_prefix_domain,
     validate_terminal_response_z_payload, verifier_setup_matrix_capacity_for_schedule,
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed, AkitaStage1Proof,

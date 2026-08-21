@@ -168,7 +168,7 @@ fn record_schedule(
         &root.open().matrix,
     )?;
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        for (group_index, group) in fold.params.precommitted_group_iter().enumerate() {
+        for (group_index, group) in fold.params.preceding_group_iter().enumerate() {
             record_outer(
                 stats,
                 &format!("B-recursive-{index}-precommitted-{group_index}"),
@@ -212,7 +212,7 @@ fn compression_instances(schedule: &FoldSchedule) -> Result<(usize, usize), Stri
         chains = chains
             .checked_add(
                 fold.params
-                    .precommitted_group_count()
+                    .preceding_group_count()
                     .checked_add(2)
                     .ok_or_else(|| "recursive compression chain count overflow".to_string())?,
             )

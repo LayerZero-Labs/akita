@@ -4,7 +4,7 @@ use super::*;
 fn borrowed_schedule_descriptor_matches_materialized_schedule() {
     let mut schedule = recursive_schedule(64, 64, true);
     let precommitted =
-        precommitted_group_params(&schedule.root.params, PolynomialGroupLayout::singleton(6));
+        preceding_group_params(&schedule.root.params, PolynomialGroupLayout::singleton(6));
     schedule
         .root
         .params

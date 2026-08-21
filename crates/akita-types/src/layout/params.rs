@@ -58,6 +58,8 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
         .ok_or_else(|| AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string()))
 }
 
+mod builder;
+mod commitment;
 mod descriptor;
 mod groups;
 mod own_group;
@@ -135,86 +137,6 @@ impl CommittedGroupParams {
         self.groups.validate_topology()
     }
 
-    /// Canonical byte encoding used to order semantically distinct level candidates.
-    ///
-    /// This is an ordering descriptor, not a wire encoding or transcript commitment.
-    #[must_use]
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
-    /// Checked wire geometry for this level's final-group B image.
-    pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
-        let logical_rows = self
-            .outer_slice_count()
-            .logical_output_rows(self.outer().matrix.output_rank())?;
-        crate::CommitmentPayloadGeometry::for_mode(
-            self.payload_mode,
-            self.outer().matrix.sis_modulus_profile(),
-            logical_rows,
-            self.role_dims().d_b(),
-        )
-    }
-
-    /// Checked wire geometry for this level's shared D image.
-    pub fn opening_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
-        crate::CommitmentPayloadGeometry::for_mode(
-            self.payload_mode,
-            self.open().matrix.sis_modulus_profile(),
-            self.open().matrix.output_rank(),
-            self.role_dims().d_d(),
-        )
-    }
-
-    /// Whether every B/D image at this level fits the compression policy cap.
-    pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
-        if !self.payload_mode.is_compressed() {
-            return Ok(true);
-        }
-        let final_outer = self.outer_slice_count().complete_source_coefficients(
-            self.outer().matrix.output_rank(),
-            self.role_dims().d_b(),
-        )?;
-        if crate::CompressionChainPlan::try_for_complete_source(
-            self.outer().matrix.sis_modulus_profile(),
-            final_outer,
-        )?
-        .is_none()
-        {
-            return Ok(false);
-        }
-        for group in self.precommitted_group_iter() {
-            let source = group
-                .profile
-                .outer_slice_count
-                .complete_source_coefficients(
-                    group.profile.outer.matrix.output_rank(),
-                    group.profile.outer.matrix.ring_dimension(),
-                )?;
-            if crate::CompressionChainPlan::try_for_complete_source(
-                group.profile.outer.matrix.sis_modulus_profile(),
-                source,
-            )?
-            .is_none()
-            {
-                return Ok(false);
-            }
-        }
-        let opening = self
-            .open()
-            .matrix
-            .output_rank()
-            .checked_mul(self.role_dims().d_d())
-            .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-        Ok(crate::CompressionChainPlan::try_for_complete_source(
-            self.open().matrix.sis_modulus_profile(),
-            opening,
-        )?
-        .is_some())
-    }
-
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
@@ -238,94 +160,23 @@ impl CommittedGroupParams {
         self.inner().matrix.ring_dimension()
     }
 
-    /// Build a params-only `CommittedGroupParams` with zeroed layout fields.
+    /// True when this fold opens any group before its own group.
     ///
-    /// Only ring dimension, matrix row counts, log_basis, and fold_challenge_config
-    /// are populated. Column counts, block geometry, and digit depths are
-    /// zeroed. Call `with_layout` to fill them from a derived layout.
-    pub fn params_only(
-        sis_modulus_profile: SisModulusProfileId,
-        ring_dimension: usize,
-        log_basis: u32,
-        n_a: usize,
-        n_b: usize,
-        n_d: usize,
-        fold_challenge_config: SparseChallengeConfig,
-    ) -> Self {
-        Self {
-            open_matrix: OpenCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::sis::SisTableDigest::CURRENT,
-                sis_modulus_profile,
-                n_d,
-                0,
-                0,
-                ring_dimension,
-            ),
-            payload_mode: crate::CommitmentPayloadMode::Compressed,
-            source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
-            witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
-            // A zeroed shell whose only group is its own; callers fill the
-            // geometry through `with_decomp`, as they always did.
-            groups: FoldGroups::singleton(GroupOpenPhaseParams {
-                profile: crate::GroupCommitPhaseParams {
-                    version: crate::GroupCommitPhaseParams::VERSION,
-                    group: crate::PolynomialGroupLayout::singleton(0),
-                    blocks: crate::BlockGeometry::new(0, 0, 0),
-                    outer_slice_count: crate::CommitmentSliceCount::ONE,
-                    inner: crate::RoleParams::new(
-                        crate::GadgetDigits::new(log_basis, 0),
-                        InnerCommitMatrixParams::new_unchecked(
-                            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                            crate::sis::SisTableDigest::CURRENT,
-                            sis_modulus_profile,
-                            n_a,
-                            0,
-                            0,
-                            ring_dimension,
-                        ),
-                    ),
-                    outer: crate::RoleParams::new(
-                        crate::GadgetDigits::new(log_basis, 0),
-                        OuterCommitMatrixParams::new_unchecked(
-                            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                            crate::sis::SisTableDigest::CURRENT,
-                            sis_modulus_profile,
-                            n_b,
-                            0,
-                            0,
-                            ring_dimension,
-                        ),
-                    ),
-                },
-                opening: GroupOpeningPlan {
-                    opening_method: OpeningMethod::EvaluationTrace,
-                    fold_challenge_config,
-                    log_basis_open: log_basis,
-                    num_digits_open: 0,
-                    num_digits_fold: 1,
-                },
-                setup_natural_len: None,
-            }),
-        }
-    }
-
-    /// True when this level carries multi-group-root metadata.
+    /// This includes an incoming setup prefix and frozen root precommitments.
     #[inline]
-    pub fn has_precommitted_groups(&self) -> bool {
-        self.precommitted_group_count() != 0
+    pub fn has_preceding_groups(&self) -> bool {
+        self.preceding_group_count() != 0
     }
 
     #[inline]
-    pub fn precommitted_group_count(&self) -> usize {
+    pub fn preceding_group_count(&self) -> usize {
         self.groups.preceding().len()
     }
 
     #[inline]
-    pub fn precommitted_group_params(&self, group_index: usize) -> Option<&GroupOpenPhaseParams> {
-        // The own group is the last entry and is not a precommitted group, so
-        // bound the index before indexing the list.
-        if group_index >= self.precommitted_group_count() {
+    pub fn preceding_group_params(&self, group_index: usize) -> Option<&GroupOpenPhaseParams> {
+        // The own group is last, so bound the index to the preceding slice.
+        if group_index >= self.preceding_group_count() {
             return None;
         }
         self.groups.preceding_group(group_index)
@@ -379,284 +230,9 @@ impl CommittedGroupParams {
         self.groups.replace_setup_prefix(prefix)
     }
 
-    pub fn precommitted_group_iter(&self) -> impl Iterator<Item = &GroupOpenPhaseParams> {
-        // Excludes the own group at the end, but *includes* an incoming prefix:
-        // this iterator has always yielded `[prefix?, precommitted...]`, and the
-        // opening batch is built from it, so dropping the prefix here shrinks the
-        // batch by one and makes it disagree with `group_count()`.
+    pub fn preceding_group_iter(&self) -> impl Iterator<Item = &GroupOpenPhaseParams> {
+        // The canonical preceding order is `[prefix?, precommitted...]`.
         self.groups.preceding().iter()
-    }
-
-    /// Reject multi-group-root params at scalar-only call sites.
-    pub fn require_scalar_level(&self, context: &str) -> Result<(), AkitaError> {
-        if self.has_precommitted_groups() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{context} requires scalar root level params"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Worst-case L1 mass of the fold-round challenge.
-    #[inline]
-    pub fn challenge_l1_mass(&self) -> usize {
-        self.fold_challenge_config().l1_norm()
-    }
-
-    /// Effective fold-round challenge L∞ norm `||c||_inf` at this level.
-    #[inline]
-    pub fn challenge_infinity_norm(&self) -> usize {
-        self.fold_challenge_config().infinity_norm() as usize
-    }
-
-    /// Effective per-block worst-case `‖c‖_2²` upper bound at this fold level.
-    #[inline]
-    pub fn challenge_l2_sq_max(&self) -> u128 {
-        self.fold_challenge_config().challenge_l2_sq_max()
-    }
-
-    /// Fold-challenge coefficient count `inner_width · D`.
-    #[inline]
-    pub fn num_fold_coeffs(&self) -> u128 {
-        (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
-    }
-
-    /// Validate the shared fold nonce against the protocol-wide attempt cap.
-    ///
-    /// This verifier boundary deliberately does not reconstruct an honest
-    /// source model or an honest folded-response cap. Those values guide the
-    /// prover's search only.
-    pub fn validate_fold_grind_nonce(
-        &self,
-        opening_batch: &OpeningClaimsLayout,
-        fold_grind_nonce: u32,
-    ) -> Result<(), AkitaError> {
-        self.validate_opening_batch(opening_batch)?;
-        crate::FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(fold_grind_nonce)
-    }
-
-    /// Exact scheduled gadget decomposition depth for the folded witness.
-    #[inline]
-    pub fn num_digits_fold(&self) -> usize {
-        self.own_group().opening.num_digits_fold
-    }
-
-    /// This fold's block triple.
-    ///
-    /// Block triple of this fold's own new group.
-    #[inline]
-    #[must_use]
-    pub fn blocks(&self) -> crate::BlockGeometry {
-        self.own_group().profile.blocks
-    }
-
-    /// Number of Boolean coordinates in the block-index domain.
-    #[inline]
-    pub fn block_index_bits(&self) -> usize {
-        self.blocks().block_index_bits()
-    }
-
-    /// Number of Boolean coordinates in one block-position slice.
-    #[inline]
-    pub fn position_index_bits(&self) -> usize {
-        self.blocks().position_index_bits()
-    }
-
-    /// Boolean block-index domain size (`next_power_of_two(B)`).
-    #[inline]
-    pub fn block_index_domain_size(&self) -> Result<usize, AkitaError> {
-        self.blocks().block_index_domain_size()
-    }
-
-    /// Validate the exact source/block geometry before it reaches allocation.
-    pub fn validate_block_geometry(&self) -> Result<(), AkitaError> {
-        self.blocks().validate()
-    }
-
-    /// Validate the exact A/B geometry executed by one commitment request.
-    ///
-    /// This binds the concrete polynomial arity and fold level to the same B
-    /// width, slice policy, and complete-source compression cap used for SIS
-    /// pricing and descriptor construction.
-    pub fn validate_commitment_request(
-        &self,
-        fold_level: usize,
-        num_polynomials: usize,
-    ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
-        self.validate_group_topology()?;
-        let own_profile = &self.own_group().profile;
-        own_profile.validate(own_profile.inner.matrix.sis_modulus_profile().field_bits())?;
-        own_profile.validate_root_geometry()?;
-        if num_polynomials == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "commitment request requires at least one polynomial".into(),
-            ));
-        }
-        if self.own_group().profile.group.num_polynomials() != num_polynomials {
-            return Err(AkitaError::InvalidSetup(
-                "stored own-group arity disagrees with the commitment request".into(),
-            ));
-        }
-        self.source_encoding.validate(self.d_a())?;
-        self.validate_block_geometry()?;
-        self.outer_slice_count().validate_for_commitment(
-            fold_level,
-            self.payload_mode,
-            self.blocks().live_blocks,
-        )?;
-        let expected_a_width = self
-            .blocks()
-            .positions_per_block
-            .checked_mul(self.inner().digits.num_digits)
-            .ok_or_else(|| AkitaError::InvalidSetup("commitment A width overflow".into()))?;
-        if self.inner().matrix.input_width() != expected_a_width {
-            return Err(AkitaError::InvalidSetup(
-                "commitment A matrix width disagrees with request geometry".into(),
-            ));
-        }
-        let geometry = crate::CommitmentSliceGeometry::try_new(
-            self.outer_slice_count(),
-            self.blocks().live_blocks,
-            num_polynomials,
-            self.inner().matrix.output_rank(),
-            self.outer().digits.num_digits,
-            self.role_dims().d_a(),
-            self.role_dims().d_b(),
-        )?;
-        if self.outer().matrix.input_width() != geometry.physical_input_width() {
-            return Err(AkitaError::InvalidSetup(
-                "commitment B matrix width disagrees with sliced request geometry".into(),
-            ));
-        }
-        if self.payload_mode.is_compressed() {
-            let source_coefficients = geometry
-                .logical_output_rows(self.outer().matrix.output_rank())?
-                .checked_mul(self.role_dims().d_b())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("commitment B source size overflow".into())
-                })?;
-            if crate::CompressionChainPlan::try_for_complete_source(
-                self.outer().matrix.sis_modulus_profile(),
-                source_coefficients,
-            )?
-            .is_none()
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "commitment B source exceeds the compression cap".into(),
-                ));
-            }
-        }
-        Ok(geometry)
-    }
-
-    /// Polynomial arity encoded by the exact physical B width.
-    pub fn commitment_polynomial_count(&self) -> Result<usize, AkitaError> {
-        let one_polynomial_width = crate::CommitmentSliceGeometry::try_new(
-            self.outer_slice_count(),
-            self.blocks().live_blocks,
-            1,
-            self.inner().matrix.output_rank(),
-            self.outer().digits.num_digits,
-            self.role_dims().d_a(),
-            self.role_dims().d_b(),
-        )?
-        .physical_input_width();
-        self.outer()
-            .matrix
-            .input_width()
-            .checked_div(one_polynomial_width)
-            .filter(|count| {
-                *count != 0 && self.outer().matrix.input_width() == *count * one_polynomial_width
-            })
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "commitment B width does not encode an exact polynomial count".into(),
-                )
-            })
-    }
-
-    /// Width of inner matrix A (column count of the A-key).
-    #[inline]
-    pub fn inner_width(&self) -> usize {
-        self.inner().matrix.input_width()
-    }
-
-    /// Exact live source ring elements in one claim.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] on overflow.
-    pub fn n_ring_elems(&self) -> Result<usize, AkitaError> {
-        self.validate_block_geometry()?;
-        Ok(self.blocks().live_ring_elements_per_claim)
-    }
-
-    /// Total flat field-element count (`n_ring_elems * d_a`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] on overflow.
-    pub fn flat_field_len(&self) -> Result<usize, AkitaError> {
-        let n_ring_elems = self.n_ring_elems()?;
-        n_ring_elems.checked_mul(self.d_a()).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "n_ring_elems={n_ring_elems} * d_a={} overflows usize",
-                self.d_a(),
-            ))
-        })
-    }
-
-    /// Append the descriptor digest encoding for this parameter set.
-    ///
-    /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
-    /// reviewed with their Fiat-Shamir binding.
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.append_descriptor_bytes_with_payload_mode(bytes, self.payload_mode);
-    }
-
-    pub(crate) fn append_descriptor_bytes_with_payload_mode(
-        &self,
-        bytes: &mut Vec<u8>,
-        payload_mode: crate::CommitmentPayloadMode,
-    ) {
-        bytes.push(payload_mode.tag());
-        self.source_encoding.append_descriptor_bytes(bytes);
-        self.opening_method().append_descriptor_bytes(bytes);
-        push_u32(bytes, self.inner().digits.log_basis);
-        push_u32(bytes, self.outer().digits.log_basis);
-        push_u32(bytes, self.open().digits.log_basis);
-        self.inner().matrix.append_descriptor_bytes(bytes);
-        self.outer().matrix.append_descriptor_bytes(bytes);
-        self.open().matrix.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.blocks().live_ring_elements_per_claim);
-        push_usize(bytes, self.blocks().positions_per_block);
-        push_usize(bytes, self.blocks().live_blocks);
-        self.outer_slice_count().append_descriptor_bytes(bytes);
-        append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config());
-        push_usize(bytes, self.inner().digits.num_digits);
-        push_usize(bytes, self.outer().digits.num_digits);
-        push_usize(bytes, self.open().digits.num_digits);
-        push_usize(bytes, self.num_digits_fold());
-        // Chunk binding is appended only when the level is chunked, so
-        // single-chunk descriptors stay byte-for-byte identical to the historical
-        // layout (the flag-off no-op invariant). When chunked, bind the chunk
-        // count and activated-level count into the Fiat-Shamir digest.
-        if self.witness_chunk.num_chunks != 1 {
-            self.witness_chunk.append_descriptor_bytes(bytes);
-        }
-
-        if !self.precommitted_groups().is_empty() {
-            push_usize(bytes, self.precommitted_groups().len());
-            for group in self.precommitted_groups() {
-                group.append_descriptor_bytes(bytes);
-            }
-        }
-        if let Some(setup_prefix) = self.setup_prefix() {
-            bytes.push(1);
-            setup_prefix.append_setup_prefix_descriptor_bytes(bytes);
-        } else {
-            bytes.push(0);
-        }
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -739,7 +315,7 @@ impl CommittedGroupParams {
     /// Number of commitment groups in this opening batch (`precommitted + final`).
     #[inline]
     fn group_count(&self) -> usize {
-        self.precommitted_group_count() + 1
+        self.preceding_group_count() + 1
     }
 
     /// Build the canonical root opening layout around one final group.
@@ -748,7 +324,7 @@ impl CommittedGroupParams {
         final_group: crate::PolynomialGroupLayout,
     ) -> Result<OpeningClaimsLayout, AkitaError> {
         let precommitted = self
-            .precommitted_group_iter()
+            .preceding_group_iter()
             .map(|group| group.profile.group)
             .collect::<Vec<_>>();
         OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
@@ -774,9 +350,9 @@ impl CommittedGroupParams {
         // layout. The stored own profile remains authoritative and is validated
         // above; exact layout equality is enforced wherever the batch has a
         // concrete final layout.
-        for group_index in 0..self.precommitted_group_count() {
+        for group_index in 0..self.preceding_group_count() {
             let group_params = self
-                .precommitted_group_params(group_index)
+                .preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group_params.validate()?;
             if group_params.opening.log_basis_open != self.open().digits.log_basis {
@@ -814,7 +390,7 @@ impl CommittedGroupParams {
         let dims = if group_index == final_group_index {
             self.role_dims()
         } else {
-            self.precommitted_group_params(group_index)
+            self.preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
                 .role_dims(self.open().matrix.ring_dimension())
         };
@@ -836,7 +412,7 @@ impl CommittedGroupParams {
         let dims = if group_index == final_group_index {
             self.role_dims()
         } else {
-            self.precommitted_group_params(group_index)
+            self.preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
                 .role_dims(self.open().matrix.ring_dimension())
         };
@@ -905,7 +481,7 @@ impl CommittedGroupParams {
                 .logical_output_rows(self.outer().matrix.output_rank());
         }
         let group = self
-            .precommitted_group_params(group_index)
+            .preceding_group_params(group_index)
             .ok_or(AkitaError::InvalidProof)?;
         group
             .profile
@@ -955,7 +531,7 @@ impl CommittedGroupParams {
     /// the group accessor's hard-coded constant.
     #[must_use]
     pub fn source_encoding_of(&self, group_index: usize) -> crate::CommittedSourceEncoding {
-        if group_index == self.precommitted_group_count() {
+        if group_index == self.preceding_group_count() {
             self.source_encoding
         } else {
             crate::CommittedSourceEncoding::CanonicalCoefficientTable
@@ -1030,7 +606,7 @@ impl CommittedGroupParams {
         rows = rows
             .checked_add(final_b_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        for group in self.precommitted_group_iter() {
+        for group in self.preceding_group_iter() {
             rows = rows
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -1083,7 +659,7 @@ impl CommittedGroupParams {
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
             let prior = self
-                .precommitted_group_params(prior_index)
+                .preceding_group_params(prior_index)
                 .ok_or(AkitaError::InvalidProof)?;
             start = start
                 .checked_add(1)
@@ -1125,7 +701,7 @@ impl CommittedGroupParams {
             Ok(self.inner().matrix.output_rank())
         } else {
             Ok(self
-                .precommitted_group_params(group_index)
+                .preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
                 .profile
                 .inner
@@ -1144,7 +720,7 @@ impl CommittedGroupParams {
                 .logical_output_rows(self.outer().matrix.output_rank())
         } else {
             let group = self
-                .precommitted_group_params(group_index)
+                .preceding_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group
                 .profile
@@ -1234,7 +810,7 @@ impl CommittedGroupParams {
     /// never construct this relation matrix.
     #[inline]
     pub fn relation_matrix_row_count(&self, num_commitments: usize) -> Result<usize, AkitaError> {
-        if self.has_precommitted_groups() {
+        if self.has_preceding_groups() {
             return self.multi_group_relation_matrix_row_count_for(num_commitments);
         }
         self.require_scalar_level("relation_matrix_row_count_for")?;
@@ -1270,7 +846,7 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
-        if self.has_precommitted_groups() {
+        if self.has_preceding_groups() {
             self.validate_opening_batch(opening_batch)?;
         } else {
             self.require_scalar_level(
@@ -1294,181 +870,6 @@ impl CommittedGroupParams {
             AkitaError::InvalidSetup("relation-row index width overflow".to_string())
         })?;
         Ok(padded.trailing_zeros() as usize)
-    }
-
-    /// Fill in layout-derived fields from exact digit-innermost geometry.
-    ///
-    /// Takes a params-only `CommittedGroupParams` (with zeroed layout fields) and
-    /// `num_positions_per_block` is `M`, power-of-two in the current Boolean layout, and
-    /// `num_live_ring_elements_per_claim` is the exact live `N`. The exact live block
-    /// count `B` is derived as `ceil(N / M)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when parameters are invalid or derived widths overflow.
-    pub fn with_decomp(
-        &self,
-        num_positions_per_block: usize,
-        num_live_ring_elements_per_claim: usize,
-        num_digits_inner: usize,
-        num_digits_outer: usize,
-        num_digits_open: usize,
-    ) -> Result<Self, AkitaError> {
-        if num_live_ring_elements_per_claim == 0
-            || num_positions_per_block == 0
-            || !num_positions_per_block.is_power_of_two()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "with_decomp requires positive N and power-of-two M".to_string(),
-            ));
-        }
-        let num_live_blocks = num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
-        crate::BlockGeometry::checked_block_index_domain_size_for(num_live_blocks).ok_or_else(
-            || AkitaError::InvalidSetup("block-index domain size overflows usize".to_string()),
-        )?;
-        let inner_width = num_positions_per_block
-            .checked_mul(num_digits_inner)
-            .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".to_string()))?;
-        let outer_width = crate::CommitmentSliceGeometry::try_new(
-            self.outer_slice_count(),
-            num_live_blocks,
-            1,
-            self.inner().matrix.output_rank(),
-            num_digits_outer,
-            self.inner().matrix.ring_dimension(),
-            self.outer().matrix.ring_dimension(),
-        )?
-        .physical_input_width();
-        let d_matrix_width = num_digits_open
-            .checked_mul(num_live_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
-        let rebuilt = Self {
-            payload_mode: self.payload_mode,
-            source_encoding: self.source_encoding,
-            witness_chunk: self.witness_chunk,
-            open_matrix: OpenCommitMatrixParams::new_unchecked(
-                self.open_matrix.security_policy(),
-                self.open_matrix.sis_table_key().table_digest,
-                self.open_matrix.sis_modulus_profile(),
-                self.open_matrix.output_rank,
-                d_matrix_width,
-                self.open_matrix.coeff_linf_bound(),
-                self.open_matrix.ring_dimension(),
-            ),
-            // Rebuild only this fold's own group; the earlier entries are frozen.
-            groups: {
-                let mut groups = self.groups.clone();
-                let own = groups.own_mut();
-                own.profile.blocks = crate::BlockGeometry::new(
-                    num_live_ring_elements_per_claim,
-                    num_positions_per_block,
-                    num_live_blocks,
-                );
-                own.profile.inner = crate::RoleParams::new(
-                    crate::GadgetDigits::new(own.profile.inner.digits.log_basis, num_digits_inner),
-                    own.profile.inner.matrix.try_with_input_width(inner_width)?,
-                );
-                own.profile.outer = crate::RoleParams::new(
-                    crate::GadgetDigits::new(own.profile.outer.digits.log_basis, num_digits_outer),
-                    OuterCommitMatrixParams::new_unchecked(
-                        own.profile.outer.matrix.security_policy(),
-                        own.profile.outer.matrix.sis_table_key().table_digest,
-                        own.profile.outer.matrix.sis_modulus_profile(),
-                        own.profile.outer.matrix.output_rank,
-                        outer_width,
-                        own.profile.outer.matrix.coeff_linf_bound(),
-                        own.profile.outer.matrix.ring_dimension(),
-                    ),
-                );
-                own.opening.num_digits_open = num_digits_open;
-                groups
-            },
-        };
-        rebuilt.validate_exact_fold_plan()
-    }
-
-    /// Build a new `CommittedGroupParams` that keeps rank/ring/SIS-bucket info
-    /// from `self` but replaces all layout-derived fields with those
-    /// from `other`.
-    ///
-    /// "Layout-derived fields" are the matrix input widths, `num_live_blocks`,
-    /// `num_positions_per_block`,
-    /// `position_index_bits`, `block_index_bits`, and the commit/open digit counts. The audited
-    /// coefficient-L∞ SIS bucket is not a layout field: it is the bucket the
-    /// output rank was sized against, so it is preserved from `self`,
-    /// matching the placement of the output rank and `sis_modulus_profile`. Pulling the
-    /// bucket from `other` would lose the audited value when the layout
-    /// argument was constructed via [`CommittedGroupParams::params_only`] or threaded
-    /// through [`Self::with_decomp`], and would let the SIS audit at
-    /// role-specific commit-matrix constructors short-circuit silently.
-    pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
-        Self {
-            payload_mode: other.payload_mode,
-            source_encoding: other.source_encoding,
-            // The chunk layout is a property of the committed witness, sized with
-            // the ranks, so it stays with `self` like the SIS buckets.
-            witness_chunk: self.witness_chunk,
-            open_matrix: OpenCommitMatrixParams::new_unchecked(
-                self.open_matrix.security_policy(),
-                self.open_matrix.sis_table_key().table_digest,
-                self.open_matrix.sis_modulus_profile(),
-                self.open_matrix.output_rank,
-                other.open_matrix.input_width,
-                self.open_matrix.coeff_linf_bound(),
-                self.open_matrix.ring_dimension(),
-            ),
-            // Layout-derived parts of this fold's own group come from `other`;
-            // ranks and audited buckets stay with `self`. Earlier entries are
-            // frozen groups and are carried across untouched.
-            groups: {
-                let mut groups = self.groups.clone();
-                let own = groups.own_mut();
-                own.profile.group = other.group();
-                own.profile.blocks = other.blocks();
-                own.profile.outer_slice_count = other.outer_slice_count();
-                own.profile.inner = crate::RoleParams::new(
-                    crate::GadgetDigits::new(
-                        other.inner().digits.log_basis,
-                        other.inner().digits.num_digits,
-                    ),
-                    self.inner()
-                        .matrix
-                        .try_with_input_width(other.inner().matrix.input_width)?,
-                );
-                own.profile.outer = crate::RoleParams::new(
-                    crate::GadgetDigits::new(
-                        other.outer().digits.log_basis,
-                        other.outer().digits.num_digits,
-                    ),
-                    OuterCommitMatrixParams::new_unchecked(
-                        self.outer().matrix.security_policy(),
-                        self.outer().matrix.sis_table_key().table_digest,
-                        self.outer().matrix.sis_modulus_profile(),
-                        self.outer().matrix.output_rank,
-                        other.outer().matrix.input_width,
-                        self.outer().matrix.coeff_linf_bound(),
-                        self.outer().matrix.ring_dimension(),
-                    ),
-                );
-                own.opening.opening_method = other.opening_method();
-                own.opening.log_basis_open = other.own_group().opening.log_basis_open;
-                own.opening.num_digits_open = other.own_group().opening.num_digits_open;
-                own.opening.num_digits_fold = other.num_digits_fold();
-                own.opening.fold_challenge_config = self.fold_challenge_config();
-                groups
-            },
-        }
-        .validate_exact_fold_plan()
-    }
-
-    fn validate_exact_fold_plan(self) -> Result<Self, AkitaError> {
-        self.validate_group_topology()?;
-        if self.num_digits_fold() == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "exact fold plan must have nonzero digit depth".into(),
-            ));
-        }
-        Ok(self)
     }
 }
 

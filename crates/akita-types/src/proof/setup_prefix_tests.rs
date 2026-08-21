@@ -7,6 +7,13 @@ use akita_challenges::SparseChallengeConfig;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use std::collections::{BTreeSet, HashSet};
 
+#[test]
+fn setup_prefix_domain_is_the_smallest_covering_power_of_two() {
+    validate_setup_prefix_domain(65, 128).expect("exact ragged prefix domain");
+    validate_setup_prefix_domain(65, 256).expect_err("overpadded prefix domain");
+    validate_setup_prefix_domain(0, 1).expect_err("empty prefix domain");
+}
+
 fn sample_level_params() -> CommittedGroupParams {
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,

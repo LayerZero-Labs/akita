@@ -193,7 +193,7 @@ fn retarget_open_dimension(
     Ok(())
 }
 
-fn precommitted_group_params(
+fn preceding_group_params(
     params: &CommittedGroupParams,
     group: PolynomialGroupLayout,
 ) -> crate::GroupOpenPhaseParams {
@@ -549,15 +549,15 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
             3,
             outer.ring_dimension(),
         );
-    let precommitted = precommitted_group_params(&group_params, precommitted_group);
+    let precommitted = preceding_group_params(&group_params, precommitted_group);
     let one_precommitted_d_width = precommitted
         .d_segment_width(1, producer.role_dims().d_d())
         .expect("precommitted D width");
-    let precommitted_group_count = 8;
+    let preceding_group_count = 8;
     producer
-        .set_precommitted_groups(vec![precommitted; precommitted_group_count])
+        .set_precommitted_groups(vec![precommitted; preceding_group_count])
         .unwrap();
-    let precommitted_d_width = one_precommitted_d_width * precommitted_group_count;
+    let precommitted_d_width = one_precommitted_d_width * preceding_group_count;
 
     let open = &producer.open().matrix;
     producer.open_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
@@ -570,7 +570,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         open.ring_dimension(),
     );
 
-    let mut groups = vec![precommitted_group; precommitted_group_count];
+    let mut groups = vec![precommitted_group; preceding_group_count];
     groups.push(final_group);
     let opening_layout = OpeningClaimsLayout::from_groups(groups).expect("multi-group layout");
     let natural_len = crate::active_setup_field_len(producer, &opening_layout)
@@ -1442,7 +1442,7 @@ fn schedule_row_identity_binds_root_precommitted_opening_method() {
             3,
             outer.ring_dimension(),
         );
-    let precommitted = precommitted_group_params(&group_params, group_layout);
+    let precommitted = preceding_group_params(&group_params, group_layout);
     let extra_d_width = precommitted
         .d_segment_width(1, schedule.root.params.role_dims().d_d())
         .expect("root precommitted D width");

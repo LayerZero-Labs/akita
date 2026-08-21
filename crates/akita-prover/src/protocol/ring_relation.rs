@@ -501,7 +501,7 @@ impl RingRelationProver {
         // suffix commitments already contain those B images directly.
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         let mut group_payloads = Vec::with_capacity(num_groups);
-        let commit_group_order = if lp.has_precommitted_groups() {
+        let commit_group_order = if lp.has_preceding_groups() {
             opening_batch.root_group_order()?
         } else {
             (0..num_groups).collect()
@@ -695,7 +695,7 @@ impl RingRelationProver {
             group_openings.push(opening);
             offset = end;
         }
-        let e_hat_concat = if lp.has_precommitted_groups() {
+        let e_hat_concat = if lp.has_preceding_groups() {
             Some(concatenate_group_d_inputs(
                 &opening_batch,
                 &group_openings

@@ -1015,6 +1015,7 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
     params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
     params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
+    params.own_group_mut().profile.group = PolynomialGroupLayout::singleton(14);
     params.own_group_mut().opening.num_digits_fold = raw_candidate.num_digits_fold;
     assert!(params.compression_sources_supported().unwrap());
     params

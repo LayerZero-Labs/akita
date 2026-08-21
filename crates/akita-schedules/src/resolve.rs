@@ -117,7 +117,7 @@ fn validate_canonical_transition_lengths(
             schedule.root.input_witness_len
         )));
     }
-    let expected_root_output = if root_params.has_precommitted_groups() {
+    let expected_root_output = if root_params.has_preceding_groups() {
         root_params.output_witness_len_for_field_bits(
             field_bits,
             policy.claim_ext_degree,

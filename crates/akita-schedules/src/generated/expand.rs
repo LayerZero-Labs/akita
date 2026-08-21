@@ -98,6 +98,24 @@ impl GroupLengthSource {
     }
 }
 
+pub(crate) enum GeneratedFoldExpansionRole {
+    Root {
+        num_digits_inner: u32,
+    },
+    Recursive {
+        fold_level: usize,
+        response_l2_sq_cap: Option<u128>,
+    },
+}
+
+pub(crate) struct GeneratedGroupExpansion {
+    pub role: GeneratedFoldExpansionRole,
+    pub payload_mode: akita_types::CommitmentPayloadMode,
+    pub open_commit_matrix: GeneratedMatrix,
+    pub group: akita_types::PolynomialGroupLayout,
+    pub source: GroupLengthSource,
+}
+
 impl GeneratedFrozenGroup {
     fn expand_to_group(
         self,
@@ -172,11 +190,7 @@ impl GeneratedSetupPrefix {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
             })?;
-        if natural_len == 0 || natural_len.checked_next_power_of_two() != Some(committed_len) {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix natural length disagrees with its frozen commitment".into(),
-            ));
-        }
+        akita_types::validate_setup_prefix_domain(natural_len, committed_len)?;
         self.group.expand_to_group(
             Some(natural_len),
             policy,
@@ -218,7 +232,6 @@ impl GeneratedGroup {
     /// Returns an error when a stored role dimension is invalid,
     /// bucket/width resolution fails, or a generated rank fails its SIS audit
     /// against the batched width.
-    #[allow(clippy::too_many_arguments)]
     /// Expand a fold's incoming setup prefix, if it carries one.
     ///
     /// Split out so the one expansion body can take its prefix from a fold or
@@ -241,32 +254,37 @@ impl GeneratedGroup {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
             })?;
         let group_natural_len = generated_count(group.natural_len, "setup-prefix natural length")?;
-        if group_natural_len > n_prefix {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix natural length exceeds commitment domain".into(),
-            ));
-        }
+        akita_types::validate_setup_prefix_domain(group_natural_len, n_prefix)?;
         Ok(Some(akita_types::scheduled_setup_prefix(
             group_natural_len,
             commitment_params,
         )))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_group(
         &self,
         policy: &PlannerPolicy,
-        payload_mode: akita_types::CommitmentPayloadMode,
-        opening_method: akita_types::OpeningMethod,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-        fold_level: usize,
-        exact_num_digits_inner: Option<u32>,
-        generated_num_digits_fold: u32,
-        response_l2_sq_cap: Option<u128>,
-        open_commit_matrix: GeneratedMatrix,
-        group: akita_types::PolynomialGroupLayout,
-        source: GroupLengthSource,
+        expansion: GeneratedGroupExpansion,
     ) -> Result<CommittedGroupParams, AkitaError> {
+        let GeneratedGroupExpansion {
+            role,
+            payload_mode,
+            open_commit_matrix,
+            group,
+            source,
+        } = expansion;
+        let (fold_level, exact_num_digits_inner, response_l2_sq_cap) = match role {
+            GeneratedFoldExpansionRole::Root { num_digits_inner } => {
+                (0, Some(num_digits_inner), None)
+            }
+            GeneratedFoldExpansionRole::Recursive {
+                fold_level,
+                response_l2_sq_cap,
+            } => (fold_level, None, response_l2_sq_cap),
+        };
+        let opening_method = self.opening_method;
+        let generated_num_digits_fold = self.num_digits_fold;
         let num_claims = source.num_claims();
         let dimensions = CommitmentRingDims {
             inner: self.inner_commit_matrix.ring_dimension as usize,
