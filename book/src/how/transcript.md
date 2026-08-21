@@ -29,7 +29,9 @@ Prover and verifier share one helper:
 - `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
 - `crates/akita-types/src/instance_descriptor/mod.rs` — descriptor shape and serialization
 
-Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
+The descriptor is absorbed before any protocol message or challenge. This
+binds the transcript to the selected algebra, setup, schedule, and public call
+shape rather than trusting those choices from later proof bytes.
 
 ### Integrator note (Jolt / recursion hosts)
 

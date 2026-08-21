@@ -1,90 +1,192 @@
 # Jolt recursion
 
-> **Status:** current integration note. The
-> [standalone recursion README](../../../profile/akita-recursion/README.md)
-> remains the canonical operational runbook.
+[Jolt](https://jolt.a16zcrypto.com/) is a zero-knowledge virtual machine that
+proves the correct execution of 64-bit RISC-V programs. Akita's Jolt
+integration turns the Akita verifier into one of those programs. Jolt can
+therefore produce an outer proof that says an Akita opening proof was accepted.
 
-The standalone `profile/akita-recursion/` sub-workspace (excluded from the main
-workspace; Rust 1.95 + RISC-V): the artifact → host → guest flow, the
-`AkitaJoltInputs` blob, cycle accounting (Jolt guest pins **`fp128::OneHot`**
-at its D256 root envelope), the
-trusted-benchmark vs production-validation distinction, and the nv=32
-full-prove trace-length limit. Link the sub-workspace README rather than
-duplicating its cycle tables.
+This is recursive verification: one proof system proves the execution of
+another proof system's verifier. It lets a host combine Akita's compact,
+post-quantum polynomial commitments with the execution and composition tools
+provided by a zkVM.
 
-**Akita revision pinning:** hosts must pin an exact Akita git tag or commit.
-Akita does not preserve proof bytes across revisions. Revalidate every upgrade
-with the host prove and verify harness instead of a retired proof digest.
+The live integration is the standalone workspace under
+`profile/akita-recursion/`. Its
+[runbook](../../../profile/akita-recursion/README.md)
+contains current commands, environment variables, and measured trace notes.
 
-## Porting the modular Jolt prover
+## The complete path
 
-Jolt PR 1732 uses two memory release points with its original optimized Akita
-pin. Preserve both when updating it to the current Akita API.
+The integration has four small crates.
 
-First, release the large shared matrix NTT entries after stage zero finishes
-the trace commitment. Propagate any release error through the Jolt setup or
-prover error type. The small compression NTT cache remains resident and does
-not rebuild at this boundary.
+| Crate | Runs where | Responsibility |
+| --- | --- | --- |
+| `artifact` | Native host | Creates a real Akita commitment, opening proof, and verifier bundle |
+| `glue` | Host and guest | Defines the bounded `AkitaJoltInputs` wire format |
+| `guest` | Jolt RISC-V guest | Decodes the bundle and calls `akita_verifier::batched_verify` |
+| `host` | Native host | Compiles the guest, runs Jolt, and checks the outer proof |
 
-Second, wrap the stack used for Akita opening proofs with
-`ReleaseRootNttAfterFold`. This releases the root shared matrix entries before
-the recursive suffix. The default stack retains them, so using
-`UniformProverStack` alone does not preserve the memory policy from the
-original Jolt branch.
+The data flow is direct:
 
-```rust
-let backend = CpuBackend::DEFAULT;
-let prepared = backend.prepare_setup(&akita_setup)?;
-let stack = UniformProverStack::uniform(
-    &backend,
-    &prepared,
-    akita_setup.expanded.as_ref(),
-)?;
-
-// Stage zero, after the trace commitment.
-let _freed_shared_bytes = prepared.drop_built_ntt_slots()?;
-
-// Opening proof.
-let releasing_stack = ReleaseRootNttAfterFold::new(stack);
-AkitaCommitmentScheme::<Cfg>::batched_prove(
-    &akita_setup,
-    opening,
-    &releasing_stack,
-    transcript,
-    BasisMode::Lagrange,
-)?;
+```text
+Akita artifact generator
+        │
+        │ AkitaJoltInputs bytes
+        ▼
+strict native Akita verification
+        │
+        ▼
+Jolt RISC-V guest
+        │ decode input
+        │ rebuild statement
+        │ run Akita verifier
+        ▼
+guest result: accepted or rejected
+        │
+        ▼
+Jolt proves and verifies the guest execution
 ```
 
-Jolt may use `CpuBackend::with_resource_limits` instead of the default. Keep
-the chosen backend value alive for as long as the prepared stack borrows it.
-The default retains ring switch operations through `2^21` ring elements and
-allows 8 MiB of sparse commitment scratch space for each worker. Change these limits only
-after measuring the complete Jolt prover. They change CPU work and memory use,
-but they do not change Akita proof bytes.
+Before compiling or proving the guest, the host strictly decodes the bundle
+and runs the native Akita verifier. This makes failures easy to locate. If the
+native check fails, the public statement or Akita proof is wrong. If it passes,
+the remaining work belongs to guest compilation, execution, or the Jolt prover.
 
-The Jolt adapter must also follow the current source ownership API. A custom
-trace one hot source implements `commit_inner_group` and returns witnesses in
-source order. It must not restore the removed root storage release hook. Each
-operation owns its derived opening and tensor data.
+## What crosses into the guest
 
-After the dependency update compiles, run the Jolt Akita checks from its own
-workflow:
+`AkitaJoltInputs<F, D>` is one versioned verifier bundle. It contains:
+
+- the transcript domain;
+- the polynomial arity and opening point;
+- the claimed value and commitment;
+- the exact generated schedule selection;
+- the verifier setup;
+- the expected proof shape;
+- the Akita proof.
+
+The decoder checks a format marker, the fixed source-view dimension, bounded
+lengths, complete consumption of the input, and the shape of each nested Akita
+object. The guest then rebuilds the same singleton opening statement used by
+the native verifier.
+
+The guest depends on `akita-verifier` rather than the complete PCS package. It
+does not carry the polynomial backend, setup generator, or planner into the
+RISC-V program.
+
+## The current configuration
+
+The harness uses `proof_optimized::fp128::OneHot`. Its input is one structured
+one hot polynomial, and the guest is compiled with a source-view dimension of
+$D = 256$. This fixed type is the root envelope for the current adaptive
+configuration. The generated schedule still chooses the dimensions used at
+each later fold.
+
+`AKITA_NUM_VARS` chooses the polynomial arity. The artifact generator resolves
+the approved row for that exact arity and rejects a row that does not match the
+guest's fixed source view. The default is 20 variables. The 32 variable target
+uses the same $D = 256$ source view and is the large recursion benchmark.
+
+The recursion workspace is separate from the main Cargo workspace. It pins
+Rust 1.95, the RISC-V targets, and one exact Jolt revision. This keeps Jolt's
+toolchain and patched dependencies out of the main Akita dependency graph.
+
+## Run the native artifact and guest trace
+
+Install the Jolt CLI from the same revision pinned by the recursion workspace.
+Then run these commands from `profile/akita-recursion/`:
 
 ```bash
-cargo nextest run --cargo-profile ci -p jolt-prover-legacy --features akita
-cargo nextest run --cargo-profile ci -p jolt-prover \
-  --features akita,prover-fixtures --test-threads 1
-cargo nextest run --cargo-profile ci -p jolt-verifier \
-  --features akita,prover-fixtures --test-threads 1
+cargo build --release
+
+AKITA_NUM_VARS=20 \
+    ./target/release/akita-recursion-artifact
+
+ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
+    AKITA_RECURSION_LOG=info \
+    ./target/release/akita-recursion-host \
+    --trace-only \
+    --trace-output /dev/null
 ```
 
-Then run the modular benchmark with `--features akita,prover-fixtures`. Record
-the proving time and peak RSS from the same scale and host used for the old
-pin. Do not compare runtime numbers until the byte parity and verifier suites
-pass.
+The artifact command proves and verifies natively before publishing the input
+blob. The trace command compiles and executes the guest without running the
+full Jolt prover. It is the fastest way to confirm that a new Akita revision or
+larger arity fits the guest.
 
-## Sources to fold in
+The guest reports three cycle regions:
 
-- [Canonical recursion runbook](../../../profile/akita-recursion/README.md)
-- `profile/akita-recursion/glue/src/lib.rs`
-- `specs/archive/2026-Q3/pr375-prover-streaming-and-onehot-unification.md`
+| Marker | Work measured |
+| --- | --- |
+| `deserialize_input` | Decode and validate the verifier bundle |
+| `transcript_init` | Build the verifier transcript and public statement |
+| `akita_verify` | Run the Akita verifier kernel |
+
+At large arities, decoding the expanded verifier setup can dominate the guest
+trace. Measuring it separately makes that transport cost visible instead of
+attributing it to the Akita verifier.
+
+## Run the full recursive proof
+
+Begin with the 20 variable target, whose trace fits the guest's current
+$2^{32}$ instruction limit:
+
+```bash
+AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
+
+ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
+    AKITA_RECURSION_LOG=info \
+    ./target/release/akita-recursion-host \
+    --input target/akita_recursion_inputs.bin
+```
+
+The full command performs Jolt preprocessing, proves the guest execution, and
+verifies the resulting Jolt proof. Success ends with
+`Akita-in-Jolt proof OK`, `is_valid=true`, and `guest_panic=false`.
+
+The 32 variable target is intended for a server with enough memory for its
+large input and trace. Measure it with `--trace-only` first. The current
+follow-up is to record its adaptive trace length and raise Jolt's trace limit
+if that measured execution exceeds $2^{32}$ instructions.
+
+## Rejection is part of the proved execution
+
+The guest returns a small status value:
+
+| Value | Meaning |
+| --- | --- |
+| `0` | Akita verification succeeded |
+| `1` | Input decoding or statement construction failed |
+| `2` | The Akita verifier rejected the proof |
+
+Malformed public input produces a defined nonzero guest result. Jolt proves
+that result in the same way it proves a successful result. A guest panic is
+reported separately.
+
+## Trusted benchmark setup
+
+The host always performs strict setup decoding and Akita verification before
+the guest runs. For cycle measurement, the RISC-V benchmark guest then uses the
+already checked expanded setup matrix directly. This keeps the benchmark
+focused on transport and verifier execution.
+
+A deployment can preserve the same trust boundary by authenticating the setup
+package outside the guest. A deployment that receives setup from an untrusted
+source should use strict setup decoding inside the guest. The normal guest
+feature keeps strict decoding enabled; the host opts into the benchmark path
+only for the ELF it builds through the pinned Jolt SDK.
+
+## Keep the integration current
+
+The smoke workflow compiles and tests the glue, artifact, and host against the
+current Akita APIs. It does not run the expensive Jolt trace or proof. After an
+Akita or Jolt upgrade:
+
+1. Run the recursion workspace tests and release build.
+2. Generate a fresh artifact and confirm native verification.
+3. Run `--trace-only` and compare the three cycle markers.
+4. Run the full Jolt proof at a known arity.
+5. Measure the intended production arity on its deployment class machine.
+
+Pin the complete integration to one Akita revision. Regenerate the verifier
+bundle after every protocol upgrade because setup, schedule identity, proof
+shape, and proof encoding advance together.

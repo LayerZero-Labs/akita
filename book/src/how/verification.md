@@ -18,7 +18,9 @@ same time. Read the chapters in this order:
    opening method. [Root fold and ring switch](./proving/root-fold-ring-switch.md)
    explains subring coefficient packing.
 4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
-   direct setup evaluation and recursive setup offloading.
+   direct setup evaluation and recursive setup offloading. Read the
+   [setup offloading overview](./setup-offloading.md) first if you want the
+   complete planner, preprocessing, and recursive handoff.
 5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
    explains exact dyadic ownership and unequal chunks.
 6. [Terminal verification](./verifying/terminal.md) explains the final direct

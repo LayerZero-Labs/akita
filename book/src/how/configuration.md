@@ -70,8 +70,8 @@ witness lengths before it uses the schedule.
   `GroupOpenPhaseParams` and `GroupOpeningPlan`.
 - `crates/akita-types/src/schedule.rs` defines `FoldParams`,
   `TerminalFoldParams`, and `FoldSchedule`.
-- Paper §3.11 `sec:akita-planner` ("What the schedule fixes").
-- Council architecture + newcomer reports (schedule invariants, level overload).
+- `crates/akita-schedules/src/resolve.rs` validates generated rows before the
+  prover or verifier uses them.
 
 ## The planner and proof size
 
@@ -90,11 +90,24 @@ panicking.
 - `crates/akita-planner/src/` owns search and emission. Runtime catalog
   expansion and audit live in `crates/akita-schedules/src/`.
 - `crates/akita-types/src/proof_size.rs` and `crates/akita-types/src/layout/proof_size.rs` (`level_proof_bytes`, planned witness sizing).
-- Paper §3.11 `sec:akita-planner` (objective/constraints, the dynamic program, generated schedules).
 - `crates/akita-planner/src/generated_families.rs`,
   `crates/akita-schedules/src/generated/`, and
   `crates/akita-schedules/src/resolve.rs` (`resolve_generated_catalog_row_for_key`).
 - `book/src/usage/profiling.md` and `.github/workflows/profile-bench.yml`.
+
+### Recursive setup catalogs
+
+Ordinary configuration catalogs use direct setup evaluation. The supported
+`RecursiveCommitmentConfig<Cfg>` adapters select separate catalogs that may
+carry a committed setup prefix into the next fold. Keeping the catalogs
+separate prevents an ordinary verifier from accepting a recursive setup shape
+under a direct configuration.
+
+The planner prices the Stage 3 proof and the later prefix opening as part of the
+complete suffix. Generated rows record every selected prefix edge. Runtime
+expansion checks those edges and never reruns the search. See
+[Setup offloading](./setup-offloading.md) for the selection rules, setup
+artifacts, and recursive claim flow.
 
 ### Selective L2 candidates
 

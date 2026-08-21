@@ -8,7 +8,7 @@
 | PR            | #301; revised by #318                      |
 | Supersedes    | Fixed two-level rollout in this document   |
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection remains the current policy |
-| Book-chapter  | book/src/roadmap/verifier-offloading.md    |
+| Book-chapter  | book/src/how/setup-offloading.md           |
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one
 > `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
@@ -40,8 +40,8 @@ recursive proof accounting, explicit direct/offloaded alternatives, a minimum
 recursive-witness contraction, and a verifier-first schedule comparator. It
 does not add mixed ring dimensions, independent role bases, commitment slicing,
 or a full Pareto frontier. The planner policy and generated schedule contract
-are shipped. The Book roadmap tracks broader verifier-offloading work outside
-this record.
+are shipped. The Book setup offloading chapter explains that behavior for
+readers.
 
 ## Summary
 
@@ -1244,7 +1244,7 @@ batch APIs can combine it with the witness claim.
 
 The implementation is shipped. Durable behavior is folded into:
 
-- `book/src/roadmap/verifier-offloading.md`;
+- `book/src/how/setup-offloading.md`;
 - `book/src/how/configuration.md`;
 - `book/src/how/proving/sumcheck-stages.md`;
 - `book/src/how/recursion.md`;

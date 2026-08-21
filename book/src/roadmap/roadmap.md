@@ -3,11 +3,14 @@
 > **Status:** current status index. Detailed reader guidance belongs in the
 > reader-path follow-up.
 
-This section separates implemented work, active work, and paper-only designs.
-[Recursive setup-prefix offloading](./verifier-offloading.md) is implemented.
-[Compute backends](./compute-backends.md) tracks the active Metal work.
-[Zero-knowledge](./zero-knowledge.md) records a paper design that is not
-implemented in the current repository.
+This section tracks capabilities that are not part of the current production
+implementation. [Compute backends](./compute-backends.md) tracks the active
+Metal work. [Zero knowledge](./zero-knowledge.md) states the current privacy
+boundary and the requirements for any future implementation.
+
+Implemented work belongs under [How it works](../how/how-it-works.md). See
+[Setup offloading](../how/setup-offloading.md) for the recursive setup path that
+has moved out of this roadmap.
 
 ## Streaming prover
 
@@ -18,7 +21,6 @@ historical and does not define the active implementation.
 
 **Sources to fold in**
 
-- Paper App B.4.1 (`sec:akita-eor-sumcheck`, "Small-space staged prover"; streaming-Jolt App A).
 - Historical records:
   `specs/archive/2026-Q3/eor-streamed-prover.md` and
   `specs/archive/2026-Q3/eor-sumcheck-prover-acceleration.md`.

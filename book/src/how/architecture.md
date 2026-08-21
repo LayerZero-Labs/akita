@@ -57,13 +57,17 @@ Key structural facts:
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
 
-Further reading: [Configuration and planning](./configuration.md), [Proving](./proving/proving.md), [Verification](./verification.md).
+Further reading: [Configuration and planning](./configuration.md), [Setup
+offloading](./setup-offloading.md), [Proving](./proving/proving.md), and
+[Verification](./verification.md).
 
 Recursive setup offloading adds one setup-only `SetupSumcheckProof` at each
 nonterminal producer whose successor consumes a setup prefix.
 Its wire payload is the setup claim, the setup-prefix evaluation, and one
 degree-two sumcheck over the native setup domain.
 Its round count and planned size do not depend on the successor witness length.
+The [setup offloading chapter](./setup-offloading.md) follows this path from
+offline planning through the recursive verifier handoff.
 
 ## Ring-dimension ownership
 
