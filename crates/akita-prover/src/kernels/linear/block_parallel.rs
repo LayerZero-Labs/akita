@@ -394,7 +394,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     // chunk-parallel work so long CRT splits do not serialize.
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
-    if num_live_blocks < SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS {
+    if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
         return mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
             mat_row,
             blocks,

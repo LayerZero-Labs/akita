@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(target_arch = "aarch64")]
+mod aarch64;
+
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
@@ -196,6 +199,20 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
     );
     if coefficients.is_empty() || params.levels == 0 {
         return;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if coefficients.len().is_multiple_of(4) {
+        if let Some(canonical) = F::canonical_u32_slice(coefficients) {
+            if std::arch::is_aarch64_feature_detected!("neon") {
+                // SAFETY: runtime feature detection guarantees NEON, and the
+                // length check guarantees every load/store covers four lanes.
+                unsafe {
+                    aarch64::balanced_decompose_canonical_u32_pow2_i8_neon(canonical, out, params)
+                };
+                return;
+            }
+        }
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

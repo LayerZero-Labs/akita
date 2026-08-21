@@ -290,31 +290,6 @@ fn matvec_tail_planning_and_runtime_selectors_agree_for_production_fields() {
 }
 
 #[test]
-fn dense_i8_exact_tail_preference_is_q128_specific() {
-    assert!(!dense_i8_commit_prefers_exact_i16_for_profile(
-        SisModulusProfileId::Q32Offset99,
-        2_048,
-        2_560,
-        64,
-    )
-    .unwrap());
-    assert!(!dense_i8_commit_prefers_exact_i16_for_profile(
-        SisModulusProfileId::Q64Offset59,
-        1_024,
-        11_264,
-        32,
-    )
-    .unwrap());
-    assert!(dense_i8_commit_prefers_exact_i16_for_profile(
-        SisModulusProfileId::Q128OffsetA7F7,
-        512,
-        19_456,
-        64,
-    )
-    .unwrap());
-}
-
-#[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(
         select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),

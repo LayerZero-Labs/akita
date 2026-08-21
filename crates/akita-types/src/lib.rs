@@ -93,8 +93,7 @@ pub use layout::{
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
-    centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_i16,
-    dense_i8_commit_prefers_exact_i16_for_profile, ntt_cache_requires_i16_tail,
+    centered_quotient_requires_i16_tail_for_field, ntt_cache_requires_i16_tail,
     ntt_cache_requires_i16_tail_for_profile, prepare_compression_ntt_cache, prepare_ntt_cache,
     prepared_verifier_ntt_cache_metadata, select_compression_crt_ntt_params, select_crt_ntt_params,
     NttCacheKey, NttCacheMode, NttPrefixRequirement, NttTransformDomain, PreparedNttCache,

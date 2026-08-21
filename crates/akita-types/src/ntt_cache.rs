@@ -321,35 +321,6 @@ pub fn ntt_cache_requires_i16_tail_for_profile(
     )))
 }
 
-/// Whether a dense signed-i8 commitment should replace repeated base-profile
-/// chunk reconstruction with one exact i16-tail accumulation.
-pub fn dense_i8_commit_prefers_exact_i16_for_profile(
-    profile: SisModulusProfileId,
-    ring_dimension: usize,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<bool, AkitaError> {
-    if profile != SisModulusProfileId::Q128OffsetA7F7 {
-        return Ok(false);
-    }
-    ntt_cache_requires_i16_tail_for_profile(profile, ring_dimension, width, rhs_abs_bound)
-}
-
-/// Field-typed form of [`dense_i8_commit_prefers_exact_i16_for_profile`] used
-/// by runtime commitment dispatch.
-pub fn dense_i8_commit_prefers_exact_i16<F: CanonicalField, const D: usize>(
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<bool, AkitaError> {
-    if !matches!(
-        select_crt_ntt_params::<F, D>()?,
-        ProtocolCrtNttParams::Q128(_)
-    ) {
-        return Ok(false);
-    }
-    ntt_cache_requires_i16_tail::<F, D>(width, rhs_abs_bound)
-}
-
 /// Field-typed form of [`centered_quotient_requires_i16_tail`] used by the
 /// runtime kernel dispatch.
 pub fn centered_quotient_requires_i16_tail_for_field<F: CanonicalField, const D: usize>(
