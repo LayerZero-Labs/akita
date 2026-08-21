@@ -364,9 +364,9 @@ fn fp128_onehot_grouped_requests(
 fn fp128_onehot_multichunk_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    Ok(sorted_grouped_requests(recursive_onehot_profile_keys::<
-        fp128::OneHotMultiChunk,
-    >(preplans)?))
+    Ok(sorted_grouped_requests(
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>(preplans)?,
+    ))
 }
 
 fn fp128_onehot_multichunk_w2r2_grouped_requests(
@@ -457,6 +457,23 @@ fn fp128_dense_grouped_requests(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
+    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
+    // (34, 2) as the larger profile-bench fixture.
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34])
+}
+
+fn recursive_onehot_chunked_profile_keys<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    // W8R2 (34, 2) currently emits a setup-prefix whose natural length disagrees
+    // with the frozen commitment, so catalog validation rejects the row.
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32])
+}
+
+fn recursive_onehot_profile_keys_for_finals<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+    final_num_vars: &[usize],
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
@@ -464,12 +481,15 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
         PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
         PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
     ];
-    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
-    // (34, 2) as the larger profile-bench fixture.
-    Ok(vec![
-        GroupedGenerationRequest::new(PolynomialGroupLayout::new(32, 2), producers.clone()),
-        GroupedGenerationRequest::new(PolynomialGroupLayout::new(34, 2), producers),
-    ])
+    Ok(final_num_vars
+        .iter()
+        .map(|&num_vars| {
+            GroupedGenerationRequest::new(
+                PolynomialGroupLayout::new(num_vars, 2),
+                producers.clone(),
+            )
+        })
+        .collect())
 }
 
 fn heterogeneous_onehot_catalog_key(
@@ -680,7 +700,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
         fp128::OneHotMultiChunk,
-        recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>
     ),
     family_row!(
         "fp128_dense",

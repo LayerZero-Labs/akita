@@ -60,7 +60,8 @@ jobs:
         # has its own feature graph so unrelated catalogs and
         # monomorphizations do not inflate every runner. The scalar fp128
         # one-hot pair runs at nv=36; distributed fp128 singletons stay at
-        # nv=32; multi-group fp128 finals use nv=34.
+        # nv=32; multi-group fp128 finals use nv=34 except W8R2, which stays at
+        # nv=32 because the (34, 2) W8R2 catalog row fails setup-prefix checks.
         group:
           - name: 1-fp32-base
             profile_feature: profile-ci-fp32
@@ -89,7 +90,7 @@ jobs:
           - name: 6-multi-group-recursive-w8r2
             profile_feature: profile-ci-multi-group-recursive-w8r2
             cases: |
-              onehot_fp128_multi_group_recursive_multi_chunk_w8r2:34:4:recursive
+              onehot_fp128_multi_group_recursive_multi_chunk_w8r2:32:4:recursive
           - name: 7-distributed
             profile_feature: profile-ci-distributed
             cases: |

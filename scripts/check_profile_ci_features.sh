@@ -62,7 +62,7 @@ MODE_NUM_VARS = {
     "onehot_fp128": {36},
     "onehot_fp128_multi_group": {34},
     "onehot_fp128_multi_group_recursive": {34},
-    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {34},
+    "onehot_fp128_multi_group_recursive_multi_chunk_w8r2": {32},
     "onehot_fp128_multi_chunk_w8r2": {32},
     "onehot_fp128_multi_chunk_w2r2": {32},
     "onehot_fp128_multi_chunk_w4r2": {32},
