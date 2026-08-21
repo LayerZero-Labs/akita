@@ -233,13 +233,16 @@ where
     if terms.len() != num_claims || true_input_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
-    if prover_claim != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
+    #[cfg(debug_assertions)]
+    {
+        let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
+        if prover_claim != true_input_claim {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening reduction input claim mismatch".to_string(),
+            ));
+        }
     }
-    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut prover = ExtensionOpeningReductionProver::new(terms, true_input_claim)?;
     let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
@@ -351,18 +354,29 @@ where
             actual: claim_coefficients.len(),
         });
     }
-    polys
-        .iter()
-        .zip(claim_coefficients)
-        .map(|(poly, &coefficient)| {
-            let witness = {
-                let _s = tracing::info_span!("eor_packed_witness").entered();
-                TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
-            };
-            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-            ExtensionOpeningReductionTerm::new(witness, factor_evals, coefficient)
-        })
-        .collect()
+    let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
+    let mut shared_factor = Some(factor_evals);
+    let mut terms = Vec::with_capacity(polys.len());
+    for (index, (poly, &coefficient)) in polys.iter().zip(claim_coefficients).enumerate() {
+        let witness = {
+            let _span = tracing::info_span!("eor_packed_witness").entered();
+            TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
+        };
+        let factor_evals = if index + 1 == polys.len() {
+            shared_factor.take().ok_or(AkitaError::InvalidProof)?
+        } else {
+            shared_factor
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?
+                .clone()
+        };
+        terms.push(ExtensionOpeningReductionTerm::new(
+            witness,
+            factor_evals,
+            coefficient,
+        )?);
+    }
+    Ok(terms)
 }
 
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =
