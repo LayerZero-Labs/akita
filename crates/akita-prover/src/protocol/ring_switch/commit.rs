@@ -4,7 +4,7 @@ use crate::compute::compression::{execute_compression_chains, CompressionExecuti
 use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
-    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalCommittedGroupParams,
+    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalFoldParams,
 };
 
 /// Public state bound for the witness produced by one intermediate fold.
@@ -93,10 +93,10 @@ where
             let num_ring_elems = committed_coeff_len / D_A;
             tracing::debug!(
                 num_ring_elems,
-                num_live_blocks = commit_params.num_live_blocks,
-                num_positions_per_block = commit_params.num_positions_per_block,
-                depth_commit = commit_params.num_digits_inner,
-                depth_open = commit_params.num_digits_open,
+                num_live_blocks = commit_params.blocks().live_blocks,
+                num_positions_per_block = commit_params.blocks().positions_per_block,
+                depth_commit = commit_params.inner().digits.num_digits,
+                depth_open = commit_params.open().digits.num_digits,
                 position_index_bits = commit_params.position_index_bits(),
                 block_index_bits = commit_params.block_index_bits(),
                 inner_width = commit_params.inner_width(),
@@ -112,11 +112,11 @@ where
                 .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
-                commit_params.num_live_blocks,
-                commit_params.inner_commit_matrix.output_rank(),
+                commit_params.blocks().live_blocks,
+                commit_params.inner().matrix.output_rank(),
             )?;
-            let n_a = commit_params.inner_commit_matrix.output_rank();
-            let blocks = (0..commit_params.num_live_blocks)
+            let n_a = commit_params.inner().matrix.output_rank();
+            let blocks = (0..commit_params.blocks().live_blocks)
                 .map(|block| inner.block_rows::<D_A>(block, n_a))
                 .collect::<Result<Vec<_>, _>>()?;
             dispatch_for_field!(
@@ -126,26 +126,23 @@ where
                 |D_B| {
                     let decomposed_inner_rows = decompose_commit_blocks_into::<Cfg::Field, D_A, D_B>(
                         &blocks,
-                        commit_params.num_digits_outer,
-                        commit_params.log_basis_outer,
+                        commit_params.outer().digits.num_digits,
+                        commit_params.outer().digits.log_basis,
                     )?;
                     let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
                         backend,
                         prepared,
-                        commit_params.outer_commit_matrix.output_rank(),
+                        commit_params.outer().matrix.output_rank(),
                         std::iter::once(&decomposed_inner_rows),
                         &slice_geometry,
-                        commit_params.log_basis_outer,
+                        commit_params.outer().digits.log_basis,
                     )?;
                     let source = RingVec::from_ring_elems(&u);
                     if !commit_params.payload_mode.is_compressed() {
                         Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))
                     } else {
                         let plan = CompressionChainPlan::for_complete_source(
-                            commit_params
-                                .outer_commit_matrix
-                                .sis_table_key()
-                                .modulus_profile,
+                            commit_params.outer().matrix.sis_table_key().modulus_profile,
                             source.coeff_len(),
                         )?;
                         let (mut outputs, _) = execute_compression_chains(
@@ -200,7 +197,7 @@ where
 /// commitment state. No outer digits or outer commitment are computed.
 #[inline(never)]
 pub fn commit_terminal_w<Cfg, B>(
-    commit_params: &TerminalCommittedGroupParams,
+    commit_params: &TerminalFoldParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
@@ -232,10 +229,10 @@ where
             let witness = packed_witness.as_ref().unwrap_or(logical_w);
             let view = witness.view::<Cfg::Field, D_A>()?;
             let plan = CommitInnerPlan {
-                n_a: commit_params.inner_commit_matrix.output_rank(),
-                num_positions_per_block: commit_params.num_positions_per_block,
-                num_digits_inner: commit_params.num_digits_inner,
-                log_basis_inner: commit_params.log_basis_inner,
+                n_a: commit_params.inner.matrix.output_rank(),
+                num_positions_per_block: commit_params.blocks.positions_per_block,
+                num_digits_inner: commit_params.inner.digits.num_digits,
+                log_basis_inner: commit_params.inner.digits.log_basis,
             };
             let inner_group = backend.commit_inner_group(prepared, vec![view], plan)?;
             let [inner] = inner_group

@@ -296,11 +296,10 @@ where
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let position_index_bits = num_positions_per_block.trailing_zeros() as usize;
-    let block_index_domain_size = num_live_blocks
-        .checked_next_power_of_two()
+    let position_index_bits =
+        crate::BlockGeometry::position_index_bits_for(num_positions_per_block);
+    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
-    let block_index_bits = block_index_domain_size.trailing_zeros() as usize;
     let expected_len = position_index_bits
         .checked_add(block_index_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
@@ -463,11 +462,10 @@ where
             "opening geometry requires power-of-two M and positive B".to_string(),
         ));
     }
-    let block_index_domain_size = num_live_blocks
-        .checked_next_power_of_two()
+    let block_index_bits = crate::BlockGeometry::checked_block_index_bits_for(num_live_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("block-index domain size overflow".to_string()))?;
-    let outer_bits = (num_positions_per_block.trailing_zeros() as usize)
-        .checked_add(block_index_domain_size.trailing_zeros() as usize)
+    let outer_bits = crate::BlockGeometry::position_index_bits_for(num_positions_per_block)
+        .checked_add(block_index_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("opening point length overflow".to_string()))?;
     let target_num_vars = outer_bits
         .checked_add(alpha_bits)

@@ -64,7 +64,7 @@ pub(super) fn catalog_policy_signature(
     let mut signature = String::new();
     let nonterminal = std::iter::once((
         0usize,
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     ))
@@ -76,7 +76,7 @@ pub(super) fn catalog_policy_signature(
             .map(|(index, fold)| {
                 (
                     index + 1,
-                    &fold.params.witness,
+                    &fold.params,
                     fold.input_witness_len,
                     fold.output_witness_len,
                 )
@@ -84,7 +84,7 @@ pub(super) fn catalog_policy_signature(
     );
     for (level, params, input_witness_len, output_witness_len) in nonterminal {
         let eor = if matches!(
-            params.opening_method,
+            params.opening_method(),
             akita_types::OpeningMethod::EvaluationTrace
         ) {
             let final_group = akita_types::PolynomialGroupLayout::singleton(
@@ -115,51 +115,49 @@ pub(super) fn catalog_policy_signature(
             params.witness_chunk.num_chunks,
             params.witness_chunk.num_activated_levels,
             opening_policy_signature(
-                params.opening_method,
+                params.opening_method(),
                 params.source_encoding,
                 spec.policy.claim_ext_degree,
                 params.d_a(),
-                params.inner_commit_matrix.security_route(),
+                params.inner().matrix.security_route(),
             )?,
         )
         .map_err(|error| format!("write catalog policy signature: {error}"))?;
         if level == 0 {
-            for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+            for (index, group) in schedule
+                .root
+                .params
+                .precommitted_groups()
+                .iter()
+                .enumerate()
+            {
                 write!(
                     signature,
                     ";pre{index}={}",
                     opening_policy_signature(
-                        group.commitment.opening.opening_method,
+                        group.opening.opening_method,
                         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                         spec.policy.claim_ext_degree,
-                        group.commitment.layout.inner_commit_matrix.ring_dimension(),
-                        group.commitment.layout.inner_commit_matrix.security_route(),
+                        group.profile.inner.matrix.ring_dimension(),
+                        group.profile.inner.matrix.security_route(),
                     )?,
                 )
                 .map_err(|error| format!("write catalog policy signature: {error}"))?;
             }
         } else if let Some(prefix) = schedule.recursive_folds[level - 1]
             .params
-            .incoming_setup_prefix
+            .setup_prefix()
             .as_ref()
         {
             write!(
                 signature,
                 ";prefix={}",
                 opening_policy_signature(
-                    prefix.commitment_params.opening.opening_method,
+                    prefix.opening.opening_method,
                     akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
                     spec.policy.claim_ext_degree,
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner_commit_matrix
-                        .ring_dimension(),
-                    prefix
-                        .commitment_params
-                        .layout
-                        .inner_commit_matrix
-                        .security_route(),
+                    prefix.profile.inner.matrix.ring_dimension(),
+                    prefix.profile.inner.matrix.security_route(),
                 )?,
             )
             .map_err(|error| format!("write catalog policy signature: {error}"))?;
@@ -180,7 +178,7 @@ pub(super) fn catalog_policy_signature(
     let terminal_source = akita_types::CommittedSourceEncoding::for_producer(
         akita_types::OpeningMethod::EvaluationTrace,
         spec.policy.claim_ext_degree,
-        schedule.terminal.params.witness.d_a(),
+        schedule.terminal.d_a(),
         akita_types::padded_boolean_opening_vars(schedule.terminal.input_witness_len)
             .map_err(|error| format!("derive terminal source arity: {error}"))?,
         false,
@@ -190,15 +188,8 @@ pub(super) fn catalog_policy_signature(
         "/T[method=ET,src={},eor={terminal_eor},input={},dA={},sec={}]",
         source_encoding_signature(terminal_source),
         schedule.terminal.input_witness_len,
-        schedule.terminal.params.witness.d_a(),
-        security_route_signature(
-            schedule
-                .terminal
-                .params
-                .witness
-                .inner_commit_matrix
-                .security_route(),
-        ),
+        schedule.terminal.d_a(),
+        security_route_signature(schedule.terminal.inner.matrix.security_route(),),
     )
     .map_err(|error| format!("write catalog policy signature: {error}"))?;
     Ok(signature)

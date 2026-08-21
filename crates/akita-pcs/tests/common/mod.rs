@@ -20,8 +20,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
     AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
-    GroupBatchStatement, LevelParamsLike, PolynomialGroupLayout, SetupPrefixProverRegistry,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
+    SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -265,7 +265,7 @@ where
 pub(super) fn opening_from_poly_for_layout<'a, P>(
     poly: &'a P,
     point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
+    layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -294,7 +294,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &(impl LevelParamsLike + ?Sized),
+    layout: &akita_types::GroupOpenPhaseParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -418,14 +418,14 @@ pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
 }
 
 pub(super) fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
-    &schedule.root.params.final_group.commitment
+    &schedule.root.params
 }
 
 pub(super) fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
         .recursive_folds
         .iter()
-        .any(|fold| fold.params.incoming_setup_prefix.is_some())
+        .any(|fold| fold.params.setup_prefix().is_some())
 }
 
 pub(super) fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
@@ -452,9 +452,10 @@ fn first_setup_prefix_slot(schedule: &FoldSchedule) -> SetupPrefixSlotId {
     schedule
         .recursive_folds
         .iter()
-        .find_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .find_map(|fold| fold.params.setup_prefix())
         .expect("recursive profile must carry a setup prefix")
         .slot_id()
+        .expect("setup prefix group")
 }
 
 fn verifier_setup_with_alternate_full_prefix(

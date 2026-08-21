@@ -9,36 +9,38 @@ use akita_field::Prime128OffsetA7F7;
 #[test]
 fn compression_quotient_rows_are_included_before_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
-    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        lp.inner_commit_matrix.security_policy(),
-        lp.inner_commit_matrix
+    lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner().matrix.security_policy(),
+        lp.inner()
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        lp.inner_commit_matrix.sis_modulus_profile(),
+        lp.inner().matrix.sis_modulus_profile(),
         2,
-        lp.inner_commit_matrix.input_width(),
-        lp.inner_commit_matrix
+        lp.inner().matrix.input_width(),
+        lp.inner()
+            .matrix
             .coeff_linf_bound()
             .expect("L infinity test matrix"),
         lp.d_a(),
     );
-    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        lp.outer_commit_matrix.security_policy(),
-        lp.outer_commit_matrix.sis_table_key().table_digest,
-        lp.outer_commit_matrix.sis_modulus_profile(),
+    lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer().matrix.security_policy(),
+        lp.outer().matrix.sis_table_key().table_digest,
+        lp.outer().matrix.sis_modulus_profile(),
         3,
-        lp.outer_commit_matrix.input_width(),
-        lp.outer_commit_matrix.coeff_linf_bound(),
+        lp.outer().matrix.input_width(),
+        lp.outer().matrix.coeff_linf_bound(),
         lp.d_a(),
     );
-    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-        lp.open_commit_matrix.security_policy(),
-        lp.open_commit_matrix.sis_table_key().table_digest,
-        lp.open_commit_matrix.sis_modulus_profile(),
+    lp.open_matrix = OpenCommitMatrixParams::new_unchecked(
+        lp.open().matrix.security_policy(),
+        lp.open().matrix.sis_table_key().table_digest,
+        lp.open().matrix.sis_modulus_profile(),
         2,
-        lp.open_commit_matrix.input_width(),
-        lp.open_commit_matrix.coeff_linf_bound(),
+        lp.open().matrix.input_width(),
+        lp.open().matrix.coeff_linf_bound(),
         lp.d_a(),
     );
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");

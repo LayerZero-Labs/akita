@@ -11,7 +11,7 @@ use crate::PreparedProverGroup;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 use akita_types::{
-    coefficient_packing_scalar_opening, LevelParamsLike, OpeningFamily, OpeningMethod,
+    coefficient_packing_scalar_opening, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
 
@@ -63,7 +63,7 @@ where
         ctx: &OperationCtx<'_, F, B>,
         challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
-        params: &(impl LevelParamsLike + ?Sized),
+        params: &akita_types::GroupOpenPhaseParams,
     ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
 }
 
@@ -270,7 +270,7 @@ where
         ctx: &OperationCtx<'_, F, B>,
         challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
-        params: &(impl LevelParamsLike + ?Sized),
+        params: &akita_types::GroupOpenPhaseParams,
     ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
         let ring_dimension = params.inner_commit_matrix_params().ring_dimension();
         dispatch_for_field!(

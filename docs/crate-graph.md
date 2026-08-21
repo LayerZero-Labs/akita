@@ -140,7 +140,7 @@ graph TD
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types,
-  on-demand compact→`LevelParams` expansion, catalog identity validation, and
+  on-demand compact→`CommittedGroupParams` expansion, catalog identity validation, and
   the schedule-search DP. It sits **below** `akita-config` and names no
   `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
   and `akita-error`.

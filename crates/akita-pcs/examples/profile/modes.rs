@@ -147,7 +147,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         let layout = Cfg::resolve_catalog_row_for_opening(
             &lookup_key.opening_layout().expect("opening layout"),
         )
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
@@ -430,12 +430,12 @@ fn run_profile_onehot_fp128_with_cfg<
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .into_schedule();
-    let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
+    let selected_dims = std::iter::once(schedule.root.params.role_dims())
         .chain(
             schedule
                 .recursive_folds
                 .iter()
-                .map(|fold| fold.params.witness.role_dims()),
+                .map(|fold| fold.params.role_dims()),
         )
         .collect::<Vec<_>>();
     tracing::info!(
@@ -630,8 +630,6 @@ fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone()
 }
 #[cfg(feature = "profile-onehot-fp128")]

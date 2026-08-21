@@ -45,11 +45,10 @@ use akita_types::{
     tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
     tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
     AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule, NegativeBinarySupport,
-    OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint, RecursiveFoldParams,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule,
+    NegativeBinarySupport, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
     RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalLevelProof,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 

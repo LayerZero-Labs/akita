@@ -78,10 +78,10 @@ At a high level:
 1. **Bind the instance** and absorb the opening batch shape into the transcript.
 2. **Resolve the exact generated row** named by
    `OpeningScheduleSelection`. Catalog and row digests are checked before the
-   ordered `CommittedGroupProfile` values are compared with the resolved row.
+   ordered `GroupCommitPhaseParams` values are compared with the resolved row.
    The verifier never runs planner search.
 3. **Replay the structural folds** in `protocol/core`: the root fold followed by
-   every recursive fold, using the schedule-selected `LevelParams`.
+   every recursive fold, using the schedule-selected `CommittedGroupParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck. If the terminal A matrix uses an L2
@@ -182,7 +182,7 @@ commitment, direct witness, or transcript input must be rejected with
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier boundary has validated the invariant.
 2. Use `akita_error::checked` for reusable exact `usize` formulas. The functions return `Option`, so the caller maps failure to the `AkitaError` variant that matches the protocol boundary. A direct standard library `checked_*` call remains appropriate for one local operation.
 3. Do not use wrapping or saturating arithmetic for exact sizes and indices. Reject arithmetic that cannot represent the required geometry.
-4. Strengthen validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
+4. Strengthen validation at deserialization, setup construction, schedule selection, `CommittedGroupParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
 5. Prover-only panics are acceptable when not reachable from verifier paths.
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
