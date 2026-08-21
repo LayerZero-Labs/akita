@@ -5,7 +5,7 @@
 | Author(s)     | Alberto Centelles |
 | Created       | 2026-07-15     |
 | Status        | active         |
-| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); Akita PR B TBD; Jolt PR C #1745 |
+| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); [Akita PR B #429](https://github.com/LayerZero-Labs/akita/pull/429); [Jolt PR C #1745](https://github.com/a16z/jolt/pull/1745) |
 | Supersedes    | [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
@@ -132,7 +132,7 @@ both repositories importing the same Rust types and traits directly.
   is owned by `akita-serialization` and remains byte-identical.
 - [ ] Golden fixtures demonstrate identical canonical field, extension-field,
   proof, setup, and transcript bytes before and after the cutover.
-- [ ] Akita's full formatter, clippy, test, and documentation guardrails pass;
+- [x] Akita's full formatter, clippy, test, and documentation guardrails pass;
   Jolt's host and host+zk formatter, clippy, and test matrices pass.
 - [x] `jolt-field` passes no-default, BN254-only, Solinas-only, and combined
   feature builds. Enabling one backend does not silently select another.
