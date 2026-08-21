@@ -2,7 +2,7 @@
 
 This chapter explains how a preset becomes a concrete recursion schedule. It
 covers the `CommitmentConfig` trait, the fold parameters stored in a schedule,
-and the planner that selects the schedule and prices its proof size.
+and the planner that searches for schedules and prices their proof size offline.
 
 ## CommitmentConfig and presets
 
@@ -29,6 +29,18 @@ dimension selected by the fold that consumes the prefix.
 - `crates/akita-config/src/lib.rs:54-120`.
 - `crates/akita-config/src/proof_optimized/`.
 - [`crates/akita-planner/README.md`](../../../crates/akita-planner/README.md) for the current planner/config boundary.
+
+### Bounded committed sources
+
+The `fp128::DenseBounded` preset is for dense polynomials whose centered
+coefficients fit within a declared signed width of 65 bits. This range is
+`[-2^64, 2^64 - 1]`, so it contains every `u64`. The narrower declaration lets
+the generated schedule use the actual source range instead of charging every
+coefficient for the full 128-bit field width. Commitment rejects a source that
+does not fit the declared interval.
+
+This preset uses the `schedules-fp128-dense-bounded` catalog. That catalog is
+not part of `schedules-default`; applications must enable it explicitly.
 
 ## Schedule and fold parameters
 
@@ -63,12 +75,14 @@ witness lengths before it uses the schedule.
 
 ## The planner and proof size
 
-The planner has no `Cfg` type parameter. It validates catalogs, expands compact
-generated rows into `FoldSchedule`, and searches candidate suffixes while it
-generates a catalog. The feature gated `akita-schedules` crate owns shipped
-table data. Runtime proving and verification only resolve and validate a frozen
-row. They never rerun planner search. Verifier reachable expansion rejects
-malformed input with an error rather than panicking.
+Normal planner search is `Cfg`-free. The optional `catalog-gen` feature enables
+`akita-config`, so table-emission binaries can name concrete
+`CommitmentConfig` presets. The feature-gated `akita-schedules` crate owns
+shipped table data and runtime expansion into `FoldSchedule` and its committed
+group parameters. Runtime proving and verification resolve an enabled
+generated row and never run planner search. Shared proof-size formulas remain
+verifier-reachable and reject malformed input with an error rather than
+panicking.
 
 **Implementation map**
 

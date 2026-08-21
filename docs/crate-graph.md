@@ -22,7 +22,7 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
-| `akita-planner` | `Cfg`-free schedule engine and offline DP |
+| `akita-planner` | `Cfg`-free schedule search and optional preset-driven table emission |
 | `akita-schedules` | Feature-gated generated schedule table wiring |
 | `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
 | `akita-setup` | Setup construction and optional cache |
@@ -77,14 +77,15 @@ graph TD
   Types --> Transcript
   Planner --> Error
   Planner --> Challenges
+  Planner --> Schedules
   Planner --> Types
+  Planner -. catalog-gen .-> Config
   Schedules --> Error
   Schedules --> Challenges
   Schedules --> Types
   Config --> Error
   Config --> Challenges
   Config --> Field
-  Config --> Planner
   Config --> Transcript
   Config --> Types
   Config --> Schedules
@@ -139,13 +140,14 @@ graph TD
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
-- `akita-planner` is the `Cfg`-free schedule engine: generated table types,
-  on-demand compact→`CommittedGroupParams` expansion, catalog identity validation, and
-  the schedule-search DP. It sits **below** `akita-config` and names no
-  `CommitmentConfig` type. It depends only on `akita-types`, `akita-challenges`,
-  and `akita-error`.
-- `akita-schedules` stores the tracked generated tables and their Cargo feature
-  wiring. The family modules are deterministic planner output. The crate
+- `akita-planner` is the offline schedule search and table emission engine.
+  Normal planner search is `Cfg`-free and depends on `akita-types`,
+  `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
+  `catalog-gen` feature also enables `akita-config`, allowing table-emission
+  binaries to name concrete `CommitmentConfig` presets.
+- `akita-schedules` owns generated row types, catalog identity validation,
+  runtime row expansion, and the tracked generated tables with their Cargo
+  feature wiring. The family modules are deterministic planner output. The crate
   depends only on `akita-error`, `akita-types`, and `akita-challenges`.
 - `akita-config` owns concrete runtime presets and the single `CommitmentConfig`
   policy trait. It depends on `akita-schedules`: `CommitmentConfig::resolve_catalog_row_for_key`
@@ -170,8 +172,9 @@ graph TD
   hosts examples and integration tests. Verifier-only integrations should not use
   it; prefer `akita-verifier` + `akita-types` + `akita-config`.
 
-CI runs `scripts/check-crate-deps.sh` to guard the important one-way boundaries
-(notably that `akita-prover`/`akita-verifier` source does not name
-`akita_planner::` paths directly, even though they link it transitively through
-`akita-config`). Add new forbidden edges there whenever a crate gets split
-further.
+CI runs `scripts/check-crate-deps.sh` to guard the important one-way boundaries,
+including that `akita-prover` and `akita-verifier` source does not name
+`akita_planner::` paths directly. Runtime `akita-config` depends on
+`akita-schedules`, not `akita-planner`; only the planner's optional catalog
+generation path adds the reverse configuration dependency. Add new forbidden
+edges there whenever a crate gets split further.

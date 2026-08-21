@@ -9,14 +9,24 @@ integrators should pin versions and read release notes.
 | Feature | Enables |
 |---------|---------|
 | `parallel` | Rayon thread pools across `akita-field`, `akita-algebra`, `akita-prover`, `akita-setup`, `akita-sumcheck`, `akita-verifier` |
-| `schedules-default` | Dev/CI schedule catalog bundles on `akita-config` |
+| `schedules-default` | The default generated schedule catalog bundles on `akita-config` |
+| `transcript-blake2b` | The default Spongefish transcript backend using Blake2b and SHA3 support |
 
-Disable parallel locally: `cargo build --no-default-features` (or add only the features you need).
+To build without Rayon while keeping the other defaults, use:
+
+```bash
+cargo build --no-default-features \
+  --features schedules-default,transcript-blake2b
+```
+
+Using `--no-default-features` alone also removes the default schedule catalogs
+and transcript backend.
 
 ## Opt-in
 
 | Feature | Enables |
 |---------|---------|
+| `transcript-keccak` | The alternative Spongefish Keccak transcript backend. Enable exactly one production transcript backend. |
 | `disk-persistence` | Disk-backed setup cache paths (`akita-setup/disk-persistence`) |
 | `logging-transcript` | `LoggingTranscript` schedule events and wire-before-squeeze smell checks in transcript tests |
 | `response-model-diagnostics` | Extra response and source energy measurements for model calibration. This can scan complete witnesses and must not be enabled for performance measurements. |

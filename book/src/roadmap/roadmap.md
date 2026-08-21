@@ -1,18 +1,20 @@
 # Roadmap
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+> **Status:** current status index. Detailed reader guidance belongs in the
+> reader-path follow-up.
 
-In-flight and planned work. The larger threads get their own pages
-([Verifier offloading](./verifier-offloading.md),
-[Zero-knowledge](./zero-knowledge.md),
-[Compute backends](./compute-backends.md)); shorter items stay here as sections.
-Keep each item honest about what has already landed versus what is still a spec.
+This section separates implemented work, active work, and paper-only designs.
+[Recursive setup-prefix offloading](./verifier-offloading.md) is implemented.
+[Compute backends](./compute-backends.md) tracks the active Metal work.
+[Zero-knowledge](./zero-knowledge.md) records a paper design that is not
+implemented in the current repository.
 
 ## Streaming prover
 
-A future small-space prover for suffix and terminal extension-opening reduction
-may stage the prefix-suffix construction instead of materializing the packed
-table. Root folds use subring coefficient packing and are outside this work.
+PR [#398](https://github.com/LayerZero-Labs/akita/pull/398) is implementing
+streamed inputs for suffix extension-opening reduction. Root folds use subring
+coefficient packing and are outside that work. The archived design below is
+historical and does not define the active implementation.
 
 **Sources to fold in**
 
