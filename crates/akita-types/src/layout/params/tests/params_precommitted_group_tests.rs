@@ -1,6 +1,6 @@
 use super::*;
 use crate::schedule::CommittedGroupProfile;
-use crate::WitnessLayout;
+use crate::{dyadic_block_ranges, WitnessLayout};
 
 #[test]
 fn multi_group_m_row_count_matches_canonical_layout() {
@@ -120,6 +120,234 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
+fn precommit_admission_fixture() -> (
+    CommittedGroupProfile,
+    PrecommittedGroupAdmissionPolicy,
+    SparseChallengeConfig,
+    usize,
+) {
+    let challenge = SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
+    let policy = PrecommittedGroupAdmissionPolicy {
+        decomposition: crate::DecompositionParams {
+            log_basis: 3,
+            log_commit_bound: 128,
+            log_open_bound: Some(128),
+        },
+        sis_security_policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        sis_table_digest: crate::SisTableDigest::CURRENT,
+        sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+    };
+    let num_digits_fold = 2;
+    let a_bound = crate::sis::rounded_up_role_a_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        64,
+        3,
+        &challenge,
+        num_digits_fold,
+    )
+    .expect("A admission bound");
+    let b_bound = crate::sis::rounded_up_collision_inf_norm(
+        policy.sis_security_policy,
+        policy.sis_modulus_profile,
+        crate::SisMatrixRole::Outer,
+        64,
+        3,
+    )
+    .expect("B admission bound");
+    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: policy.sis_security_policy,
+            table_digest: policy.sis_table_digest,
+            modulus_profile: policy.sis_modulus_profile,
+            role: crate::SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: a_bound,
+        },
+        32 * 16,
+    )
+    .expect("audited A matrix");
+    let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: policy.sis_security_policy,
+            table_digest: policy.sis_table_digest,
+            modulus_profile: policy.sis_modulus_profile,
+            role: crate::SisMatrixRole::Outer,
+            ring_dimension: 64,
+            coeff_linf_bound: b_bound,
+        },
+        inner_commit_matrix.output_rank() * 43 * 8,
+    )
+    .expect("audited B matrix");
+    let layout = CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
+        group: PolynomialGroupLayout::new(14, 1),
+        num_live_ring_elements_per_claim: 256,
+        num_positions_per_block: 32,
+        num_live_blocks: 8,
+        outer_slice_count: crate::CommitmentSliceCount::ONE,
+        log_basis_inner: 8,
+        num_digits_inner: 16,
+        inner_commit_matrix,
+        log_basis_outer: 3,
+        num_digits_outer: 43,
+        outer_commit_matrix,
+    };
+    (layout, policy, challenge, num_digits_fold)
+}
+
+#[test]
+fn opening_d_segment_width_uses_the_method_physical_width() {
+    let evaluation_trace =
+        crate::opening_d_segment_width(crate::OpeningMethod::EvaluationTrace, 4, 512, 64, 3, 5, 2)
+            .expect("full A-ring D segment");
+    let coefficient_packing = crate::opening_d_segment_width(
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        },
+        4,
+        512,
+        64,
+        3,
+        5,
+        2,
+    )
+    .expect("reduced packing D segment");
+
+    assert_eq!(evaluation_trace, 3 * 5 * 2 * (512 / 64));
+    assert_eq!(coefficient_packing, 3 * 5 * 2 * (4 * 64 / 64));
+    assert_eq!(evaluation_trace, 2 * coefficient_packing);
+    assert!(crate::opening_d_segment_width(
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        },
+        4,
+        512,
+        96,
+        3,
+        5,
+        2,
+    )
+    .is_err());
+}
+
+#[test]
+fn precommit_admission_rejects_policy_and_basis_mismatches() {
+    let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
+    PrecommittedLevelParams::admit(
+        layout,
+        num_digits_fold,
+        policy,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer,
+    )
+    .expect("valid precommit admission");
+
+    let mismatched_modulus = PrecommittedGroupAdmissionPolicy {
+        sis_modulus_profile: SisModulusProfileId::Q64Offset59,
+        ..policy
+    };
+    let error = PrecommittedLevelParams::admit(
+        layout,
+        num_digits_fold,
+        mismatched_modulus,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer,
+    )
+    .expect_err("mismatched modulus must be rejected");
+    assert!(error.to_string().contains("modulus profile does not match"));
+    let error = PrecommittedLevelParams::admit(
+        layout,
+        num_digits_fold,
+        policy,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer - 1,
+    )
+    .expect_err("opening below frozen outer basis must be rejected");
+    assert!(error.to_string().contains("must dominate"));
+
+    let mut wrong_outer_depth = layout;
+    wrong_outer_depth.num_digits_outer += 1;
+    let outer = wrong_outer_depth.outer_commit_matrix;
+    wrong_outer_depth.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        outer.sis_table_key(),
+        outer.input_width()
+            + wrong_outer_depth.inner_commit_matrix.output_rank()
+                * wrong_outer_depth.num_live_blocks,
+    )
+    .expect("canonical wrong-depth B matrix");
+    let error = PrecommittedLevelParams::admit(
+        wrong_outer_depth,
+        num_digits_fold,
+        policy,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer,
+    )
+    .expect_err("wrong frozen outer digit depth must be rejected");
+    assert!(error.to_string().contains("outer digit depth"), "{error}");
+}
+
+#[test]
+fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
+    let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
+    let mut low_a = layout;
+    let inner = low_a.inner_commit_matrix;
+    let lower_a_bound = crate::sis::COEFF_LINF_BUCKETS
+        .iter()
+        .copied()
+        .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
+        .expect("lower supported A bound");
+    low_a.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            coeff_linf_bound: lower_a_bound,
+            ..inner.sis_table_key().expect("L infinity test matrix")
+        },
+        inner.input_width(),
+    )
+    .expect("canonical low-bound A matrix");
+    let error = PrecommittedLevelParams::admit(
+        low_a,
+        num_digits_fold,
+        policy,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer,
+    )
+    .expect_err("insufficient A bound must be rejected");
+    assert!(error.to_string().contains("A bound"), "{error}");
+
+    let mut low_b = layout;
+    let outer = low_b.outer_commit_matrix;
+    let lower_b_bound = crate::sis::COEFF_LINF_BUCKETS
+        .iter()
+        .copied()
+        .rfind(|&bound| bound < outer.coeff_linf_bound())
+        .expect("lower supported B bound");
+    low_b.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            coeff_linf_bound: lower_b_bound,
+            ..outer.sis_table_key()
+        },
+        outer.input_width(),
+    )
+    .expect("canonical low-bound B matrix");
+    let error = PrecommittedLevelParams::admit(
+        low_b,
+        num_digits_fold,
+        policy,
+        OpeningMethod::EvaluationTrace,
+        challenge,
+        layout.log_basis_outer,
+    )
+    .expect_err("insufficient B bound must be rejected");
+    assert!(error.to_string().contains("B bound"), "{error}");
+}
+
 #[test]
 fn native_group_dimensions_are_independent_of_final_group_order() {
     use jolt_field::Prime128OffsetA7F7;
@@ -129,11 +357,14 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     let inner = &precommitted.layout.inner_commit_matrix;
     precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
-        inner.sis_table_key().table_digest,
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().expect("L infinity test matrix"),
         128,
     );
     let outer = &precommitted.layout.outer_commit_matrix;
@@ -146,7 +377,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         outer.coeff_linf_bound(),
         outer.ring_dimension(),
     );
-    precommitted.fold_challenge_config =
+    precommitted.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
 
     assert_eq!(lp.d_a(), 64, "the final group remains native at A=64");
@@ -156,17 +387,30 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
             .d_a(),
         128
     );
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
+            .expect("relation geometry");
     let witness_layout = WitnessLayout::new(
         &lp,
         &batch,
+        &relation_geometry,
         lp.witness_chunk.num_chunks,
         crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open),
     )
     .expect("witness layout");
     assert_eq!(
-        lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
+        lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
             .expect("output witness length"),
         witness_layout.live_coeff_len()
+    );
+    assert_eq!(
+        lp.output_witness_len_for_field_bits(128, 1, &batch)
+            .expect("policy-bound output witness length"),
+        witness_layout.live_coeff_len()
+    );
+    assert!(
+        witness_layout.live_coeff_len().is_multiple_of(128),
+        "the grouped witness must include padding for the widest successor A carrier"
     );
     assert!(witness_layout
         .units_for_group(0)
@@ -240,13 +484,18 @@ fn address_oracle_precommit(
         outer.coeff_linf_bound(),
         d_b,
     );
-    let layout = CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, claims), &lp);
+    let layout = CommittedGroupProfile::from_params_unchecked_for_test(
+        PolynomialGroupLayout::new(4, claims),
+        &lp,
+    );
     PrecommittedLevelParams {
         layout,
-        log_basis_open: lp.log_basis_open,
-        fold_challenge_config: lp.fold_challenge_config,
-        num_digits_open: lp.num_digits_open,
-        num_digits_fold: lp.num_digits_fold,
+        opening: crate::GroupOpeningPlan::evaluation_trace(
+            lp.fold_challenge_config,
+            lp.log_basis_open,
+            lp.num_digits_open,
+            lp.num_digits_fold,
+        ),
     }
 }
 
@@ -280,6 +529,55 @@ fn address_oracle_fixture(group_count: usize) -> (CommittedGroupParams, OpeningC
 }
 
 #[test]
+fn relation_geometry_supports_mixed_root_opening_methods() {
+    let (mut lp, batch) = address_oracle_fixture(2);
+    lp.precommitted_groups[0].opening.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    lp.precommitted_groups[0].opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("D64 challenge");
+
+    let geometry =
+        crate::RelationWitnessGeometry::for_level(&lp, &batch, 2).expect("mixed opening geometry");
+    let final_group = batch.root_final_group_index().expect("final group");
+    assert_eq!(
+        geometry.group_opening_geometry(final_group).unwrap(),
+        crate::RelationRowGeometry::native(64).unwrap()
+    );
+    let precommitted = geometry.group_opening_geometry(0).unwrap();
+    assert_eq!(precommitted.polynomial_modulus_dimension(), 64);
+    assert_eq!(precommitted.coordinate_plane_count(), 2);
+    assert_eq!(precommitted.physical_coefficient_width(), 128);
+    assert_eq!(geometry.relation_coefficient_block_len().unwrap(), 64);
+
+    let layout =
+        WitnessLayout::new(&lp, &batch, &geometry, 2, 2).expect("mixed-method witness layout");
+    assert_eq!(
+        layout
+            .unit(final_group, 0)
+            .unwrap()
+            .e_geometry()
+            .coordinate_plane_count(),
+        1
+    );
+    assert_eq!(layout.unit(0, 0).unwrap().e_geometry(), precommitted);
+    assert!(crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch).is_err());
+    assert!(lp.validate_opening_batch(&batch).is_ok());
+}
+
+#[test]
+fn relation_geometry_revalidates_frozen_precommitted_profiles() {
+    let (mut lp, batch) = address_oracle_fixture(2);
+    lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .sis_table_key
+        .ring_dimension /= 2;
+    assert!(crate::RelationWitnessGeometry::for_level(&lp, &batch, 2).is_err());
+}
+
+#[test]
 fn compact_witness_addresses_match_independent_formula_matrix() {
     use jolt_field::Prime128OffsetA7F7;
 
@@ -293,8 +591,12 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 num_activated_levels: usize::from(num_chunks > 1),
             };
             let quotient_depth = crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open);
-            let layout = WitnessLayout::new(&lp, &batch, num_chunks, quotient_depth)
-                .expect("compact witness layout");
+            let relation_geometry =
+                crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
+                    .expect("relation geometry");
+            let layout =
+                WitnessLayout::new(&lp, &batch, &relation_geometry, num_chunks, quotient_depth)
+                    .expect("compact witness layout");
             let mut cursor = 0usize;
             let mut unit_position = 0usize;
             for chunk in 0..num_chunks {
@@ -307,11 +609,8 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                         .group_layout(group_index)
                         .expect("group layout")
                         .num_polynomials();
-                    let blocks = WitnessLayout::resolve_chunk_block_ranges(
-                        params.num_live_blocks(),
-                        num_chunks,
-                    )
-                    .expect("chunk ranges")[chunk]
+                    let blocks = dyadic_block_ranges(params.num_live_blocks(), num_chunks)
+                        .expect("chunk ranges")[chunk]
                         .clone();
                     let unit = &layout.units()[unit_position];
                     unit_position += 1;
@@ -386,7 +685,6 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                                                 + coefficient);
                                         assert_eq!(
                                             unit.e_coefficient_index(
-                                                d_a,
                                                 d_d,
                                                 claims,
                                                 delta_d,
@@ -441,8 +739,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     }
                 }
             }
-            let relation_layout =
-                crate::relation_rhs_layout_for(&lp, &batch).expect("compression relation layout");
+            let relation_layout = relation_geometry.rhs_layout();
             assert_eq!(layout.r_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
@@ -485,13 +782,13 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 .take(ordinary_row_count)
                 .enumerate()
             {
-                assert_eq!(row.ring_dim(), ring_dim);
+                assert_eq!(row.geometry().physical_coefficient_width(), ring_dim);
                 assert_eq!(row.range(), cursor..cursor + quotient_depth * ring_dim);
                 for digit in 0..quotient_depth {
                     for coefficient in 0..ring_dim {
                         assert_eq!(
                             layout
-                                .r_coefficient_index(row_index, digit, coefficient)
+                                .r_coefficient_index(row_index, digit, 0, coefficient)
                                 .expect("R address"),
                             cursor + digit * ring_dim + coefficient
                         );
@@ -552,14 +849,15 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     let row = &layout.r_rows()[row_index];
                     assert_eq!(
                         row.range(),
-                        cursor..cursor + quotient_depth * row.ring_dim()
+                        cursor
+                            ..cursor + quotient_depth * row.geometry().physical_coefficient_width()
                     );
                     cursor = row.range().end;
                 }
                 let h_row = &layout.r_rows()[layer.h_quotient_row()];
                 assert_eq!(
                     h_row.range(),
-                    cursor..cursor + quotient_depth * h_row.ring_dim()
+                    cursor..cursor + quotient_depth * h_row.geometry().physical_coefficient_width()
                 );
                 cursor = h_row.range().end;
             }
@@ -573,7 +871,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             assert_eq!(layout.r_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
-                lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
+                lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
                     .expect("canonical witness length"),
                 cursor
             );

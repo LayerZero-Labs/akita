@@ -10,9 +10,9 @@
 //! shuffles. Because `len` is always a power of two, each stage hits exactly
 //! one width with no remainder.
 //!
-//! These kernels are selected when `AKITA_AVX512_NTT=1` and full AVX-512
-//! support is present. The true 256-bit AVX2 transform is the default because
-//! it wins every measured target degree on Ice Lake.
+//! These kernels are not selected by production dispatch. They remain available
+//! to direct architecture tests and benchmark-only experiments; the true
+//! 256-bit AVX2 transform wins every measured target degree on Ice Lake.
 
 #[cfg(target_arch = "x86")]
 use std::arch::x86::*;
@@ -24,8 +24,8 @@ use super::{
     mont_mul_16x_i32_avx512, mont_mul_4x_i32_avx2, mont_mul_8x_i32_avx2,
     reduce_range_16x_i32_avx512, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
+use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::forward_dif_tail_eligible;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
 /// Forward DIF butterfly stages over the cyclic NTT, width-aware.
@@ -110,7 +110,7 @@ unsafe fn forward_dif_stages<const D: usize>(
         len /= 2;
     }
 
-    if forward_dif_tail_eligible::<D>() {
+    if batched_four_point_eligible::<D>(4) {
         // SAFETY: AVX2 proven by this function's safety contract.
         unsafe { forward_dif_tail_i32_avx2::<D>(a_ptr, tw_ptr, p128, pinv128) };
     } else {
@@ -346,7 +346,7 @@ pub(super) unsafe fn forward_ntt_i32<const D: usize>(
     unsafe {
         mont_mul_table(a, prime, &tw.psi_pows);
         forward_dif_stages(a, prime, tw);
-        if !forward_dif_tail_eligible::<D>() {
+        if !batched_four_point_eligible::<D>(4) {
             reduce_range_all(a, prime);
         }
     }
@@ -384,7 +384,7 @@ pub(super) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     // SAFETY: feature contract forwarded to each helper.
     unsafe {
         forward_dif_stages(a, prime, tw);
-        if !forward_dif_tail_eligible::<D>() {
+        if !batched_four_point_eligible::<D>(4) {
             reduce_range_all(a, prime);
         }
     }
@@ -555,7 +555,6 @@ mod tests {
 
     #[test]
     fn wide512_i32_transforms_match_scalar_supported_degrees() {
-        check_degree::<32>();
         check_degree::<64>();
         check_degree::<128>();
         check_degree::<256>();

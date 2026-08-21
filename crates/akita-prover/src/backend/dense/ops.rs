@@ -1,26 +1,22 @@
-//! Dense polynomial opening, tensor, and fold operations.
+//! Dense polynomial opening and fold operations.
 //!
 //! Storage is D-free; every ring-shaped operation takes the ring dimension as
 //! a method const generic and views the flat coefficients at kernel entry.
 
-use super::poly::{DenseColumnSource, DensePoly};
-use super::tensor_fold;
+use super::poly::DensePoly;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
     cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
     DecomposeParams,
 };
-use crate::backend::RootTensorProjectionPoly;
-use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
-use crate::{CommitInnerWitness, DecomposeFoldWitness};
+use crate::DecomposeFoldWitness;
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
-use akita_algebra::{CyclotomicRing, SplitEqEvals};
-use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
+use akita_algebra::CyclotomicRing;
+use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_types::{embed_ring_subfield_vector, tensor_column_partials_split_fold, FpExtEncoding};
+use akita_types::SubfieldMultiplierOpeningPoint;
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{CanonicalEncoding, Field};
 
 impl<F> DensePoly<F>
 where
@@ -43,7 +39,7 @@ where
                 let block = &coeffs[start..end];
                 let mut acc = CyclotomicRing::<F, D>::zero();
                 for (b_j, &a_j) in block.iter().zip(scalars.iter()) {
-                    acc += b_j.scale(&a_j);
+                    b_j.scale_accumulate_into(&mut acc, a_j);
                 }
                 acc
             })
@@ -86,154 +82,19 @@ where
         )
     }
 
-    pub(crate) fn evaluate_and_fold_ring<const D: usize>(
+    pub(crate) fn evaluate_and_fold_subfield<const D: usize>(
         &self,
-        live_block_weights: &[CyclotomicRing<F, D>],
-        position_weights: &[CyclotomicRing<F, D>],
+        multipliers: &SubfieldMultiplierOpeningPoint<F>,
         num_positions_per_block: usize,
-    ) -> (CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>) {
-        crate::backend::poly_helpers::fused_evaluate_and_fold_ring(
-            self.fold_blocks_ring::<D>(position_weights, num_positions_per_block),
-            live_block_weights,
+    ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError> {
+        let position_weights = multipliers.materialize_position_rings::<D>()?;
+        let live_block_weights = multipliers.materialize_fold_rings::<D>()?;
+        Ok(
+            crate::backend::poly_helpers::fused_evaluate_and_fold_materialized(
+                self.fold_blocks_ring(&position_weights, num_positions_per_block),
+                &live_block_weights,
+            ),
         )
-    }
-
-    pub(crate) fn tensor_extension_column_partials<E, const D: usize>(
-        &self,
-        logical_point: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        let (split_bits, width) = self.tensor_shape::<E, D>(Some(logical_point))?;
-        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
-        let source = DenseColumnSource {
-            flat: &self.field_coeffs()[..self.live_coeff_len()?],
-            width,
-        };
-        Ok(tensor_column_partials_split_fold::<F, E, _>(
-            &split, width, &source,
-        ))
-    }
-
-    pub(crate) fn tensor_extension_column_partials_batch<E, const D: usize>(
-        polys: &[&Self],
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        E: MulBaseUnreduced<F>,
-    {
-        let Some(first) = polys.first() else {
-            return Ok(Vec::new());
-        };
-        let (split_bits, width) = first.tensor_shape::<E, D>(Some(logical_point))?;
-        // The Dao-Thaler / Gruen split of the tail equality table is
-        // point-dependent only, so it is built once and shared across the batch.
-        let split = SplitEqEvals::new(&logical_point[split_bits..])?;
-        polys
-            .iter()
-            .map(|poly| {
-                poly.tensor_shape::<E, D>(Some(logical_point))?;
-                let source = DenseColumnSource {
-                    flat: &poly.field_coeffs()[..poly.live_coeff_len()?],
-                    width,
-                };
-                Ok(tensor_column_partials_split_fold::<F, E, _>(
-                    &split, width, &source,
-                ))
-            })
-            .collect()
-    }
-
-    pub(crate) fn tensor_packed_extension_evals<E, const D: usize>(
-        &self,
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let (_split_bits, width) = self.tensor_shape::<E, D>(None)?;
-        let live_len = self.live_coeff_len()?;
-        let flat = &self.field_coeffs()[..live_len];
-        // Width-aligned runs never crossed a ring boundary in the old
-        // ring-typed walk, so the flat chunking packs identical values.
-        let mut evals = Vec::with_capacity(live_len / width);
-        for coeffs in flat.chunks_exact(width) {
-            evals.push(E::from_base_slice(coeffs));
-        }
-        Ok(evals)
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
-        &self,
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        Ok(None)
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
-        polys: &[&Self],
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        if polys.len() != coeffs.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: polys.len(),
-                actual: coeffs.len(),
-            });
-        }
-        let mut witnesses = Vec::with_capacity(polys.len());
-        for poly in polys {
-            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
-                return Ok(None);
-            };
-            witnesses.push(witness);
-        }
-        Ok(Some(SparseExtensionOpeningWitness::linear_combination(
-            coeffs.iter().copied().zip(witnesses.iter()),
-        )?))
-    }
-
-    pub(crate) fn tensor_packed_extension_poly<E, const D: usize>(
-        &self,
-    ) -> Result<DensePoly<F>, AkitaError>
-    where
-        F: Field + CanonicalEncoding + Ring,
-        E: FpExtEncoding<F>,
-    {
-        let evals = self.tensor_packed_extension_evals::<E, D>()?;
-        let packed_len = D / E::DEGREE;
-        if packed_len == 0 {
-            return Err(AkitaError::InvalidInput(
-                "extension degree exceeds root ring dimension".to_string(),
-            ));
-        }
-        let mut rings = Vec::with_capacity(evals.len().div_ceil(packed_len));
-        for chunk in evals.chunks(packed_len) {
-            let mut values = chunk.to_vec();
-            values.resize(packed_len, E::zero());
-            rings.push(embed_ring_subfield_vector::<F, E, D>(
-                &values,
-                AkitaError::InvalidInput(
-                    "root transformed witness does not encode in the ring-subfield basis"
-                        .to_string(),
-                ),
-            )?);
-        }
-        Ok(DensePoly::from_ring_coeffs::<D>(rings))
-    }
-
-    pub(crate) fn tensor_packed_extension_root_poly<E, const D: usize>(
-        &self,
-    ) -> Result<RootTensorProjectionPoly<F>, AkitaError>
-    where
-        F: Field + CanonicalEncoding + Ring,
-        E: FpExtEncoding<F>,
-    {
-        Ok(self.tensor_packed_extension_poly::<E, D>()?.into())
     }
 
     #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold")]
@@ -252,23 +113,24 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<D>(
+                cached_digit_decompose_fold_partitioned::<F, D>(
                     digit_planes,
                     challenges,
                     num_positions_per_block,
                     num_digits,
+                    log_basis,
                 )
             };
             let modulus = (-F::one())
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128")
+                .expect("Akita field element must fit in u128")
                 + 1;
             return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
         }
 
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         let threshold = decompose_centering_threshold(num_digits, log_basis, q);
         let params = DecomposeParams {
@@ -346,43 +208,5 @@ where
 
         let _span = tracing::info_span!("dense_multi_digit_convert").entered();
         build_decompose_fold_witness::<F, D>(centered_coeffs, params.q)
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePoly::decompose_fold_tensor_batched")]
-    pub(crate) fn decompose_fold_tensor_batched<const D: usize>(
-        polys: &[&Self],
-        tensor: &TensorChallengeSet,
-        num_positions_per_block: usize,
-        num_digits: usize,
-        log_basis: u32,
-    ) -> Result<Option<DecomposeFoldWitness<F>>, AkitaError> {
-        tensor_fold::decompose_fold_batched_tensor_dense::<F, D>(
-            polys,
-            tensor,
-            num_positions_per_block,
-            num_digits,
-            log_basis,
-        )
-    }
-
-    #[tracing::instrument(skip_all, name = "DensePoly::commit_inner")]
-    pub(crate) fn commit_inner<B, const D: usize>(
-        &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
-        plan: CommitInnerPlan,
-    ) -> Result<CommitInnerWitness<F>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
-        let t = self.commit_rows::<B, D>(
-            backend,
-            prepared,
-            plan.n_a,
-            plan.num_positions_per_block,
-            plan.num_digits_inner,
-            plan.log_basis_inner,
-        )?;
-        Ok(CommitInnerWitness::from_rows(t))
     }
 }

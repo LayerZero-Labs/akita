@@ -47,14 +47,14 @@ use super::super::two_round_prefix::{
     Stage1BivariateSkipState,
 };
 use akita_algebra::split_eq::GruenSplitEq;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Fold, Ring, Unreduced, Zero};
-
 use akita_error::AkitaError;
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
 use akita_types::DigitRangePlan;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Fold, Unreduced};
 
 const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 5;
 
@@ -545,7 +545,13 @@ struct DirectRangePrefixState<E: Field> {
 }
 
 /// Direct leaf state over `range_image(x) = w(x)(w(x)+1)`.
-pub(crate) struct LowBasisRangeCheckProver<E: Field> {
+///
+/// For `basis <= 8` this is the complete stage-1 instance prover: it
+/// implements [`EqFactoredSumcheckInstanceProver`], so callers that batch
+/// several stage-1 instances over one shared equality point can drive its
+/// rounds directly instead of going through the single-instance
+/// [`DigitRangeProver`](crate::DigitRangeProver) wrapper.
+pub struct LowBasisRangeCheckProver<E: Field> {
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
     polynomial_precomputation: RangePolynomialPrecomputation,

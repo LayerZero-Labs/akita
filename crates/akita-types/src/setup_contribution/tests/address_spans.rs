@@ -1,6 +1,4 @@
 use super::*;
-use akita_algebra::One;
-use akita_algebra::Zero;
 
 #[test]
 fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
@@ -22,7 +20,6 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
         .unwrap();
     let first_e = first_unit
         .e_coefficient_index(
-            role_dims.d_a(),
             role_dims.d_d(),
             group.num_claims,
             inputs.depth_open(),
@@ -113,7 +110,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             .unwrap();
         let first_e = first_unit
             .e_coefficient_index(
-                role_dims.d_a(),
                 role_dims.d_d(),
                 group.num_claims,
                 inputs.depth_open(),
@@ -127,7 +123,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             / geometry.relation_coefficient_block_len();
         let second_e = first_unit
             .e_coefficient_index(
-                role_dims.d_a(),
                 role_dims.d_d(),
                 group.num_claims,
                 inputs.depth_open(),

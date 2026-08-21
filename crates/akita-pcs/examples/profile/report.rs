@@ -1,14 +1,16 @@
+use akita_challenges::SparseChallengeConfig;
+use akita_error::AkitaError;
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    golomb_rice::{
-        analyze_z_fold_golomb_encoding, golomb_rice_low_bits_sweep_payload_bytes,
-        golomb_rice_zigzag_width, rice_low_bits_for_cap,
-    },
+    golomb_rice::{analyze_z_fold_golomb_encoding, golomb_rice_zigzag_width},
     layout::proof_size::field_bytes,
-    sis::num_digits_for_bound,
-    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, NttTransformDomain,
-    SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
+    sis::{compute_num_digits_field_width, num_digits_for_bound},
+    AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
+    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, InnerCommitSecurityRoute,
+    NttTransformDomain, OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout,
+    PrecommittedLevelParams, SetupSumcheckProof, SisModulusProfileId,
+    SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -54,9 +56,19 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             .z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = terminal_response_z_fold_stats(segment, schedule, field_bits).ok();
-        let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
-        let z_rice_low_bits_wire = z_stats.as_ref().map(|s| s.rice_low_bits_wire).unwrap_or(0);
-        let z_rice_low_bits_cap = z_stats.as_ref().map(|s| s.rice_low_bits_cap).unwrap_or(0);
+        let z_linf_cap = segment
+            .layout
+            .groups
+            .first()
+            .and_then(|group| group.z_linf_cap);
+        let z_rice_low_bits_wire = segment
+            .layout
+            .groups
+            .first()
+            .map(|group| group.z_rice_low_bits)
+            .unwrap_or(0);
+        let z_rice_low_bits_cap =
+            z_linf_cap.and_then(|_| z_stats.as_ref().map(|stats| stats.rice_low_bits_cap));
         let z_stats_coords = z_stats.as_ref().map(|s| s.coord_count).unwrap_or(0);
         let z_bits_per_coord_golomb = z_stats
             .as_ref()
@@ -92,9 +104,9 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             tail_t_ring_elems = t_ring_elems,
             tail_e_bytes = e_bytes,
             tail_t_bytes = t_bytes,
-            z_witness_linf_cap,
+            z_linf_cap = ?z_linf_cap,
             z_rice_low_bits_wire,
-            z_rice_low_bits_cap,
+            z_rice_low_bits_cap = ?z_rice_low_bits_cap,
             z_coords = z_stats_coords,
             z_bits_per_coord_golomb,
             z_bits_per_coord_packed,
@@ -106,14 +118,11 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let golomb_line = z_stats
             .map(|stats| {
                 format!(
-                    " Golomb z: witness_linf_cap={} wire_low_bits={} cap_low_bits={} sample_low_bits={} ring_elems={z_ring_elems} field_coeffs={} \
+                    " Golomb z: coefficient_linf_cap={z_linf_cap:?} wire_low_bits={z_rice_low_bits_wire} sample_low_bits={} ring_elems={z_ring_elems} field_coeffs={} \
                      {:.2} bits/coord@wire vs {:.2}@sample vs packed {:.2} bits/field_coeff \
                      (hypothetical packed z={} B, savings={} B); \
                      planner z budget={z_budget_bytes} B (slack {z_slack_bytes} B); \
                      dist max={} median={} p90={} p99={}",
-                    stats.witness_linf_cap,
-                    stats.rice_low_bits_wire,
-                    stats.rice_low_bits_cap,
                     stats.rice_low_bits_sample,
                     stats.coord_count,
                     stats.bits_per_coord_at_wire,
@@ -149,9 +158,6 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
         );
         assert_eq!(tail_bytes, z_wire_bytes + e_bytes + t_bytes);
-        if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
-            emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
-        }
     }
 }
 
@@ -166,91 +172,29 @@ fn terminal_response_z_fold_stats<FF: Field>(
         .groups
         .first()
         .ok_or(akita_error::AkitaError::InvalidProof)?;
-    let admission_cap = group.z_admission_linf_cap;
+    let encoding_abs_bound = group.z_linf_cap.unwrap_or(i16::MAX as u128);
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
             .ok_or(akita_error::AkitaError::InvalidProof)?,
         group,
-    )?;
-    let log_cap = u128::BITS - admission_cap.leading_zeros();
+    )?
+    .into_iter()
+    .map(i64::from)
+    .collect::<Vec<_>>();
+    let log_cap = u128::BITS - encoding_abs_bound.leading_zeros();
     let hypothetical_digits =
         num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
     analyze_z_fold_golomb_encoding(
         &z_values,
-        admission_cap,
-        golomb_rice_zigzag_width(admission_cap),
+        encoding_abs_bound,
+        group.z_rice_low_bits,
+        golomb_rice_zigzag_width(encoding_abs_bound),
         hypothetical_digits,
         params.log_basis_inner,
         witness.z_payloads.first().map_or(0, Vec::len),
     )
-}
-
-fn emit_z_golomb_k_sweep<FF: Field>(
-    label: &str,
-    witness: &akita_types::TerminalResponse<FF>,
-    schedule: &FoldSchedule,
-    field_bits: u32,
-    actual_z_payload_bytes: usize,
-) {
-    let Some(group) = witness.layout.groups.first() else {
-        return;
-    };
-    let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
-        witness
-            .z_payloads
-            .first()
-            .map(Vec::as_slice)
-            .unwrap_or_default(),
-        group,
-    ) else {
-        return;
-    };
-    let Ok(stats) = terminal_response_z_fold_stats(witness, schedule, field_bits) else {
-        return;
-    };
-    let low_bits_hi = stats
-        .rice_low_bits_cap
-        .saturating_add(4)
-        .max(stats.rice_low_bits_sample);
-    let Ok(sweep) =
-        golomb_rice_low_bits_sweep_payload_bytes(&z_values, stats.zigzag_w, low_bits_hi)
-    else {
-        return;
-    };
-    let low_bits_observed = rice_low_bits_for_cap(u128::from(stats.observed_max_abs));
-    eprintln!(
-        "[{label}]   z_golomb_low_bits_sweep (coords={}):",
-        z_values.len()
-    );
-    for &(rice_low_bits, bytes) in &sweep {
-        let marker = if rice_low_bits == stats.rice_low_bits_wire {
-            "  <-- wire low bits"
-        } else if rice_low_bits == stats.rice_low_bits_cap {
-            "  <-- cap low bits (planner reference)"
-        } else if rice_low_bits == stats.rice_low_bits_sample {
-            "  <-- sample-optimal on this witness"
-        } else if rice_low_bits == low_bits_observed {
-            "  <-- low bits from observed max only (NOT sound)"
-        } else {
-            ""
-        };
-        let delta = bytes as i64 - actual_z_payload_bytes as i64;
-        eprintln!(
-            "[{label}]     low_bits={rice_low_bits:2}: payload={bytes:6} B ({:.2} bits/coord, delta_vs_actual={delta:+}){marker}",
-            (bytes.saturating_mul(8)) as f64 / z_values.len().max(1) as f64,
-        );
-    }
-    if let Some((rice_low_bits, bytes)) = sweep.iter().min_by_key(|(_, b)| *b) {
-        let save_vs_beta = actual_z_payload_bytes.saturating_sub(*bytes);
-        eprintln!(
-            "[{label}]   z_golomb_sweep_summary: best low_bits={rice_low_bits} -> {bytes} B \
-             (vs actual {actual_z_payload_bytes} B at wire_low_bits={}, delta {save_vs_beta} B; \
-             wire low bits must be >= best for honest encodes)",
-            stats.rice_low_bits_wire,
-        );
-    }
 }
 
 /// Surface the public setup prefix and every initialized exact NTT cache slot.
@@ -278,6 +222,8 @@ pub(crate) fn report_setup_sizes(
         let domain = match metric.key.domain {
             NttTransformDomain::Negacyclic => "negacyclic",
             NttTransformDomain::Cyclic => "cyclic",
+            NttTransformDomain::I16TailBothTransforms => "i16_tail_both",
+            NttTransformDomain::ExactNegacyclicI16 { .. } => "exact_negacyclic_i16",
         };
         tracing::info!(
             label,
@@ -328,12 +274,425 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
     );
 }
 
+/// One planner group as consumed by a fold row.
+///
+/// `consumer_level` identifies the fold whose parameters consume the group.
+/// `emit` takes the producer row separately because a setup prefix is emitted
+/// on the preceding fold row.
+struct PlannedGroupReport {
+    group: String,
+    group_role: &'static str,
+    consumer_level: usize,
+    witness_field_elements: usize,
+    public_num_vars: usize,
+    public_num_polynomials: usize,
+    d_a: usize,
+    d_b: usize,
+    d_d: usize,
+    source_encoding: &'static str,
+    extension_degree: usize,
+    opening_method: &'static str,
+    challenge_subring_dimension: Option<usize>,
+    packing_factor: Option<usize>,
+    packing_partial_width: Option<usize>,
+    packing_quotient_width: Option<usize>,
+    a_width: usize,
+    b_width: usize,
+    d_width: usize,
+    n_a: usize,
+    n_b: usize,
+    n_d: usize,
+    b_slice_count: usize,
+    physical_b_input_width: usize,
+    logical_b_rows: usize,
+    complete_b_compression_bytes: Option<usize>,
+    log_basis_inner: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
+    num_digits_inner: usize,
+    num_digits_outer: usize,
+    num_digits_open: usize,
+    num_digits_fold: usize,
+    challenge_l1_mass: usize,
+    challenge_count_pm1: usize,
+    challenge_count_pm2: usize,
+    challenge_operator_norm_threshold: Option<u32>,
+    num_live_ring_elements_per_claim: usize,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
+    block_index_domain_size: usize,
+    security_route: akita_types::InnerCommitSecurityRoute,
+    response_l2_sq_cap: Option<u128>,
+    norm_proof_shape: Option<akita_types::PhysicalL2NormProofShape>,
+    setup_prefix_natural_field_elements: usize,
+    setup_prefix_padded_field_elements: usize,
+}
+
+const fn source_encoding_name(source_encoding: CommittedSourceEncoding) -> &'static str {
+    match source_encoding {
+        CommittedSourceEncoding::CanonicalCoefficientTable => "canonical_coefficients",
+        CommittedSourceEncoding::TensorSubfieldProjection { .. } => "tensor_subfield_projection",
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OpeningReportGeometry {
+    method: &'static str,
+    challenge_subring_dimension: Option<usize>,
+    packing_factor: Option<usize>,
+    partial_width: Option<usize>,
+    quotient_width: Option<usize>,
+}
+
+fn opening_report_geometry(
+    opening_method: OpeningMethod,
+    extension_degree: usize,
+    a_ring_dimension: usize,
+) -> Result<OpeningReportGeometry, AkitaError> {
+    match opening_method {
+        OpeningMethod::EvaluationTrace => Ok(OpeningReportGeometry {
+            method: "evaluation_trace",
+            challenge_subring_dimension: None,
+            packing_factor: None,
+            partial_width: None,
+            quotient_width: None,
+        }),
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension,
+        } => {
+            let geometry = SubringCoefficientPackingGeometry::try_new(
+                extension_degree,
+                a_ring_dimension,
+                challenge_subring_dimension,
+            )?;
+            Ok(OpeningReportGeometry {
+                method: "subring_coefficient_packing",
+                challenge_subring_dimension: Some(geometry.challenge_subring_dimension()),
+                packing_factor: Some(geometry.packing_factor()),
+                partial_width: Some(geometry.partial_base_field_width()),
+                quotient_width: Some(geometry.partial_base_field_width()),
+            })
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BSliceReportGeometry {
+    slice_count: usize,
+    physical_input_width: usize,
+    logical_rows: usize,
+    complete_compression_bytes: Option<usize>,
+}
+
+fn b_slice_report_geometry(
+    payload_mode: CommitmentPayloadMode,
+    slice_count: CommitmentSliceCount,
+    physical_output_rank: usize,
+    physical_input_width: usize,
+    outer_ring_dimension: usize,
+    modulus_profile: SisModulusProfileId,
+) -> Result<BSliceReportGeometry, AkitaError> {
+    let logical_rows = slice_count.logical_output_rows(physical_output_rank)?;
+    let complete_compression_bytes = if payload_mode.is_compressed() {
+        let complete_source_coefficients =
+            slice_count.complete_source_coefficients(physical_output_rank, outer_ring_dimension)?;
+        Some(
+            akita_types::CompressionChainPlan::for_complete_source(
+                modulus_profile,
+                complete_source_coefficients,
+            )?
+            .source_bytes(),
+        )
+    } else {
+        None
+    };
+    Ok(BSliceReportGeometry {
+        slice_count: slice_count.get(),
+        physical_input_width,
+        logical_rows,
+        complete_compression_bytes,
+    })
+}
+
+fn reported_operator_norm_threshold(
+    security_route: InnerCommitSecurityRoute,
+    ring_dimension: usize,
+    challenge: &SparseChallengeConfig,
+) -> Option<u32> {
+    match security_route {
+        InnerCommitSecurityRoute::Linf(_) => None,
+        InnerCommitSecurityRoute::L2 { .. } => {
+            akita_challenges::selective_l2_operator_norm_rejection(ring_dimension, challenge)
+                .map(|policy| policy.threshold)
+        }
+    }
+}
+
+impl PlannedGroupReport {
+    fn committed(
+        group: String,
+        group_role: &'static str,
+        level: usize,
+        witness_field_elements: usize,
+        public_group: Option<PolynomialGroupLayout>,
+        params: &CommittedGroupParams,
+        extension_degree: usize,
+    ) -> Result<Self, AkitaError> {
+        let role_dims = params.role_dims();
+        let opening =
+            opening_report_geometry(params.opening_method, extension_degree, role_dims.d_a())?;
+        let security_route = params.inner_commit_matrix.security_route();
+        let (response_l2_sq_cap, norm_proof_shape) = match security_route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_types::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap,
+                norm_proof_shape,
+                ..
+            } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
+        };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &params.fold_challenge_config,
+        );
+        let (public_num_vars, public_num_polynomials) = public_group
+            .map(|layout| (layout.num_vars(), layout.num_polynomials()))
+            .unwrap_or((0, 0));
+        let n_b = params.outer_commit_matrix.output_rank();
+        let b_geometry = b_slice_report_geometry(
+            params.payload_mode,
+            params.outer_slice_count,
+            n_b,
+            params.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            params.outer_commit_matrix.sis_modulus_profile(),
+        )?;
+        Ok(Self {
+            group,
+            group_role,
+            consumer_level: level,
+            witness_field_elements,
+            public_num_vars,
+            public_num_polynomials,
+            d_a: role_dims.d_a(),
+            d_b: role_dims.d_b(),
+            d_d: role_dims.d_d(),
+            source_encoding: source_encoding_name(params.source_encoding),
+            extension_degree,
+            opening_method: opening.method,
+            challenge_subring_dimension: opening.challenge_subring_dimension,
+            packing_factor: opening.packing_factor,
+            packing_partial_width: opening.partial_width,
+            packing_quotient_width: opening.quotient_width,
+            a_width: params.inner_commit_matrix.input_width(),
+            b_width: params.outer_commit_matrix.input_width(),
+            d_width: params.open_commit_matrix.input_width(),
+            n_a: params.inner_commit_matrix.output_rank(),
+            n_b,
+            n_d: params.open_commit_matrix.output_rank(),
+            b_slice_count: b_geometry.slice_count,
+            physical_b_input_width: b_geometry.physical_input_width,
+            logical_b_rows: b_geometry.logical_rows,
+            complete_b_compression_bytes: b_geometry.complete_compression_bytes,
+            log_basis_inner: params.log_basis_inner,
+            log_basis_outer: params.log_basis_outer,
+            log_basis_open: params.log_basis_open,
+            num_digits_inner: params.num_digits_inner,
+            num_digits_outer: params.num_digits_outer,
+            num_digits_open: params.num_digits_open,
+            num_digits_fold: params.num_digits_fold(),
+            challenge_l1_mass: params.challenge_l1_mass(),
+            challenge_count_pm1: params.fold_challenge_config.count_pm1,
+            challenge_count_pm2: params.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold,
+            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
+            num_live_blocks: params.num_live_blocks,
+            num_positions_per_block: params.num_positions_per_block,
+            block_index_domain_size: params.block_index_domain_size().unwrap_or(0),
+            security_route,
+            response_l2_sq_cap,
+            norm_proof_shape,
+            setup_prefix_natural_field_elements: 0,
+            setup_prefix_padded_field_elements: 0,
+        })
+    }
+
+    fn precommitted(
+        group: String,
+        consumer_level: usize,
+        witness_field_elements: usize,
+        params: &PrecommittedLevelParams,
+        shared_open: &OpenCommitMatrixParams,
+        setup_prefix_lengths: Option<(usize, usize)>,
+        extension_degree: usize,
+    ) -> Result<Self, AkitaError> {
+        let layout = params.layout;
+        let role_dims = params.role_dims(shared_open.ring_dimension());
+        let opening = opening_report_geometry(
+            params.opening.opening_method,
+            extension_degree,
+            role_dims.d_a(),
+        )?;
+        let (setup_prefix_natural_field_elements, setup_prefix_padded_field_elements) =
+            setup_prefix_lengths.unwrap_or((0, 0));
+        let (public_num_vars, public_num_polynomials) = setup_prefix_lengths
+            .is_none()
+            .then_some(layout.group)
+            .map(|layout| (layout.num_vars(), layout.num_polynomials()))
+            .unwrap_or((0, 0));
+        let security_route = layout.inner_commit_matrix.security_route();
+        let (response_l2_sq_cap, norm_proof_shape) = match security_route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_types::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap,
+                norm_proof_shape,
+                ..
+            } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
+        };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &params.opening.fold_challenge_config,
+        );
+        let n_b = layout.outer_commit_matrix.output_rank();
+        let b_geometry = b_slice_report_geometry(
+            CommitmentPayloadMode::Compressed,
+            layout.outer_slice_count,
+            n_b,
+            layout.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            layout.outer_commit_matrix.sis_modulus_profile(),
+        )?;
+        Ok(Self {
+            group,
+            group_role: if setup_prefix_lengths.is_some() {
+                "setup_offload"
+            } else {
+                "precommitted"
+            },
+            consumer_level,
+            witness_field_elements,
+            public_num_vars,
+            public_num_polynomials,
+            d_a: role_dims.d_a(),
+            d_b: role_dims.d_b(),
+            d_d: role_dims.d_d(),
+            source_encoding: source_encoding_name(
+                akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
+            ),
+            extension_degree,
+            opening_method: opening.method,
+            challenge_subring_dimension: opening.challenge_subring_dimension,
+            packing_factor: opening.packing_factor,
+            packing_partial_width: opening.partial_width,
+            packing_quotient_width: opening.quotient_width,
+            a_width: layout.inner_commit_matrix.input_width(),
+            b_width: layout.outer_commit_matrix.input_width(),
+            d_width: shared_open.input_width(),
+            n_a: layout.inner_commit_matrix.output_rank(),
+            n_b,
+            n_d: shared_open.output_rank(),
+            b_slice_count: b_geometry.slice_count,
+            physical_b_input_width: b_geometry.physical_input_width,
+            logical_b_rows: b_geometry.logical_rows,
+            complete_b_compression_bytes: b_geometry.complete_compression_bytes,
+            log_basis_inner: layout.log_basis_inner,
+            log_basis_outer: layout.log_basis_outer,
+            log_basis_open: params.opening.log_basis_open,
+            num_digits_inner: layout.num_digits_inner,
+            num_digits_outer: layout.num_digits_outer,
+            num_digits_open: params.opening.num_digits_open,
+            num_digits_fold: params.opening.num_digits_fold,
+            challenge_l1_mass: params.challenge_l1_mass(),
+            challenge_count_pm1: params.opening.fold_challenge_config.count_pm1,
+            challenge_count_pm2: params.opening.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold,
+            num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
+            num_live_blocks: layout.num_live_blocks,
+            num_positions_per_block: layout.num_positions_per_block,
+            block_index_domain_size: layout
+                .num_live_blocks
+                .checked_next_power_of_two()
+                .unwrap_or(0),
+            security_route,
+            response_l2_sq_cap,
+            norm_proof_shape,
+            setup_prefix_natural_field_elements,
+            setup_prefix_padded_field_elements,
+        })
+    }
+
+    fn emit(&self, label: &str, level: usize, field_bits: u32) {
+        let num_digits_quotient = compute_num_digits_field_width(field_bits, self.log_basis_open);
+        tracing::info!(
+            label,
+            level,
+            group = self.group.as_str(),
+            group_role = self.group_role,
+            consumer_level = self.consumer_level,
+            witness_field_elements = self.witness_field_elements,
+            public_num_vars = self.public_num_vars,
+            public_num_polynomials = self.public_num_polynomials,
+            d_a = self.d_a,
+            d_b = self.d_b,
+            d_d = self.d_d,
+            source_encoding = self.source_encoding,
+            extension_degree = self.extension_degree,
+            opening_method = self.opening_method,
+            challenge_subring_dimension = ?self.challenge_subring_dimension,
+            packing_factor = ?self.packing_factor,
+            packing_partial_width = ?self.packing_partial_width,
+            packing_quotient_width = ?self.packing_quotient_width,
+            a_width = self.a_width,
+            b_width = self.b_width,
+            d_width = self.d_width,
+            n_a = self.n_a,
+            n_b = self.n_b,
+            n_d = self.n_d,
+            b_slice_count = self.b_slice_count,
+            physical_b_input_width = self.physical_b_input_width,
+            logical_b_rows = self.logical_b_rows,
+            complete_b_compression_bytes = ?self.complete_b_compression_bytes,
+            log_basis_inner = self.log_basis_inner,
+            log_basis_outer = self.log_basis_outer,
+            log_basis_open = self.log_basis_open,
+            num_digits_inner = self.num_digits_inner,
+            num_digits_outer = self.num_digits_outer,
+            num_digits_open = self.num_digits_open,
+            num_digits_fold = self.num_digits_fold,
+            num_digits_quotient,
+            challenge_l1_mass = self.challenge_l1_mass,
+            challenge_count_pm1 = self.challenge_count_pm1,
+            challenge_count_pm2 = self.challenge_count_pm2,
+            challenge_operator_norm_threshold = ?self.challenge_operator_norm_threshold,
+            num_live_ring_elements_per_claim = self.num_live_ring_elements_per_claim,
+            num_live_blocks = self.num_live_blocks,
+            num_positions_per_block = self.num_positions_per_block,
+            block_index_domain_size = self.block_index_domain_size,
+            security_route = ?self.security_route,
+            response_l2_sq_cap = ?self.response_l2_sq_cap,
+            norm_proof_shape = ?self.norm_proof_shape,
+            setup_prefix_natural_field_elements = self.setup_prefix_natural_field_elements,
+            setup_prefix_padded_field_elements = self.setup_prefix_padded_field_elements,
+            "planned fold group"
+        );
+    }
+}
+
 pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
-    root_num_claims: usize,
+    final_group: PolynomialGroupLayout,
     field_bits: u32,
-) {
+    extension_degree: usize,
+) -> Result<(), AkitaError> {
+    let challenge_field_bits = field_bits
+        .checked_mul(
+            u32::try_from(extension_degree).map_err(|_| {
+                AkitaError::InvalidSetup("profile extension degree exceeds u32".into())
+            })?,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("profile challenge field width overflow".into()))?;
     let levels = schedule.num_fold_levels();
     let num_setup_field_elements =
         akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
@@ -352,7 +711,57 @@ pub(crate) fn emit_runtime_schedule_summary(
         "runtime schedule"
     );
 
-    let root_current_w_groups = root_current_w_groups(schedule, root_num_claims);
+    let root_current_w_groups = root_current_w_groups(schedule, final_group);
+    let root_open = &schedule.root.params.open_commit_matrix;
+    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+        let layout = group.descriptor.group;
+        let witness_field_elements =
+            group_field_elements(layout.num_vars(), layout.num_polynomials());
+        PlannedGroupReport::precommitted(
+            format!("pre{index}"),
+            0,
+            witness_field_elements,
+            &group.commitment,
+            root_open,
+            None,
+            extension_degree,
+        )?
+        .emit(label, 0, field_bits);
+    }
+    PlannedGroupReport::committed(
+        "final".to_string(),
+        "final",
+        0,
+        group_field_elements(final_group.num_vars(), final_group.num_polynomials()),
+        Some(final_group),
+        &schedule.root.params.final_group.commitment,
+        extension_degree,
+    )?
+    .emit(label, 0, field_bits);
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        PlannedGroupReport::committed(
+            "folded".to_string(),
+            "folded",
+            index + 1,
+            fold.input_witness_len,
+            None,
+            &fold.params.witness,
+            extension_degree,
+        )?
+        .emit(label, index + 1, field_bits);
+        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+            PlannedGroupReport::precommitted(
+                format!("setup_to_L{}", index + 1),
+                index + 1,
+                prefix.natural_len,
+                &prefix.commitment_params,
+                &fold.params.open_commit_matrix,
+                Some((prefix.natural_len, prefix.n_prefix().unwrap_or(0))),
+                extension_degree,
+            )?
+            .emit(label, index, field_bits);
+        }
+    }
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params.final_group.commitment,
@@ -377,6 +786,24 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
+        let opening =
+            opening_report_geometry(lp.opening_method, extension_degree, role_dims.d_a())?;
+        let extension_opening_reduction_bytes =
+            if matches!(lp.opening_method, OpeningMethod::EvaluationTrace) {
+                let final_group = akita_types::PolynomialGroupLayout::singleton(
+                    akita_types::padded_boolean_opening_vars(input_witness_len)?,
+                );
+                let opening_shape = lp
+                    .opening_layout_for_final_group(final_group)?
+                    .aggregate_polynomial_group_layout()?;
+                akita_types::extension_opening_reduction_level_bytes(
+                    challenge_field_bits,
+                    extension_degree,
+                    opening_shape,
+                )?
+            } else {
+                0
+            };
         let current_w_len = current_w_groups;
         let next_w_len = output_witness_len;
         let setup_prefix = schedule
@@ -387,6 +814,34 @@ pub(crate) fn emit_runtime_schedule_summary(
             setup_prefix.map_or(0, |prefix| prefix.natural_len);
         let setup_prefix_padded_field_elements =
             setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
+        let a_input_raw_dimension = lp.inner_commit_matrix.raw_input_dimension();
+        let a_output_raw_dimension = lp.inner_commit_matrix.raw_output_dimension();
+        let b_input_raw_dimension = lp.outer_commit_matrix.raw_input_dimension();
+        let b_output_raw_dimension = lp.outer_commit_matrix.raw_output_dimension();
+        let d_input_raw_dimension = lp.open_commit_matrix.raw_input_dimension();
+        let d_output_raw_dimension = lp.open_commit_matrix.raw_output_dimension();
+        let security_route = lp.inner_commit_matrix.security_route();
+        let (response_l2_sq_cap, norm_proof_shape) = match security_route {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => (None, None),
+            akita_types::InnerCommitSecurityRoute::L2 {
+                response_l2_sq_cap,
+                norm_proof_shape,
+                ..
+            } => (Some(response_l2_sq_cap), Some(norm_proof_shape)),
+        };
+        let challenge_operator_norm_threshold = reported_operator_norm_threshold(
+            security_route,
+            role_dims.d_a(),
+            &lp.fold_challenge_config,
+        );
+        let b_geometry = b_slice_report_geometry(
+            lp.payload_mode,
+            lp.outer_slice_count,
+            lp.outer_commit_matrix.output_rank(),
+            lp.outer_commit_matrix.input_width(),
+            role_dims.d_b(),
+            lp.outer_commit_matrix.sis_modulus_profile(),
+        )?;
         tracing::info!(
             label,
             level = level_idx,
@@ -394,10 +849,41 @@ pub(crate) fn emit_runtime_schedule_summary(
             d_a = role_dims.d_a(),
             d_b = role_dims.d_b(),
             d_d = role_dims.d_d(),
+            source_encoding = source_encoding_name(lp.source_encoding),
+            extension_degree,
+            witness_chunk_count = lp.witness_chunk.num_chunks,
+            witness_chunk_activated_levels = lp.witness_chunk.num_activated_levels,
+            witness_chunk_active = lp.witness_chunk.uses_multi_chunk(),
+            opening_method = opening.method,
+            challenge_subring_dimension = ?opening.challenge_subring_dimension,
+            packing_factor = ?opening.packing_factor,
+            packing_partial_width = ?opening.partial_width,
+            packing_quotient_width = ?opening.quotient_width,
+            extension_opening_reduction_present = extension_opening_reduction_bytes != 0,
+            extension_opening_reduction_bytes,
+            a_width = lp.inner_commit_matrix.input_width(),
+            b_width = lp.outer_commit_matrix.input_width(),
+            d_width = lp.open_commit_matrix.input_width(),
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
+            b_slice_count = b_geometry.slice_count,
+            physical_b_input_width = b_geometry.physical_input_width,
+            logical_b_rows = b_geometry.logical_rows,
+            complete_b_compression_bytes = ?b_geometry.complete_compression_bytes,
+            security_route = ?security_route,
+            response_l2_sq_cap = ?response_l2_sq_cap,
+            norm_proof_shape = ?norm_proof_shape,
+            ?a_input_raw_dimension,
+            ?a_output_raw_dimension,
+            ?b_input_raw_dimension,
+            ?b_output_raw_dimension,
+            ?d_input_raw_dimension,
+            ?d_output_raw_dimension,
             challenge_l1_mass = lp.challenge_l1_mass(),
+            challenge_count_pm1 = lp.fold_challenge_config.count_pm1,
+            challenge_count_pm2 = lp.fold_challenge_config.count_pm2,
+            challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
             log_basis_open = lp.log_basis_open,
@@ -411,6 +897,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(),
+            num_digits_quotient = compute_num_digits_field_width(field_bits, lp.log_basis_open),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -421,25 +908,51 @@ pub(crate) fn emit_runtime_schedule_summary(
         );
     }
 
-    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        if let Some(prefix) = &fold.params.incoming_setup_prefix {
-            tracing::info!(
-                label,
-                successor_level = index + 1,
-                setup_prefix_natural_field_elements = prefix.natural_len,
-                setup_prefix_padded_field_elements = prefix.n_prefix().unwrap_or(0),
-                "planned recursive setup edge"
-            );
-        }
-    }
-
+    let terminal_level = levels - 1;
+    let terminal = &schedule.terminal;
+    let witness = &terminal.params.witness;
+    let challenge = &terminal.params.sparse_challenge_config;
+    let security_route = witness.inner_commit_matrix.security_route();
+    let response_l2_sq_cap = witness.response_l2_sq_cap();
+    let z_linf_cap = terminal
+        .params
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .and_then(|group| group.z_linf_cap);
+    let challenge_operator_norm_threshold =
+        reported_operator_norm_threshold(security_route, witness.d_a(), challenge);
     tracing::info!(
         label,
-        terminal_response_len = schedule.terminal.input_witness_len,
-        final_inner_log_basis = schedule.terminal.params.witness.log_basis_inner,
-        final_inner_ring_dimension = schedule.terminal.params.witness.d_a(),
+        level = terminal_level,
+        input_witness_len = terminal.input_witness_len,
+        d_a = witness.d_a(),
+        n_a = witness.inner_commit_matrix.output_rank(),
+        inner_width = witness.inner_width(),
+        a_input_raw_dimension = ?witness.inner_commit_matrix.raw_input_dimension(),
+        a_output_raw_dimension = ?witness.inner_commit_matrix.raw_output_dimension(),
+        log_basis_inner = witness.log_basis_inner,
+        num_digits_inner = witness.num_digits_inner,
+        fold_log_basis = witness.fold_log_basis,
+        fold_digit_count = witness.fold_digit_count,
+        challenge_l1_mass = challenge.l1_norm(),
+        challenge_count_pm1 = challenge.count_pm1,
+        challenge_count_pm2 = challenge.count_pm2,
+        challenge_operator_norm_threshold = ?challenge_operator_norm_threshold,
+        security_route = ?security_route,
+        response_l2_sq_cap = ?response_l2_sq_cap,
+        z_linf_cap = ?z_linf_cap,
+        num_live_ring_elements_per_claim = witness.num_live_ring_elements_per_claim,
+        num_positions_per_block = witness.num_positions_per_block,
+        num_live_blocks = witness.num_live_blocks,
+        block_index_domain_size = witness
+            .num_live_blocks
+            .checked_next_power_of_two()
+            .unwrap_or(0),
         "planned terminal state"
     );
+    Ok(())
 }
 
 fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
@@ -449,7 +962,7 @@ fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
         .unwrap_or(0)
 }
 
-fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> String {
+fn root_current_w_groups(schedule: &FoldSchedule, final_group: PolynomialGroupLayout) -> String {
     let mut groups = schedule
         .root
         .params
@@ -464,17 +977,9 @@ fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> Str
             )
         })
         .collect::<Vec<_>>();
-    let precommitted_polys = schedule
-        .root
-        .params
-        .precommitted_groups
-        .iter()
-        .map(|group| group.descriptor.group.num_polynomials())
-        .sum::<usize>();
-    let final_polys = root_num_claims.saturating_sub(precommitted_polys);
     groups.push(format!(
         "final={}",
-        schedule.root.input_witness_len.saturating_mul(final_polys)
+        group_field_elements(final_group.num_vars(), final_group.num_polynomials())
     ));
     groups.join(";")
 }
@@ -485,15 +990,20 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
 
 fn extension_opening_reduction_sizes<E: Field + AkitaSerialize>(
     reduction: Option<&akita_types::ExtensionOpeningReductionProof<E>>,
-) -> (usize, usize) {
-    reduction.map_or((0, 0), |reduction| {
+) -> (usize, usize, usize) {
+    reduction.map_or((0, 0, 0), |reduction| {
         let partials = reduction
             .partials
             .iter()
             .map(|value| value.serialized_size(Compress::No))
             .sum();
         let sumcheck = reduction.sumcheck.serialized_size(Compress::No);
-        (partials, sumcheck)
+        let final_claims = reduction
+            .final_claims
+            .iter()
+            .map(|value| value.serialized_size(Compress::No))
+            .sum();
+        (partials, sumcheck, final_claims)
     })
 }
 
@@ -529,6 +1039,10 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
+fn fold_grind_attempts(accepted_nonce: u32) -> u64 {
+    u64::from(accepted_nonce) + 1
+}
+
 fn print_akita_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
@@ -539,8 +1053,11 @@ where
     FF: Field + CanonicalEncoding + AkitaSerialize,
     E: Field + AkitaSerialize,
 {
-    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let (
+        extension_opening_partials_size,
+        extension_opening_sumcheck_size,
+        extension_opening_final_claims_size,
+    ) = extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let opening_payload_size = level.opening_payload.serialized_size(Compress::No);
     let opening_payload_d = level.opening_payload.coeff_len();
     let total = level.serialized_size(Compress::No);
@@ -567,6 +1084,13 @@ where
         .sum::<usize>();
     let stage1_range_image_evaluation_size =
         stage1.range_image_evaluation.serialized_size(Compress::No);
+    let (stage1_norm_proof_size, response_l2_sq) =
+        stage1.norm_proof.as_ref().map_or((0, None), |norm| {
+            (
+                norm.serialized_size(Compress::No),
+                Some(norm.response_l2_sq),
+            )
+        });
     let stage2_sumcheck_size = stage2_intermediate
         .sumcheck_proof
         .serialized_size(Compress::No);
@@ -581,6 +1105,7 @@ where
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
+    let grind_attempts = fold_grind_attempts(grind_nonce);
 
     tracing::info!(
         label,
@@ -589,12 +1114,16 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
+        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
+        stage1_norm_proof_bytes = stage1_norm_proof_size,
+        response_l2_sq = ?response_l2_sq,
         stage2_sumcheck_bytes = stage2_sumcheck_size,
         stage3_sumcheck_bytes = stage3_sumcheck_size,
         next_w_payload_bytes = next_w_payload_size,
@@ -603,12 +1132,16 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!(
+        "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
+    );
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!(
         "[{label}]     stage1_range_image_evaluation={stage1_range_image_evaluation_size} bytes"
     );
+    eprintln!("[{label}]     stage1_norm_proof={stage1_norm_proof_size} bytes");
     eprintln!("[{label}]     stage2_sumcheck={stage2_sumcheck_size} bytes");
     eprintln!("[{label}]     stage3_sumcheck={stage3_sumcheck_size} bytes");
     eprintln!(
@@ -620,11 +1153,13 @@ where
         total,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + extension_opening_final_claims_size
             + opening_payload_size
             + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size
+            + stage1_norm_proof_size
             + stage2_sumcheck_size
             + stage3_sumcheck_size
             + next_w_payload_size
@@ -644,11 +1179,28 @@ where
     FF: Field + CanonicalEncoding + AkitaSerialize,
     E: Field + AkitaSerialize,
 {
-    let (extension_opening_partials_size, extension_opening_sumcheck_size) =
-        extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
+    let (
+        extension_opening_partials_size,
+        extension_opening_sumcheck_size,
+        extension_opening_final_claims_size,
+    ) = extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let terminal_response_size = level.terminal_response().serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
     let grind_nonce = level.fold_grind_nonce;
+    let grind_attempts = fold_grind_attempts(grind_nonce);
+    let response_l2_sq = level
+        .terminal_response()
+        .layout
+        .groups
+        .first()
+        .and_then(|group| {
+            akita_types::decode_terminal_z_golomb_payload(
+                level.terminal_response().z_payloads.first()?,
+                group,
+            )
+            .ok()
+        })
+        .and_then(|values| akita_types::sis::checked_centered_l2_sq(&values));
     let full = level.serialized_size(Compress::No);
     // `total_bytes` excludes the terminal response to mirror the planner's
     // `terminal_level_proof_bytes`. The response is reported separately as
@@ -668,8 +1220,11 @@ where
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
+        extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
+        grind_attempts,
+        response_l2_sq = ?response_l2_sq,
         terminal_response_bytes = terminal_response_size,
         root_variant = root_variant,
         "proof fold level"
@@ -685,6 +1240,9 @@ where
     );
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
+    eprintln!(
+        "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
+    );
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!(
         "[{label}]     terminal_response={terminal_response_size} bytes (absorbed via transcript)"
@@ -693,6 +1251,7 @@ where
         full,
         extension_opening_partials_size
             + extension_opening_sumcheck_size
+            + extension_opening_final_claims_size
             + fold_grind_nonce_size
             + terminal_response_size
     );
@@ -767,7 +1326,19 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _field_bits: u32) {
+pub(crate) fn print_layout(
+    layout: &CommittedGroupParams,
+    _num_claims: usize,
+    _field_bits: u32,
+) -> Result<(), AkitaError> {
+    let b_geometry = b_slice_report_geometry(
+        layout.payload_mode,
+        layout.outer_slice_count,
+        layout.outer_commit_matrix.output_rank(),
+        layout.outer_commit_matrix.input_width(),
+        layout.outer_commit_matrix.ring_dimension(),
+        layout.outer_commit_matrix.sis_modulus_profile(),
+    )?;
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
@@ -782,6 +1353,14 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _f
         log_basis_inner = layout.log_basis_inner,
         log_basis_outer = layout.log_basis_outer,
         log_basis_open = layout.log_basis_open,
+        n_a = layout.inner_commit_matrix.output_rank(),
+        n_b = layout.outer_commit_matrix.output_rank(),
+        n_d = layout.open_commit_matrix.output_rank(),
+        b_slice_count = b_geometry.slice_count,
+        physical_b_input_width = b_geometry.physical_input_width,
+        logical_b_rows = b_geometry.logical_rows,
+        complete_b_compression_bytes = b_geometry.complete_compression_bytes,
         "layout"
     );
+    Ok(())
 }

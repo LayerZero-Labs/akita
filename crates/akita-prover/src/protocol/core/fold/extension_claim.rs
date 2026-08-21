@@ -1,13 +1,12 @@
 use super::super::*;
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
-    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeOpeningProveBackendFor,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
-use crate::RootTensorProjectionPoly;
+use jolt_field::AdditiveGroup;
 use jolt_field::Unreduced;
 
 pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
-    CurrentClaims,
     Logical(&'a [G]),
 }
 
@@ -27,11 +26,13 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
 where
     F: Field
         + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
         + Ring
+        + Field
         + Unreduced
         + Field
-        + 'static
-        + akita_serialization::AkitaSerialize,
+        + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + Unreduced
@@ -44,19 +45,16 @@ where
     V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
-    R: DigitRowsComputeBackend<F>,
+    O: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = block_claims
-        .opening_claims()
-        .layout()
+        .opening_layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
-    let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let eor_groups: Vec<&P> = match eor_source {
-            ExtensionOpeningSource::CurrentClaims => block_claims.groups().collect(),
-            ExtensionOpeningSource::Logical(groups) => groups.iter().collect(),
-        };
+    let (protocol_points, reduction) = if run_eor {
+        let ExtensionOpeningSource::Logical(groups) = eor_source;
+        let eor_groups: Vec<&P> = groups.iter().collect();
         if eor_groups.len() != opening_batch.num_groups() {
             return Err(AkitaError::InvalidInput(
                 "extension-opening source group count mismatch".to_string(),
@@ -91,73 +89,23 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-        (
-            proved.protocol_points,
-            Some(proved.row_coefficients),
-            Some(proved.reduction),
-        )
+        (proved.protocol_points, Some(proved.reduction))
     } else {
         let protocol_points =
             prepare_non_eor_opening(&block_claims, &opening_batch, validate_non_eor)?;
-        (protocol_points, None, None)
+        (protocol_points, None)
     };
 
-    // Tensor-project only when EOR ran without base-eval padding (root geometry).
-    // All other arms share one finish path.
-    if run_eor && !pad_base_evals {
-        let transformed: Vec<RootTensorProjectionPoly<F>> = {
-            let _span = tracing::info_span!(
-                "extension_transform_polys",
-                num_claims = opening_batch.num_total_polynomials()
-            )
-            .entered();
-            let mut transformed = Vec::with_capacity(opening_batch.num_total_polynomials());
-            for group_index in 0..opening_batch.num_groups() {
-                let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                transformed.extend(block_claims.group(group_index)?.tensor_project(
-                    tensor.backend(),
-                    Some(tensor.prepared()),
-                    group_dims.d_a(),
-                )?);
-            }
-            transformed
-        };
-        let fold_refs = transformed.iter().collect::<Vec<_>>();
-        let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
-        finish_prepared_fold::<
-            F,
-            E,
-            T,
-            PreparedProverGroup<'_, RootTensorProjectionPoly<F>>,
-            C,
-            O,
-            TS,
-            R,
-        >(FinishFoldArgs {
-            stack,
-            block_claims: transformed_block_claims,
-            protocol_points: &protocol_points,
-            reduction,
-            row_coefficients,
-            trace_opening_batch: &opening_batch,
-            level_params,
-            basis,
-            pad_base_evals,
-            transcript,
-        })
-    } else {
-        finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-            stack,
-            block_claims,
-            protocol_points: &protocol_points,
-            reduction,
-            row_coefficients,
-            trace_opening_batch: &opening_batch,
-            level_params,
-            basis,
-            pad_base_evals,
-            transcript,
-        })
-    }
+    finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
+        stack,
+        block_claims,
+        protocol_points: &protocol_points,
+        reduction,
+        trace_opening_batch: &opening_batch,
+        level_params,
+        basis,
+        pad_base_evals,
+        transcript,
+    })
     .map_err(|err| AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}")))
 }

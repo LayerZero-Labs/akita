@@ -9,19 +9,134 @@
 
 /// Minimum min-entropy (bits) for every ring fold sparse-challenge transcript draw.
 ///
-/// Flat folds sample one such draw per logical block. Tensor folds sample
-/// independent fold-high and fold-low factor vectors; each factor is one draw
-/// and is reused across many logical blocks
-/// (`c_{p,q} = fold_high_p · fold_low_q`). Soundness therefore requires
-/// **each draw** to clear this floor, not merely the product
-/// `fold_high ⊗ fold_low` summed to 128 bits (a 64+64 split would pass a sum
-/// rule but leave each factor brute-forceable).
+/// Every logical block receives an independent draw that must clear this floor.
 pub const MIN_FOLD_CHALLENGE_ENTROPY_BITS: u32 = 128;
 
 /// Production D=64 signed sparse ±1 count (LaBRADOR-aligned).
 pub const D64_PRODUCTION_PM1_COUNT: usize = 31;
 /// Production D=64 signed sparse ±2 count (LaBRADOR-aligned).
 pub const D64_PRODUCTION_PM2_COUNT: usize = 10;
+
+/// D=64 exact shell used by the selective-L2 operator-norm route.
+///
+/// The raw family has about 130.15 bits of support. The independently checked
+/// fixed-point certificate retains 128.062439 bits inside the strict runtime
+/// threshold 18 predicate.
+pub const D64_L2_OP_NORM_PM1_COUNT: usize = 31;
+pub const D64_L2_OP_NORM_PM2_COUNT: usize = 11;
+
+/// D=128 selective-L2 route reuses the production `(31, 0)` shell.
+pub const D128_L2_OP_NORM_PM1_COUNT: usize = 31;
+pub const D128_L2_OP_NORM_PM2_COUNT: usize = 0;
+
+/// Verifier-enforced operator-norm rejection policy for selective L2 folds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OperatorNormRejection {
+    /// Strict certified predicate threshold used by prover and verifier.
+    pub threshold: u32,
+    /// Fractional bits used by the certified fixed-point predicate.
+    pub fractional_bits: u32,
+    /// Certified upper bound on each fixed-point root-coordinate error.
+    pub root_coordinate_error_units: u32,
+    /// Fixed-point distance below `threshold` of the certified true-norm subset.
+    pub rounding_margin_units: u32,
+}
+
+impl OperatorNormRejection {
+    /// D=64 selective-L2 policy. Its support certificate is
+    /// `cert_d64_a31_b11_gamma18.json` from the Akita paper artifacts.
+    pub const D64_SELECTIVE_L2: Self = Self {
+        threshold: 18,
+        fractional_bits: 48,
+        root_coordinate_error_units: 4,
+        rounding_margin_units: 600,
+    };
+
+    /// D=128 selective-L2 policy. Its support certificate is
+    /// `scripts/operator_norm/d128/cert_d128_w31_gamma13.json`.
+    pub const D128_SELECTIVE_L2: Self = Self {
+        threshold: 13,
+        fractional_bits: 48,
+        root_coordinate_error_units: 4,
+        rounding_margin_units: 351,
+    };
+
+    /// Validate the exact challenge family covered by the support certificate.
+    pub fn validate(
+        self,
+        ring_d: usize,
+        config: &SparseChallengeConfig,
+    ) -> Result<(), &'static str> {
+        let covered = match self {
+            Self::D64_SELECTIVE_L2 => {
+                ring_d == 64
+                    && config.count_pm1 == D64_L2_OP_NORM_PM1_COUNT
+                    && config.count_pm2 == D64_L2_OP_NORM_PM2_COUNT
+            }
+            Self::D128_SELECTIVE_L2 => {
+                ring_d == 128
+                    && config.count_pm1 == D128_L2_OP_NORM_PM1_COUNT
+                    && config.count_pm2 == D128_L2_OP_NORM_PM2_COUNT
+            }
+            _ => false,
+        };
+        if !covered {
+            return Err("unsupported operator-norm rejection policy or challenge family");
+        }
+        Ok(())
+    }
+
+    /// Canonical transcript-domain bytes for this rejection policy.
+    pub fn domain_separator_bytes(self) -> [u8; 17] {
+        let mut out = [0u8; 17];
+        out[0] = 2;
+        out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
+        out[5..9].copy_from_slice(&self.fractional_bits.to_le_bytes());
+        out[9..13].copy_from_slice(&self.root_coordinate_error_units.to_le_bytes());
+        out[13..17].copy_from_slice(&self.rounding_margin_units.to_le_bytes());
+        out
+    }
+}
+
+/// Exact challenge config paired with
+/// [`OperatorNormRejection::D64_SELECTIVE_L2`].
+pub const D64_SELECTIVE_L2_CHALLENGE_CONFIG: SparseChallengeConfig = SparseChallengeConfig {
+    count_pm1: D64_L2_OP_NORM_PM1_COUNT,
+    count_pm2: D64_L2_OP_NORM_PM2_COUNT,
+};
+
+/// Exact challenge config paired with
+/// [`OperatorNormRejection::D128_SELECTIVE_L2`].
+pub const D128_SELECTIVE_L2_CHALLENGE_CONFIG: SparseChallengeConfig = SparseChallengeConfig {
+    count_pm1: D128_L2_OP_NORM_PM1_COUNT,
+    count_pm2: D128_L2_OP_NORM_PM2_COUNT,
+};
+
+/// Challenge family selected by a certified selective-L2 route.
+#[inline]
+#[must_use]
+pub fn selective_l2_challenge_config(ring_d: usize) -> Option<SparseChallengeConfig> {
+    match ring_d {
+        64 => Some(D64_SELECTIVE_L2_CHALLENGE_CONFIG),
+        128 => Some(D128_SELECTIVE_L2_CHALLENGE_CONFIG),
+        _ => None,
+    }
+}
+
+/// Rejection policy selected by a certified selective-L2 schedule, if any.
+#[inline]
+#[must_use]
+pub fn selective_l2_operator_norm_rejection(
+    ring_d: usize,
+    config: &SparseChallengeConfig,
+) -> Option<OperatorNormRejection> {
+    let policy = match ring_d {
+        64 => OperatorNormRejection::D64_SELECTIVE_L2,
+        128 => OperatorNormRejection::D128_SELECTIVE_L2,
+        _ => return None,
+    };
+    policy.validate(ring_d, config).is_ok().then_some(policy)
+}
 
 /// Ring degrees with a production fold-challenge ladder entry.
 macro_rules! production_fold_challenge_ring_dims {
@@ -41,13 +156,17 @@ macro_rules! production_fold_challenge_ring_dims {
 
 production_fold_challenge_ring_dims!(64, 128, 256, 512, 1024, 2048);
 
-const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize)] = &[
-    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT),
-    (128, 31, 0),
-    (256, 23, 0),
-    (512, 19, 0),
-    (1024, 16, 0),
-    (2048, 14, 0),
+// The last coordinate is floor(log2(support)). It lets the verifier and the
+// offline planner validate the fixed production families without repeatedly
+// evaluating dozens of floating-point logarithms. The tests below recompute
+// every value from the canonical support formula.
+const PRODUCTION_FOLD_CHALLENGE_LADDER: &[(usize, usize, usize, u32)] = &[
+    (64, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT, 128),
+    (128, 31, 0, 129),
+    (256, 23, 0, 131),
+    (512, 19, 0, 132),
+    (1024, 16, 0, 131),
+    (2048, 14, 0, 131),
 ];
 
 /// Fixed-weight sparse ring fold challenge family.
@@ -76,8 +195,8 @@ impl SparseChallengeConfig {
     pub fn production_for_ring_dim(ring_d: usize) -> Option<Self> {
         PRODUCTION_FOLD_CHALLENGE_LADDER
             .iter()
-            .find(|(d, _, _)| *d == ring_d)
-            .map(|(_, pm1, pm2)| Self {
+            .find(|(d, _, _, _)| *d == ring_d)
+            .map(|(_, pm1, pm2, _)| Self {
                 count_pm1: *pm1,
                 count_pm2: *pm2,
             })
@@ -166,6 +285,19 @@ impl SparseChallengeConfig {
         ring_dim: usize,
         required_bits: u32,
     ) -> Result<(), &'static str> {
+        if let Some((_, _, _, support_floor_bits)) =
+            PRODUCTION_FOLD_CHALLENGE_LADDER
+                .iter()
+                .find(|(d, pm1, pm2, _)| {
+                    *d == ring_dim && *pm1 == self.count_pm1 && *pm2 == self.count_pm2
+                })
+        {
+            return if required_bits <= *support_floor_bits {
+                Ok(())
+            } else {
+                Err("sparse challenge family has insufficient min-entropy for security floor")
+            };
+        }
         __dispatch_fold_challenge_ring_dim!(self, ring_dim, required_bits)
     }
 
@@ -206,13 +338,96 @@ impl SparseChallengeConfig {
 #[cfg(test)]
 mod entropy_tests {
     use super::*;
+    use jolt_field::{
+        pseudo_mersenne_modulus, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        PseudoMersenne,
+    };
+
+    fn assert_ls18_short_difference_bound<F: PseudoMersenne>(split_count: u32) {
+        let modulus =
+            pseudo_mersenne_modulus(F::MODULUS_BITS, F::OFFSET).expect("production modulus");
+        let split_count = u128::from(split_count);
+        for &carrier_dimension in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
+            assert!(carrier_dimension.is_power_of_two());
+            assert!(carrier_dimension >= split_count as usize);
+        }
+        assert_eq!(
+            modulus % (4 * split_count),
+            2 * split_count + 1,
+            "production prime must meet the LS18 partial splitting congruence"
+        );
+
+        let max_challenge_coefficient = PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+            .iter()
+            .map(|&ring_dim| {
+                SparseChallengeConfig::production_for_ring_dim(ring_dim)
+                    .expect("production challenge")
+                    .infinity_norm()
+            })
+            .max()
+            .expect("production challenge ladder");
+        assert!(max_challenge_coefficient <= 2);
+
+        let max_difference_coefficient = 2 * u128::from(max_challenge_coefficient);
+        let split_count_exponent =
+            u32::try_from(split_count).expect("small production split count");
+        // For even `ell`, raising
+        // `2 c_max < q^(1/ell) / sqrt(ell)` to `ell` gives this integer check.
+        let exact_shortness_lhs = max_difference_coefficient.pow(split_count_exponent)
+            * split_count.pow(split_count_exponent / 2);
+        assert!(
+            exact_shortness_lhs < modulus,
+            "raising the strict LS18 shortness bound to split_count must remain below q"
+        );
+    }
 
     #[test]
     fn production_ladder_matches_proof_optimized_dims() {
-        for &d in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
+        assert_eq!(
+            PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len(),
+            PRODUCTION_FOLD_CHALLENGE_LADDER.len(),
+            "the production dimension and challenge ladders must have identical coverage"
+        );
+        for (&d, &(_, _, _, support_floor_bits)) in PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+            .iter()
+            .zip(PRODUCTION_FOLD_CHALLENGE_LADDER)
+        {
             let cfg = SparseChallengeConfig::production_for_ring_dim(d).expect("ladder entry");
             assert!(cfg.validate_for_ring_dim(d).is_ok(), "d={d}");
+            let computed_floor = match d {
+                64 => cfg.log2_support_bits::<64>().floor() as u32,
+                128 => cfg.log2_support_bits::<128>().floor() as u32,
+                256 => cfg.log2_support_bits::<256>().floor() as u32,
+                512 => cfg.log2_support_bits::<512>().floor() as u32,
+                1024 => cfg.log2_support_bits::<1024>().floor() as u32,
+                2048 => cfg.log2_support_bits::<2048>().floor() as u32,
+                _ => unreachable!("production dimension list is exhaustive"),
+            };
+            assert_eq!(computed_floor, support_floor_bits, "d={d}");
+            for required_bits in 0..=support_floor_bits + 2 {
+                let generic = match d {
+                    64 => cfg.validate_min_entropy::<64>(required_bits),
+                    128 => cfg.validate_min_entropy::<128>(required_bits),
+                    256 => cfg.validate_min_entropy::<256>(required_bits),
+                    512 => cfg.validate_min_entropy::<512>(required_bits),
+                    1024 => cfg.validate_min_entropy::<1024>(required_bits),
+                    2048 => cfg.validate_min_entropy::<2048>(required_bits),
+                    _ => unreachable!("production dimension list is exhaustive"),
+                };
+                assert_eq!(
+                    cfg.validate_min_entropy_for_ring_dim(d, required_bits),
+                    generic,
+                    "fast and generic entropy checks disagree for d={d}, required={required_bits}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn production_primes_and_challenges_meet_ls18_shortness() {
+        assert_ls18_short_difference_bound::<Prime32Offset99>(2);
+        assert_ls18_short_difference_bound::<Prime64Offset59>(2);
+        assert_ls18_short_difference_bound::<Prime128OffsetA7F7>(4);
     }
 
     #[test]
@@ -233,7 +448,7 @@ mod entropy_tests {
     }
 
     #[test]
-    fn tensor_floor_is_per_draw_not_product_budget() {
+    fn entropy_floor_is_per_draw() {
         let weak = SparseChallengeConfig::pm1_only(1);
         let per_draw = weak.log2_support_bits::<4>();
         assert!(per_draw < 128.0);
@@ -266,7 +481,7 @@ mod entropy_tests {
         assert_eq!(uni256.challenge_l2_sq_max(), 23);
         assert_eq!(uni256.nonzero_count_max(), 23);
 
-        for (d, pm1, pm2) in PRODUCTION_FOLD_CHALLENGE_LADDER {
+        for (d, pm1, pm2, _) in PRODUCTION_FOLD_CHALLENGE_LADDER {
             if *d >= 512 {
                 let cfg = SparseChallengeConfig {
                     count_pm1: *pm1,
@@ -275,5 +490,27 @@ mod entropy_tests {
                 assert!(cfg.validate_for_ring_dim(*d).is_ok());
             }
         }
+    }
+
+    #[test]
+    fn selective_l2_operator_norm_policies_are_dimension_and_family_typed() {
+        let d64 = D64_SELECTIVE_L2_CHALLENGE_CONFIG;
+        let d128 = D128_SELECTIVE_L2_CHALLENGE_CONFIG;
+        assert_eq!(selective_l2_challenge_config(64), Some(d64));
+        assert_eq!(selective_l2_challenge_config(128), Some(d128));
+        assert_eq!(selective_l2_challenge_config(256), None);
+        assert_eq!(
+            selective_l2_operator_norm_rejection(64, &d64),
+            Some(OperatorNormRejection::D64_SELECTIVE_L2)
+        );
+        assert_eq!(
+            selective_l2_operator_norm_rejection(128, &d128),
+            Some(OperatorNormRejection::D128_SELECTIVE_L2)
+        );
+        assert!(selective_l2_operator_norm_rejection(64, &d128).is_none());
+        assert!(selective_l2_operator_norm_rejection(128, &d64).is_none());
+        assert!(OperatorNormRejection::D128_SELECTIVE_L2
+            .validate(128, &SparseChallengeConfig::pm1_only(30))
+            .is_err());
     }
 }

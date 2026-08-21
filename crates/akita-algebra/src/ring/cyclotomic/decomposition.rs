@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod x86;
+
 /// Compute the centering threshold for balanced decomposition.
 ///
 /// When `levels * log_basis == field_bits`, uses asymmetric centering (T_k).
@@ -83,7 +86,7 @@ pub fn peel_first_balanced_digit(
 }
 
 #[inline(always)]
-fn balanced_digit_to_field<F: Field + CanonicalEncoding>(digit: i128, q: u128) -> F {
+fn balanced_digit_to_field<F: CanonicalEncoding>(digit: i128, q: u128) -> F {
     if digit >= 0 {
         F::from_u128_reduced(digit as u128)
     } else {
@@ -173,7 +176,7 @@ impl BalancedDecomposePow2Params {
 /// Panics if `out.len() != coefficients.len() * params.levels`, or if the
 /// precomputed parameters use a basis wider than signed `i8` digits.
 #[inline]
-pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding>(
+pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalEncoding>(
     coefficients: &[F],
     out: &mut [i8],
     params: &BalancedDecomposePow2Params,
@@ -191,12 +194,29 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: Field + CanonicalEncoding
         params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
         "log_basis must be in 1..=8 for i8 output"
     );
+    if coefficients.is_empty() || params.levels == 0 {
+        return;
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if coefficients.len().is_multiple_of(8) {
+        if let Some(canonical) = F::canonical_u32_slice(coefficients) {
+            if std::is_x86_feature_detected!("avx2") {
+                // SAFETY: runtime feature detection guarantees AVX2, and the
+                // length check guarantees every load/store covers eight lanes.
+                unsafe {
+                    x86::balanced_decompose_canonical_u32_pow2_i8_avx2(canonical, out, params)
+                };
+                return;
+            }
+        }
+    }
     balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
 }
 
 #[inline]
 fn balanced_decompose_coefficients_pow2_signed_into_with_params<
-    F: Field + CanonicalEncoding,
+    F: CanonicalEncoding,
     T: BalancedSignedDigit,
 >(
     coefficients: &[F],
@@ -217,7 +237,7 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
             let (mut c0, d0) = peel_first_balanced_digit(
                 coefficients[base]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128"),
+                    .expect("Akita field element must fit in u128"),
                 params.q,
                 params.threshold,
                 params.mask,
@@ -228,7 +248,7 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
             let (mut c1, d1) = peel_first_balanced_digit(
                 coefficients[base + 1]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128"),
+                    .expect("Akita field element must fit in u128"),
                 params.q,
                 params.threshold,
                 params.mask,
@@ -239,7 +259,7 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
             let (mut c2, d2) = peel_first_balanced_digit(
                 coefficients[base + 2]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128"),
+                    .expect("Akita field element must fit in u128"),
                 params.q,
                 params.threshold,
                 params.mask,
@@ -285,7 +305,7 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
             let (mut c, d0) = peel_first_balanced_digit(
                 coefficients[coefficient]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128"),
+                    .expect("Akita field element must fit in u128"),
                 params.q,
                 params.threshold,
                 params.mask,
@@ -305,13 +325,13 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
         for base in (0..bulk_end).step_by(3) {
             let canonical0 = coefficients[base]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let canonical1 = coefficients[base + 1]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let canonical2 = coefficients[base + 2]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let mut c0 = if canonical0 > params.threshold {
                 -((params.q - canonical0) as i128)
             } else {
@@ -361,7 +381,7 @@ fn balanced_decompose_coefficients_pow2_signed_into_with_params<
         for coefficient in bulk_end..width {
             let canonical = coefficients[coefficient]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let mut c = if canonical > params.threshold {
                 -((params.q - canonical) as i128)
             } else {
@@ -398,7 +418,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
         let mask = b - 1;
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         let threshold = decompose_centering_threshold(levels, log_basis, q);
         let overflow_possible = q.saturating_sub(threshold) > i128::MAX as u128;
@@ -414,7 +434,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
             for i in 0..D {
                 let canonical = self.coeffs[i]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128");
+                    .expect("Akita field element must fit in u128");
                 let (mut c, d0) =
                     peel_first_balanced_digit(canonical, q, threshold, mask, half_b, b, log_basis);
                 first_plane.coeffs[i] = balanced_digit_to_field::<F>(d0, q);
@@ -430,7 +450,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
             for i in 0..D {
                 let canonical = self.coeffs[i]
                     .to_u128_checked()
-                    .expect("canonical prime-field value fits in u128");
+                    .expect("Akita field element must fit in u128");
                 let mut c: i128 = if canonical > threshold {
                     -((q - canonical) as i128)
                 } else {
@@ -454,17 +474,17 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     #[inline]
     pub fn coeff_norm_sq(&self) -> u128
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         let half_q = q / 2;
         self.coeffs.iter().fold(0u128, |acc, &coeff| {
             let canonical = coeff
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let centered: i128 = if canonical > half_q {
                 -((q - canonical) as i128)
             } else {
@@ -517,7 +537,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// Panics if `log_basis` is zero or >= 128.
     pub fn gadget_recompose_pow2_i8(digits: &[[i8; D]], log_basis: u32) -> Self
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         if digits.is_empty() {
             return Self::zero();
@@ -581,7 +601,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     #[inline]
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let levels = out.len();
         assert!(
@@ -595,7 +615,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
 
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         self.balanced_decompose_pow2_i8_into_with_modulus(out, log_basis, q);
     }
@@ -609,7 +629,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
         log_basis: u32,
         q: u128,
     ) where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
         self.balanced_decompose_pow2_i8_into_with_params(out, &params);
@@ -622,17 +642,13 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
         out: &mut [[i8; D]],
         params: &BalancedDecomposePow2Params,
     ) where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         assert!(
             params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
             "log_basis must be in 1..=8 for i8 output"
         );
-        balanced_decompose_coefficients_pow2_signed_into_with_params(
-            &self.coeffs,
-            out.as_flattened_mut(),
-            params,
-        );
+        balanced_decompose_coefficients_pow2_i8_into(&self.coeffs, out.as_flattened_mut(), params);
     }
 
     /// Balanced decomposition directly into signed i16 digit planes.
@@ -641,11 +657,11 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// `1..=16`; bases 10 and 11 map to `[-512, 511]` and `[-1024, 1023]`.
     pub fn balanced_decompose_pow2_i16_into(&self, out: &mut [[i16; D]], log_basis: u32)
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
         balanced_decompose_coefficients_pow2_signed_into_with_params(
@@ -658,7 +674,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// Allocating variant of [`balanced_decompose_pow2_i8_into`](Self::balanced_decompose_pow2_i8_into).
     pub fn balanced_decompose_pow2_i8(&self, levels: usize, log_basis: u32) -> Vec<[i8; D]>
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
         self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
@@ -669,7 +685,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     #[must_use]
     pub fn balanced_decompose_pow2_i16(&self, levels: usize, log_basis: u32) -> Vec<[i16; D]>
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let mut digit_planes = vec![[0i16; D]; levels];
         self.balanced_decompose_pow2_i16_into(&mut digit_planes, log_basis);
@@ -687,7 +703,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// `(levels - 1) * log_basis >= 128`.
     pub fn balanced_decompose_pow2_with_carry_into(&self, out: &mut [Self], log_basis: u32)
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let levels = out.len();
         assert!(levels > 0, "levels must be positive");
@@ -710,14 +726,14 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
         };
         let q = (-F::one())
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128")
+            .expect("Akita field element must fit in u128")
             + 1;
         let half_q = q / 2;
 
         for i in 0..D {
             let canonical = self.coeffs[i]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128");
+                .expect("Akita field element must fit in u128");
             let mut c: i128 = if canonical > half_q {
                 -((q - canonical) as i128)
             } else {
@@ -747,7 +763,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
     /// [`balanced_decompose_pow2_with_carry_into`](Self::balanced_decompose_pow2_with_carry_into).
     pub fn balanced_decompose_pow2_with_carry(&self, levels: usize, log_basis: u32) -> Vec<Self>
     where
-        F: Field + CanonicalEncoding,
+        F: CanonicalEncoding,
     {
         let mut out = vec![Self::zero(); levels];
         self.balanced_decompose_pow2_with_carry_into(&mut out, log_basis);

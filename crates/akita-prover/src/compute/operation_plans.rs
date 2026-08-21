@@ -1,17 +1,17 @@
 use akita_algebra::CyclotomicRing;
-use akita_challenges::{SparseChallenge, TensorChallenges};
+use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_types::{CommittedGroupParams, CommittedGroupProfile};
+use akita_types::{
+    CommittedGroupParams, CommittedGroupProfile, PreparedSubringCoefficientPackingPoint,
+    SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
+};
 use jolt_field::Field;
 
 // ===========================================================================
-// Open, source-typed operation boundary (PO1)
+// Open, source-typed operation boundary
 //
-// Everything below this banner is the *new* prover compute boundary. It sits
-// ABOVE the fixed representation-named row helpers above (`dense_commit_rows`,
-// `onehot_commit_rows`, `ring_switch_relation_rows`, ...), which survive only
-// as lower-level standard kernels. The new layer is open by *source type* `S`
-// instead of closed over Akita's built-in plan shapes:
+// The prover compute boundary is open by source type `S` instead of closed
+// over Akita's built-in representation plan shapes:
 //
 // - operation kernels (`RootCommitKernel`, `OpeningFoldKernel`, ...) take the
 //   borrowed representation view as a generic type parameter `S`, so a
@@ -25,10 +25,9 @@ use jolt_field::Field;
 //   setup, so commitment / opening / tensor / ring-switch work can run on
 //   independent backends while the protocol still sees canonical Akita outputs.
 //
-// PO1 establishes this surface additively: the kernel traits are skeletons with
-// no Akita impls yet (the six representation nodes implement them in their own
-// backend files), and the monolithic `ProverComputeBackend` ladder
-// boundary is intentionally left in place for PO4 to remove.
+// Built-in representations implement these kernels in their backend modules.
+// Shared arithmetic may remain as private CPU helpers, but protocol and public
+// extension boundaries use the source-typed kernels directly.
 // ===========================================================================
 
 /// Scalar operation parameters for an inner Ajtai commit.
@@ -71,11 +70,15 @@ impl CommitInnerPlan {
 
 /// Fold parameters for a fused evaluate-and-fold opening.
 ///
-/// The base/ring split preserves the current distinction between base
-/// multiplier points (scalar folds) and ring multiplier points (sparse
-/// ring-multiplier accumulation).
+/// For source rings `p[b, j]`, position multipliers `a[j]`, and outer
+/// multipliers `s[b]`, every backend returns
+/// `e[b] = sum_j p[b, j] * a[j]` and `y = sum_b e[b] * s[b]`.
+/// The folded `e` rows become the next recursive relation witness.
+///
+/// The base/subfield split keeps degree-one scalar folds direct while proper
+/// extension folds retain their compact subfield coordinates.
 #[derive(Debug, Clone, Copy)]
-pub enum OpeningFoldPlan<'a, F: Field, const D: usize> {
+pub enum OpeningFoldPlan<'a, F: Field> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
@@ -85,25 +88,23 @@ pub enum OpeningFoldPlan<'a, F: Field, const D: usize> {
         /// Number of ring-element positions in each block.
         num_positions_per_block: usize,
     },
-    /// Ring multiplier point: ring-element fold weights.
-    Ring {
-        /// Outer evaluation ring multipliers applied to the folded blocks.
-        live_block_weights: &'a [CyclotomicRing<F, D>],
-        /// Per-block fold ring multipliers.
-        position_weights: &'a [CyclotomicRing<F, D>],
+    /// Proper-extension multiplier point in compact subfield coordinates.
+    Subfield {
+        /// Position and outer-fold multipliers for this opening.
+        multipliers: &'a SubfieldMultiplierOpeningPoint<F>,
         /// Number of ring-element positions in each block.
         num_positions_per_block: usize,
     },
 }
 
-impl<F: Field, const D: usize> OpeningFoldPlan<'_, F, D> {
+impl<F: Field> OpeningFoldPlan<'_, F> {
     pub(crate) fn num_positions_per_block(self) -> usize {
         match self {
             Self::Base {
                 num_positions_per_block,
                 ..
             }
-            | Self::Ring {
+            | Self::Subfield {
                 num_positions_per_block,
                 ..
             } => num_positions_per_block,
@@ -111,7 +112,7 @@ impl<F: Field, const D: usize> OpeningFoldPlan<'_, F, D> {
     }
 
     /// Validate exact position and live-fold weight lengths at a kernel boundary.
-    pub(crate) fn validate(self, num_live_blocks: usize) -> Result<(), AkitaError> {
+    pub(crate) fn validate<const D: usize>(self, num_live_blocks: usize) -> Result<(), AkitaError> {
         let (fold_len, position_len, num_positions_per_block) = match self {
             Self::Base {
                 live_block_weights,
@@ -122,15 +123,17 @@ impl<F: Field, const D: usize> OpeningFoldPlan<'_, F, D> {
                 position_weights.len(),
                 num_positions_per_block,
             ),
-            Self::Ring {
-                live_block_weights,
-                position_weights,
+            Self::Subfield {
+                multipliers,
                 num_positions_per_block,
-            } => (
-                live_block_weights.len(),
-                position_weights.len(),
-                num_positions_per_block,
-            ),
+            } => {
+                multipliers.ensure_ring_dim::<D>()?;
+                (
+                    multipliers.fold_len(),
+                    multipliers.position_len(),
+                    num_positions_per_block,
+                )
+            }
         };
         if !num_positions_per_block.is_power_of_two()
             || num_live_blocks == 0
@@ -154,6 +157,86 @@ pub struct OpeningFoldOutput<F: Field, const D: usize> {
     pub folded: Vec<CyclotomicRing<F, D>>,
 }
 
+/// Checked scalar inputs for one coefficient-packing projection batch.
+///
+/// Source data stays in the representation-specific borrowed batch view. The
+/// output layout is fixed by `geometry` as
+/// `[claim][block][extension coordinate][subring coefficient]`.
+#[derive(Debug, Clone, Copy)]
+pub struct SubringCoefficientPackingPlan<'a, E: Field> {
+    /// Canonically split public opening point.
+    pub point: &'a PreparedSubringCoefficientPackingPoint<E>,
+}
+
+impl<E: Field> SubringCoefficientPackingPlan<'_, E> {
+    /// Validate the plan at a source kernel boundary.
+    pub fn validate<const D: usize>(&self, source_num_vars: usize) -> Result<(), AkitaError> {
+        if self.point.geometry().a_ring_dimension() != D
+            || self.point.source_num_vars() != source_num_vars
+        {
+            return Err(AkitaError::InvalidInput(
+                "coefficient-packing plan disagrees with source geometry or arity".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Canonical base-field coordinates for one claim's packed partials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubringCoefficientPackingPartials<F: Field> {
+    geometry: SubringCoefficientPackingGeometry,
+    num_live_blocks: usize,
+    coordinates: Vec<F>,
+}
+
+impl<F: Field> SubringCoefficientPackingPartials<F> {
+    /// Build a typed partial buffer after checking its exact physical width.
+    pub fn new(
+        geometry: SubringCoefficientPackingGeometry,
+        num_live_blocks: usize,
+        coordinates: Vec<F>,
+    ) -> Result<Self, AkitaError> {
+        let expected = num_live_blocks
+            .checked_mul(geometry.partial_base_field_width())
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("coefficient-packing partial length overflow".into())
+            })?;
+        if num_live_blocks == 0 || coordinates.len() != expected {
+            return Err(AkitaError::InvalidSize {
+                expected,
+                actual: coordinates.len(),
+            });
+        }
+        Ok(Self {
+            geometry,
+            num_live_blocks,
+            coordinates,
+        })
+    }
+
+    /// Checked packing geometry.
+    pub const fn geometry(&self) -> SubringCoefficientPackingGeometry {
+        self.geometry
+    }
+
+    /// Number of live blocks represented by this claim.
+    pub const fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Canonical `[block][extension coordinate][subring coefficient]` data.
+    pub fn coordinates(&self) -> &[F] {
+        &self.coordinates
+    }
+}
+
+impl<F: Field> AsRef<[F]> for SubringCoefficientPackingPartials<F> {
+    fn as_ref(&self) -> &[F] {
+        self.coordinates()
+    }
+}
+
 /// Decompose + challenge-fold parameters for one opening.
 #[derive(Debug, Clone, Copy)]
 pub struct DecomposeFoldPlan<'a> {
@@ -169,26 +252,14 @@ pub struct DecomposeFoldPlan<'a> {
 
 /// Batched decompose + fold parameters at one opening point.
 ///
-/// Both the sparse-challenge and tensor-shaped fused batched paths are exposed
-/// so a representation can keep its fast batched kernel rather than folding
-/// each polynomial independently and aggregating later.
+/// A representation may keep a fast batched kernel rather than folding each
+/// polynomial independently and aggregating later.
 #[derive(Debug, Clone, Copy)]
 pub enum DecomposeFoldBatchPlan<'a> {
     /// Sparse-challenge batched fold.
     Sparse {
         /// Sparse fold challenges, outermost first.
         challenges: &'a [SparseChallenge],
-        /// Number of ring-element positions in each block.
-        num_positions_per_block: usize,
-        /// Number of balanced digits.
-        num_digits: usize,
-        /// Logarithm of the gadget basis.
-        log_basis: u32,
-    },
-    /// Tensor-shaped batched fold.
-    Tensor {
-        /// Tensor-structured fold challenges.
-        tensor: &'a TensorChallenges,
         /// Number of ring-element positions in each block.
         num_positions_per_block: usize,
         /// Number of balanced digits.
@@ -214,11 +285,4 @@ pub struct RingSwitchRelationPlan {
     pub log_basis_open: u32,
     /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
     pub log_basis_outer: u32,
-}
-
-/// Scalar operation parameters for additional public-row quotient rows.
-#[derive(Debug, Clone, Copy)]
-pub struct RingSwitchQuotientPlan {
-    /// Number of A-side quotient rows to produce.
-    pub n_a: usize,
 }

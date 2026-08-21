@@ -2,7 +2,6 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::Zero;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
@@ -14,8 +13,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     SamplingMode,
 };
-use jolt_field::Prime128OffsetA7F7;
-
+use jolt_field::{Prime128OffsetA7F7, Zero};
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;
@@ -98,6 +96,7 @@ fn make_case_with_shape(
         level_params
             .inner_commit_matrix
             .sis_table_key()
+            .expect("benchmark setup matrix is L infinity")
             .table_digest,
         level_params.inner_commit_matrix.sis_modulus_profile(),
         n_a,
@@ -128,9 +127,15 @@ fn make_case_with_shape(
     );
     let depth_fold = level_params.num_digits_fold();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &level_params,
+        &opening_batch,
+    )
+    .unwrap();
     let layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
+        &relation_geometry,
         num_live_blocks / blocks_per_chunk,
         r_decomp_levels::<F>(log_basis),
     )
@@ -177,6 +182,7 @@ fn make_case_with_shape(
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
+        1,
         eq_tau1,
         &layout,
         &groups,
@@ -264,26 +270,32 @@ fn bench_setup_index_weight(c: &mut Criterion) {
     configure_group(&mut shape_group);
     let num_live_blocks = 1024;
     let mixed_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
+        inner: 128,
+        outer: 64,
+        opening: 64,
     };
     let wider_mixed_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 16,
-        opening: 32,
+        inner: 256,
+        outer: 128,
+        opening: 128,
     };
     for (shape, role_dims, outgoing_ring_dim, num_groups, blocks_per_chunk) in [
-        ("mixed_d/single_group/single_chunk", mixed_dims, 16, 1, 1024),
-        ("mixed_d/single_group/64_chunks", mixed_dims, 16, 1, 16),
+        ("mixed_d/single_group/single_chunk", mixed_dims, 64, 1, 1024),
+        ("mixed_d/single_group/64_chunks", mixed_dims, 64, 1, 16),
         (
-            "mixed_d/a64_b16_d32/single_chunk",
+            "mixed_d/a256_b128_d128/single_chunk",
             wider_mixed_dims,
-            16,
+            128,
             1,
             1024,
         ),
-        ("mixed_d/a64_b16_d32/64_chunks", wider_mixed_dims, 16, 1, 16),
+        (
+            "mixed_d/a256_b128_d128/64_chunks",
+            wider_mixed_dims,
+            128,
+            1,
+            16,
+        ),
         (
             "uniform/two_groups/single_chunk",
             CommitmentRingDims::uniform(D),

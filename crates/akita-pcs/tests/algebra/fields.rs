@@ -1,13 +1,10 @@
-use akita_algebra::One;
-use akita_algebra::Ring;
-use akita_algebra::Zero;
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
 use jolt_field::{
-    pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, Prime128Offset159,
+    pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset159,
     Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne,
-    PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    Ring, Zero, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 
 use super::fixtures::{check_solinas_prime, NR};

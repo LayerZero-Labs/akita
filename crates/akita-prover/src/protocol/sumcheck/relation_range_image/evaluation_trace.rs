@@ -1,15 +1,19 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
 use super::fold_two_round_quad;
-use std::{mem, sync::Arc};
-
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::ops::Range;
+use std::sync::Arc;
 
 use akita_error::AkitaError;
+
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
-    EvaluationTraceInputs, FpExtEncoding,
+    CoefficientPackingStage2Source, CoefficientPackingStage2Terms, EvaluationTraceInputs,
+    FpExtEncoding,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,7 +52,7 @@ pub(crate) fn build_evaluation_trace_weights<F, E>(
     inputs: EvaluationTraceInputs<'_, F, E>,
 ) -> Result<EvaluationTraceWeights<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + Ring + Field,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(&inputs)?;
@@ -63,8 +67,10 @@ where
         for (local_claim, claim_index) in parameters.claim_range().enumerate() {
             let mut segments = Vec::with_capacity(units.clone().count());
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let physical_coefficient_start = unit.e_coefficient_index(
-                    group_dims.d_a(),
                     group_dims.d_d(),
                     group_layout.num_polynomials(),
                     parameters.opening_digit_weights().len(),
@@ -135,29 +141,127 @@ struct PreparedLaneTerm<E: Field> {
     lane: usize,
 }
 
+#[derive(Clone)]
+struct PreparedPackingSegment<E: Field> {
+    factor: E,
+    source_index: usize,
+    target_lane_start: usize,
+    source_lane_start: usize,
+    lane_count: usize,
+}
+
+struct PreparedPackingLaneMap<E: Field> {
+    segments: Vec<PreparedPackingSegment<E>>,
+    lane_to_segment: Vec<Option<usize>>,
+    overlapping_segments: BTreeMap<usize, Vec<usize>>,
+}
+
+impl<E: Field> PreparedPackingLaneMap<E> {
+    fn add_segment(&mut self, lane: usize, segment: usize) -> Result<(), AkitaError> {
+        let slot = self
+            .lane_to_segment
+            .get_mut(lane)
+            .ok_or(AkitaError::InvalidProof)?;
+        if let Some(existing) = *slot {
+            self.overlapping_segments
+                .entry(lane)
+                .or_insert_with(|| vec![existing])
+                .push(segment);
+        } else {
+            *slot = Some(segment);
+        }
+        Ok(())
+    }
+
+    fn for_each_segment(&self, lane: usize, mut visit: impl FnMut(usize)) {
+        if let Some(segments) = self.overlapping_segments.get(&lane) {
+            for &segment in segments {
+                visit(segment);
+            }
+        } else if let Some(Some(segment)) = self.lane_to_segment.get(lane) {
+            visit(*segment);
+        }
+    }
+}
+
+enum PreparedLaneWeights<E: Field> {
+    Sparse(Vec<Vec<PreparedLaneTerm<E>>>),
+    Packing(PreparedPackingLaneMap<E>),
+    Dense(Vec<E>),
+}
+
 struct PreparedTraceSource<E: Field> {
     values: Vec<E>,
     lane_count: usize,
 }
 
-/// Canonical prover preparation of the evaluation trace's exact live E support.
+/// One contiguous source-to-witness contribution to a structured linear term.
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StructuredLinearSegment {
+    pub(crate) physical_coefficient_start: usize,
+    pub(crate) source_coefficient_start: usize,
+    pub(crate) coefficient_count: usize,
+}
+
+/// One factored linear term supported on selected witness coefficient ranges.
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StructuredLinearTerm<E: Field> {
+    pub(crate) factor: E,
+    pub(crate) source_index: usize,
+    pub(crate) segment_range: Range<usize>,
+}
+
+/// Method-neutral structured linear weights over one flat witness domain.
+#[cfg(test)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StructuredLinearWeights<E: Field> {
+    pub(crate) sources: Vec<Arc<[E]>>,
+    pub(crate) segments: Vec<StructuredLinearSegment>,
+    pub(crate) terms: Vec<StructuredLinearTerm<E>>,
+    pub(crate) physical_field_len: usize,
+}
+
+/// Canonical prover preparation of exact structured linear support.
 ///
-/// Block, claim, and digit scalars are compiled once. The source-coordinate trace stays
-/// factored while coefficient coordinates are folded; lane challenges then merge the
-/// prepared support directly. No full coefficient-domain trace table is materialized.
-pub(crate) struct PreparedProverEvaluationTrace<E: Field> {
-    lane_terms: Vec<Vec<PreparedLaneTerm<E>>>,
+/// Scalar factors are compiled once. Source-coordinate vectors stay factored while
+/// coefficient coordinates are folded; lane challenges then merge the prepared support
+/// directly. No full coefficient-domain weight table is materialized.
+pub(crate) struct PreparedProverLinearTerms<E: Field> {
+    lane_weights: PreparedLaneWeights<E>,
     sources: Vec<PreparedTraceSource<E>>,
     live_lane_count: usize,
     coeff_count: usize,
 }
 
-impl<E: Field> PreparedProverEvaluationTrace<E> {
+impl<E: Field> PreparedProverLinearTerms<E> {
+    #[cfg(test)]
+    pub(crate) fn source_count(&self) -> usize {
+        self.sources.len()
+    }
+
     pub(crate) fn final_value(&self) -> Result<E, AkitaError> {
         if self.live_lane_count != 1 || self.coeff_count != 1 {
             return Err(AkitaError::InvalidProof);
         }
         Ok(self.get(0, 0, 1))
+    }
+
+    /// A trace of the given geometry whose weight function is identically zero.
+    ///
+    /// Used by virtual-only stage-2 instances that carry no committed
+    /// evaluation-trace term: every lane has empty support, so `get` returns
+    /// zero everywhere, coefficient/lane folds are no-ops over the empty
+    /// source set, and [`Self::final_value`] resolves to zero once folding
+    /// completes.
+    pub(crate) fn zero(live_lane_count: usize, coeff_count: usize) -> Self {
+        Self {
+            lane_weights: PreparedLaneWeights::Sparse(vec![Vec::new(); live_lane_count]),
+            sources: Vec::new(),
+            live_lane_count,
+            coeff_count,
+        }
     }
 
     #[cfg(test)]
@@ -180,7 +284,7 @@ impl<E: Field> PreparedProverEvaluationTrace<E> {
             })
             .collect();
         Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
             sources,
             live_lane_count,
             coeff_count,
@@ -190,21 +294,23 @@ impl<E: Field> PreparedProverEvaluationTrace<E> {
     /// Compile checked semantic trace terms into exact opening support.
     #[tracing::instrument(
         skip_all,
-        name = "PreparedProverEvaluationTrace::new",
+        name = "PreparedProverLinearTerms::from_evaluation_trace",
         fields(
             terms = weights.terms.len(),
             coeff_count,
             physical_field_len = weights.physical_field_len
         )
     )]
-    pub(crate) fn new(
+    pub(crate) fn from_evaluation_trace(
         weights: &EvaluationTraceWeights<E>,
         coeff_count: usize,
         output_scale: E,
     ) -> Result<Self, AkitaError> {
         if coeff_count == 0
             || !coeff_count.is_power_of_two()
+            || weights.physical_field_len == 0
             || !weights.physical_field_len.is_multiple_of(coeff_count)
+            || weights.terms.is_empty()
         {
             return Err(AkitaError::InvalidSetup(
                 "evaluation-trace common-coordinate geometry is malformed".into(),
@@ -376,45 +482,334 @@ impl<E: Field> PreparedProverEvaluationTrace<E> {
             }
         }
         Ok(Self {
-            lane_terms,
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
             sources,
             live_lane_count,
             coeff_count,
         })
     }
 
+    /// Consume canonical coefficient-packing terms into the Stage 2 engine.
+    pub(crate) fn from_coefficient_packing(
+        weights: CoefficientPackingStage2Terms<E>,
+    ) -> Result<Self, AkitaError> {
+        let physical_field_len = weights.physical_field_len();
+        let coeff_count = weights.relation_coefficient_block_len();
+        let (source_values, segments, terms) = weights.into_linear_parts();
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || physical_field_len == 0
+            || !physical_field_len.is_multiple_of(coeff_count)
+            || terms.is_empty()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing linear geometry is malformed".into(),
+            ));
+        }
+        let sources = source_values
+            .into_iter()
+            .map(|values| {
+                if values.is_empty() || !values.len().is_multiple_of(coeff_count) {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing source geometry is malformed".into(),
+                    ));
+                }
+                Ok(PreparedTraceSource {
+                    lane_count: values.len() / coeff_count,
+                    values,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let live_lane_count = physical_field_len / coeff_count;
+        let mut packing = PreparedPackingLaneMap {
+            segments: Vec::new(),
+            lane_to_segment: vec![None; live_lane_count],
+            overlapping_segments: BTreeMap::new(),
+        };
+        for term in terms {
+            let source_index = match term.source() {
+                CoefficientPackingStage2Source::DirectOpening => 0,
+                CoefficientPackingStage2Source::PackingZ => 1,
+            };
+            let source = sources.get(source_index).ok_or(AkitaError::InvalidProof)?;
+            let term_segments = segments
+                .get(term.segments())
+                .ok_or(AkitaError::InvalidProof)?;
+            if term_segments.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing term has no support".into(),
+                ));
+            }
+            for segment in term_segments {
+                let physical = segment.physical_coefficients();
+                let source_range = segment.source_coefficients();
+                if physical.len() != source_range.len()
+                    || physical.is_empty()
+                    || !physical.start.is_multiple_of(coeff_count)
+                    || !physical.len().is_multiple_of(coeff_count)
+                    || !source_range.start.is_multiple_of(coeff_count)
+                    || physical.end > physical_field_len
+                    || source_range.end > source.values.len()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing segment is unaligned or out of bounds".into(),
+                    ));
+                }
+                let target_lane_start = physical.start / coeff_count;
+                let source_lane_start = source_range.start / coeff_count;
+                let lane_count = physical.len() / coeff_count;
+                let segment_index = packing.segments.len();
+                packing.segments.push(PreparedPackingSegment {
+                    factor: term.factor(),
+                    source_index,
+                    target_lane_start,
+                    source_lane_start,
+                    lane_count,
+                });
+                for lane_offset in 0..lane_count {
+                    let target_lane =
+                        target_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "coefficient-packing target lane overflow".into(),
+                            )
+                        })?;
+                    let source_lane =
+                        source_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "coefficient-packing source lane overflow".into(),
+                            )
+                        })?;
+                    if source_lane >= source.lane_count {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    packing.add_segment(target_lane, segment_index)?;
+                }
+            }
+        }
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Packing(packing),
+            sources,
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
+    /// Compile arbitrary checked source segments into the shared Stage 2 engine.
+    #[cfg(test)]
+    pub(crate) fn from_structured_weights(
+        weights: &StructuredLinearWeights<E>,
+        coeff_count: usize,
+    ) -> Result<Self, AkitaError> {
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || weights.physical_field_len == 0
+            || !weights.physical_field_len.is_multiple_of(coeff_count)
+            || weights.sources.is_empty()
+            || weights.terms.is_empty()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "structured linear common-coordinate geometry is malformed".into(),
+            ));
+        }
+        let live_lane_count = weights.physical_field_len / coeff_count;
+        let sources = weights
+            .sources
+            .iter()
+            .map(|source| {
+                if source.is_empty() || !source.len().is_multiple_of(coeff_count) {
+                    return Err(AkitaError::InvalidSetup(
+                        "structured linear source geometry is malformed".into(),
+                    ));
+                }
+                Ok(PreparedTraceSource {
+                    values: source.as_ref().to_vec(),
+                    lane_count: source.len() / coeff_count,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
+        for term in &weights.terms {
+            let source = weights
+                .sources
+                .get(term.source_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let segments = weights
+                .segments
+                .get(term.segment_range.clone())
+                .ok_or(AkitaError::InvalidProof)?;
+            if segments.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "structured linear source geometry is malformed".into(),
+                ));
+            }
+            let source_lane_count = source.len() / coeff_count;
+            for segment in segments {
+                let target_end = segment
+                    .physical_coefficient_start
+                    .checked_add(segment.coefficient_count)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("structured linear target range overflow".into())
+                    })?;
+                let source_end = segment
+                    .source_coefficient_start
+                    .checked_add(segment.coefficient_count)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("structured linear source range overflow".into())
+                    })?;
+                if segment.coefficient_count == 0
+                    || !segment.coefficient_count.is_multiple_of(coeff_count)
+                    || !segment
+                        .physical_coefficient_start
+                        .is_multiple_of(coeff_count)
+                    || !segment.source_coefficient_start.is_multiple_of(coeff_count)
+                    || target_end > weights.physical_field_len
+                    || source_end > source.len()
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "structured linear segment is unaligned or out of bounds".into(),
+                    ));
+                }
+                let target_lane_start = segment.physical_coefficient_start / coeff_count;
+                let source_lane_start = segment.source_coefficient_start / coeff_count;
+                let lane_count = segment.coefficient_count / coeff_count;
+                for lane_offset in 0..lane_count {
+                    let target_lane =
+                        target_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "structured linear target lane overflow".into(),
+                            )
+                        })?;
+                    let source_lane =
+                        source_lane_start.checked_add(lane_offset).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "structured linear source lane overflow".into(),
+                            )
+                        })?;
+                    if source_lane >= source_lane_count {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                    lane_terms
+                        .get_mut(target_lane)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .push(PreparedLaneTerm {
+                            factor: term.factor,
+                            source_index: term.source_index,
+                            lane: source_lane,
+                        });
+                }
+            }
+        }
+        Ok(Self {
+            lane_weights: PreparedLaneWeights::Sparse(lane_terms),
+            sources,
+            live_lane_count,
+            coeff_count,
+        })
+    }
+
+    /// Add another checked structured term set over the same witness domain.
+    pub(crate) fn merge(&mut self, other: Self) -> Result<(), AkitaError> {
+        if self.live_lane_count != other.live_lane_count || self.coeff_count != other.coeff_count {
+            return Err(AkitaError::InvalidSize {
+                expected: self.live_lane_count * self.coeff_count,
+                actual: other.live_lane_count * other.coeff_count,
+            });
+        }
+        let source_offset = self.sources.len();
+        self.sources.extend(other.sources);
+        match (&mut self.lane_weights, other.lane_weights) {
+            (PreparedLaneWeights::Sparse(target), PreparedLaneWeights::Sparse(source)) => {
+                for (target, terms) in target.iter_mut().zip(source) {
+                    target.extend(terms.into_iter().map(|mut term| {
+                        term.source_index += source_offset;
+                        term
+                    }));
+                }
+            }
+            (PreparedLaneWeights::Packing(target), PreparedLaneWeights::Packing(mut source)) => {
+                let segment_offset = target.segments.len();
+                for segment in &mut source.segments {
+                    segment.source_index += source_offset;
+                }
+                target.segments.extend(source.segments);
+                for lane in 0..source.lane_to_segment.len() {
+                    if let Some(source_segments) = source.overlapping_segments.get(&lane) {
+                        for &source_segment in source_segments {
+                            target.add_segment(lane, source_segment + segment_offset)?;
+                        }
+                    } else if let Some(Some(source_segment)) = source.lane_to_segment.get(lane) {
+                        target.add_segment(lane, *source_segment + segment_offset)?;
+                    }
+                }
+            }
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "cannot merge different Stage 2 weight representations".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[inline]
     fn values_in_lane<const N: usize>(&self, lane: usize, coefficients: [usize; N]) -> [E; N] {
         let mut values = [E::zero(); N];
-        let Some(terms) = self.lane_terms.get(lane) else {
-            return values;
-        };
-        if let [term] = terms.as_slice() {
-            let Some(source) = self.sources.get(term.source_index) else {
-                return values;
-            };
-            let Some(source_lane_start) = term.lane.checked_mul(self.coeff_count) else {
-                return values;
-            };
-            for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
-                    *value = term.factor * *source_value;
+        match &self.lane_weights {
+            PreparedLaneWeights::Dense(dense) => {
+                if self.coeff_count == 1 && coefficients.iter().all(|&coefficient| coefficient == 0)
+                {
+                    if let Some(&value) = dense.get(lane) {
+                        values.fill(value);
+                    }
                 }
+                values
             }
-            return values;
-        }
-        for term in terms {
-            let Some(source) = self.sources.get(term.source_index) else {
-                continue;
-            };
-            let source_lane_start = term.lane * self.coeff_count;
-            for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
-                    *value += term.factor * *source_value;
+            PreparedLaneWeights::Packing(packing) => {
+                packing.for_each_segment(lane, |segment_index| {
+                    let Some(segment) = packing.segments.get(segment_index) else {
+                        return;
+                    };
+                    let Some(lane_offset) = lane.checked_sub(segment.target_lane_start) else {
+                        return;
+                    };
+                    if lane_offset >= segment.lane_count {
+                        return;
+                    }
+                    let Some(source) = self.sources.get(segment.source_index) else {
+                        return;
+                    };
+                    let source_lane = segment.source_lane_start + lane_offset;
+                    let source_lane_start = source_lane * self.coeff_count;
+                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                        if let Some(source_value) =
+                            source.values.get(source_lane_start + coefficient)
+                        {
+                            *value += segment.factor * *source_value;
+                        }
+                    }
+                });
+                values
+            }
+            PreparedLaneWeights::Sparse(lane_terms) => {
+                let Some(terms) = lane_terms.get(lane) else {
+                    return values;
+                };
+                for term in terms {
+                    let Some(source) = self.sources.get(term.source_index) else {
+                        continue;
+                    };
+                    let source_lane_start = term.lane * self.coeff_count;
+                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                        if let Some(source_value) =
+                            source.values.get(source_lane_start + coefficient)
+                        {
+                            *value += term.factor * *source_value;
+                        }
+                    }
                 }
+                values
             }
         }
-        values
     }
 
     #[inline]
@@ -471,7 +866,16 @@ impl<E: Field> PreparedProverEvaluationTrace<E> {
                 actual,
             });
         }
-        if self.lane_terms.len() != self.live_lane_count
+        let lane_shape_is_valid = match &self.lane_weights {
+            PreparedLaneWeights::Sparse(terms) => terms.len() == self.live_lane_count,
+            PreparedLaneWeights::Packing(packing) => {
+                packing.lane_to_segment.len() == self.live_lane_count
+            }
+            PreparedLaneWeights::Dense(values) => {
+                self.coeff_count == 1 && values.len() == self.live_lane_count
+            }
+        };
+        if !lane_shape_is_valid
             || self.sources.iter().any(|source| {
                 source.values.len() != source.lane_count.saturating_mul(self.coeff_count)
             })
@@ -526,25 +930,29 @@ impl<E: Field> PreparedProverEvaluationTrace<E> {
     }
 
     pub(crate) fn fold_lanes(&mut self, challenge: E) {
-        let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let even_scale = E::one() - challenge;
-        let mut source_lanes = mem::take(&mut self.lane_terms).into_iter();
-        let mut folded = Vec::with_capacity(next_live_lane_count);
-        while let Some(mut even_terms) = source_lanes.next() {
-            for term in &mut even_terms {
-                term.factor *= even_scale;
-            }
-            if let Some(mut odd_terms) = source_lanes.next() {
-                for term in &mut odd_terms {
-                    term.factor *= challenge;
-                }
-                even_terms.reserve(odd_terms.len());
-                even_terms.append(&mut odd_terms);
-            }
-            folded.push(even_terms);
+        if !matches!(self.lane_weights, PreparedLaneWeights::Dense(_)) {
+            debug_assert_eq!(self.coeff_count, 1);
+            let dense = (0..self.live_lane_count)
+                .map(|lane| self.get(lane, 0, 1))
+                .collect();
+            self.lane_weights = PreparedLaneWeights::Dense(dense);
+            self.sources.clear();
         }
-        debug_assert_eq!(folded.len(), next_live_lane_count);
-        self.lane_terms = folded;
+        let next_live_lane_count = self.live_lane_count.div_ceil(2);
+        let PreparedLaneWeights::Dense(values) = &mut self.lane_weights else {
+            unreachable!("lane weights were materialized above");
+        };
+        let even_scale = E::one() - challenge;
+        for target in 0..next_live_lane_count {
+            let source = 2 * target;
+            let left = values[source];
+            values[target] = if let Some(&right) = values.get(source + 1) {
+                left + challenge * (right - left)
+            } else {
+                even_scale * left
+            }
+        }
+        values.truncate(next_live_lane_count);
         self.live_lane_count = next_live_lane_count;
     }
 

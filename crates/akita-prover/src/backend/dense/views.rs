@@ -6,16 +6,14 @@
 //! kernels can trust the D-view afterwards.
 
 use super::poly::DensePoly;
-use crate::compute::{
-    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
-};
+use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use akita_error::AkitaError;
 use jolt_field::Field;
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
-/// One view type backs the commit, opening-fold, and tensor-projection kernels;
-/// the kernel trait it is passed to selects the operation.
+/// One view type backs the commit and opening-fold kernels; the kernel trait it
+/// is passed to selects the operation.
 #[derive(Debug, Clone, Copy)]
 pub struct DenseView<'a, F: Field, const D: usize> {
     pub(super) poly: &'a DensePoly<F>,
@@ -31,10 +29,6 @@ impl<F> RootPolyMeta<F> for DensePoly<F>
 where
     F: Field,
 {
-    fn num_ring_elems(&self) -> usize {
-        self.meta_ring_elems()
-    }
-
     fn num_vars(&self) -> usize {
         self.num_vars
     }
@@ -66,6 +60,32 @@ where
         self.ring_coeffs::<D>()?;
         Ok(DenseView { poly: self })
     }
+
+    /// Exact scan of the committed ring view.
+    ///
+    /// A dense source carries arbitrary field elements, so this is the one root
+    /// representation that can exceed a bounded schedule's digit envelope. The
+    /// scan covers the same coefficients the commit view decomposes, physical
+    /// zero padding included (padding is centered zero and cannot raise either
+    /// reach).
+    fn committed_centered_reach(
+        &self,
+        modulus: u128,
+        centering_threshold: u128,
+    ) -> Result<(u128, u128), AkitaError>
+    where
+        F: jolt_field::CanonicalEncoding,
+    {
+        // `ring_coeffs` both validates `D` and pins the live prefix the commit
+        // kernel reads, so scanning its exact flat span keeps the check and the
+        // decomposition over the same coefficients.
+        let live_coeffs = self.ring_coeffs::<D>()?.len() * D;
+        Ok(crate::compute::centered_reach_of_field_coeffs(
+            &self.field_coeffs()[..live_coeffs],
+            modulus,
+            centering_threshold,
+        ))
+    }
 }
 
 impl<F, const D: usize> RootOpeningSource<F, D> for DensePoly<F>
@@ -88,33 +108,6 @@ where
     }
 
     fn opening_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::OpeningBatchView<'a>, AkitaError> {
-        for poly in polys {
-            poly.ring_coeffs::<D>()?;
-        }
-        Ok(DenseBatchView { polys })
-    }
-}
-
-impl<F, const D: usize> RootTensorSource<F, D> for DensePoly<F>
-where
-    F: Field,
-{
-    type TensorView<'a>
-        = DenseView<'a, F, D>
-    where
-        Self: 'a;
-
-    type TensorBatchView<'a>
-        = DenseBatchView<'a, F, D>
-    where
-        Self: 'a;
-
-    fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        self.ring_coeffs::<D>()?;
-        Ok(DenseView { poly: self })
-    }
-
-    fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         for poly in polys {
             poly.ring_coeffs::<D>()?;
         }

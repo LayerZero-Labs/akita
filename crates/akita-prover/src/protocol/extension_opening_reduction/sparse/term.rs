@@ -115,7 +115,7 @@ impl<E: Field> ExtensionOpeningReductionTerm<E> {
                     "extension-opening cylindrical domain overflow".to_string(),
                 )
             })?;
-        checked_table_len(total_rounds)?;
+        reduction_table_len(total_rounds)?;
         if !extra_point.is_empty() {
             self.tables = ExtensionOpeningTables::Cylindrical {
                 inner: Box::new(self.tables),

@@ -1,6 +1,7 @@
 //! Prover-side trace table: sparse columns for `K = 1`, dense flat slice for `K > 1`.
 
 use akita_error::AkitaError;
+
 use jolt_field::Field;
 
 #[inline]
@@ -331,9 +332,8 @@ impl<E: Field> TraceTable<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Ring;
-    use akita_algebra::Zero;
     use jolt_field::Fp32;
+    use jolt_field::{Ring, Zero};
 
     type F = Fp32<251>;
 

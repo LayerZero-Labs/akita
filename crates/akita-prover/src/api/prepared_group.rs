@@ -3,7 +3,8 @@
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring, Unreduced};
+use jolt_field::Unreduced;
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Homogeneous polynomial storage for one prepared prover group.
 ///
@@ -60,24 +61,22 @@ impl<'a, P> PreparedProverGroup<'a, P> {
 /// choose the concrete polynomial type inside the carrier; low-level kernels
 /// remain statically dispatched.
 #[allow(private_bounds)]
-pub trait PreparedGroupProveOps<F, E, O, TS>:
-    crate::protocol::core::RootProverGroupOpening<F, E, O>
-    + crate::protocol::core::RootProverGroupTensor<F, E, TS>
+pub trait PreparedGroupProveOps<F, E, O>:
+    crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
-    TS: crate::compute::ComputeBackendSetup<F>,
 {
 }
 
-impl<F, E, O, TS, G> PreparedGroupProveOps<F, E, O, TS> for G
+impl<F, E, O, G> PreparedGroupProveOps<F, E, O> for G
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
-    TS: crate::compute::ComputeBackendSetup<F>,
-    G: crate::protocol::core::RootProverGroupOpening<F, E, O>
-        + crate::protocol::core::RootProverGroupTensor<F, E, TS>,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone,
 {
 }

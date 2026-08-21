@@ -16,8 +16,10 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
@@ -29,6 +31,10 @@ rand = "0.8"
 
 [[bench]]
 name = "crt_ntt_ops"
+harness = false
+
+[[bench]]
+name = "offset_eq_window"
 harness = false
 
 [features]

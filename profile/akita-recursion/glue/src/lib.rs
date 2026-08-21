@@ -10,18 +10,18 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{CanonicalEncoding, Field, Ring, Field};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupDescriptor,
-    AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
-    OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
-    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
+    canonical_base_field_proof_shape, AkitaBatchedProof, AkitaBatchedProofShape,
+    AkitaExpandedSetup, AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, FlatMatrix,
+    GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
+    SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
-
 use std::sync::Arc;
 
 /// Encoding mode used for the verifier-input blob. Held constant on both ends
@@ -55,8 +55,9 @@ fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
 
 /// Bundled verifier inputs that travel from the host to the Jolt guest.
 ///
-/// `D` is the cyclotomic ring dimension picked by the host config. The
-/// guest must use the same `D` to decode `commitment`.
+/// `D` is the cyclotomic root-envelope dimension pinned by the host config.
+/// The guest must use the same value to reject blobs built for a different
+/// verifier monomorphization; per-level dimensions remain schedule-owned.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaJoltInputs<F: Field, const D: usize> {
     /// Domain label both prover and verifier transcripts were initialized with.
@@ -77,7 +78,7 @@ pub struct AkitaJoltInputs<F: Field, const D: usize> {
     /// reconstructing a `Schedule` first.
     pub proof_shape: AkitaBatchedProofShape,
     /// The Akita batched proof itself. The extension field collapses to `F`
-    /// for the fp128 D64OneHot profile (`DEGREE == 1`).
+    /// for the fp128 OneHot profile (`EXT_DEGREE == 1`).
     pub proof: AkitaBatchedProof<F, F>,
 }
 
@@ -201,7 +202,7 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
-        + ExtField<F>
+        + Ring
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -305,8 +306,12 @@ where
     fn decode_seed_and_matrix(
         rest: &mut &[u8],
     ) -> Result<(AkitaSetupDescriptor, FlatMatrix<F>), SerializationError> {
-        let seed =
-            AkitaSetupDescriptor::deserialize_with_mode(&mut *rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let seed = AkitaSetupDescriptor::deserialize_with_mode(
+            &mut *rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
+        )?;
         let matrix_fields = seed.num_field_elements;
         if matrix_fields > MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS {
             return Err(SerializationError::LengthLimitExceeded {
@@ -336,10 +341,13 @@ where
         )
     }
 
-    fn decode_from_bytes_with_setup(
+    fn decode_from_bytes_with_setup<Cfg>(
         bytes: &[u8],
         decode_setup: impl FnOnce(&mut &[u8]) -> Result<AkitaVerifierSetup<F>, SerializationError>,
-    ) -> Result<Self, SerializationError> {
+    ) -> Result<Self, SerializationError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    {
         if bytes.len() < BLOB_MAGIC.len() {
             return Err(SerializationError::InvalidData(
                 "akita-jolt blob shorter than magic header".to_string(),
@@ -391,6 +399,11 @@ where
             BLOB_VALIDATE,
             &(),
         )?;
+        Self::validate_proof_shape_before_allocation::<Cfg>(
+            schedule_selection,
+            &proof_shape,
+            rest.len(),
+        )?;
         let proof = AkitaBatchedProof::<F, F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
@@ -410,13 +423,38 @@ where
             proof,
         })
     }
+
+    fn validate_proof_shape_before_allocation<Cfg>(
+        schedule_selection: OpeningScheduleSelection,
+        proof_shape: &AkitaBatchedProofShape,
+        proof_bytes_available: usize,
+    ) -> Result<(), SerializationError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    {
+        proof_shape.validate_base_field_decode_budget(
+            proof_bytes_available,
+            F::zero().serialized_size(BLOB_COMPRESS),
+        )?;
+        let resolved = Cfg::resolve_schedule_selection(schedule_selection)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let expected_shape = canonical_base_field_proof_shape(resolved.schedule())
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        if *proof_shape != expected_shape {
+            return Err(SerializationError::InvalidData(
+                "proof shape does not match the selected canonical schedule".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
-        + ExtField<F>
+        + Ring
+        + Field
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -441,8 +479,11 @@ where
     /// This path rederives the public setup matrix from its seed and rejects
     /// stale or corrupted cached matrix bytes. Host-side artifact checks should
     /// use this path.
-    pub fn read_from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
-        Self::decode_from_bytes_with_setup(bytes, Self::deserialize_strict_host_setup)
+    pub fn read_from_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    {
+        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_strict_host_setup)
     }
 }
 
@@ -454,7 +495,7 @@ impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: Field
         + CanonicalEncoding
-        + ExtField<F>
+        + Ring
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
@@ -481,8 +522,11 @@ where
     /// field elements, and seed/matrix shape equality, but it
     /// deliberately skips checking that the expanded setup matrix coefficients
     /// equal the matrix derived from the seed.
-    pub fn read_trusted_host_artifact_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
-        Self::decode_from_bytes_with_setup(bytes, Self::deserialize_trusted_host_setup)
+    pub fn read_trusted_host_artifact_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
+    where
+        Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    {
+        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_trusted_host_setup)
     }
 }
 
@@ -496,18 +540,18 @@ pub use akita_algebra as _akita_algebra_dep;
 mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
-    use jolt_field::Prime128Offset275;
+    use akita_config::proof_optimized::fp128;
     use akita_types::{
-        derive_public_matrix_prefix, sample_akita_setup_seed, setup_prefix_slot_id,
-        CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
+        derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
+        CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
         OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
         SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
     };
-    use jolt_field::Prime128Offset275;
 
-    type TestF = Prime128Offset275;
-    const TEST_D: usize = 32;
+    type TestCfg = fp128::OneHot;
+    type TestF = fp128::Field;
+    const TEST_D: usize = 256;
     const PREFIX_D: usize = 64;
 
     fn blob_prefix() -> Vec<u8> {
@@ -551,6 +595,7 @@ mod tests {
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
+                outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,
@@ -558,10 +603,12 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: GroupOpeningPlan::evaluation_trace(
+                SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         }
     }
 
@@ -576,7 +623,7 @@ mod tests {
     fn previous_blob_version_is_rejected_at_the_magic_boundary() {
         let mut bytes = blob_prefix();
         bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv1");
-        let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes)
+        let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes)
             .expect_err("v1 blob must not reach payload decoding");
         assert!(error.to_string().contains("magic mismatch"));
     }
@@ -588,7 +635,7 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
 
-        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
         assert!(err.to_string().contains("length"));
     }
 
@@ -602,7 +649,7 @@ mod tests {
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
             .unwrap();
 
-        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
         assert!(err.to_string().contains("length"));
     }
 
@@ -615,7 +662,7 @@ mod tests {
         2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
         3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
-        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes).unwrap_err();
+        let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
         assert!(err.to_string().contains("opening-point arity 3"));
     }
 
@@ -637,13 +684,11 @@ mod tests {
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        let id = setup_prefix_slot_id(1, commitment_params);
+        let id = scheduled_setup_prefix(1, commitment_params).slot_id();
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),
-                natural_len: 1,
-                padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![RingVec::from_coeffs(vec![
                         TestF::zero();
@@ -676,5 +721,40 @@ mod tests {
         let err = AkitaJoltInputs::<TestF, TEST_D>::check_setup_matrix_bytes_available(&[], 1)
             .unwrap_err();
         assert!(err.to_string().contains("setup matrix claims"));
+    }
+
+    #[test]
+    fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
+        let row = TestCfg::resolve_catalog_row_for_opening(
+            &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
+        )
+        .expect("generated singleton row");
+        let canonical = canonical_base_field_proof_shape(row.schedule()).expect("canonical shape");
+
+        let mut huge = canonical.clone();
+        huge.root.opening_payload_coeffs = usize::MAX;
+        let budget_error =
+            AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<TestCfg>(
+                row.selection(),
+                &huge,
+                0,
+            )
+            .expect_err("huge shape must fail against remaining bytes");
+        let budget_message = budget_error.to_string();
+        assert!(
+            budget_message.contains("remaining proof bytes") || budget_message.contains("overflow"),
+            "unexpected budget error: {budget_message}"
+        );
+
+        let mut noncanonical = canonical;
+        noncanonical.root.opening_payload_coeffs += 1;
+        let identity_error =
+            AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<TestCfg>(
+                row.selection(),
+                &noncanonical,
+                MAX_JOLT_BLOB_BYTES as usize,
+            )
+            .expect_err("noncanonical shape must fail before proof decoding");
+        assert!(identity_error.to_string().contains("canonical schedule"));
     }
 }

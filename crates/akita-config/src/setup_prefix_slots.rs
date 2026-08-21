@@ -65,8 +65,9 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
         };
         let natural_len = active_setup_field_len(params, &opening_layout)?;
         let n_prefix = padded_setup_prefix_len(natural_len);
-        setup_prefix_slot_matches(slot_id, natural_len, n_prefix)?;
-        if !ids.insert(slot_id.clone()) {
+        let commitment_id = slot_id.slot_id();
+        setup_prefix_slot_matches(&commitment_id, natural_len, n_prefix)?;
+        if !ids.insert(commitment_id) {
             continue;
         }
     }
@@ -76,9 +77,8 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
 
 /// Enumerate every exact setup-prefix slot required by selected recursive schedules.
 ///
-/// Selected keys are the bounded catalog/profile set from
-/// `recursive_group_batch_candidates_for_capacity`,
-/// not a dense capacity grid.
+/// Selected keys are the bounded recursive catalog/profile set from
+/// `recursive_group_batch_candidates_for_capacity`, not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -93,11 +93,13 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     for key in
         recursive_group_batch_candidates_for_capacity::<Cfg>(max_num_vars, max_num_batched_polys)?
     {
-        let Ok(schedule) = Cfg::runtime_schedule(key.clone()) else {
+        let Ok(schedule) = Cfg::resolve_catalog_row_for_key(&key) else {
             continue;
         };
         let root_layout = key.opening_layout()?;
-        for slot_id in extract_setup_prefix_slot_ids_from_schedule(&schedule, &root_layout)? {
+        for slot_id in
+            extract_setup_prefix_slot_ids_from_schedule(schedule.schedule(), &root_layout)?
+        {
             ids.insert(slot_id);
         }
     }
@@ -117,19 +119,19 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    if !Cfg::recursive_setup_planning()
-        || Cfg::decomposition().log_commit_bound != 1
-        || max_num_batched_polys == 0
-    {
+    // Gated on recursive setup planning alone: the body is a pure catalog
+    // enumeration and does not depend on the committed-source class. The former
+    // extra `log_commit_bound != 1` test was an implicit "is one-hot" filter that
+    // was always true for the recursive configs (every one delegates its
+    // decomposition to a one-hot base), and would have silently returned an
+    // empty capacity for a recursive family over any other source bound.
+    if !Cfg::recursive_setup_planning() || max_num_batched_polys == 0 {
         return Ok(Vec::new());
     }
 
     let mut keys = Vec::new();
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
-            if entry.root.precommitted_groups.is_empty() {
-                continue;
-            }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
                 precommitteds: entry
@@ -149,27 +151,19 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     Ok(keys)
 }
 
-#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
+#[cfg(all(test, feature = "schedules-fp128-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-    use akita_types::{
-        AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-    };
+    use crate::{CommitmentConfig, RecursiveCommitmentConfig};
+    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-    type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
+    type SetupCfg = RecursiveCommitmentConfig<fp128::OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
-        let singleton =
-            OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials()).expect("singleton");
-        let pre_params =
-            <PrecommittedCommitmentConfig<SetupCfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )
-            .expect("precommit params");
-        let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
+        let precommitted =
+            fp128::OneHot::profile_without_precommitted_groups(pre).expect("independent profile");
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![precommitted, precommitted],
@@ -202,6 +196,20 @@ mod tests {
     }
 
     #[test]
+    fn capacity_candidates_include_scalar_recursive_key() {
+        let scalar_k256 = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1));
+        let candidates =
+            recursive_group_batch_candidates_for_capacity::<SetupCfg>(36, 1).expect("candidates");
+        assert_eq!(candidates, vec![scalar_k256]);
+
+        let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(36, 1).expect("slots");
+        assert!(
+            !slots.is_empty(),
+            "scalar recursive schedule must provision its carried setup prefix"
+        );
+    }
+
+    #[test]
     fn selected_recursive_keys_yield_exact_prefix_slots() {
         use akita_types::setup_prefix_slot_field_elements;
 
@@ -226,28 +234,12 @@ mod tests {
                 one_slot_field_elements >= slot.natural_len,
                 "slot capacity must cover the natural public-matrix prefix"
             );
-            let a_coeff_len = slot
-                .commitment_params
-                .layout
-                .inner_commit_matrix
-                .output_rank()
-                * slot.commitment_params.inner_width()
-                * slot
-                    .commitment_params
-                    .layout
-                    .inner_commit_matrix
-                    .ring_dimension();
-            let b_coeff_len = slot
-                .commitment_params
-                .layout
-                .outer_commit_matrix
-                .output_rank()
-                * slot.commitment_params.outer_width()
-                * slot
-                    .commitment_params
-                    .layout
-                    .outer_commit_matrix
-                    .ring_dimension();
+            let a_coeff_len = slot.commitment_profile.inner_commit_matrix.output_rank()
+                * slot.commitment_profile.inner_commit_matrix.input_width()
+                * slot.commitment_profile.inner_commit_matrix.ring_dimension();
+            let b_coeff_len = slot.commitment_profile.outer_commit_matrix.output_rank()
+                * slot.commitment_profile.outer_commit_matrix.input_width()
+                * slot.commitment_profile.outer_commit_matrix.ring_dimension();
             assert!(one_slot_field_elements >= a_coeff_len);
             assert!(one_slot_field_elements >= b_coeff_len);
             slot_field_elements = slot_field_elements.max(one_slot_field_elements);
@@ -258,18 +250,22 @@ mod tests {
     #[test]
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
-        let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
+        let schedule = SetupCfg::resolve_catalog_row_for_key(&key).expect("recursive schedule");
         let ids = extract_setup_prefix_slot_ids_from_schedule(
-            &schedule,
+            schedule.schedule(),
             &key.opening_layout().expect("layout"),
         )
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup(), 64);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }
+        let dimensions = ids
+            .iter()
+            .map(SetupPrefixSlotId::d_setup)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(dimensions, BTreeSet::from([256]));
         let unique: BTreeSet<_> = ids.iter().cloned().collect();
         assert_eq!(unique.len(), ids.len());
     }

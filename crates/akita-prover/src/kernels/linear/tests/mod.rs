@@ -1,5 +1,6 @@
 use super::{
-    aligned_i8_tile_width, balanced_digit_abs_bound, decompose_block_i8, fused_split_eq_quotients,
+    aligned_i8_tile_width, balanced_digit_abs_bound, base_tile_width,
+    centered_quotient_rows_with_i16_tail, decompose_block_i8, fused_split_eq_quotients,
     mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_block_parallel,
     mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_single_row_with_params,
     mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8,
@@ -15,7 +16,7 @@ use akita_types::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
     prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
-use jolt_field::{CanonicalEncoding, Field, Fp64, Prime128Offset275, Prime64Offset59};
+use jolt_field::{CanonicalEncoding, Field, Fp64, One, Prime128Offset275, Prime64Offset59, Ring};
 
 fn prepare_both_transforms<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
@@ -30,7 +31,7 @@ fn build_negacyclic_ntt_slot<F: Field + CanonicalEncoding, const D: usize>(
         matrix,
         NttCacheMode::ExactNegacyclic {
             width: 1,
-            log_basis: 8,
+            rhs_abs_bound: 1 << 7,
         },
     )
 }
@@ -103,7 +104,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
 }
 
-fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field + jolt_field::Field, const D: usize>(
+fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     negacyclic: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {

@@ -1,7 +1,8 @@
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::DigitRangePlan;
-use jolt_field::{Field, Ring, Unreduced};
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,17 +1,16 @@
 #![allow(missing_docs)]
 
-use jolt_field::Zero;
-use jolt_field::{
-    CanonicalBytes, CanonicalEncoding, Ext2, ExtField, Field, Fold, FpExt4, Prime128Offset275,
-    Prime32Offset99, Prime64Offset59, Ring, Unreduced,
-};
-
 use akita_prover::DigitRangeProver;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::multilinear_eval;
 use akita_transcript::{labels, AkitaTranscript};
 use akita_types::{AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
 use akita_verifier::AkitaStage1Verifier;
+use jolt_field::{
+    CanonicalBytes, CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128Offset275,
+    Prime32Offset99, Prime64Offset59, Ring, Zero,
+};
+use jolt_field::{Fold, Unreduced};
 
 type F = Prime128Offset275;
 
@@ -49,7 +48,7 @@ fn prove_stage1_case(
     .expect("stage1 prover should build");
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, stage1_point) = prover
-        .prove(&mut prover_transcript)
+        .prove(&mut prover_transcript, None)
         .expect("stage1 proof should succeed");
     (proof, stage1_point, equality_point)
 }
@@ -107,7 +106,7 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -121,7 +120,7 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
 
 fn assert_high_basis_extension_roundtrips<Base, E>()
 where
-    Base: Field + CanonicalEncoding + CanonicalBytes + CanonicalEncoding,
+    Base: Field + CanonicalEncoding + CanonicalBytes + AkitaSerialize,
     E: Field + ExtField<Base> + Ring + Fold + Unreduced + AkitaSerialize,
 {
     let raw_challenges = [3, 5, 7, 9].map(E::from_u64);
@@ -146,7 +145,7 @@ where
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript).unwrap();
+        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
@@ -193,7 +192,7 @@ fn high_basis_final_range_image_matches_dense_padding_oracle_at_every_prefix() {
             )
             .unwrap();
             let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-            let (proof, stage1_point) = prover.prove(&mut prover_transcript).unwrap();
+            let (proof, stage1_point) = prover.prove(&mut prover_transcript, None).unwrap();
 
             let verifier = AkitaStage1Verifier::new(equality_point, plan);
             let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);

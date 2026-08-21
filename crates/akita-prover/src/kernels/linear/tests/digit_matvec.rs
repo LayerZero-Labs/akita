@@ -1,5 +1,4 @@
 use super::*;
-use jolt_field::Ring;
 
 #[test]
 fn mat_vec_mul_digits_i8_matches_num_digits_one_roundtrip() {

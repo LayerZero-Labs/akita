@@ -5,11 +5,12 @@
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-31 |
 | Revised | 2026-07-31 |
-| Status | active |
+| Status | implemented |
 | PR | #337 |
-| Supersedes | Projected-digit and outgoing-witness storage rules in `digit-innermost-layout.md`, `mixed-ring-dimension-per-level.md`, `distributed-setup-offloading.md`, and `relation-range-image-sumcheck.md` |
-| Superseded by | |
-| Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
+| Supersedes | Projected-digit and outgoing-witness storage rules in `archive/2026-Q3/digit-innermost-layout.md`, the deleted mixed-ring experiment, `archive/2026-Q3/distributed-setup-offloading.md`, and `archive/2026-Q3/relation-range-image-sumcheck.md` |
+| Superseded-by | |
+| Book-chapter | book/src/how/proving/opening-points-layout.md |
+| Related-chapter | book/src/how/verifying/matrix_evaluation.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -201,21 +202,17 @@ conversion boundary.
 ## Chunk partition
 
 Every group is partitioned into the same positive `W` chunk indices. For group
-`g`, chunk `c` owns the exact block interval
+`g`, define
 
 \[
-[S_{g,c},S_{g,c}+F_{g,c}),
+S_{g,c}=\left\lfloor\frac{cF_g}{W}\right\rfloor,
+\qquad
+F_{g,c}=S_{g,c+1}-S_{g,c}.
 \]
 
-where
-
-\[
-F_{g,c}=\lfloor F_g/W\rfloor+[c < F_g\bmod W]
-\]
-
-and `S_{g,c}` is the checked prefix sum of earlier chunk lengths. Each interval
-**MUST** be nonempty, intervals **MUST** be adjacent, and their union **MUST**
-be `[0,F_g)`.
+Chunk `c` owns `[S_{g,c},S_{g,c+1})`. The intervals **MUST** be adjacent, and
+their union **MUST** be `[0,F_g)`. When `W > F_g`, repeated boundaries produce
+empty intervals. The layout still retains all `W` chunk indices.
 
 `ChunkedWitnessCfg` chooses `W`; it is not resolved address geometry.
 `WitnessLayout` owns the resolved block intervals and coefficient ranges.
@@ -260,8 +257,7 @@ L_T(g,c) &= H_gF_{g,c}n_{A,g}q_{B,g}\delta_{B,g}b_g
 \end{aligned}
 \]
 
-Starting from `cursor = 0`, each physical unit receives adjacent nonempty
-ranges:
+Starting from `cursor = 0`, each physical unit receives adjacent ranges:
 
 ```text
 z_range = cursor .. cursor + L_Z(g)
@@ -271,7 +267,8 @@ cursor  = t_range.end
 ```
 
 Every chunk contains a complete copy of group `g`'s Z segment. E and T contain
-only the source blocks owned by that chunk.
+only the source blocks owned by that chunk. An empty chunk therefore has an
+empty E range and an empty T range, but its Z range remains nonempty.
 
 ### Z order
 
@@ -331,7 +328,8 @@ After the final Z/E/T unit, the witness contains one shared R tail. Relation
 rows use the canonical order
 
 ```text
-[consistency_g | A_g | B_g | B_inner_g] for each relation-order group
+[consistency_g | A_g | B_g] for each relation-order group, with B rows in
+slice-major then physical-row order
 [shared D rows]
 ```
 
@@ -596,8 +594,8 @@ The cutover **MUST** delete or evolve away:
 
 - [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
 - [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)
-- [`digit-innermost-layout.md`](digit-innermost-layout.md)
-- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
-- [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
-- [`relation-range-image-sumcheck.md`](relation-range-image-sumcheck.md)
-- [`setup-layout-repack.md`](setup-layout-repack.md)
+- [`archive/2026-Q3/digit-innermost-layout.md`](archive/2026-Q3/digit-innermost-layout.md)
+- The deleted mixed-ring experiment and its planner evidence are superseded by this layout and the flat public matrix spec.
+- [`archive/2026-Q3/distributed-setup-offloading.md`](archive/2026-Q3/distributed-setup-offloading.md)
+- [`relation-range-image-sumcheck.md`](archive/2026-Q3/relation-range-image-sumcheck.md)
+- [`archive/2026-Q3/setup-layout-repack.md`](archive/2026-Q3/setup-layout-repack.md)

@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use jolt_field::One;
 mod common;
 
 use akita_error::AkitaError;
@@ -15,20 +14,12 @@ use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
 
-/// Production-scale fold-linf e2e is exercised at nv=20: still folds with
-/// intermediate handles and TailBoundWithGrind, without the nv=28 CI cost.
+/// Production-scale fold-linf e2e is exercised at nv=20 for root and terminal
+/// grinding without the nv=28 CI cost. Recursive-handle tampering is covered
+/// by the two-polynomial nv=20 fixture in `protocol_soundness`.
 const FOLD_LINF_E2E_NV: usize = 20;
 
-fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
-    let mut coeffs = flat.coeffs().to_vec();
-    let first = coeffs
-        .first_mut()
-        .expect("tamper target must contain at least one coefficient");
-    *first += F::one();
-    *flat = akita_types::RingVec::from_coeffs(coeffs);
-}
-
-struct TailBoundGrindFixture {
+struct FoldLinfGrindFixture {
     proof: AkitaBatchedProof<F, F>,
     verifier_setup: AkitaVerifierSetup<F>,
     commitment: CommittedGroup<F>,
@@ -36,23 +27,42 @@ struct TailBoundGrindFixture {
     opening: F,
 }
 
-fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> TailBoundGrindFixture {
-    let layout = OneHotCfg::get_params_for_batched_commitment(
+fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
+    let layout = OneHotCfg::resolve_catalog_row_for_opening(
         &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
-    .expect("layout");
-    let poly = make_onehot_poly(&layout, seed);
+    .expect("layout")
+    .schedule()
+    .root
+    .params
+    .final_group
+    .commitment
+    .clone();
+    let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
-    let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+    let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
     let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-    let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT
+        .prepare_setup(&setup)
+        .expect("prepare setup");
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = Scheme::batched_prove::<_, _, _>(
@@ -74,7 +84,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     )
     .expect("verify");
 
-    TailBoundGrindFixture {
+    FoldLinfGrindFixture {
         proof,
         verifier_setup,
         commitment,
@@ -84,10 +94,10 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
 }
 
 #[test]
-fn tail_bound_with_grind_onehot_e2e_prove_verify() {
+fn fold_linf_grind_onehot_e2e_prove_verify() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
+        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
         for step in fixture.proof.nonterminal_folds() {
             assert!(
                 step.fold_grind_nonce < MAX_FOLD_GRIND_ATTEMPTS,
@@ -102,7 +112,7 @@ fn tail_bound_with_grind_onehot_e2e_prove_verify() {
 fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);
+        let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);
         let shape = fixture.proof.shape();
         let mut bytes = Vec::new();
         fixture
@@ -142,66 +152,49 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
     });
 }
 
-#[test]
-fn fold_recursive_handle_tamper_rejected() {
-    init_rayon_pool();
-    run_on_large_stack(|| {
-        let fixture = prove_tail_bound_with_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_04);
-        let mut malformed = fixture.proof;
-        let recursive = malformed
-            .recursive_folds
-            .first_mut()
-            .expect("tail-bound-with-grind onehot should include an intermediate fold");
-        bump_flat_ring_vec(&mut recursive.opening_payload);
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let result = Scheme::batched_verify(
-            &malformed,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        );
-        assert_invalid_proof("tampered recursive fold handle", result);
-    });
-}
-
-#[allow(dead_code)]
-fn assert_invalid_proof<T: core::fmt::Debug>(label: &str, result: Result<T, AkitaError>) {
-    match result {
-        Err(AkitaError::InvalidProof) => {}
-        Err(AkitaError::InvalidInput(msg)) if msg.contains("InvalidProof") => {}
-        other => panic!("{label}: expected InvalidProof, got {other:?}"),
-    }
-}
-
 #[cfg(feature = "logging-transcript")]
 #[test]
-fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
+fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
     use akita_transcript::{labels, LoggingTranscript};
 
     init_rayon_pool();
     run_on_large_stack(|| {
         let num_vars = FOLD_LINF_E2E_NV;
-        let layout = OneHotCfg::get_params_for_batched_commitment(
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(
             &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
         )
-        .expect("layout");
-        let poly = make_onehot_poly(&layout, 0x61_61);
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone();
+        let poly = make_onehot_poly(num_vars, 0x61_61);
         let point = random_point(num_vars, 0x71_71);
-        let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);
+        let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
         let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
-        let prepared = CpuBackend.prepare_setup(&setup).expect("prepare setup");
+        let prepared = CpuBackend::DEFAULT
+            .prepare_setup(&setup)
+            .expect("prepare setup");
         let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend,
+            &CpuBackend::DEFAULT,
             &prepared,
             setup.expanded.as_ref(),
         )
         .expect("stack");
         let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-        let (commitment, hint) =
-            Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
+        let akita_prover::CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = Scheme::commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));

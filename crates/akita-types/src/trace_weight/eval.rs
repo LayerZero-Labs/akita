@@ -288,7 +288,7 @@ pub struct TraceTerm<F: Field, E: Field, const D: usize> {
 /// `gamma[i][j][m]` is the `m`-th ring-subfield coordinate of `beta_i · beta_j`,
 /// where `beta_i` is the basis element with coordinate vector `e_i`. Because the
 /// `FpExtEncoding` types use the same coordinates for `from_base_slice`,
-/// `to_base_vec`, and `to_ext_coords`, this is exactly the
+/// `to_base_vec`, and `ext_coords`, this is exactly the
 /// multiplication table the `psi`-embedding respects, so folding block weights in
 /// this `K`-dimensional coordinate algebra agrees with folding the embedded ring
 /// elements in `R_q` (but costs `O(K²)` instead of `O(D²)`).
@@ -307,7 +307,8 @@ where
             unit[j] = F::one();
             let beta_j = E::from_base_slice(&unit);
             unit[j] = F::zero();
-            let prod = (beta_i * beta_j).to_ext_coords();
+            let prod = beta_i * beta_j;
+            let prod = prod.ext_coords();
             for (m, slot) in gamma[i][j].iter_mut().enumerate() {
                 *slot = prod[m];
             }
@@ -403,7 +404,7 @@ where
         BasisMode::Monomial => (E::one(), b),
     };
     let lift = |w: E| -> Vec<E> {
-        let mut coords: Vec<E> = w.to_ext_coords().into_iter().map(E::lift_base).collect();
+        let mut coords: Vec<E> = w.ext_coords().iter().copied().map(E::lift_base).collect();
         coords.resize(k, E::zero());
         coords
     };
@@ -598,6 +599,9 @@ where
         // The descriptor owns the physical E address for every logical block.
         let mut v = vec![E::zero(); k];
         for unit in layout.witness_layout.units_for_group(layout.group_id)? {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let block = term
                 .block_offset
                 .checked_add(unit.global_block_start())

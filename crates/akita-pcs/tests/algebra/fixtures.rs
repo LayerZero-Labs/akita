@@ -1,8 +1,7 @@
-use akita_algebra::One;
 use num_bigint::BigUint;
 use rand::{rngs::StdRng, SeedableRng};
 
-use jolt_field::{Ext2Config, Fp32, PseudoMersenne};
+use jolt_field::{CanonicalEncoding, Ext2Config, Field, Fp32, One, PseudoMersenne};
 
 pub(super) fn rand_u128<R: rand_core::RngCore>(rng: &mut R) -> u128 {
     let lo = rng.next_u64() as u128;
@@ -24,12 +23,14 @@ pub(super) fn big_mul_mod_u128(a: u128, b: u128, p: u128) -> u128 {
     biguint_to_u128(&r)
 }
 
-pub(super) fn check_solinas_prime<S: PseudoMersenne + std::fmt::Debug>(
+pub(super) fn check_solinas_prime<
+    S: CanonicalEncoding + Field + PseudoMersenne + std::fmt::Debug,
+>(
     p: u128,
     iters: usize,
     seed: u64,
 ) {
-    assert_eq!(<S as jolt_field::CanonicalEncoding>::MODULUS_BITS, 128);
+    assert_eq!(<S as CanonicalEncoding>::MODULUS_BITS, 128);
     assert_eq!(<S as PseudoMersenne>::OFFSET, 0u128.wrapping_sub(p));
     assert_eq!(std::mem::size_of::<S>(), 16);
 
@@ -44,12 +45,12 @@ pub(super) fn check_solinas_prime<S: PseudoMersenne + std::fmt::Debug>(
 
         assert!(
             a.to_u128_checked()
-                .expect("canonical prime-field value fits in u128")
+                .expect("Akita field element must fit in u128")
                 < p
         );
         assert!(
             b.to_u128_checked()
-                .expect("canonical prime-field value fits in u128")
+                .expect("Akita field element must fit in u128")
                 < p
         );
 
@@ -61,19 +62,19 @@ pub(super) fn check_solinas_prime<S: PseudoMersenne + std::fmt::Debug>(
 
         let aa = a
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let bb = b
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let got_mul = (a * b)
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let exp_mul = big_mul_mod_u128(aa, bb, p);
         assert_eq!(got_mul, exp_mul);
 
         let got_sqr = (a * a)
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let exp_sqr = big_mul_mod_u128(aa, aa, p);
         assert_eq!(got_sqr, exp_sqr);
 

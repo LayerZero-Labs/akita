@@ -23,9 +23,8 @@
 
 use super::eq_poly::EqPolynomial;
 use super::uni_poly::UniPoly;
-use akita_error::AkitaError;
-
 use crate::{Field, Ring};
+use akita_error::AkitaError;
 
 /// Split equality polynomial with Gruen scalar accumulation.
 ///
@@ -264,9 +263,7 @@ mod tests {
     use super::*;
     use crate::poly::fold_evals_in_place;
     use crate::Field;
-    use jolt_field::One;
-    use jolt_field::Prime128Offset275;
-    use jolt_field::Zero;
+    use jolt_field::{One, Prime128Offset275, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

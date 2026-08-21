@@ -25,9 +25,9 @@ fn bench_relation_evaluator(c: &mut Criterion) {
             CommitmentRingDims {
                 inner: 128,
                 outer: 64,
-                opening: 32,
+                opening: 64,
             },
-            32,
+            64,
         ),
     ] {
         let case = relation_evaluator_benchmark_case(role_dims, outgoing_ring_dimension)

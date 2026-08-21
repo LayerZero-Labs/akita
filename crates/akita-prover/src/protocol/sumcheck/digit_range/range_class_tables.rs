@@ -1,9 +1,9 @@
 use super::compact_digit_source::RangeImageClass;
 use super::{compose_small_poly_with_affine, MAX_TREE_STAGE_Q_DEGREE};
-use jolt_field::{Field, Fold, Ring};
-
 use akita_error::AkitaError;
 use akita_types::DigitRangePlan;
+use jolt_field::Fold;
+use jolt_field::{Field, Ring};
 
 /// Plan-derived child-node values for every range-image class.
 pub(super) struct ProductNodeTable<E: Field, const LANES: usize> {
@@ -339,8 +339,7 @@ impl<E: Field + Ring> OrderedRangePairCoefficients<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::One;
-    use jolt_field::Prime128Offset275;
+    use jolt_field::{One, Prime128Offset275};
 
     type F = Prime128Offset275;
 

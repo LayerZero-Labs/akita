@@ -1,9 +1,8 @@
 use akita_error::AkitaError;
 use akita_prover::{
-    prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, NttOperationCluster,
-    UniformProverStack,
+    prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, UniformProverStack,
 };
-use akita_types::{FoldSchedule, NttTransformDomain};
+use akita_types::FoldSchedule;
 use jolt_field::{CanonicalEncoding, Field};
 
 /// Prewarm the exact cache union for the profile's shared CPU owner.
@@ -21,43 +20,6 @@ pub(crate) fn prewarm_uniform_profile_execution<F>(
 where
     F: Field + CanonicalEncoding,
 {
-    let mut requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
-    let root = &schedule.root.params;
-    let final_layout = &root.final_group.commitment;
-    requirements.add_matrix(
-        0,
-        NttOperationCluster::Commit,
-        final_layout.inner_commit_matrix.ring_dimension(),
-        final_layout.inner_commit_matrix.output_rank(),
-        final_layout.inner_commit_matrix.input_width(),
-        NttTransformDomain::Negacyclic,
-    )?;
-    requirements.add_matrix(
-        0,
-        NttOperationCluster::Commit,
-        final_layout.outer_commit_matrix.ring_dimension(),
-        final_layout.outer_commit_matrix.output_rank(),
-        final_layout.outer_commit_matrix.input_width(),
-        NttTransformDomain::Negacyclic,
-    )?;
-    for precommitted in &root.precommitted_groups {
-        let layout = &precommitted.commitment.layout;
-        requirements.add_matrix(
-            0,
-            NttOperationCluster::Commit,
-            layout.inner_commit_matrix.ring_dimension(),
-            layout.inner_commit_matrix.output_rank(),
-            layout.inner_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
-        )?;
-        requirements.add_matrix(
-            0,
-            NttOperationCluster::Commit,
-            layout.outer_commit_matrix.ring_dimension(),
-            layout.outer_commit_matrix.output_rank(),
-            layout.outer_commit_matrix.input_width(),
-            NttTransformDomain::Negacyclic,
-        )?;
-    }
+    let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<F, _>(stack, &requirements)
 }

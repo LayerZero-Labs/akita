@@ -13,7 +13,7 @@
 //! bit `k` of `b` equals `x[k]`. In other words, `r[0]` corresponds to the
 //! **least-significant bit** (bit 0) and `r[n-1]` to the MSB.
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use crate::Field;
 use std::marker::PhantomData;
@@ -50,14 +50,8 @@ impl<E: Field> EqPolynomial<E> {
     }
 
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
-        let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
-            expected: usize::BITS as usize,
-            actual: num_vars,
-        })?;
-        let len = 1usize
-            .checked_shl(shift)
-            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))?;
-        Ok(len)
+        checked::pow2(num_vars)
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".to_string()))
     }
 
     #[track_caller]
@@ -78,7 +72,7 @@ impl<E: Field> EqPolynomial<E> {
     }
 
     #[track_caller]
-    fn checked_table_len(label: &str, num_vars: usize) -> Result<usize, AkitaError> {
+    fn materialized_table_len(label: &str, num_vars: usize) -> Result<usize, AkitaError> {
         let len = Self::table_len(num_vars)?;
         Self::check_element_budget(label, len)?;
         Ok(len)
@@ -144,6 +138,38 @@ impl<E: Field> EqPolynomial<E> {
         (0..len).map(|index| split.eval_at(index)).collect()
     }
 
+    /// Sum the first `len` entries of the little-endian equality table without
+    /// materializing them.
+    ///
+    /// This is the multilinear analogue of a binary prefix probability. It
+    /// scans the upper-bound bits from most to least significant and costs one
+    /// field operation per coordinate instead of one per table entry.
+    pub fn prefix_sum(r: &[E], len: usize) -> Result<E, AkitaError> {
+        let table_len = Self::table_len(r.len())?;
+        if len > table_len {
+            return Err(AkitaError::InvalidSize {
+                expected: table_len,
+                actual: len,
+            });
+        }
+        if len == table_len {
+            return Ok(E::one());
+        }
+
+        let mut below = E::zero();
+        let mut equal_prefix = E::one();
+        for bit in (0..r.len()).rev() {
+            let (left, right) = Self::split_lagrange_parent(equal_prefix, r[bit]);
+            if (len >> bit) & 1 == 1 {
+                below += left;
+                equal_prefix = right;
+            } else {
+                equal_prefix = left;
+            }
+        }
+        Ok(below)
+    }
+
     /// Compute the full evaluation table with optional scaling:
     /// `scaling_factor · eq(r, x)` for all `x ∈ {0,1}^n`.
     ///
@@ -166,7 +192,7 @@ impl<E: Field> EqPolynomial<E> {
     /// Uses **little-endian** index order.
     #[track_caller]
     pub fn evals_serial(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
-        let size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let size = Self::materialized_table_len("eq evaluation table", r.len())?;
         let mut evals = Self::zero_vec("eq evaluation table", size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
@@ -236,7 +262,7 @@ impl<E: Field> EqPolynomial<E> {
     pub fn evals_parallel(r: &[E], scaling_factor: Option<E>) -> Result<Vec<E>, AkitaError> {
         use rayon::prelude::*;
 
-        let final_size = Self::checked_table_len("eq evaluation table", r.len())?;
+        let final_size = Self::materialized_table_len("eq evaluation table", r.len())?;
         let mut evals = Self::zero_vec("eq evaluation table", final_size)?;
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut size = 1;
@@ -341,10 +367,7 @@ impl<E: Field> SplitEqEvals<E> {
 mod tests {
     use super::*;
     use crate::Field;
-    use jolt_field::Fp64;
-    use jolt_field::One;
-    use jolt_field::Ring;
-    use jolt_field::Zero;
+    use jolt_field::{Fp64, One, Ring, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -382,6 +405,23 @@ mod tests {
         let scaled = EqPolynomial::evals_with_scaling(&r, Some(scale)).unwrap();
         for (u, s) in unscaled.iter().zip(scaled.iter()) {
             assert_eq!(*s, *u * scale);
+        }
+    }
+
+    #[test]
+    fn prefix_sum_matches_materialized_prefixes() {
+        let mut rng = StdRng::seed_from_u64(0xC0DF);
+        for n in 0..9 {
+            let r: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
+            let table = EqPolynomial::evals(&r).unwrap();
+            let mut expected = F::zero();
+            for len in 0..=table.len() {
+                assert_eq!(EqPolynomial::prefix_sum(&r, len).unwrap(), expected);
+                if let Some(value) = table.get(len) {
+                    expected += *value;
+                }
+            }
+            assert!(EqPolynomial::prefix_sum(&r, table.len() + 1).is_err());
         }
     }
 

@@ -76,6 +76,7 @@ dependencies = [
  "akita-transcript",
  "jolt-field",
  "sha3 0.10.9",
+ "smallvec",
  "tracing",
 ]
 
@@ -97,7 +98,6 @@ dependencies = [
 name = "akita-error"
 version = "0.1.0"
 dependencies = [
- "jolt-field",
  "thiserror",
 ]
 
@@ -167,6 +167,8 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
+ "akita-config",
+ "akita-error",
  "akita-serialization",
  "akita-types",
  "jolt-field",
@@ -210,7 +212,6 @@ dependencies = [
  "akita-challenges",
  "akita-error",
  "akita-types",
- "jolt-field",
 ]
 
 [[package]]
@@ -244,6 +245,7 @@ dependencies = [
  "akita-serialization",
  "akita-transcript",
  "jolt-field",
+ "rayon",
  "tracing",
 ]
 
@@ -669,9 +671,9 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cmov"
-version = "0.5.3"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f88a43d011fc4a6876cb7344703e297c71dda42494fee094d5f7c76bf13f746"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "cobs"
@@ -1252,7 +1254,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/Acentelles/jolt.git?rev=eb93a031027ee735f0827edb4539e971ab5fcc0b#eb93a031027ee735f0827edb4539e971ab5fcc0b"
+source = "git+https://github.com/a16z/jolt?rev=1ac7d402d33a162fdc133cd43bfc6c5124861629#1ac7d402d33a162fdc133cd43bfc6c5124861629"
 dependencies = [
  "num-traits",
  "rand_core 0.6.4",
@@ -2060,9 +2062,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "spin"
@@ -2089,6 +2091,7 @@ source = "git+https://github.com/arkworks-rs/spongefish?rev=d2d190b1329d35ac9577
 dependencies = [
  "blake2 0.11.0-rc.6",
  "digest 0.11.3",
+ "keccak 0.1.6",
  "p3-koala-bear",
  "rand 0.8.6",
  "sha2",

@@ -8,6 +8,7 @@
 //! tables are rejected with [`AkitaError`] instead of panicking.
 
 use akita_error::AkitaError;
+
 use jolt_field::Field;
 
 use crate::PolynomialView;

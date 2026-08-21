@@ -1,9 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_algebra::One;
-use akita_algebra::Ring;
-use akita_algebra::Zero;
 use akita_error::AkitaError;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceProverExt,
@@ -12,7 +9,7 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels as tr_labels;
 use akita_transcript::{AkitaTranscript, Transcript};
-use jolt_field::Prime128Offset275;
+use jolt_field::{One, Prime128Offset275, Ring, Zero};
 
 type F = Prime128Offset275;
 

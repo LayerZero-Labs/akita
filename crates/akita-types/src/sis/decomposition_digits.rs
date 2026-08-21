@@ -34,19 +34,99 @@
 
 use crate::DecompositionParams;
 
-/// Signed coefficient interval represented by `num_digits_fold` balanced
+/// Signed coefficient interval represented by `num_digits` balanced
 /// base-`2^log_basis` digits, returned as `(negative_abs_reach, positive_reach)`.
+///
+/// This is the accepted envelope for **any** balanced-digit plane: the folded
+/// response `z` the verifier admits, and equally the committed source `s` a
+/// bounded commitment can represent. A source coefficient outside this interval
+/// cannot be recovered from its `num_digits` digits, so a producer must reject it
+/// rather than commit the truncation
+/// (see [`crate::DecompositionParams::log_commit_bound`]).
+///
+/// Both sides **saturate to a conservative lower bound** once the true reach
+/// exceeds `u128::MAX`, inheriting that behavior from the underlying
+/// `balanced_digit_max` / [`balanced_digit_abs_max`] series. A caller that needs
+/// to distinguish "the reach is this value" from "the reach is beyond `u128`" must
+/// use [`checked_balanced_digit_representable_bounds`]; comparing a saturated
+/// value against a real coefficient rejects legitimate inputs.
 #[inline]
 #[must_use]
-pub fn fold_witness_representable_linf_bounds(
-    log_basis: u32,
-    num_digits_fold: usize,
-) -> (u128, u128) {
-    let num_digits_fold = num_digits_fold.max(1);
+pub fn balanced_digit_representable_bounds(log_basis: u32, num_digits: usize) -> (u128, u128) {
+    let num_digits = num_digits.max(1);
     (
-        balanced_digit_abs_max(log_basis, num_digits_fold),
-        balanced_digit_max(log_basis, num_digits_fold),
+        balanced_digit_abs_max(log_basis, num_digits),
+        balanced_digit_max(log_basis, num_digits),
     )
+}
+
+/// Exact signed coefficient interval, as
+/// `(negative_abs_reach, positive_reach)`, with `None` on a side whose true reach
+/// exceeds `u128::MAX`.
+///
+/// `None` means "unbounded for any `u128` coefficient", which is the distinction
+/// [`balanced_digit_representable_bounds`] loses by saturating. A commit-side
+/// range check needs it: a full-field decomposition can span more than 128 bits
+/// (`ceil(128 / 11) * 11 = 132`), and treating a saturated lower bound as the
+/// accepted interval would reject valid field elements.
+///
+/// Total function: a degenerate `log_basis` (`0`, or `>= 128`) yields a
+/// `(0, 0)`-reach answer rather than panicking, so a verifier-reachable caller can
+/// pass unvalidated schedule data through it.
+#[must_use]
+pub fn checked_balanced_digit_representable_bounds(
+    log_basis: u32,
+    num_digits: usize,
+) -> (Option<u128>, Option<u128>) {
+    if log_basis == 0 || log_basis >= 128 {
+        return (Some(0), Some(0));
+    }
+    let base: u128 = 1u128 << log_basis;
+    // `(b^n - 1) / (b - 1)` accumulated as `1 + b + ... + b^(n-1)`, so overflow is
+    // detected rather than folded into a saturating quotient.
+    let num_digits = num_digits.max(1);
+    let mut series: Option<u128> = Some(0);
+    let mut power: Option<u128> = Some(1);
+    for _ in 0..num_digits {
+        series = match (series, power) {
+            (Some(total), Some(term)) => total.checked_add(term),
+            _ => None,
+        };
+        if series.is_none() {
+            break;
+        }
+        power = power.and_then(|term| term.checked_mul(base));
+    }
+    let scale = |factor: u128| series.and_then(|total| factor.checked_mul(total));
+    // Balanced digits span `[-b/2, b/2 - 1]`, so the positive factor is one less.
+    (scale(base / 2), scale(base / 2 - 1))
+}
+
+/// Minimum balanced-digit depth whose exact signed range contains
+/// `[-cap, cap]`.
+///
+/// Unlike [`num_digits_for_bound`], this function accepts an exact integer
+/// magnitude instead of a power-of-two bit width. The positive reach is the
+/// binding side because balanced digits extend farther in the negative
+/// direction.
+#[inline]
+#[must_use]
+pub fn num_digits_for_linf_cap(cap: u128, field_bits: u32, log_basis: u32) -> usize {
+    assert!(log_basis > 0 && log_basis < 128, "invalid log_basis");
+    if cap == 0 {
+        return 1;
+    }
+    let signed_bits = (u128::BITS - cap.leading_zeros()).saturating_add(1);
+    if signed_bits >= field_bits {
+        return compute_num_digits_field_width(field_bits, log_basis);
+    }
+    let fallback = num_digits_for_bound(signed_bits, field_bits, log_basis);
+    for digits in 1..fallback {
+        if balanced_digit_max(log_basis, digits) >= cap {
+            return digits;
+        }
+    }
+    fallback
 }
 
 /// Maximum positive value representable by `num_digits` balanced base-`b`
@@ -175,13 +255,28 @@ pub fn num_digits_for_bound(log_bound: u32, field_bits: u32, log_basis: u32) -> 
 /// level commits the balanced-digit witness, whose commit bound collapses to
 /// `log_basis`.
 pub fn num_digits_inner(decomposition: DecompositionParams, is_root: bool) -> usize {
-    let field_bits = decomposition.field_bits();
     let bound = if is_root {
         decomposition.log_commit_bound
     } else {
         decomposition.log_basis
     };
-    num_digits_for_bound(bound, field_bits, decomposition.log_basis)
+    num_digits_inner_for_bound(decomposition, bound)
+}
+
+/// `δ_commit` for an explicit source coefficient bound.
+///
+/// This is the general planner entry point when the source bound and selected
+/// A decomposition basis are independent. `source_log_bound` follows the same
+/// signed-bound convention as [`num_digits_for_bound`].
+pub fn num_digits_inner_for_bound(
+    decomposition: DecompositionParams,
+    source_log_bound: u32,
+) -> usize {
+    num_digits_for_bound(
+        source_log_bound,
+        decomposition.field_bits(),
+        decomposition.log_basis,
+    )
 }
 
 /// `δ_setup`: digits per coefficient for setup-prefix commitments.
@@ -256,9 +351,7 @@ pub fn projected_role_ring_count(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sis::{
-        fold_witness_digit_plan, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    };
+    use crate::sis::{fold_witness_beta_inf, FoldChallengeNorms, FoldWitnessNorms};
 
     #[test]
     fn balanced_digit_max_cases() {
@@ -275,6 +368,58 @@ mod tests {
         // b = 8, δ = 2 digits represent [-36, 27].
         assert_eq!(balanced_digit_max(3, 2), 27);
         assert_eq!(balanced_digit_abs_max(3, 2), 36);
+    }
+
+    /// The checked reaches agree with the saturating ones inside `u128` and
+    /// report `None` beyond it.
+    ///
+    /// The saturating pair is a deliberate conservative *lower* bound
+    /// (`balanced_digit_max` divides a saturated `b^n`), which is correct for
+    /// choosing a digit depth but wrong as an acceptance interval. A commit-side
+    /// range check must not read it as exact.
+    #[test]
+    fn checked_reaches_are_exact_where_the_saturating_reaches_are() {
+        for (log_basis, num_digits) in [(2u32, 3usize), (3, 2), (5, 13), (11, 11)] {
+            let (checked_negative, checked_positive) =
+                checked_balanced_digit_representable_bounds(log_basis, num_digits);
+            let (negative, positive) = balanced_digit_representable_bounds(log_basis, num_digits);
+            assert_eq!(checked_negative, Some(negative));
+            assert_eq!(checked_positive, Some(positive));
+        }
+
+        // `ceil(128 / 11) = 12` digits of base 2^11 span 132 bits, so both true
+        // reaches exceed `u128::MAX` and the saturating pair understates them.
+        let (negative, positive) = checked_balanced_digit_representable_bounds(11, 12);
+        assert_eq!((negative, positive), (None, None));
+        let (saturating_negative, saturating_positive) =
+            balanced_digit_representable_bounds(11, 12);
+        assert!(saturating_positive < u128::MAX / 2);
+        assert_eq!(saturating_negative, u128::MAX);
+
+        // Total over degenerate bases: verifier-reachable callers pass unvalidated
+        // schedule data, so this must answer rather than panic.
+        for log_basis in [0u32, 128, u32::MAX] {
+            assert_eq!(
+                checked_balanced_digit_representable_bounds(log_basis, 4),
+                (Some(0), Some(0))
+            );
+        }
+        // Base 2 balanced digits are `{-1, 0}`: four of them reach `-15` and
+        // nothing positive. Not a production basis, but the reach must still be
+        // the exact one rather than a wrapped `base / 2 - 1`.
+        assert_eq!(
+            checked_balanced_digit_representable_bounds(1, 4),
+            (Some(15), Some(0))
+        );
+    }
+
+    #[test]
+    fn exact_linf_cap_does_not_round_through_a_power_of_two_range() {
+        assert_eq!(num_digits_for_linf_cap(20, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(27, 64, 3), 2);
+        assert_eq!(num_digits_for_linf_cap(28, 64, 3), 3);
+        assert_eq!(num_digits_for_linf_cap(1_755, 128, 3), 4);
+        assert_eq!(num_digits_for_linf_cap(1_756, 128, 3), 5);
     }
 
     #[test]
@@ -358,39 +503,24 @@ mod tests {
         let dense = FoldWitnessNorms::bounded(3, 64);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
         let onehot = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
-        let (dense_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
+        let dense_beta = fold_witness_beta_inf(8, 1, challenge, dense).unwrap();
+        let onehot_beta = fold_witness_beta_inf(8, 1, challenge, onehot).unwrap();
+        let dense_digits =
+            num_digits_for_bound((128 - dense_beta.leading_zeros()).saturating_add(1), 128, 3);
+        let onehot_digits = num_digits_for_bound(
+            (128 - onehot_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
-        let (onehot_digits, _) = fold_witness_digit_plan(
-            8,
-            1,
-            128,
-            3,
-            challenge,
-            onehot,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(dense_digits > 0 && onehot_digits > 0);
         assert!(onehot_digits < dense_digits);
         // More claims never reduce the digit count.
-        let (batched_digits, _) = fold_witness_digit_plan(
-            8,
-            4,
+        let batched_beta = fold_witness_beta_inf(8, 4, challenge, dense).unwrap();
+        let batched_digits = num_digits_for_bound(
+            (128 - batched_beta.leading_zeros()).saturating_add(1),
             128,
             3,
-            challenge,
-            dense,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        )
-        .unwrap();
+        );
         assert!(batched_digits >= dense_digits);
     }
 
@@ -402,15 +532,6 @@ mod tests {
         };
         let witness = FoldWitnessNorms::bounded(3, 64);
         // A fold must contain at least one live block.
-        assert!(fold_witness_digit_plan(
-            0,
-            1,
-            128,
-            3,
-            challenge,
-            witness,
-            &FoldWitnessLinfCapConfig::worst_case_beta_only()
-        )
-        .is_err());
+        assert!(fold_witness_beta_inf(0, 1, challenge, witness).is_err());
     }
 }

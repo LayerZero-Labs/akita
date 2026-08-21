@@ -2,7 +2,7 @@
 
 use akita_error::AkitaError;
 use akita_planner::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emitted_scalar_keys, GeneratedFamily, GenerationPreplans, ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
     CompressionChainPlan, FoldSchedule, OpenCommitMatrixParams, OuterCommitMatrixParams,
@@ -22,6 +22,12 @@ struct Stats {
     rejections: BTreeSet<String>,
 }
 
+struct SourceImageShape {
+    output_rank: usize,
+    ring_dimension: usize,
+    logical_images: usize,
+}
+
 fn git_head() -> String {
     Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -39,11 +45,12 @@ fn record(
     key: &str,
     profile: SisModulusProfileId,
     field_bytes: usize,
-    output_rank: usize,
-    ring_dimension: usize,
+    shape: SourceImageShape,
 ) -> Result<(), String> {
-    let coefficients = output_rank
-        .checked_mul(ring_dimension)
+    let coefficients = shape
+        .output_rank
+        .checked_mul(shape.ring_dimension)
+        .and_then(|count| count.checked_mul(shape.logical_images))
         .ok_or_else(|| "source coefficient count overflow".to_string())?;
     let bytes = coefficients
         .checked_mul(field_bytes)
@@ -82,6 +89,7 @@ fn record_outer(
     profile: SisModulusProfileId,
     field_bytes: usize,
     matrix: &OuterCommitMatrixParams,
+    slice_count: akita_types::CommitmentSliceCount,
 ) -> Result<(), String> {
     record(
         stats,
@@ -89,8 +97,11 @@ fn record_outer(
         key,
         profile,
         field_bytes,
-        matrix.output_rank(),
-        matrix.ring_dimension(),
+        SourceImageShape {
+            output_rank: matrix.output_rank(),
+            ring_dimension: matrix.ring_dimension(),
+            logical_images: slice_count.get(),
+        },
     )
 }
 
@@ -108,8 +119,11 @@ fn record_open(
         key,
         profile,
         field_bytes,
-        matrix.output_rank(),
-        matrix.ring_dimension(),
+        SourceImageShape {
+            output_rank: matrix.output_rank(),
+            ring_dimension: matrix.ring_dimension(),
+            logical_images: 1,
+        },
     )
 }
 
@@ -133,6 +147,7 @@ fn record_schedule(
             profile,
             field_bytes,
             &group.commitment.layout.outer_commit_matrix,
+            group.commitment.layout.outer_slice_count,
         )?;
     }
     record_outer(
@@ -142,6 +157,7 @@ fn record_schedule(
         profile,
         field_bytes,
         &root.final_group.commitment.outer_commit_matrix,
+        root.final_group.commitment.outer_slice_count,
     )?;
     record_open(
         stats,
@@ -160,6 +176,7 @@ fn record_schedule(
                 profile,
                 field_bytes,
                 &group.layout.outer_commit_matrix,
+                group.layout.outer_slice_count,
             )?;
         }
         record_outer(
@@ -169,6 +186,7 @@ fn record_schedule(
             profile,
             field_bytes,
             &fold.params.witness.outer_commit_matrix,
+            fold.params.witness.outer_slice_count,
         )?;
         record_open(
             stats,
@@ -214,6 +232,7 @@ fn main() -> Result<(), String> {
     let mut max_chains_per_proof = 0usize;
     let mut max_maps_per_proof = 0usize;
     let mut max_instances_key = String::new();
+    let preplans = GenerationPreplans::default();
     for family in ALL_GENERATED_FAMILIES {
         for key in emitted_scalar_keys(family)
             .map_err(|error| format!("{} scalar keys: {error}", family.module_name))?
@@ -246,11 +265,12 @@ fn main() -> Result<(), String> {
             }
             schedules += 1;
         }
-        for (key, honest_fold_policies) in (family.group_batch_keys)(family)
+        for request in (family.grouped_requests)(&preplans)
             .map_err(|error| format!("{} group keys: {error}", family.module_name))?
         {
+            let key = request.key();
             let label = format!("{}:group:{key:?}", family.module_name);
-            let schedule = match (family.regen_group_batch)(key, honest_fold_policies) {
+            let schedule = match (family.regen_group_batch)(request) {
                 Ok(schedule) => schedule,
                 Err(AkitaError::UnsupportedSchedule(_)) => {
                     unsupported += 1;

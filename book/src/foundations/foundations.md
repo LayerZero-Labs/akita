@@ -29,4 +29,5 @@ Plus reference material: [glossary and notation](./glossary.md), the
 
 - Paper §2 `sec:preliminaries` (the canonical scoping for this whole part).
 - Council math-foundations report (Part A generic, Part B protocol-specific).
-- Crate-level: `jolt-field`, `akita-algebra`, `akita-sumcheck`, `akita-challenges`, `akita-types/src/sis`.
+- Crate-level: Jolt's `jolt-field`, `akita-algebra`, `akita-sumcheck`,
+  `akita-challenges`, and `akita-types/src/sis`.

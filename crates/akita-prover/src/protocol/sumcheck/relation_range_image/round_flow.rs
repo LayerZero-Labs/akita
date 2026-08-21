@@ -1,6 +1,4 @@
 use super::*;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Fold, Ring, Unreduced};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
@@ -153,9 +151,9 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 };
                 let coeff_count = self.common_alpha_factor.len();
                 let alpha_round2 = Self::fold_alpha_two_rounds(&self.common_alpha_factor, r0, r);
-                self.evaluation_trace.fold_two_coefficients(r0, r);
+                self.linear_terms.fold_two_coefficients(r0, r);
                 // This is the two-round coefficient handoff, so the ordinary one-round
-                // trace transition below is deliberately bypassed.
+                // linear-term transition below is deliberately bypassed.
                 let mut round2_terms = None;
                 self.witness_state = match mem::replace(
                     &mut self.witness_state,
@@ -167,7 +165,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                                 .materialize_two_round_compact_prefix_and_compute_next_round(
                                     &compact_witness,
                                     &alpha_round2,
-                                    &self.evaluation_trace,
+                                    &self.linear_terms,
                                     r0,
                                     r,
                                 );
@@ -245,15 +243,15 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 } else {
                     Self::materialize_compact_witness(&compact_witness, &fold_lut)
                 };
-                self.fold_evaluation_trace_for_current_round(r);
+                self.fold_linear_terms_for_current_round(r);
                 WitnessState::FoldedSuffix(folded_witness)
             }
             WitnessState::FoldedSuffix(folded_witness) => {
                 if folding_lane_round && use_partial_lane_round {
                     if fuse_next_folded_partial_lane {
-                        // Fold trace before the fused kernel so relation terms use the same
+                        // Fold linear terms before the fused kernel so relation terms use the same
                         // post-fold table as `compute_folded_partial_lane_round_terms`.
-                        self.fold_evaluation_trace_for_current_round(r);
+                        self.fold_linear_terms_for_current_round(r);
                         let (
                             next_folded_witness,
                             next_relation_lane_weights,
@@ -272,11 +270,11 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                             coeff_count,
                             r,
                         );
-                        self.fold_evaluation_trace_for_current_round(r);
+                        self.fold_linear_terms_for_current_round(r);
                         WitnessState::FoldedSuffix(next_folded_witness)
                     }
                 } else if in_coefficient_round && use_partial_lane_coefficient_round {
-                    self.fold_evaluation_trace_for_current_round(r);
+                    self.fold_linear_terms_for_current_round(r);
                     if fuse_next_coefficient_round {
                         let mut next_alpha_factor = self.common_alpha_factor.clone();
                         fold_evals_in_place(&mut next_alpha_factor, r);
@@ -301,7 +299,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 } else {
                     let mut folded_witness = folded_witness;
                     fold_evals_in_place(&mut folded_witness, r);
-                    self.fold_evaluation_trace_for_current_round(r);
+                    self.fold_linear_terms_for_current_round(r);
                     WitnessState::FoldedSuffix(folded_witness)
                 }
             }

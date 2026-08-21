@@ -11,17 +11,34 @@ readme = "../../../README.md"
 publish = false
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+transcript-blake2b = [
+  "akita-config/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-config/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 trusted-benchmark-artifact = []
 
 [dependencies]
+akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
+akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
-akita-types = { version = "0.1.0", path = "../../../crates/akita-types" }
+akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false }
 
 [dev-dependencies]
-akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges" }
+akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges", default-features = false }
+akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp128-onehot",
+  "test-support",
+  "transcript-blake2b",
+] }
 
 [lints.rust]
 missing_docs = "warn"

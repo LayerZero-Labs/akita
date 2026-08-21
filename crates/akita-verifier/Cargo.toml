@@ -15,26 +15,42 @@ description = "Verifier-facing API surface for the Akita polynomial commitment s
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
-# `rayon` is consumed only through jolt-field's `cfg_join!` macro expansion,
-# which references `rayon::join` at the call site; machete cannot see that.
+# `rayon` is consumed through Jolt's conditional-parallel macros, whose
+# expansions reference Rayon at the call site.
 [package.metadata.cargo-machete]
 ignored = ["rayon"]
 
 [dependencies]
-akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck", default-features = false }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
-default = ["schedules-default"]
+default = ["schedules-default", "transcript-blake2b"]
+transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
+  "akita-config/transcript-blake2b",
+  "akita-sumcheck/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-challenges/transcript-keccak",
+  "akita-config/transcript-keccak",
+  "akita-sumcheck/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 benchmark-support = []
 schedules-default = ["akita-config/schedules-default"]
 parallel = [
@@ -50,12 +66,16 @@ workspace = true
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
-  "schedules-fp128-d128-dense",
-  "schedules-fp128-d64-dense",
+  "schedules-fp128-dense",
 ] }
 criterion = "0.5"
 
 [[bench]]
 name = "relation_evaluator"
+harness = false
+required-features = ["benchmark-support"]
+
+[[bench]]
+name = "evaluation_trace"
 harness = false
 required-features = ["benchmark-support"]

@@ -31,13 +31,17 @@ benchmark-guest = ["guest", "trusted-benchmark-artifact"]
 trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 
 [dependencies]
+akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
 jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 akita-recursion-glue = { path = "../glue" }
-akita-config = { path = "../../../crates/akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
-akita-error = { path = "../../../crates/akita-error" }
+akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp128-onehot",
+] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }

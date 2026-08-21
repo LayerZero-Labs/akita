@@ -41,8 +41,7 @@
         "book/src/how/proving/opening-points-layout.md",
         "book/src/usage/commitment-api.md",
         "book/src/how/architecture.md",
-        "specs/single-point-opening-batch.md",
-        "specs/digit-innermost-layout.md"
+        "specs/archive/2026-Q3/digit-innermost-layout.md"
       ]
     },
     {
@@ -52,8 +51,7 @@
       "consider_updating": [
         "book/src/how/architecture.md",
         "book/src/how/proving/sumcheck-stages.md",
-        "specs/akita-polyops-cutover.md",
-        "specs/akita-sumcheck-unification.md"
+        "specs/archive/2026-Q3/akita-polyops-cutover.md"
       ]
     },
     {
@@ -63,10 +61,9 @@
       "consider_updating": [
         "book/src/how/security.md",
         "book/src/foundations/lattices-sis.md",
-        "specs/akita-sis-*.md",
-        "specs/sis-euclidean-estimator.md",
+        "specs/archive/2026-Q2/akita-sis-*.md",
+        "specs/archive/2026-Q2/sis-euclidean-estimator.md",
         "specs/fold-linf-rejection.md",
-        "specs/archive/bounded-l1-sparse-challenge.md",
         "docs/security-posture.md"
       ]
     },
@@ -78,9 +75,8 @@
         "book/src/how/proving/**",
         "book/src/how/recursion.md",
         "specs/packed-sumcheck.md",
-        "specs/setup-product-sumcheck.md",
-        "specs/terminal-fold-cutover.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/terminal-fold-cutover.md",
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {
@@ -92,8 +88,8 @@
         "book/src/how/proving/fold-path.md",
         "docs/verifier-contract.md",
         "docs/verifier-panic-audit.md",
-        "specs/security-hardening.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/security-hardening.md",
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {
@@ -101,7 +97,7 @@
       "description": "Fiat-Shamir transcript and instance binding",
       "code": [
         "crates/akita-transcript/**",
-        "crates/akita-types/src/instance_descriptor.rs"
+        "crates/akita-types/src/instance_descriptor/**"
       ],
       "consider_updating": [
         "book/src/how/transcript.md",
@@ -126,17 +122,29 @@
     {
       "id": "field-algebra",
       "description": "Field traits, packed SIMD, extension towers",
-      "code": [
-        "crates/akita-serialization/src/field_impls.rs",
-        "crates/akita-algebra/**"
-      ],
+      "code": ["crates/akita-algebra/**", "crates/akita-serialization/src/field_impls.rs"],
       "consider_updating": [
         "book/src/foundations/rings-and-fields.md",
         "book/src/foundations/ntt-crt.md",
         "book/src/how/optimizations.md",
-        "specs/jolt-field-unification.md",
-        "specs/crt-ntt-*.md",
-        "specs/avx-simd-port.md"
+        "specs/archive/2026-Q3/akita-field-refactor.md",
+        "specs/archive/2026-Q3/crt-ntt-*.md",
+        "specs/archive/2026-Q3/avx-simd-port.md"
+      ]
+    },
+    {
+      "id": "error-arithmetic",
+      "description": "Protocol error ownership and reusable checked integer formulas",
+      "code": [
+        "crates/akita-error/**",
+        "scripts/tests/test_checked_arithmetic_ownership.py"
+      ],
+      "consider_updating": [
+        "README.md",
+        "book/src/how/architecture.md",
+        "book/src/how/verification.md",
+        "docs/crate-graph.md",
+        "docs/verifier-contract.md"
       ]
     },
     {
@@ -150,9 +158,9 @@
         "book/src/foundations/extension-opening-reduction.md",
         "book/src/how/proving/extension-opening-reduction.md",
         "book/src/how/proving/fold-path.md",
-        "specs/eor-*.md",
-        "specs/extension-field-*.md",
-        "specs/protocol-field-geometry-cutover.md"
+        "specs/archive/2026-Q3/eor-*.md",
+        "specs/archive/2026-Q3/extension-field-*.md",
+        "specs/archive/2026-Q3/protocol-field-geometry-cutover.md"
       ]
     },
     {
@@ -165,7 +173,7 @@
       "id": "ci-tooling",
       "description": "CI workflows and repo scripts",
       "code": [".github/workflows/**", "scripts/**"],
-      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/ci-test-timing.md"]
+      "consider_updating": ["docs/ci-test-timing.md", "docs/documentation.md", "specs/archive/2026-Q3/ci-test-timing.md"]
     },
     {
       "id": "book-tooling",

@@ -1,12 +1,6 @@
 use akita_error::AkitaError;
 use akita_types::{CommittedGroupParams, SetupMatrixCapacity, TerminalCommittedGroupParams};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct MixedScore {
-    pub setup_field_elements: usize,
-    pub proof_bytes: usize,
-}
-
 pub(crate) fn level_setup_field_elements(
     params: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
@@ -22,7 +16,3 @@ pub(crate) fn terminal_setup_field_elements(
     akita_types::accumulate_terminal_matrix_field_elements(params, &mut field_elements)?;
     Ok(field_elements)
 }
-
-#[cfg(test)]
-#[path = "../test/setup_score.rs"]
-mod tests;

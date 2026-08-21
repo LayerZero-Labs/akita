@@ -4,7 +4,10 @@ use crate::dispatch_for_field;
 use crate::layout::{CommitmentRingDims, CommittedGroupParams};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
-use crate::{CompressionChainPlan, SisModulusProfileId};
+use crate::{
+    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, LevelParamsLike,
+    OpeningMethod, SisModulusProfileId, SubringCoefficientPackingGeometry,
+};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::{
@@ -18,46 +21,98 @@ use std::iter::repeat_n;
 #[path = "relation_layout.rs"]
 mod layout_types;
 use layout_types::RelationCompressionLayout;
-pub use layout_types::{RelationGroupRows, RelationRhsLayout, RelationRowFamily};
+pub use layout_types::{
+    RelationGroupRows, RelationRhsLayout, RelationRowFamily, RelationRowGeometry,
+    RelationWitnessGeometry,
+};
+
+pub(crate) fn opening_row_geometry(
+    params: &dyn LevelParamsLike,
+    extension_degree: usize,
+) -> Result<RelationRowGeometry, AkitaError> {
+    let d_a = params.inner_commit_matrix_params().ring_dimension();
+    match (params.opening_method(), params.source_encoding()) {
+        (
+            OpeningMethod::EvaluationTrace,
+            CommittedSourceEncoding::TensorSubfieldProjection {
+                extension_degree: encoded_degree,
+            },
+        ) if encoded_degree != extension_degree => Err(AkitaError::InvalidSetup(
+            "tensor source encoding does not match the protocol extension degree".into(),
+        )),
+        (OpeningMethod::EvaluationTrace, _) => RelationRowGeometry::native(d_a),
+        (
+            OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            },
+            CommittedSourceEncoding::CanonicalCoefficientTable,
+        ) => {
+            let geometry = SubringCoefficientPackingGeometry::try_new(
+                extension_degree,
+                d_a,
+                challenge_subring_dimension,
+            )?;
+            RelationRowGeometry::new(
+                geometry.challenge_subring_dimension(),
+                geometry.extension_degree(),
+            )
+        }
+        (OpeningMethod::SubringCoefficientPacking { .. }, _) => Err(AkitaError::InvalidSetup(
+            "coefficient packing requires the canonical coefficient source encoding".into(),
+        )),
+    }
+}
 
 impl RelationRhsLayout {
-    #[must_use]
     pub fn uniform(
         role_dims: CommitmentRingDims,
         n_d: usize,
         n_a: usize,
-        commit_rows_per_group: usize,
-        b_inner_rows_per_group: usize,
+        physical_b_rows_per_group: usize,
+        outer_slice_count: CommitmentSliceCount,
         num_groups: usize,
-    ) -> Self {
-        Self {
-            opening_ring_dim: role_dims.d_d(),
+    ) -> Result<Self, AkitaError> {
+        let opening_geometry = RelationRowGeometry::native(role_dims.d_a())?;
+        let layout = Self {
+            d_ring_dimension: role_dims.d_d(),
             n_d,
-            groups: repeat_n(
-                RelationGroupRows {
+            groups: (0..num_groups)
+                .map(|group_index| RelationGroupRows {
                     role_dims,
+                    opening_geometry,
+                    opening_method: OpeningMethod::EvaluationTrace,
                     n_a,
-                    commit_rows: commit_rows_per_group,
-                    b_inner_rows: b_inner_rows_per_group,
-                },
-                num_groups,
-            )
-            .collect(),
+                    physical_b_rows: physical_b_rows_per_group,
+                    outer_slice_count,
+                    group_index,
+                })
+                .collect(),
             compression: None,
-        }
+        };
+        layout.validate()?;
+        Ok(layout)
     }
 
     fn validate(&self) -> Result<(), AkitaError> {
-        if self.groups.is_empty() || self.opening_ring_dim == 0 {
+        if self.groups.is_empty() || self.d_ring_dimension == 0 {
             return Err(AkitaError::InvalidSetup(
                 "relation rhs layout requires non-empty group and ring geometry".into(),
             ));
         }
         for group in &self.groups {
             group.role_dims.validate_role_projection()?;
-            if group.role_dims.d_d() != self.opening_ring_dim {
+            if group.role_dims.d_d() != self.d_ring_dimension {
                 return Err(AkitaError::InvalidSetup(
                     "relation rhs groups disagree with the level-shared D dimension".into(),
+                ));
+            }
+            if !group
+                .opening_geometry
+                .physical_coefficient_width()
+                .is_multiple_of(self.d_ring_dimension)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "relation opening width is not divisible by the D dimension".into(),
                 ));
             }
         }
@@ -71,7 +126,7 @@ impl RelationRhsLayout {
             }
             for (group, plan) in self.groups.iter().zip(&compression.group_plans) {
                 let expected = group
-                    .commit_rows
+                    .logical_b_rows()?
                     .checked_mul(group.role_dims.d_b())
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("relation B compression shape overflow".into())
@@ -82,7 +137,7 @@ impl RelationRhsLayout {
                     ));
                 }
             }
-            let expected = self.n_d.checked_mul(self.opening_ring_dim).ok_or_else(|| {
+            let expected = self.n_d.checked_mul(self.d_ring_dimension).ok_or_else(|| {
                 AkitaError::InvalidSetup("relation D compression shape overflow".into())
             })?;
             if compression.opening_plan.source_coefficients() != expected {
@@ -100,11 +155,11 @@ impl RelationRhsLayout {
     /// Each group contributes one native-A consistency row, its native A rows,
     /// and its native B rows. The trailing D rows use the level-shared opening
     /// dimension.
-    pub fn row_ring_dims(&self) -> Result<Vec<usize>, AkitaError> {
+    pub fn row_geometries(&self) -> Result<Vec<RelationRowGeometry>, AkitaError> {
         Ok(self
             .row_families()?
             .into_iter()
-            .map(RelationRowFamily::ring_dim)
+            .map(RelationRowFamily::geometry)
             .collect())
     }
 
@@ -114,8 +169,7 @@ impl RelationRhsLayout {
         let row_count = self.groups.iter().try_fold(0usize, |rows, group| {
             rows.checked_add(1)
                 .and_then(|rows| rows.checked_add(group.n_a))
-                .and_then(|rows| rows.checked_add(group.commit_rows))
-                .and_then(|rows| rows.checked_add(group.b_inner_rows))
+                .and_then(|rows| rows.checked_add(group.logical_b_rows().ok()?))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("relation quotient row count overflow".into())
                 })
@@ -123,41 +177,41 @@ impl RelationRhsLayout {
         let row_count = row_count.checked_add(self.n_d).ok_or_else(|| {
             AkitaError::InvalidSetup("relation quotient row count overflow".into())
         })?;
-        let compression_group_indices = self
-            .compression
-            .as_ref()
-            .map(|compression| compression.group_indices.as_slice());
         let mut rows = Vec::with_capacity(row_count);
-        for (relation_group_index, group) in self.groups.iter().enumerate() {
-            let group_index = compression_group_indices
-                .and_then(|indices| indices.get(relation_group_index))
-                .copied()
-                .unwrap_or(relation_group_index);
+        for group in &self.groups {
+            let group_index = group.group_index;
             rows.push(RelationRowFamily::Consistency {
                 group_index,
-                ring_dim: group.role_dims.d_a(),
+                opening_method: group.opening_method,
+                geometry: group.opening_geometry,
             });
-            rows.extend((0..group.n_a).map(|row| RelationRowFamily::Inner {
-                group_index,
-                row,
-                ring_dim: group.role_dims.d_a(),
-            }));
-            let b_rows = group
-                .commit_rows
-                .checked_add(group.b_inner_rows)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("relation quotient B row count overflow".into())
-                })?;
-            rows.extend((0..b_rows).map(|row| RelationRowFamily::Outer {
-                group_index,
-                row,
-                ring_dim: group.role_dims.d_b(),
-            }));
+            let inner_geometry = RelationRowGeometry::native(group.role_dims.d_a())?;
+            for row in 0..group.n_a {
+                rows.push(RelationRowFamily::Inner {
+                    group_index,
+                    row,
+                    geometry: inner_geometry,
+                });
+            }
+            let outer_geometry = RelationRowGeometry::native(group.role_dims.d_b())?;
+            for slice_index in 0..group.outer_slice_count.get() {
+                for physical_row in 0..group.physical_b_rows {
+                    rows.push(RelationRowFamily::Outer {
+                        group_index,
+                        slice_index,
+                        physical_row,
+                        geometry: outer_geometry,
+                    });
+                }
+            }
         }
-        rows.extend((0..self.n_d).map(|row| RelationRowFamily::Opening {
-            row,
-            ring_dim: self.opening_ring_dim,
-        }));
+        let opening_geometry = RelationRowGeometry::native(self.d_ring_dimension)?;
+        for row in 0..self.n_d {
+            rows.push(RelationRowFamily::Opening {
+                row,
+                geometry: opening_geometry,
+            });
+        }
         if let Some(compression) = &self.compression {
             for map_index in 0..crate::COMPRESSION_MAP_COUNT {
                 for (&group_index, plan) in compression
@@ -165,15 +219,20 @@ impl RelationRhsLayout {
                     .iter()
                     .zip(&compression.group_plans)
                 {
+                    let geometry =
+                        RelationRowGeometry::native(plan.maps()[map_index].ring_dimension())?;
                     rows.push(RelationRowFamily::CompressionF {
                         group_index,
                         map_index,
-                        ring_dim: plan.maps()[map_index].ring_dimension(),
+                        geometry,
                     });
                 }
+                let geometry = RelationRowGeometry::native(
+                    compression.opening_plan.maps()[map_index].ring_dimension(),
+                )?;
                 rows.push(RelationRowFamily::CompressionH {
                     map_index,
-                    ring_dim: compression.opening_plan.maps()[map_index].ring_dimension(),
+                    geometry,
                 });
             }
         }
@@ -244,7 +303,7 @@ impl RelationRhsLayout {
             .compression
             .as_ref()
             .and_then(|compression| compression.group_plans.get(relation_group_index));
-        crate::CommitmentPayloadGeometry::new(group.commit_rows, group.role_dims.d_b(), plan)
+        crate::CommitmentPayloadGeometry::new(group.logical_b_rows()?, group.role_dims.d_b(), plan)
     }
 
     /// Checked wire geometry for the shared D payload.
@@ -252,7 +311,7 @@ impl RelationRhsLayout {
         self.validate()?;
         crate::CommitmentPayloadGeometry::new(
             self.n_d,
-            self.opening_ring_dim,
+            self.d_ring_dimension,
             self.compression
                 .as_ref()
                 .map(|compression| &compression.opening_plan),
@@ -276,11 +335,12 @@ fn compression_plan(
 /// # Errors
 ///
 /// Returns an error if the opening batch is malformed for multi-group root params.
-pub fn relation_rhs_layout_for(
+fn build_relation_rhs_layout(
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
+    extension_degree: usize,
 ) -> Result<RelationRhsLayout, AkitaError> {
-    opening_batch.check()?;
+    let final_group_index = lp.validate_opening_batch_geometry(opening_batch)?;
     let n_d = lp.open_commit_matrix.output_rank();
     let opening_plan = lp
         .payload_mode
@@ -297,19 +357,24 @@ pub fn relation_rhs_layout_for(
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
         let group_indices = opening_batch.root_group_order()?;
+        let opening_geometry = opening_row_geometry(lp, extension_degree)?;
         let groups = group_indices
             .iter()
-            .map(|_| RelationGroupRows {
+            .map(|&group_index| RelationGroupRows {
+                group_index,
                 role_dims,
+                opening_geometry,
+                opening_method: lp.opening_method,
                 n_a: lp.inner_commit_matrix.output_rank(),
-                commit_rows: lp.outer_commit_matrix.output_rank(),
-                b_inner_rows: 0,
+                physical_b_rows: lp.outer_commit_matrix.output_rank(),
+                outer_slice_count: lp.outer_slice_count,
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
                 lp.outer_commit_matrix.sis_modulus_profile(),
-                lp.outer_commit_matrix.output_rank(),
+                lp.outer_slice_count
+                    .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
                 role_dims.d_b(),
             )?;
             Some(RelationCompressionLayout {
@@ -321,7 +386,7 @@ pub fn relation_rhs_layout_for(
             None
         };
         let layout = RelationRhsLayout {
-            opening_ring_dim: role_dims.d_d(),
+            d_ring_dimension: role_dims.d_d(),
             n_d,
             groups,
             compression,
@@ -329,44 +394,53 @@ pub fn relation_rhs_layout_for(
         layout.validate()?;
         return Ok(layout);
     }
-    let final_group_index = lp.validate_opening_batch(opening_batch)?;
-    let final_role_dims = lp.group_role_dims(opening_batch, final_group_index)?;
+    let final_role_dims = lp.group_role_dims_geometry(opening_batch, final_group_index)?;
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_indices = Vec::with_capacity(lp.precommitted_group_count() + 1);
     let mut group_plans = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
+        group_index: final_group_index,
         role_dims: final_role_dims,
+        opening_geometry: opening_row_geometry(lp, extension_degree)?,
+        opening_method: lp.opening_method,
         n_a: lp.inner_commit_matrix.output_rank(),
-        commit_rows: lp.outer_commit_matrix.output_rank(),
-        b_inner_rows: 0,
+        physical_b_rows: lp.outer_commit_matrix.output_rank(),
+        outer_slice_count: lp.outer_slice_count,
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
             lp.outer_commit_matrix.sis_modulus_profile(),
-            lp.outer_commit_matrix.output_rank(),
+            lp.outer_slice_count
+                .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
             final_role_dims.d_b(),
         )?);
     }
     for (group_index, group) in lp.precommitted_group_iter().enumerate() {
-        let role_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         groups.push(RelationGroupRows {
+            group_index,
             role_dims,
+            opening_geometry: opening_row_geometry(group, extension_degree)?,
+            opening_method: group.opening.opening_method,
             n_a: group.layout.inner_commit_matrix.output_rank(),
-            commit_rows: group.layout.outer_commit_matrix.output_rank(),
-            b_inner_rows: 0,
+            physical_b_rows: group.layout.outer_commit_matrix.output_rank(),
+            outer_slice_count: group.layout.outer_slice_count,
         });
         group_indices.push(group_index);
         if opening_plan.is_some() {
             group_plans.push(compression_plan(
                 group.layout.outer_commit_matrix.sis_modulus_profile(),
-                group.layout.outer_commit_matrix.output_rank(),
+                group
+                    .layout
+                    .outer_slice_count
+                    .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?,
                 role_dims.d_b(),
             )?);
         }
     }
     let layout = RelationRhsLayout {
-        opening_ring_dim: final_role_dims.d_d(),
+        d_ring_dimension: final_role_dims.d_d(),
         n_d,
         groups,
         compression: opening_plan.map(|opening_plan| RelationCompressionLayout {
@@ -379,15 +453,87 @@ pub fn relation_rhs_layout_for(
     Ok(layout)
 }
 
+impl RelationWitnessGeometry {
+    /// Resolve the single checked relation and witness geometry for one level.
+    pub fn for_level(
+        lp: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        extension_degree: usize,
+    ) -> Result<Self, AkitaError> {
+        if !extension_degree.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "relation witness extension degree must be a nonzero power of two".into(),
+            ));
+        }
+        let rhs_layout = build_relation_rhs_layout(lp, opening_batch, extension_degree)?;
+        Ok(Self::from_parts(extension_degree, rhs_layout))
+    }
+
+    /// Resolve the current EvaluationTrace execution geometry and reject any
+    /// scheduled coefficient-packing group before legacy ring-only code runs.
+    pub fn for_evaluation_trace_execution(
+        lp: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<Self, AkitaError> {
+        lp.validate_opening_batch(opening_batch)?;
+        let geometry = Self::for_level(lp, opening_batch, 1)?;
+        if geometry
+            .rhs_layout()
+            .groups
+            .iter()
+            .any(|group| !matches!(group.opening_method, OpeningMethod::EvaluationTrace))
+        {
+            return Err(AkitaError::InvalidSetup(
+                "EvaluationTrace execution received a coefficient-packing group".into(),
+            ));
+        }
+        Ok(geometry)
+    }
+
+    /// Common Stage-2 coefficient block derived from row polynomial moduli.
+    pub fn relation_coefficient_block_len(&self) -> Result<usize, AkitaError> {
+        let row_geometries = self
+            .rhs_layout()
+            .row_families()?
+            .into_iter()
+            .filter(|row| {
+                !matches!(
+                    row,
+                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+                )
+            })
+            .map(RelationRowFamily::geometry)
+            .collect::<Vec<_>>();
+        let coefficient_block = row_geometries
+            .iter()
+            .map(|geometry| geometry.polynomial_modulus_dimension())
+            .min()
+            .ok_or_else(|| AkitaError::InvalidSetup("relation rows are empty".into()))?;
+        if row_geometries.iter().any(|geometry| {
+            !geometry
+                .physical_coefficient_width()
+                .is_multiple_of(coefficient_block)
+        }) {
+            return Err(AkitaError::InvalidSetup(
+                "relation row width is not aligned to its common modulus block".into(),
+            ));
+        }
+        Ok(coefficient_block)
+    }
+}
+
 /// Logical relation-matrix row count encoded in assembled relation rhs.
 ///
-/// Layout: [consistency_g | A_g | B_g | B_inner_g]_g | D (`n_d`).
+/// Layout: [consistency_g | A_g | B_g]_g | D (`n_d`), with each B group
+/// expanded in slice-major then physical-row order.
 #[must_use]
 pub fn relation_rhs_row_count(layout: &RelationRhsLayout) -> usize {
     let group_rows = layout.groups.iter().fold(0usize, |acc, group| {
-        acc.saturating_add(group.n_a)
-            .saturating_add(group.commit_rows)
-            .saturating_add(group.b_inner_rows)
+        acc.saturating_add(group.n_a).saturating_add(
+            group
+                .physical_b_rows
+                .saturating_mul(group.outer_slice_count.get()),
+        )
     });
     let base = layout
         .groups
@@ -414,22 +560,19 @@ pub fn relation_rhs_coeff_len(layout: &RelationRhsLayout) -> Result<usize, Akita
             .n_a
             .checked_mul(group.role_dims.d_a())
             .ok_or_else(|| AkitaError::InvalidSetup("relation y A segment overflow".into()))?;
-        let b_rows = group
-            .commit_rows
-            .checked_add(group.b_inner_rows)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation y B row count overflow".into()))?;
+        let b_rows = group.logical_b_rows()?;
         let b_segment = b_rows
             .checked_mul(group.role_dims.d_b())
             .ok_or_else(|| AkitaError::InvalidSetup("relation y B segment overflow".into()))?;
         group_segment = group_segment
-            .checked_add(group.role_dims.d_a())
+            .checked_add(group.opening_geometry.physical_coefficient_width())
             .and_then(|len| len.checked_add(a_segment))
             .and_then(|len| len.checked_add(b_segment))
             .ok_or_else(|| AkitaError::InvalidSetup("relation y group segment overflow".into()))?;
     }
     let d_segment = layout
         .n_d
-        .checked_mul(layout.opening_ring_dim)
+        .checked_mul(layout.d_ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("relation y D segment overflow".into()))?;
     let base = d_segment
         .checked_add(group_segment)
@@ -535,7 +678,7 @@ pub fn assemble_relation_rhs<F: Field>(
     commitment_rows: &RingVec<F>,
 ) -> Result<RingVec<F>, AkitaError> {
     layout.validate()?;
-    let v_rows = ring_row_count_at(v, layout.opening_ring_dim)?;
+    let v_rows = ring_row_count_at(v, layout.d_ring_dimension)?;
     if v_rows != layout.n_d {
         return Err(AkitaError::InvalidSize {
             expected: layout.n_d,
@@ -544,7 +687,7 @@ pub fn assemble_relation_rhs<F: Field>(
     }
     let expected_commit_coeffs = layout.groups.iter().try_fold(0usize, |acc, group| {
         let group_coeffs = group
-            .commit_rows
+            .logical_b_rows()?
             .checked_mul(group.role_dims.d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("assemble_relation_rhs commit width overflow".into())
@@ -563,7 +706,10 @@ pub fn assemble_relation_rhs<F: Field>(
     let mut coeffs = Vec::with_capacity(coeff_len);
     let mut commit_offset = 0usize;
     for group in &layout.groups {
-        coeffs.extend(repeat_n(F::zero(), group.role_dims.d_a()));
+        coeffs.extend(repeat_n(
+            F::zero(),
+            group.opening_geometry.physical_coefficient_width(),
+        ));
         let a_coeff_len = group
             .n_a
             .checked_mul(group.role_dims.d_a())
@@ -572,7 +718,7 @@ pub fn assemble_relation_rhs<F: Field>(
             })?;
         coeffs.extend(repeat_n(F::zero(), a_coeff_len));
         let commit_coeff_len = group
-            .commit_rows
+            .logical_b_rows()?
             .checked_mul(group.role_dims.d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("assemble_relation_rhs B segment overflow".into())
@@ -585,13 +731,6 @@ pub fn assemble_relation_rhs<F: Field>(
             .get(commit_offset..commit_end)
             .ok_or(AkitaError::InvalidProof)?;
         coeffs.extend_from_slice(rows);
-        let b_inner_coeff_len = group
-            .b_inner_rows
-            .checked_mul(group.role_dims.d_b())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("assemble_relation_rhs B_inner segment overflow".into())
-            })?;
-        coeffs.extend(repeat_n(F::zero(), b_inner_coeff_len));
         commit_offset = commit_end;
     }
     coeffs.extend_from_slice(v.coeffs());
@@ -640,22 +779,20 @@ pub fn assemble_compressed_relation_rhs<F: Field>(
 
     let mut coefficients = Vec::with_capacity(relation_rhs_coeff_len(layout)?);
     for group in &layout.groups {
-        let b_rows = group
-            .commit_rows
-            .checked_add(group.b_inner_rows)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation RHS row count overflow".into()))?;
+        let b_rows = group.logical_b_rows()?;
         let ordinary_coefficients = group
             .role_dims
             .d_a()
-            .checked_mul(group.n_a.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidSetup("relation RHS row count overflow".into())
-            })?)
-            .and_then(|len| {
+            .checked_mul(group.n_a)
+            .and_then(|a| {
                 group
                     .role_dims
                     .d_b()
                     .checked_mul(b_rows)
-                    .and_then(|b| len.checked_add(b))
+                    .and_then(|b| a.checked_add(b))
+            })
+            .and_then(|native| {
+                native.checked_add(group.opening_geometry.physical_coefficient_width())
             })
             .ok_or_else(|| AkitaError::InvalidSetup("relation RHS width overflow".into()))?;
         coefficients.extend(repeat_n(F::zero(), ordinary_coefficients));
@@ -664,7 +801,7 @@ pub fn assemble_compressed_relation_rhs<F: Field>(
         F::zero(),
         layout
             .n_d
-            .checked_mul(layout.opening_ring_dim)
+            .checked_mul(layout.d_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation D width overflow".into()))?,
     ));
     for map_index in 0..crate::COMPRESSION_MAP_COUNT {
@@ -849,15 +986,15 @@ where
     E: Field + MulBaseUnreduced<F>,
 {
     layout.validate()?;
-    if !v.can_decode_vec(layout.opening_ring_dim) {
+    if !v.can_decode_vec(layout.d_ring_dimension) {
         return Err(AkitaError::InvalidSize {
-            expected: layout.opening_ring_dim,
+            expected: layout.d_ring_dimension,
             actual: v.coeff_len(),
         });
     }
     let expected_u_coeffs = layout.groups.iter().try_fold(0usize, |acc, group| {
         let group_coeffs = group
-            .commit_rows
+            .logical_b_rows()?
             .checked_mul(group.role_dims.d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation claim commit width overflow".into())
@@ -871,10 +1008,10 @@ where
             actual: u.coeff_len(),
         });
     }
-    if v.coeff_len() / layout.opening_ring_dim != layout.n_d {
+    if v.coeff_len() / layout.d_ring_dimension != layout.n_d {
         return Err(AkitaError::InvalidSize {
             expected: layout.n_d,
-            actual: v.coeff_len() / layout.opening_ring_dim,
+            actual: v.coeff_len() / layout.d_ring_dimension,
         });
     }
     let row_count = layout
@@ -885,8 +1022,7 @@ where
             layout.groups.iter().try_fold(count, |count, group| {
                 count
                     .checked_add(group.n_a)
-                    .and_then(|count| count.checked_add(group.commit_rows))
-                    .and_then(|count| count.checked_add(group.b_inner_rows))
+                    .and_then(|count| count.checked_add(group.logical_b_rows().ok()?))
             })
         })
         .ok_or_else(|| AkitaError::InvalidSetup("relation row count overflow".into()))?;
@@ -915,14 +1051,11 @@ where
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("relation claim row index overflow".into())
                         })?;
-                    let commit_end =
-                        commit_offset
-                            .checked_add(group.commit_rows)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "relation claim commit offset overflow".into(),
-                                )
-                            })?;
+                    let commit_end = commit_offset
+                        .checked_add(group.logical_b_rows()?)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("relation claim commit offset overflow".into())
+                        })?;
                     let rows = u_typed
                         .get(commit_offset..commit_end)
                         .ok_or(AkitaError::InvalidProof)?;
@@ -933,9 +1066,6 @@ where
                         &mut row_idx,
                         &mut acc,
                     )?;
-                    row_idx = row_idx.checked_add(group.b_inner_rows).ok_or_else(|| {
-                        AkitaError::InvalidSetup("relation claim row index overflow".into())
-                    })?;
                     commit_offset = commit_end;
                 }
                 Ok::<(), AkitaError>(())
@@ -951,7 +1081,7 @@ where
                     AkitaError::InvalidSetup("relation claim row index overflow".into())
                 })?;
             let commit_coeff_len = group
-                .commit_rows
+                .logical_b_rows()?
                 .checked_mul(group.role_dims.d_b())
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("relation claim commit width overflow".into())
@@ -979,16 +1109,13 @@ where
                     )
                 }
             )?;
-            row_idx = row_idx.checked_add(group.b_inner_rows).ok_or_else(|| {
-                AkitaError::InvalidSetup("relation claim row index overflow".into())
-            })?;
             commit_coeff_offset = commit_coeff_end;
         }
     }
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Opening),
         F,
-        layout.opening_ring_dim,
+        layout.d_ring_dimension,
         |D_D| {
             let v_typed = v.as_ring_slice::<D_D>()?;
             accumulate_extension_rows::<F, E, D_D>(&eq_tau1, alpha, v_typed, &mut row_idx, &mut acc)
@@ -1053,7 +1180,8 @@ where
     let mut offset = 0usize;
     let mut claim = E::zero();
     for (row_index, family) in row_families.into_iter().enumerate() {
-        let ring_dim = family.ring_dim();
+        let geometry = family.geometry();
+        let ring_dim = geometry.physical_coefficient_width();
         let end = offset
             .checked_add(ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation RHS offset overflow".into()))?;
@@ -1061,12 +1189,33 @@ where
             .coeffs()
             .get(offset..end)
             .ok_or(AkitaError::InvalidProof)?;
+        if matches!(
+            family,
+            RelationRowFamily::Consistency {
+                opening_method: crate::OpeningMethod::SubringCoefficientPacking { .. },
+                ..
+            }
+        ) {
+            if row.iter().any(|coefficient| !coefficient.is_zero()) {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing consistency RHS must be zero".into(),
+                ));
+            }
+            offset = end;
+            continue;
+        }
+        if geometry.coordinate_plane_count() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "non-packing relation RHS cannot use coordinate planes".into(),
+            ));
+        }
+        let modulus_dimension = geometry.polynomial_modulus_dimension();
         let power_index = alpha_powers
             .iter()
-            .position(|(dimension, _)| *dimension == ring_dim)
+            .position(|(dimension, _)| *dimension == modulus_dimension)
             .unwrap_or_else(|| {
                 let index = alpha_powers.len();
-                alpha_powers.push((ring_dim, scalar_powers(alpha, ring_dim)));
+                alpha_powers.push((modulus_dimension, scalar_powers(alpha, modulus_dimension)));
                 index
             });
         let powers = &alpha_powers
@@ -1074,23 +1223,16 @@ where
             .ok_or(AkitaError::InvalidProof)?
             .1;
         if include(family) {
-            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?
-                * eval_flat_ring_at_pows_fast(row, powers);
+            let row_evaluation = eval_flat_ring_at_pows_fast(row, powers);
+            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)? * row_evaluation;
         }
         offset = end;
     }
     Ok(claim)
 }
 
-/// Row-index weight for the trailing EvaluationTrace row: `eq(row_index, last)`.
-///
-/// Fold paths combine this with `relation_claim_from_layout_extension` as
-/// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
-/// Stage-2 evaluation-trace row weight).
-pub fn evaluation_trace_row_weight<E: Field>(
-    evaluation_trace_row: usize,
-    tau1: &[E],
-) -> Result<E, AkitaError> {
+/// Equality weight for one authenticated relation-row index.
+pub fn relation_row_weight<E: Field>(relation_row: usize, tau1: &[E]) -> Result<E, AkitaError> {
     let num_vars = tau1.len();
     if num_vars >= usize::BITS as usize {
         return Err(AkitaError::InvalidSize {
@@ -1101,341 +1243,15 @@ pub fn evaluation_trace_row_weight<E: Field>(
     let domain_size = 1usize
         .checked_shl(num_vars as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("tau1 row-index domain overflow".to_string()))?;
-    if evaluation_trace_row >= domain_size {
+    if relation_row >= domain_size {
         return Err(AkitaError::InvalidSize {
             expected: domain_size,
-            actual: evaluation_trace_row.saturating_add(1),
+            actual: relation_row.saturating_add(1),
         });
     }
-    Ok(eq_eval_at_index(tau1, evaluation_trace_row))
+    Ok(eq_eval_at_index(tau1, relation_row))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_algebra::Ring;
-    use akita_algebra::Zero;
-    use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7};
-
-    type F = Fp32<251>;
-    type E = FpExt2<F, NegOneNr>;
-
-    #[test]
-    fn lifted_relation_claim_matches_base_for_constant_alpha() {
-        const D: usize = 4;
-        const N_A: usize = 1;
-        let tau1 = [
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-            F::from_u64(13),
-        ];
-        let alpha = F::from_u64(17);
-        let v = [CyclotomicRing::from_coefficients([
-            F::from_u64(1),
-            F::from_u64(2),
-            F::from_u64(3),
-            F::from_u64(4),
-        ])];
-        let u = [CyclotomicRing::from_coefficients([
-            F::from_u64(5),
-            F::from_u64(6),
-            F::from_u64(7),
-            F::from_u64(8),
-        ])];
-
-        let base = relation_claim_from_rows::<F, D>(&tau1, alpha, N_A, &v, &u).unwrap();
-        let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
-        let lifted = relation_claim_from_rows_extension::<F, E, D>(
-            &lifted_tau1,
-            E::lift_base(alpha),
-            N_A,
-            &v,
-            &u,
-        )
-        .unwrap();
-
-        assert_eq!(lifted, E::lift_base(base));
-    }
-
-    #[test]
-    fn relation_claim_at_dims_matches_uniform_single_d() {
-        const D: usize = 64;
-        let dims = CommitmentRingDims::uniform(D);
-        let tau1 = [
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let alpha = F::from_u64(13);
-        let mut v_coeffs = [F::zero(); D];
-        v_coeffs[..4].copy_from_slice(&[
-            F::from_u64(1),
-            F::from_u64(2),
-            F::from_u64(3),
-            F::from_u64(4),
-        ]);
-        let mut u_coeffs = [F::zero(); D];
-        u_coeffs[..4].copy_from_slice(&[
-            F::from_u64(5),
-            F::from_u64(6),
-            F::from_u64(7),
-            F::from_u64(8),
-        ]);
-        let v = [CyclotomicRing::from_coefficients(v_coeffs)];
-        let u = [CyclotomicRing::from_coefficients(u_coeffs)];
-        let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
-        const N_A: usize = 1;
-        let layout = RelationRhsLayout::uniform(dims, 1, N_A, 1, 0, 1);
-        let at_dims = relation_claim_from_layout_extension::<F, E>(
-            &layout,
-            &lifted_tau1,
-            E::lift_base(alpha),
-            &RingVec::from_ring_elems(&v),
-            &RingVec::from_ring_elems(&u),
-        )
-        .unwrap();
-        let monolithic = relation_claim_from_rows_extension::<F, E, D>(
-            &lifted_tau1,
-            E::lift_base(alpha),
-            N_A,
-            &v,
-            &u,
-        )
-        .unwrap();
-        assert_eq!(at_dims, monolithic);
-    }
-
-    #[test]
-    fn assemble_relation_rhs_matches_generate_rhs_for_uniform_dims() {
-        const D: usize = 64;
-        let dims = CommitmentRingDims::uniform(D);
-        let mut v_coeffs = [F::zero(); D];
-        v_coeffs[0] = F::from_u64(1);
-        let v = [CyclotomicRing::from_coefficients(v_coeffs)];
-        let mut u_coeffs = [F::zero(); D];
-        u_coeffs[0] = F::from_u64(2);
-        let u = [CyclotomicRing::from_coefficients(u_coeffs)];
-        let layout = RelationRhsLayout::uniform(dims, 1, 2, 1, 0, 1);
-        let typed =
-            generate_relation_rhs::<F, D>(&v, &u, layout.n_d, 1, layout.groups[0].n_a).unwrap();
-        let assembled = assemble_relation_rhs::<F>(
-            &layout,
-            &RingVec::from_ring_elems(&v),
-            &RingVec::from_ring_elems(&u),
-        )
-        .unwrap();
-        assert_eq!(
-            assembled.coeffs(),
-            RingVec::from_ring_elems(&typed).coeffs()
-        );
-    }
-
-    #[test]
-    fn mixed_role_dims_relation_rhs_coeff_len_matches_per_segment_widths() {
-        let dims = CommitmentRingDims {
-            inner: 128,
-            outer: 32,
-            opening: 64,
-        };
-        let layout = RelationRhsLayout::uniform(dims, 2, 4, 3, 1, 1);
-        let coeff_len = relation_rhs_coeff_len(&layout).expect("coeff len");
-        let expected = 128 + 2 * 64 + 3 * 32 + 32 + 4 * 128;
-        assert_eq!(coeff_len, expected);
-        assert_eq!(relation_rhs_row_count(&layout), 1 + 2 + 3 + 1 + 4);
-    }
-
-    #[test]
-    fn group_local_a_b_dims_share_d_in_rhs_and_claim() {
-        type G = Prime128OffsetA7F7;
-        let final_dims = CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 64,
-        };
-        let precommitted_dims = CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        };
-        let layout = RelationRhsLayout {
-            opening_ring_dim: 64,
-            n_d: 1,
-            groups: vec![
-                RelationGroupRows {
-                    role_dims: final_dims,
-                    n_a: 1,
-                    commit_rows: 1,
-                    b_inner_rows: 0,
-                },
-                RelationGroupRows {
-                    role_dims: precommitted_dims,
-                    n_a: 2,
-                    commit_rows: 2,
-                    b_inner_rows: 0,
-                },
-            ],
-            compression: None,
-        };
-        assert_eq!(
-            relation_rhs_coeff_len(&layout).expect("mixed group rhs length"),
-            256 + 256 + 128 + 128 + 2 * 128 + 2 * 64 + 64
-        );
-        assert_eq!(
-            layout.row_ring_dims().expect("mixed quotient row dims"),
-            vec![256, 256, 128, 128, 128, 128, 64, 64, 64]
-        );
-
-        let mut commitment_coeffs = vec![G::zero(); 128 + 2 * 64];
-        commitment_coeffs[0] = G::from_u64(2);
-        commitment_coeffs[128] = G::from_u64(3);
-        commitment_coeffs[128 + 64] = G::from_u64(4);
-        let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
-        let mut v_coeffs = vec![G::zero(); 64];
-        v_coeffs[0] = G::from_u64(5);
-        let v = RingVec::from_coeffs(v_coeffs);
-
-        let rhs = assemble_relation_rhs(&layout, &v, &commitment_rows).expect("mixed group rhs");
-        assert_eq!(
-            rhs.coeff_len(),
-            relation_rhs_coeff_len(&layout).expect("mixed group rhs length")
-        );
-
-        let tau1 = [
-            G::from_u64(7),
-            G::from_u64(11),
-            G::from_u64(13),
-            G::from_u64(19),
-        ];
-        let alpha = G::from_u64(17);
-        let claim = relation_claim_from_layout_extension::<G, G>(
-            &layout,
-            &tau1,
-            alpha,
-            &v,
-            &commitment_rows,
-        )
-        .expect("mixed group claim");
-        let expected = eq_eval_at_index(&tau1, 2) * G::from_u64(2)
-            + eq_eval_at_index(&tau1, 6) * G::from_u64(3)
-            + eq_eval_at_index(&tau1, 7) * G::from_u64(4)
-            + eq_eval_at_index(&tau1, 8) * G::from_u64(5);
-        assert_eq!(claim, expected);
-    }
-
-    #[test]
-    fn rows_allow_group_a_larger_than_final_group_a() {
-        let layout = RelationRhsLayout {
-            opening_ring_dim: 32,
-            n_d: 1,
-            groups: vec![
-                RelationGroupRows {
-                    role_dims: CommitmentRingDims {
-                        inner: 64,
-                        outer: 32,
-                        opening: 32,
-                    },
-                    n_a: 1,
-                    commit_rows: 1,
-                    b_inner_rows: 0,
-                },
-                RelationGroupRows {
-                    role_dims: CommitmentRingDims {
-                        inner: 128,
-                        outer: 32,
-                        opening: 32,
-                    },
-                    n_a: 1,
-                    commit_rows: 1,
-                    b_inner_rows: 0,
-                },
-            ],
-            compression: None,
-        };
-        assert_eq!(
-            layout.row_ring_dims().expect("native quotient row dims"),
-            vec![64, 64, 32, 128, 128, 32, 32]
-        );
-    }
-
-    #[test]
-    fn evaluation_trace_row_weight_uses_last_row() {
-        // total_row_count = 4 → 2 row-index vars; eq table length 4.
-        let tau1 = [F::from_u64(2), F::from_u64(3)];
-        let weight = evaluation_trace_row_weight(3, &tau1).unwrap();
-        assert_eq!(weight, eq_eval_at_index(&tau1, 3));
-        assert_ne!(weight, eq_eval_at_index(&tau1, 0));
-    }
-
-    #[test]
-    fn evaluation_trace_row_weight_rejects_out_of_domain_index() {
-        let tau1 = [F::from_u64(2), F::from_u64(3)];
-        assert!(evaluation_trace_row_weight(4, &tau1).is_err());
-    }
-
-    #[test]
-    fn fused_relation_claim_matches_full_logical_row_evaluation() {
-        const D: usize = 64;
-        let dims = CommitmentRingDims::uniform(D);
-        let tau1 = [
-            F::from_u64(3),
-            F::from_u64(5),
-            F::from_u64(7),
-            F::from_u64(11),
-        ];
-        let alpha = F::from_u64(13);
-        let mut v_coeffs = [F::zero(); D];
-        v_coeffs[..4].copy_from_slice(&[
-            F::from_u64(1),
-            F::from_u64(2),
-            F::from_u64(3),
-            F::from_u64(4),
-        ]);
-        let mut u_coeffs = [F::zero(); D];
-        u_coeffs[..4].copy_from_slice(&[
-            F::from_u64(5),
-            F::from_u64(6),
-            F::from_u64(7),
-            F::from_u64(8),
-        ]);
-        let v = [CyclotomicRing::from_coefficients(v_coeffs)];
-        let u = [CyclotomicRing::from_coefficients(u_coeffs)];
-        let lifted_tau1: Vec<E> = tau1.iter().copied().map(E::lift_base).collect();
-        const N_A: usize = 1;
-        let layout = RelationRhsLayout::uniform(dims, 1, N_A, 1, 0, 1);
-        let evaluation_trace_row = relation_rhs_row_count(&layout);
-        let trace_target = E::from_u64(19);
-        let quotient_claim = relation_claim_from_layout_extension::<F, E>(
-            &layout,
-            &lifted_tau1,
-            E::lift_base(alpha),
-            &RingVec::from_ring_elems(&v),
-            &RingVec::from_ring_elems(&u),
-        )
-        .unwrap();
-        let weight = evaluation_trace_row_weight(evaluation_trace_row, &lifted_tau1).unwrap();
-        let fused = quotient_claim + weight * trace_target;
-
-        let alpha_pows = scalar_powers(E::lift_base(alpha), D);
-        let padded_domain = 1usize << lifted_tau1.len();
-        let mut y_alpha = vec![E::zero(); padded_domain];
-        let mut row_idx = 1usize + N_A;
-        for ring in &u {
-            y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
-            row_idx += 1;
-        }
-        for ring in &v {
-            y_alpha[row_idx] = eval_ring_at_pows_fast(ring, &alpha_pows);
-            row_idx += 1;
-        }
-        y_alpha[evaluation_trace_row] = trace_target;
-
-        let mut independent = E::zero();
-        for (row, value) in y_alpha.iter().enumerate() {
-            independent += eq_eval_at_index(&lifted_tau1, row) * *value;
-        }
-        assert_eq!(fused, independent);
-    }
-}
+#[path = "relation_tests.rs"]
+mod tests;

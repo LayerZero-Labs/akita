@@ -4,7 +4,8 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::UniPoly;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
 use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Ring, Unreduced, Zero};
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring, Zero};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]

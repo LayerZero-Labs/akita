@@ -11,11 +11,11 @@ use super::{
     compose_small_poly_with_affine, MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE,
 };
 use akita_algebra::split_eq::GruenSplitEq;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Fold, Ring, Unreduced};
-
 use akita_error::AkitaError;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 struct CompactRangeLeafState<E: Field> {
     source: CompactDigitSource,
@@ -54,7 +54,7 @@ fn accumulate_round<E: Field + Unreduced>(
 }
 
 /// Final equality-factored quartic over the virtual range-image table.
-pub(super) struct ClassIndexedRangeLeafProver<E: Field> {
+pub(in crate::protocol::sumcheck) struct ClassIndexedRangeLeafProver<E: Field> {
     range_image: RangeImageTableState<E>,
     split_eq: GruenSplitEq<E>,
     input_claim: E,
@@ -64,7 +64,7 @@ pub(super) struct ClassIndexedRangeLeafProver<E: Field> {
 }
 
 impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
-    pub(super) fn new(
+    pub(in crate::protocol::sumcheck) fn new(
         source: CompactDigitSource,
         equality_point: &[E],
         input_claim: E,
@@ -99,37 +99,25 @@ impl<E: Field + Ring> ClassIndexedRangeLeafProver<E> {
         })
     }
 
-    pub(super) fn final_range_image_eval(&self) -> E {
+    pub(in crate::protocol::sumcheck) fn final_range_image_eval(&self) -> E {
         self.range_image
             .final_value()
             .expect("range-image leaf was not fully folded")
     }
 }
 
-impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
-    for ClassIndexedRangeLeafProver<E>
-{
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn degree_bound(&self) -> usize {
-        self.polynomial_coefficients.len().saturating_sub(1)
-    }
-
-    fn input_claim(&self) -> E {
-        self.input_claim
-    }
-
-    fn current_linear_factor_evals(&self) -> (E, E) {
-        self.split_eq.linear_factor_evals()
-    }
-
-    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
+    /// Compute the existing equality-factored leaf's inner polynomial in
+    /// coefficient form. Both the ordinary eq-factored driver and the L2 fused
+    /// driver consume this one kernel.
+    pub(in crate::protocol::sumcheck) fn round_q_coefficients(
+        &mut self,
+        round: usize,
+    ) -> [E; MAX_TREE_STAGE_Q_DEGREE + 1] {
         debug_assert_eq!(round, self.rounds_completed);
         let (equality_prefix_weights, equality_suffix_weights) =
             self.split_eq.remaining_eq_tables();
-        let coefficients = match &self.range_image {
+        match &self.range_image {
             RangeImageTableState::Compact(CompactRangeLeafState {
                 source,
                 pair_coefficients,
@@ -187,7 +175,43 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
                     &self.polynomial_coefficients,
                 )
             }
-        };
+        }
+    }
+
+    pub(in crate::protocol::sumcheck) fn final_range_claim(&self) -> E {
+        let range_image = self.final_range_image_eval();
+        let leaf = self
+            .polynomial_coefficients
+            .iter()
+            .rev()
+            .fold(E::zero(), |acc, &coefficient| {
+                acc * range_image + coefficient
+            });
+        self.split_eq.current_scalar() * leaf
+    }
+}
+
+impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
+    for ClassIndexedRangeLeafProver<E>
+{
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        self.polynomial_coefficients.len().saturating_sub(1)
+    }
+
+    fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    fn current_linear_factor_evals(&self) -> (E, E) {
+        self.split_eq.linear_factor_evals()
+    }
+
+    fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
+        let coefficients = self.round_q_coefficients(round);
         EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.degree_bound()].to_vec())
     }
 

@@ -1,11 +1,10 @@
 # Spec: `akita-field` Refactor Proposal
 
-| Field         | Value                                                      |
-|---------------|------------------------------------------------------------|
-| Author(s)     | Taghi Badakhshan                                           |
-| Status        | superseded                                                 |
-| Branch        | `taghi/refactor/akita-field`                               |
-| Superseded-by | [`jolt-field-unification.md`](../../jolt-field-unification.md) |
+| Field     | Value                        |
+| --------- | ---------------------------- |
+| Author(s) | Taghi Badakhshan             |
+| Status    | historical |
+| Branch    | `taghi/refactor/akita-field` |
 
 ## Summary
 

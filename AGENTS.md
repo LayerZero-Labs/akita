@@ -22,6 +22,7 @@ scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
+scripts/check-shared-field-identity.sh
 cargo machete --with-metadata
 typos
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
@@ -31,8 +32,9 @@ CI runs these exact Clippy configurations; all must pass because the feature
 graphs differ:
 
 ```bash
-cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
-cargo clippy --all --all-targets --release --no-default-features -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
+cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
+cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,
@@ -79,6 +81,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - Type methods may assemble `self` into arguments, but the logic lives in one place, not duplicated across siblings.
 - If `A` needs the output of `B`, call `B` (or extend `B`); do not introduce `C` that forwards to `B`.
 - Security and sizing contracts must use the same primitives the verifier enforces. No split-brain where certification and MSIS pricing read different bounds.
+- Generic checked `usize` formulas live in `akita_error::checked`. Use those primitives directly and do not redefine local product, sum, fixed-arity multiplication, range, alignment, division, or power-of-two helpers.
 - Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios. Delete single-use indirection.
 
 ## Feature flags
@@ -86,6 +89,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - `parallel` — Rayon parallelization (default)
 - `disk-persistence` — disk-backed persistence for some commitment flows
 - `logging-transcript` — `LoggingTranscript` schedule events and smell checks
+- `response-model-diagnostics` — expensive source and response energy measurements for model calibration
 
 Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 
@@ -97,6 +101,6 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Core API types | [`book/src/how/architecture.md`](book/src/how/architecture.md#core-types) |
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
-| Transcript hardening | [`specs/transcript-hardening.md`](specs/transcript-hardening.md) |
+| Transcript hardening | [`book/src/how/transcript.md`](book/src/how/transcript.md) |
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |

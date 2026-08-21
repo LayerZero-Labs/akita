@@ -359,18 +359,8 @@ impl<T> crate::FoldChallengeSeedPreview for LoggingTranscript<T>
 where
     T: crate::FoldChallengeSeedPreview,
 {
-    fn preview_challenge_bytes_after_absorb(&self, absorb_payload: &[u8], len: usize) -> Vec<u8> {
-        self.inner
-            .preview_challenge_bytes_after_absorb(absorb_payload, len)
-    }
-
-    fn preview_challenge_bytes_after_absorb_chain(
-        &self,
-        absorbs: &[&[u8]],
-        squeeze_lens: &[usize],
-    ) -> Vec<u8> {
-        self.inner
-            .preview_challenge_bytes_after_absorb_chain(absorbs, squeeze_lens)
+    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8> {
+        self.inner.preview_fold_challenge_seed(absorb_payloads)
     }
 }
 

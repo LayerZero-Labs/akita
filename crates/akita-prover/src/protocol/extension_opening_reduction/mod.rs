@@ -10,12 +10,12 @@ use akita_algebra::EqPolynomial;
 use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
-    checked_table_len, extension_opening_reduction_claim, num_rounds_from_table_len,
-    project_tensor_factor_value, tensor_opening_split, validate_reduction_tables,
+    extension_opening_reduction_claim, num_rounds_from_table_len, project_tensor_factor_value,
+    reduction_table_len, tensor_opening_split, validate_reduction_tables,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
-use jolt_field::{ExtField, Field, Fold, Unreduced, Zero};
-
+use jolt_field::{ExtField, Field, Zero};
+use jolt_field::{Fold, Unreduced};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

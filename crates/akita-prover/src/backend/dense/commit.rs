@@ -1,7 +1,7 @@
 //! Dense polynomial inner commit.
 
 use super::poly::DensePoly;
-use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
+use crate::compute::{CpuBackend, CpuPreparedSetup, DenseCommitInput};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
@@ -10,18 +10,15 @@ impl<F> DensePoly<F>
 where
     F: Field + CanonicalEncoding,
 {
-    pub(super) fn commit_rows<B, const D: usize>(
+    pub(super) fn commit_rows<const D: usize>(
         &self,
-        backend: &B,
-        prepared: &B::PreparedSetup,
+        backend: &CpuBackend,
+        prepared: &CpuPreparedSetup<F>,
         n_a: usize,
         num_positions_per_block: usize,
         num_digits_inner: usize,
         log_basis: u32,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        B: CommitmentComputeBackend<F>,
-    {
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let coeffs = self.ring_coeffs::<D>()?;
         let n = coeffs.len();
         let num_live_blocks = n.div_ceil(num_positions_per_block);
@@ -31,12 +28,10 @@ where
                 digit_block_slices(digit_planes, n, num_positions_per_block, num_digits_inner);
             return backend.dense_commit_rows(
                 prepared,
-                DenseCommitRowsPlan {
-                    n_a,
-                    input: DenseCommitInput::CachedDigits {
-                        digit_block_slices,
-                        log_basis_inner: log_basis,
-                    },
+                n_a,
+                DenseCommitInput::CachedDigits {
+                    digit_block_slices,
+                    log_basis_inner: log_basis,
                 },
             );
         }
@@ -54,13 +49,11 @@ where
 
         backend.dense_commit_rows(
             prepared,
-            DenseCommitRowsPlan {
-                n_a,
-                input: DenseCommitInput::CoeffBlocks {
-                    block_slices,
-                    num_digits_inner,
-                    log_basis_inner: log_basis,
-                },
+            n_a,
+            DenseCommitInput::CoeffBlocks {
+                block_slices,
+                num_digits_inner,
+                log_basis_inner: log_basis,
             },
         )
     }

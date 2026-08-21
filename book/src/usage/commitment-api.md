@@ -5,8 +5,103 @@ verify, plus the setup and transcript objects those calls thread through.
 
 ## Commit, prove, verify
 
-The `batched_commit`, `batched_prove`, and `batched_verify` entry points operate
-on ordered commitment groups.
+The `commit`, `batched_prove`, and `batched_verify` entry points operate on
+ordered commitment groups. Every commit call creates exactly one homogeneous
+polynomial group and supplies its complete parameter context:
+
+```rust
+let output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &polynomials,
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+```
+
+`GroupContext::scheduler_without_precommitted_groups()` selects the *scalar row*, the
+generated row for a group that has no precommitted groups. The resulting committed
+group may be opened alone or retained as a precommitted group for a later grouped
+opening; both uses have exactly the same parameters.
+`GroupContext::scheduler_with_precommitted_groups(&prior)` selects the exact *grouped
+row*, the generated row keyed on that ordered prefix.
+
+All polynomials inside one group must have the same `num_vars`. A commit call
+rejects a mixed-arity bundle rather than padding it to the widest polynomial.
+Polynomials of different arities belong in separate groups, and separate groups
+may have different arities.
+
+For a grouped lifecycle, construct one ordered `PrecommittedGroupProfiles` and borrow
+it for the final commit:
+
+```rust
+let prior = PrecommittedGroupProfiles::from_ordered_groups(prior_commitments.iter())?;
+let final_output = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &final_polynomials,
+    &stack,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+
+let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
+    opening_claims,
+    hints,
+    polynomial_groups,
+)?;
+let selection = prover_data.selection();
+```
+
+`PrecommittedGroupProfiles` is non-empty by construction, so both grouped constructors
+are infallible; the "no precommitted groups" case has its own spelling. Batch assembly
+derives the prefix from the ordered claims, so it is not passed twice.
+
+The constructor derives the exact batch profile and selects its schedule before
+stripping commitment profiles from prover-owned opening data. The same
+`selection` is placed in `GroupBatchStatement` for verification.
+
+Callers that already own audited root parameters use the same `commit` method
+with `GroupContext::explicit_without_precommitted_groups(&params)` or
+`GroupContext::explicit_with_precommitted_groups(&prior, &params)`. Explicit mode
+does not select a catalog row. It validates the supplied parameters, while
+the supplied opening method also selects and authenticates the committed source
+encoding. `EvaluationTrace` may use `TensorSubfieldProjection` when the field
+and root geometry admit it. `SubringCoefficientPacking` uses
+`CanonicalCoefficientTable`. The encoding is commitment identity and cannot be
+reinterpreted by a later opening plan.
+
+### Precommitting under a recursive configuration
+
+A `RecursiveCommitmentConfig<Cfg>` catalog ships no row without precommitted groups at
+a precommit layout. It carries only the grouped root. Committing a precommitted group
+under the recursive configuration therefore fails with `UnsupportedSchedule`.
+
+Build the setup under the recursive configuration, commit each precommitted group
+under the base configuration `Cfg`, then commit the final group and prove under
+the recursive one. Both configurations share the same setup:
+
+```rust
+let setup = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::setup_prover(nv, k)?;
+
+// Precommitted groups use the base configuration, which owns the scalar rows.
+let pre = AkitaCommitmentScheme::<Cfg>::commit(
+    &setup,
+    &prior_polynomials,
+    &stack,
+    GroupContext::scheduler_without_precommitted_groups(),
+)?;
+
+// The grouped root uses the recursive configuration.
+let root = AkitaCommitmentScheme::<RecursiveCommitmentConfig<Cfg>>::commit(
+    &setup,
+    &final_polynomials,
+    &stack,
+    GroupContext::scheduler_with_precommitted_groups(&prior),
+)?;
+```
+
+The frozen precommitted descriptor a recursive grouped row carries is exactly
+`Cfg::profile_without_precommitted_groups(group)`, which is what makes the split
+sound.
+
 Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
 and its commitment.
 Polynomials within one group share that point.
@@ -27,8 +122,8 @@ setup and schedule selection do not depend on point values.
 
 On the prover side, `ProverOpeningData` privately binds each commitment hint to
 one `PreparedProverGroup<P>` in the same protocol-visible order as the public
-claims. `SelectedProverOpeningData` pairs that material with the one exact
-`OpeningScheduleSelection` returned by the final commit. Akita treats the
+claims. `SelectedProverOpeningData` privately pairs that material with the one
+exact `OpeningScheduleSelection` derived during batch assembly. Akita treats the
 concrete polynomial representation as a caller contract: callers must supply
 groups with the arity and shape claimed by the public statement. Bad prover
 material is a completeness failure, not a verifier soundness input.
@@ -39,25 +134,20 @@ recursive heterogeneous wrappers. The verifier receives a
 `GroupBatchStatement` containing only the exact generated-row selection and
 self-describing public claims.
 
-`commit_group` takes a raw polynomial group. `commit_final_group` takes the
-exact ordered precommitted profiles and atomically returns the final
-`CommittedGroup`, its hint, and the `OpeningScheduleSelection` that must be used
-for proving and verification.
-
 There is no ambient shared point, global polynomial type for the batch, or
 coordinate-routing object.
 
 **Sources to fold in**
 
 - `crates/akita-pcs/src/scheme/mod.rs`.
-- `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
+- `crates/akita-prover/src/api/commitment.rs` (`GroupContext`, `CommitOutput`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
 - `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`,
   `SelectedProverOpeningData`).
 - `crates/akita-prover/src/api/prepared_group.rs` (coarse prepared group
   carrier).
-- `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
+- `crates/akita-pcs/tests/akita_fp128_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching
 
@@ -93,21 +183,24 @@ change `AkitaSetupSeed`, transcript bytes, or proof validity. A proof made with
 one materialized capacity can therefore be verified with a larger covering
 prefix carrying the same public matrix identity.
 
-Setup-prefix offloading follows the same rule. If Stage 3 needs
-`natural_len` coefficients, setup storage covers exactly that many source
-coefficients. The committed setup polynomial still has the power-of-two length
-`n_prefix`; preprocessing constructs
-`S[0..natural_len] || 0^(n_prefix-natural_len)` explicitly. Later random stream
-coefficients are never used as padding. The prefix commitment's A and B matrix
-dimensions are ordinary planner-owned commitment parameters, independent of
-the dimensions used by the producing or consuming fold.
+Setup-prefix offloading follows the same one-stream rule, but the committed
+object is now the actual power-of-two setup prefix. If Stage 3 has active
+support `natural_len`, setup storage for the selected prefix covers
+`n_prefix = next_power_of_two(natural_len)` source coefficients, and
+preprocessing commits `S[0..n_prefix]`. The tail after `natural_len` is real
+public setup data; it contributes zero because the setup-index weight is zero
+there. The prefix commitment's A and B matrix dimensions are ordinary
+planner-owned commitment parameters, independent of the dimensions used by the
+producing or consuming fold.
 
 After a concrete schedule is selected, callers may use
 `setup_verifier_for_schedule` to keep only the public-matrix prefix that proof
-verification can read. A producer followed by an incoming setup-prefix
-commitment is offloaded, so the verifier does not scan that producer's natural
-source prefix. The retained matrix is the maximum of the terminal A matrix and
-the active setup fields of every producer that remains direct. This is a
+verification can read directly. A producer followed by an incoming setup-prefix
+commitment is offloaded, so the verifier does not scan that producer's active
+source prefix during Stage 3; it authenticates the carried full-prefix opening
+against the setup-prefix commitment in the successor opening. The retained
+matrix is the maximum of the terminal A matrix and the active setup fields of
+every producer that remains direct. This is a
 schedule-derived capacity, not necessarily the length of any stored setup
 prefix. The complete setup-prefix commitment registry remains in the verifier
 artifact.
@@ -126,6 +219,31 @@ keys and can have different prefix lengths. Equal requirements join by maximum
 because the matrices overlap. An initialized larger prefix covers a smaller
 request with the same field profile, ring dimension, and transform domain.
 Concurrent construction of the same key is single-flight.
+
+The execution plan describes every matrix operation. The selected backend then
+decides which operations retain NTT slots. CPU ring switch operations above the
+streaming threshold compute transform chunks from the public matrix and do not
+prewarm a complete slot. Memory reporting uses the same decision, so its total
+matches the slots that prewarming can leave resident.
+
+Prepared state stays warm across proofs by default. A caller may use
+`ReleaseRootNttAfterFold` when it owns an isolated root cache and wants to free
+it before the recursive suffix. Release removes built shared matrix keys and
+deduplicates clusters that share one physical cache owner. Small compression
+NTT entries stay resident. Existing readers remain valid through their `Arc`.
+Release does not cancel construction already in progress, so a caller that
+needs an empty shared matrix cache must prevent new construction during the
+release boundary.
+
+A normal lifecycle is:
+
+```text
+prepare empty backend state
+prewarm retained requirements and skip streamed requirements
+run the proof and retain built slots for reuse
+optionally release shared matrix state at an exclusive root boundary
+reuse the prepared setup; released shared slots rebuild at the next exact extent
+```
 
 The terminal verifier keeps its separate exact-negacyclic cache and adds the
 i16 tail only when the checked CRT bound requires it. Compression execution

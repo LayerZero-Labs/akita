@@ -25,10 +25,7 @@ fn main() {
     let _ = transcript.challenge_scalar(labels::CHALLENGE_TAU1);
 
     transcript.assert_smell_checks();
-    println!(
-        "Akita transcript schedule example using D={}",
-        fp128::D64OneHot::D
-    );
+    println!("Akita transcript schedule example using D={}", 256);
     for (index, event) in transcript.events().iter().enumerate() {
         println!("{index:02}: {}", format_event(event));
     }

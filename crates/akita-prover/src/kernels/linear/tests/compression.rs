@@ -5,9 +5,11 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_types::layout::FlatMatrix;
 use akita_types::prepare_compression_ntt_cache;
-use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{
+    CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
+};
 
-fn assert_compression_batch<F: Field + CanonicalEncoding, const D: usize>() {
+fn assert_compression_batch<F: Field + CanonicalEncoding + Ring, const D: usize>() {
     let column_count = 3;
     let matrix = (0..column_count)
         .map(|index| {
@@ -49,7 +51,7 @@ fn assert_compression_batch<F: Field + CanonicalEncoding, const D: usize>() {
     }
 }
 
-fn schoolbook_cyclic_digit_product<F: Field, const D: usize>(
+fn schoolbook_cyclic_digit_product<F: Field + Ring, const D: usize>(
     matrix: &[CyclotomicRing<F, D>],
     digits: &[[i8; D]],
 ) -> CyclotomicRing<F, D> {

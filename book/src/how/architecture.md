@@ -11,8 +11,8 @@ orchestration lives in `akita-pcs`.
 
 | Crate | Role |
 |-------|------|
-| `jolt-field` (Jolt repository) | Shared field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros |
-| `akita-error` | Akita protocol error definition |
+| `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
+| `jolt-field` (Jolt repository) | Shared field traits, prime/extension fields, packed/unreduced arithmetic, parallel macros |
 | `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
@@ -33,18 +33,22 @@ CI enforces one-way boundaries via `scripts/check-crate-deps.sh`.
 
 Key structural facts:
 
-- `jolt-field` is owned by Jolt and imported directly; Akita has no field wrapper crate.
+- `akita-error` is the lowest shared failure layer. It owns `AkitaError` and
+  reusable exact `usize` formulas in `akita_error::checked`. These formulas
+  return `Option`; each caller maps failure to the `AkitaError` variant that
+  describes its protocol boundary. Shared field arithmetic lives in Jolt's
+  `jolt-field` package.
 - `akita-planner` sits **below** `akita-config` and names no `CommitmentConfig` type.
 - `akita-verifier` depends on `akita-config` and therefore reaches `akita-planner` transitively; the schedule DP is verifier-reachable.
 - Verifier-only integrations should use `akita-verifier` + `akita-types` + `akita-config`, not the umbrella `akita-pcs` package.
 
 ## End-to-end lifecycle
 
-1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::runtime_schedule` resolves the recursion schedule from a shipped table or the offline DP (`akita_planner::resolve_schedule`). The preset also fixes the protocol geometry: when the claim field coincides with the coefficient field (`EXT_DEGREE == 1`, today's `fp128` families) the fold path never runs extension-opening reduction; when claims live in a proper extension (`fp32` / `fp64`), root EOR follows `akita_types::root_tensor_projection_enabled` and suffix EOR follows `EXT_DEGREE > 1`. See [Fold path and field geometry](./proving/fold-path.md).
+1. **Preset selection.** The caller picks a `CommitmentConfig` preset (`fp32` / `fp64` / `fp128` families). `CommitmentConfig::resolve_catalog_row_for_key` resolves one complete row from the shipped catalog. Planner search remains offline. Each row selects `SubringCoefficientPacking` or `EvaluationTrace` for every nonterminal fold. EOR is present only for an evaluation trace opening over a proper extension field. See [Fold path and field geometry](./proving/fold-path.md).
 2. **Setup.** `akita-setup` expands the config-backed setup (Ajtai matrices, stride envelopes). Setup capacity must cover the requested `num_vars`.
-3. **Commit.** `commit` / `batched_commit` (in `akita-prover`, orchestrated by `akita-pcs`) produce commitments over root polynomials at the opening layout implied by the schedule.
+3. **Commit.** The context-aware `commit` entry point (in `akita-prover`, orchestrated by `akita-pcs`) produces one committed polynomial group using `GroupContext`. Scheduler mode selects the scalar row when the group has no precommitted groups, or the exact grouped row when it does; explicit mode validates caller-supplied root parameters. A group committed under a scalar row may later be supplied as a precommitted group.
 4. **Claims.** The caller supplies ordered `PolynomialGroupClaims`; each group owns its complete point, evaluations, and commitment.
-5. **Prove.** `batched_prove` walks the folded-only schedule level by level: per-group opening preparation, sumcheck stages, extension-opening reduction, recursive suffix work, and the final direct terminal handoff.
+5. **Prove.** `batched_prove` walks the schedule level by level. It prepares each group with the scheduled opening method, runs the sumchecks, performs EOR when required, and hands the last folded witness to the direct terminal proof.
 6. **Verify.** `batched_verify` re-derives the schedule, replays nonterminal sumchecks and relation-matrix evaluations, then closes the terminal with direct consistency/A and weighted trace checks. Prover and verifier share `bind_transcript_instance_descriptor` so Fiat-Shamir challenges match.
 
 Entry points: `crates/akita-pcs/src/scheme/mod.rs`, `crates/akita-prover/src/protocol/core/prove.rs`, `crates/akita-verifier/src/protocol/core/verify.rs`.
@@ -61,8 +65,8 @@ Its round count and planned size do not depend on the successor witness length.
 
 The cyclotomic ring dimension is **schedule-derived shape metadata, not a
 type parameter of the protocol**. Protocol data — commitments, hints, proofs,
-claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
-`SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
+claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`, and
+their enum wrapper) — is flat field-element vectors (`RingVec<F>`). Per-level
 `CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
 differ. Here, *role* is the historical protocol name for a commitment matrix's
@@ -84,7 +88,7 @@ Every function on the prove/verify path has one of two roles:
 
 - **Orchestration** reads schedule types, drives the transcript, and moves
   D-free storage. It never carries `const D`.
-- **Kernels** (NTT, digit decomposition, commit/opening/tensor folds,
+- **Kernels** (NTT, digit decomposition, commit/opening folds,
   ring-switch arithmetic) are const-generic over `D` and receive extracted
   numbers, never schedule types.
 
@@ -93,7 +97,7 @@ ring dimension of the specific data one operation touches and enters the
 kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
-see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
+see `specs/runtime-ring-cutover.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
 names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 `d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.
@@ -107,12 +111,13 @@ Mixed-dimension malformed proof rejection is covered by
 
 | Type | Role |
 |------|------|
+| `AkitaError`, `akita_error::checked` | Shared protocol failures and reusable checked formulas for sizes, offsets, ranges, alignment, and exact division |
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper around a materialized prefix of the dimension-free public field stream |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
+| `LevelParams` | Per-level recursion layout and config (ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |

@@ -35,7 +35,7 @@ ring elements per step. No trusted setup, no pairing, post-quantum target.
 
 - `crates/akita-pcs/src/lib.rs:1-16` — umbrella crate module docs.
 - Paper §1 `sec:introduction`, §1.1 `sec:contributions` (Akita's contributions).
-- `specs/akita-pcs-crate-decomposition.md` (lineage, naming).
+- `specs/archive/2026-Q3/akita-pcs-crate-decomposition.md` (lineage, naming).
 - Council note: post-quantum is currently asserted, not argued — keep the claim honest.
 
 ## Lineage and naming
@@ -64,7 +64,7 @@ and what is asserted vs proven. The canonical narrative lives in
 - `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `norm_bound.rs`).
 - `docs/security-posture.md`.
 - Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
-- `specs/security-hardening.md`, `specs/sis-quantum128-scalar-n-table.md`,
+- `specs/archive/2026-Q3/security-hardening.md`, `specs/sis-quantum128-scalar-n-table.md`,
   `specs/fold-linf-rejection.md`.
 - `specs/sis-quantum128-scalar-n-table.md` (implemented policy, role coverage,
   generated tables, and schedule identity).
@@ -76,7 +76,7 @@ Reading orders by audience:
 - **Application developer (integrating Jolt or another host):** start with
   [Usage](./usage/usage.md). While chapters are stubs, use
   [`profile/akita-recursion/README.md`](../../profile/akita-recursion/README.md),
-  [`specs/single-point-opening-batch.md`](../../specs/single-point-opening-batch.md),
+  [`usage/commitment-api.md`](./usage/commitment-api.md),
   and [`AGENTS.md`](../../AGENTS.md) for the current API contracts.
 - **Contributor:** [How it works](./how/how-it-works.md), lead with the lifecycle.
 - **Reviewer:** [Foundations](./foundations/foundations.md) + [Security model](./how/security.md).

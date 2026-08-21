@@ -5,7 +5,7 @@
 //! `count_pm2` at magnitude 2. When `count_pm2 == 0` every non-zero
 //! coefficient is ±1.
 
-use crate::sampler::position_sample::sample_distinct_positions_into;
+use crate::sampler::position_sample::{sample_distinct_positions_into, DistinctPositionScratch};
 use crate::sampler::xof::XofCursor;
 use crate::{SparseChallenge, SparseChallengeConfig};
 
@@ -16,6 +16,7 @@ const SIGN_BYTE_CHUNK: usize = 64;
 pub(crate) struct SignedSparseScratch {
     positions: Vec<u32>,
     coeffs: Vec<i8>,
+    position_scratch: DistinctPositionScratch,
     total: usize,
 }
 
@@ -25,6 +26,7 @@ impl SignedSparseScratch {
         Self {
             positions: vec![0u32; total],
             coeffs: Vec::with_capacity(total),
+            position_scratch: DistinctPositionScratch::new(),
             total,
         }
     }
@@ -34,14 +36,14 @@ impl SignedSparseScratch {
         d: usize,
         n: usize,
         cfg: &SparseChallengeConfig,
-    ) -> Vec<SparseChallenge> {
+    ) -> Result<Vec<SparseChallenge>, akita_error::AkitaError> {
         let mut challenges = Vec::with_capacity(n);
         let mut scratch = Self::new(cfg.count_pm1, cfg.count_pm2);
         for _ in 0..n {
-            scratch.sample(cursor, d, cfg.count_pm1, cfg.count_pm2);
+            scratch.sample(cursor, d, cfg.count_pm1, cfg.count_pm2)?;
             challenges.push(scratch.take_challenge());
         }
-        challenges
+        Ok(challenges)
     }
 
     /// Draw one signed-sparse candidate into the scratch buffers.
@@ -52,9 +54,9 @@ impl SignedSparseScratch {
         d: usize,
         count_pm1: usize,
         count_pm2: usize,
-    ) {
+    ) -> Result<(), akita_error::AkitaError> {
         debug_assert_eq!(self.total, count_pm1 + count_pm2);
-        sample_distinct_positions_into(cursor, d, &mut self.positions);
+        sample_distinct_positions_into(cursor, d, &mut self.positions, &mut self.position_scratch)?;
         self.coeffs.resize(self.total, 0);
         let mut sign_bytes = [0u8; SIGN_BYTE_CHUNK];
         let mut written = 0;
@@ -68,14 +70,23 @@ impl SignedSparseScratch {
             }
             written += take;
         }
+        Ok(())
     }
 
-    /// Move the accepted draw into an owned [`SparseChallenge`] and reset scratch
-    /// storage for the next slot.
-    pub(crate) fn take_challenge(&mut self) -> SparseChallenge {
+    /// Copy the accepted draw into inline challenge storage. The scratch
+    /// vectors retain their allocation for the next slot.
+    pub(crate) fn take_challenge(&self) -> SparseChallenge {
         SparseChallenge {
-            positions: std::mem::replace(&mut self.positions, vec![0u32; self.total]),
-            coeffs: std::mem::replace(&mut self.coeffs, Vec::with_capacity(self.total)),
+            positions: self.positions.iter().copied().collect(),
+            coeffs: self.coeffs.iter().copied().collect(),
         }
+    }
+
+    pub(crate) fn positions(&self) -> &[u32] {
+        &self.positions
+    }
+
+    pub(crate) fn coeffs(&self) -> &[i8] {
+        &self.coeffs
     }
 }

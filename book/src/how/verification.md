@@ -3,6 +3,70 @@
 How the verifier replays the proof level by level, and the no-panic contract
 that governs every verifier-reachable line.
 
+## Reading this section
+
+The verifier has several checks because one recursive fold must bind a public
+opening claim, a digit witness, a ring relation, and the public setup at the
+same time. Read the chapters in this order:
+
+1. [Matrix evaluation at a point](./verifying/matrix_evaluation.md)
+   defines the physical rows and columns.
+2. [The Stage 2 fused check](./verifying/stage2.md) shows how the relation,
+   range image, and schedule-selected opening method share one final witness
+   evaluation.
+3. [Evaluation trace](./verifying/evaluation_trace.md) explains the trace-based
+   opening method. [Root fold and ring switch](./proving/root-fold-ring-switch.md)
+   explains subring coefficient packing.
+4. [Setup contribution and Stage 3](./verifying/setup_contribution.md) explains
+   direct setup evaluation and recursive setup offloading.
+5. [The distributed relation verifier](./verifying/distributed-relation-verifier.md)
+   explains exact dyadic ownership and unequal chunks.
+6. [Terminal verification](./verifying/terminal.md) explains the final direct
+   checks after recursion stops.
+
+The proving section owns the derivation of the ring relations and the logical
+multi-group layout. These verifier chapters start from those relations and
+explain how one verifier replays them at sampled points. This separation keeps
+the mathematical definition and the optimized verifier implementation from
+becoming competing sources of truth.
+
+The book describes shipped behavior. The files under `specs/` record design
+history and pending changes, so they may describe alternatives that are not
+active in the verifier.
+
+## Verifier data flow
+
+For each nonterminal level, the verifier follows this order:
+
+```text
+validated schedule and setup
+        |
+        v
+fold replay and outgoing witness binding
+        |
+        v
+ring switch: sample alpha, tau0, and tau1
+        |
+        +--> prepare relation matrix evaluator
+        +--> prepare compression weights
+        +--> prepare scheduled opening terms
+        |
+        v
+Stage 1: digit range product
+        |
+        v
+Stage 2: range image + relation + opening claim
+        |
+        v
+Stage 3: setup product when the setup claim is deferred
+        |
+        v
+next recursive level or terminal direct checks
+```
+
+Preparation validates public geometry once. The final point kernels then use
+typed prepared state and return errors for any remaining mismatch.
+
 ## Per-level replay
 
 `batched_verify` (in `crates/akita-verifier/src/protocol/core/verify.rs`) is
@@ -20,7 +84,9 @@ At a high level:
    every recursive fold, using the schedule-selected `LevelParams`.
 4. **Check the terminal witness directly** against its predecessor-bound `t`
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
-   block, D block, or quotient sumcheck.
+   block, D block, or quotient sumcheck. If the terminal A matrix uses an L2
+   route, the verifier also computes the decoded response's exact integer
+   squared norm and compares it with the scheduled cap.
 
 At each nonterminal fold, the verifier checks fixed 128-byte `p_H` and `p_F`
 payload shapes, reconstructs the B, D, F, and H relation right hand sides, and
@@ -29,12 +95,22 @@ the negative-binary support from `WitnessLayout` and evaluates the stage-1
 equality table restricted to those intervals; compression roles never enlarge
 or shrink the ordinary A/B/D common address block.
 
+An L2 fold at D64 or D128 also replays operator norm rejection from the
+transcript. The schedule fixes the sparse challenge family and both the true
+subset threshold and strict integer threshold. A challenge is accepted only
+when the integer interval calculation proves that every spectral magnitude is
+within the strict threshold.
+
 Root replay reads each commitment group's point directly from
 `PolynomialGroupClaims`.
 The verifier prepares the per-group relation and extension-opening factors from
 that complete point, without reconstructing a common point.
-When EOR is required, the groups enter one batched reduction but retain their
-own public points and native arities.
+When EOR is required, the verifier samples an early coefficient vector and
+replays one ordinary sumcheck for the combined opening claims. The proof keeps
+the individual terminal claims. The verifier checks their early combination
+against the sumcheck terminal value and absorbs them. It then absorbs the
+complete opening payload before sampling the independent application
+coefficients that bind those terminal claims to the committed witness.
 
 At a recursive boundary, Stage 2 supplies the next-witness claim
 `(stage2_point, stage2_next_w_eval)`.
@@ -76,7 +152,7 @@ replay, it:
    canonical security table, role, modulus, rank, width, bound, and ring
    dimension;
 5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
-   response, and full terminal infinity-norm-cap geometry;
+   response, and full terminal norm cap geometry;
 6. checks that the schedule fits the setup field capacity; and only then
 7. binds the instance descriptor and replays the proof.
 
@@ -91,6 +167,7 @@ Verifier-reachable execution is a **no-panic boundary**.
 Malformed verifier-facing proof, setup, schedule, public claim, opening point,
 commitment, direct witness, or transcript input must be rejected with
 `AkitaError` or `SerializationError`, never by panicking.
+`AkitaError` has one canonical definition in `akita-error`.
 
 ### Crates in scope
 
@@ -103,8 +180,10 @@ commitment, direct witness, or transcript input must be rejected with
 ### Rules for contributors
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier boundary has validated the invariant.
-2. Strengthen validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
-3. Prover-only panics are acceptable when not reachable from verifier paths.
+2. Use `akita_error::checked` for reusable exact `usize` formulas. The functions return `Option`, so the caller maps failure to the `AkitaError` variant that matches the protocol boundary. A direct standard library `checked_*` call remains appropriate for one local operation.
+3. Do not use wrapping or saturating arithmetic for exact sizes and indices. Reject arithmetic that cannot represent the required geometry.
+4. Strengthen validation at deserialization, setup construction, schedule selection, `LevelParams` construction, and verifier API entry points rather than sprinkling checks through hot loops.
+5. Prover-only panics are acceptable when not reachable from verifier paths.
 
 Maintainer mirror: [`docs/verifier-contract.md`](../../../docs/verifier-contract.md).
 Historical audit evidence: [`docs/verifier-panic-audit.md`](../../../docs/verifier-panic-audit.md).

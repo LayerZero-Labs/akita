@@ -6,101 +6,311 @@ traces, and the CI benchmark matrix.
 ## Canonical command
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features parallel,profile-onehot-fp128-d64 --example profile
+  --features parallel,profile-onehot-fp128 --example profile
 ```
 
 Run from `crates/akita-pcs/`. The harness refuses debug builds unless
 `AKITA_ALLOW_DEBUG_PROFILE=1`.
 
+This feature-pruned command measures the adaptive `onehot_fp128` catalog. With
+the normal default feature set, omitting `AKITA_MODE` selects the same profile.
+
 Always use the feature-pruned command above when profiling this path or
 measuring its binary size/codegen time. An unpruned default-feature build of
 the `profile` example retains every locally supported profile mode; it is a
-multi-mode developer artifact, not a like-for-like onehot fp128/D64 binary.
+multi-mode developer artifact, not a like-for-like fp128 one-hot binary.
 Mixing the two build surfaces can roughly double the example binary and make a
 normal release link look like a verifier regression.
 
 ## Presets and ring degrees
 
-Under committed-fold A-role SIS pricing, **fp128** production is **D=64**
-(signed-sparse; ~20% smaller than D128).
-Shipped tables: `fp128_d64_onehot`, `fp128_d64_dense`, `fp128_d128_*`.
-**fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
-`D32OneHot` preset.
-**fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
-one-hot** (CI benches at `nv=28`).
+The default direct **fp128** one-hot preset is adaptive: generated tables choose
+the first two fold levels and use the D64 suffix domain. Direct dense uses the
+same adaptive policy. At dense `nv=26`, the root roles are A/B/D = 256/64/64,
+and every recursive fold and the terminal use D64. Dense and one-hot root
+sources do not store a nominal ring dimension. Each kernel reads its actual
+dimension from the generated schedule. Recursive and multi-chunk companion
+presets inherit their base adaptive policy and resolve their own generated
+catalog keys.
+Shipped direct tables are `fp128_onehot` and `fp128_dense`.
+The small-field presets use larger A dimensions where they reduce setup, while
+keeping B and D at dimensions that remained competitive in measured search.
+fp32 searches A at D64 through D1024, B/D at D64 through D256, and a monotone
+D64/D128 suffix domain. fp64 searches A at D64 through D512, B/D at D64 through
+D256, and the D64 suffix domain. Larger B/D candidates were certified but
+removed from production search after exhaustive comparison showed that they
+never won. CI runs the one-hot cases at `nv=30` and dense at `nv=26`.
 
-Compare ring degrees with
-`akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_dense_schedule`.
+The direct configs are `akita_config::proof_optimized::fp128::OneHot` and
+`akita_config::proof_optimized::fp128::Dense`.
 
 ## Environment knobs
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AKITA_MODE` | `onehot_fp128_d64` | Preset family and representation |
-| `AKITA_NUM_VARS` | `25` in code (`32` in canonical command above) | Witness size |
+| `AKITA_MODE` | `onehot_fp128` | Preset family and representation |
+| `AKITA_NUM_VARS` | `32` | Witness size |
 | `AKITA_NUM_POLYS` | `1` | Batched opening count |
 | `AKITA_PROFILE_TRACE` | `1` | Chrome/Perfetto trace output |
-| `AKITA_PROFILE_LOG` | `trace` | `tracing` filter |
+| `AKITA_PROFILE_MONITOR` | `1` when tracing | Add process CPU, host CPU, and RSS counter tracks |
+| `AKITA_PROFILE_MONITOR_INTERVAL_MS` | `100` | Resource sampling interval in milliseconds (minimum `10`) |
+| `AKITA_PROFILE_LOG` | `trace` | Console tracing filter; the Perfetto layer always captures all spans |
 | `AKITA_PROFILE_ANSI` | `1` | Colored log output |
 | `AKITA_PROFILE_SPAN_CLOSES` | `1` | Log span close events |
 | `AKITA_PROFILE_PROVE_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Global prove pool size (`0` = Rayon default) |
-| `AKITA_PROFILE_VERIFY_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Verify pool when it differs from prove (`0` = Rayon default) |
+| `AKITA_PROFILE_VERIFY_THREADS` | `RAYON_NUM_THREADS` or Rayon default | Multi threaded verify pool when it differs from prove (`0` = Rayon default) |
 | `AKITA_ALLOW_DEBUG_PROFILE` | unset | Bypass `--release` guard |
 | `RAYON_NUM_THREADS` | Rayon default | Fallback when profile thread vars are unset |
 
 Implementation: `crates/akita-pcs/examples/profile/main.rs`.
+
+When the resource monitor is enabled, the trace contains native Perfetto
+counter tracks named `process_effective_cores`, `process_cpu_percent`,
+`system_effective_cores`, `system_cpu_percent`, `rss_gib`,
+`virtual_memory_gib`, and `logical_cpus`. One effective core means one core was
+busy for the complete sampling interval. Values can exceed one when Rayon
+workers run concurrently.
+
+After the Chrome writer flushes, the harness rewrites resource samples as
+native Perfetto counter events and writes a sibling `*.summary.json`. The
+versioned summary records run identity, the git revision, exact process peak
+RSS, root wall and dark time, CPU pool utilization, counter statistics, and
+inclusive and same-thread self time for every span label. Per-label inclusive
+totals can exceed wall time because instances on different Rayon workers are
+summed. Dark time is root-thread wall time not covered by a root-thread child.
+
+Quick inspection without opening Perfetto:
+
+```bash
+jq '{run, root, peak_rss_gib, cpu_utilization}' \
+  profile_traces/akita_nv28_dense_fp128_*.summary.json
+jq '.spans["DensePoly::decompose_fold"]' \
+  profile_traces/akita_nv28_dense_fp128_*.summary.json
+```
+
+The sampled RSS track shows when memory changes, while the `getrusage`
+high-water mark cannot miss a short peak between samples. Neither is an
+allocation profiler. Akita field values implement `Allocative` only under the
+Jolt compatibility feature, while the PCS setup, polynomial, and witness
+object graphs do not. Type-attributed heap snapshots therefore require an
+explicit object-graph instrumentation change. Use the RSS timeline and span
+summary to choose those snapshot boundaries rather than treating RSS as live
+object attribution.
+
 Disable parallel while retaining the same pruned workload:
 
 ```bash
-AKITA_MODE=onehot_fp128_d64 AKITA_NUM_VARS=32 \
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
   cargo run --release --no-default-features \
-  --features profile-onehot-fp128-d64 --example profile
+  --features profile-onehot-fp128 --example profile
 ```
+
+## Response model calibration
+
+Normal profile builds do not scan complete witnesses to measure source and
+response energies. Broad tracing filters such as `trace` do not enable those
+scans.
+
+Enable the extra measurements only when collecting response model data:
+
+```bash
+AKITA_MODE=onehot_fp128 AKITA_NUM_VARS=32 \
+  cargo run --release --no-default-features \
+  --features parallel,profile-onehot-fp128,response-model-diagnostics \
+  --example profile
+```
+
+This feature adds `fold_response_model` events to the trace. It also measures
+the exact energy of recursive source witnesses and response components. These
+operations can scan complete witness buffers, so traces from this mode do not
+measure normal prover performance.
+
+For each successful L2 fold, the report parser joins the measured response
+energy to that run's planned cap and fold level. It rejects missing
+measurements and cap violations. The machine-readable summary retains the
+measured energy, frozen cap, cap utilization, accepted nonce, and attempt
+count. This keeps empirical calibration tied to the exact schedule that
+produced the proof. It replaces detached literal fixtures in planner unit
+tests.
+
+The optional diagnostic events also carry exact incoming source energy and the
+challenge-scaled conditional mean. The standard report does not merge those
+multi-group source samples into the cap table. Analyze them as a separate
+calibration data set when evaluating the three percent source-model envelope.
 
 ## CI benchmark matrix
 
 Workflow: `.github/workflows/profile-bench.yml`.
-CI builds use `--no-default-features --features parallel,profile-ci`.
-When adding a bench case, extend the mode→feature table in
-`scripts/check_profile_ci_features.sh`.
+Each matrix group builds with the narrow `profile-ci-*` feature named beside
+its cases in the workflow. The head and merge base use the same feature when
+both revisions define it. An older merge base falls back to the `profile-ci`
+compatibility union. When adding a case, update its mode and schedule mapping in
+`scripts/check_profile_ci_features.sh`. That guard checks the narrow group
+feature and the compatibility union.
+
+The benchmark jobs consume the generated schedule tables committed at each
+revision. They do not regenerate those tables before compiling. The separate
+schedule drift CI job checks committed tables against the generator.
+
+The fold report names the opening method for every group. A coefficient packing
+row reports its challenge subring dimension `s`, packing factor `h`, packed
+partial width, and `Q_pack` width. It also reports the committed source
+encoding, witness chunk count, and whether EOR is present. These fields explain
+why a row can use less setup while taking more prover or verifier time. The
+report compares them with the merge base instead of inferring a method from the
+field tier or A ring dimension.
 
 Committed-fold A-role pricing (every cell folds securely):
 
 | Case | nv | np | Setup mode |
 |------|----|----|------------|
-| `onehot_fp32_d128` | 28 | 1 | `direct` |
-| `onehot_fp64_d128` | 28 | 1 | `direct` |
-| `dense_fp128_d64` | 24 | 1 | `direct` |
-| `onehot_fp128_d64_tensor` | 26 | 1 | `direct` |
-| `onehot_fp128_d64` | 32 | 1 | `direct` |
-| `onehot_fp128_d64` | 30 | 4 | `direct` |
-| `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `direct` |
-| `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `recursive` |
-| `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |
-| `onehot_fp128_d64_multi_chunk_w2r2` | 32 | 1 | `direct` |
-| `onehot_fp128_d64_multi_chunk_w4r2` | 32 | 1 | `direct` |
-| `onehot_fp128_d64_multi_chunk_w8r2` | 32 | 1 | `direct` |
+| `dense_fp32` | 26 | 1 | `direct` |
+| `onehot_fp32` | 30 | 1 | `direct` |
+| `dense_fp64` | 26 | 1 | `direct` |
+| `onehot_fp64` | 30 | 1 | `direct` |
+| `dense_fp128` | 28 | 1 | `direct` |
+| `onehot_fp128` | 36 | 1 | `direct` |
+| `onehot_fp128` | 36 | 1 | `recursive` |
+| `onehot_fp128_multi_group` | 32 | 4 | `direct` |
+| `onehot_fp128_multi_group_recursive` | 32 | 4 | `recursive` |
+| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |
+| `onehot_fp128_multi_chunk_w2r2` | 32 | 1 | `direct` |
+| `onehot_fp128_multi_chunk_w4r2` | 32 | 1 | `direct` |
+| `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
-fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
-GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
+The base profiles are separated by field into `profile-ci-fp32`,
+`profile-ci-fp64`, and `profile-ci-fp128-base`. Each job compiles only the
+schedule catalogs required by its rows. The fp128 base shard includes the
+direct and recursive one-hot catalogs so its two `nv=36` rows use the same
+binary. The fp32 and fp64 one-hot jobs use generated `nv=30` schedules while
+keeping the 1 GiB equality-table allocation guard active.
 The long multi-group recursive rows run in separate parallel CI groups so each
 task keeps one benchmark case. The distributed rows also run in their own group
-and are compared against merge-base like the other rows.
+and are compared against the merge base like the other rows.
 
-Report pipeline: `scripts/profile_bench_report.py`.
-Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
+The workflow file is the source of truth for the active cases. The table above
+is a summary and may lag.
+
+### What the profiles prove
+
+Every row measures a complete PCS opening proof.
+
+| Profile family | Public opening statement |
+|----------------|--------------------------|
+| Dense `nv26` | One committed 26 variable multilinear polynomial with `2^26` coefficients, opened at one 26 coordinate point for fp32 and fp64. |
+| Dense Fp128 `nv28` | One committed 28 variable multilinear polynomial with `2^28` coefficients, opened at one 28 coordinate point. |
+| One hot `nv30` | One committed 30 variable multilinear polynomial with `2^30` coefficients, opened at one 30 coordinate point. |
+| One hot `nv36` | One committed 36 variable multilinear polynomial with `2^36` coefficients, opened at one 36 coordinate point. The direct and recursive rows prove this same statement. |
+| One hot distributed `nv32` | One committed 32 variable multilinear polynomial with `2^32` coefficients, opened at one 32 coordinate point with W2R2, W4R2, or W8R2 witness partitioning. |
+| Multi group | Four polynomials in three groups. Two precommitted groups each contain one 16 variable polynomial and use independent 16 coordinate points. The final group contains two 32 variable polynomials that share one 32 coordinate point. |
+
+The one-hot generator places one `1` in every consecutive 256 coefficient
+chunk. This is the benchmark witness shape. The public statement checks only
+commitment and opening consistency. It does not assert one-hot structure.
+
+`direct` evaluates the public setup matrix contribution during Stage 2.
+`recursive` carries the same check through a Stage 3 setup-product sumcheck.
+Both modes execute the complete fold schedule and terminal verification. A
+`W2R2`, `W4R2`, or `W8R2` profile divides the witness relation into 2, 4, or 8
+exact chunks for the first two fold levels. Generated profiles may select
+different A, B, and D ring dimensions at different levels. The short report
+labels omit those selected dimensions.
+
+Each measured sample performs these operations:
+
+1. Prepare the public statement by generating deterministic witnesses and
+   opening points and computing the expected opening.
+2. Expand and prepare setup.
+3. Commit to the polynomials.
+4. Produce and serialize a complete proof.
+5. Check the reported proof size.
+6. Build verifier setup once.
+7. Verify the claimed openings with the configured multi-threaded pool.
+8. Verify the same proof and claims again with one thread.
+
+Dense runs expose the first step as `statement_prepare` in runtime logs and
+Perfetto. Its child spans split out evaluation generation and expected-opening
+computation. This is profile-harness work, not a PCS benchmark phase, so the CI
+report deliberately excludes it and begins at setup. The Perfetto root span
+includes statement preparation and both verifier runs, so protocol comparisons
+should use the named phase spans instead of root wall time.
+
+For extension-valued dense points, expected-opening preparation uses the same
+checked split-tensor contraction primitive as the dense backend. It streams the
+base evaluation table through split equality weights instead of allocating a
+full extension-field copy of the table.
+
+Dense root commitments always use the canonical coefficient table. Extension
+opening reduction and its tensor-packed witness are now suffix-only operations;
+they do not appear inside the root commit span.
+
+Dense profile witnesses use an index-derived SplitMix64 stream. This keeps the
+input deterministic while allowing every evaluation to be generated in
+parallel without a shared random-number generator. The generated `Vec` is
+transferred directly into `DensePoly`; it is not retained as a duplicate input
+buffer. This stream is benchmark data, not cryptographic randomness.
+
+The profile workflow does not test malformed proofs or rejection paths. The
+test suite owns those checks.
+
+### CI report format
+
+`scripts/profile_bench_report.py` writes `summary.json`, `summary.csv`, the
+compact pull request comment, and the full `report.md` artifact. The compact
+comment shows the public statements first. It then uses separate tables for
+phase time, memory and setup size, and proof size. This keeps each table narrow
+enough to read in a pull request. Every compact row also shows the resolved
+`A/B/D` dimension sequence, with consecutive repeated tuples collapsed.
+
+The full artifact keeps each fold in one side-by-side table. Each detailed cell
+uses named blocks for matrix geometry, decomposition, challenge parameters,
+witness or setup input, relation geometry, and proof components. Multi group
+rows repeat those blocks for each precommitment, final group, and setup offload
+instead of joining unrelated values in one line.
+
+The phase table begins at PCS setup and excludes statement preparation. It
+labels the existing verifier time as multi-threaded and adds a separate
+single-threaded verifier column. Both runs use the same proof, claims, and
+verifier setup. The multi-threaded run comes first so comparisons with older
+merge bases preserve the old measurement order. Profile CI sets both configured
+thread counts to the runner CPU count and rejects a runner with fewer than two
+CPUs. The single-threaded timing always uses one dedicated Rayon worker. Every
+profile Rayon pool uses a 64 MiB worker stack. Without the `parallel` feature,
+both verifier labels measure the same sequential execution.
+
+Pull request runs compare the head with its merge base. The two binaries run
+interleaved on the same runner. User-facing report text must say merge base, not
+main. The full artifact may also show a prior run from the same pull request,
+but that prior run is not the baseline for the reported delta.
+
+Times are medians of the measured samples after the configured warmup runs.
+Peak RSS is the largest sample. A negative delta means less time, memory, or
+proof data. Failed cases remain visible and identify the phase that failed.
+
+Each sample runs in a new process and constructs setup in memory. Profile CI
+does not enable disk persistence. Setup time therefore does not include loading
+a setup matrix or prefix registry from an earlier sample.
 
 `Setup and preparation` includes exact NTT prewarming for the resolved profile
 execution on its uniform CPU stack. This is an execution prewarm, not part of
-public setup identity or `ComputeBackendSetup::prepare_setup`: it joins the root
-commitment requirements with `NttExecutionRequirements::from_prove_schedule`
-and materializes the resulting per-dimension, per-domain prefixes before the
-online timers begin. The harness rejects any later cache growth during commit
-or prove. Consequently, `Commit` and `Prove` measure hot-cache protocol work,
-while `Prepared NTT cache size` remains the exact execution-resident footprint.
+public setup identity or `ComputeBackendSetup::prepare_setup`: the canonical
+`NttExecutionRequirements::from_commit_and_prove_schedule` constructor derives
+all root-commit and prove requirements before materializing the retained
+per-dimension, per-domain prefixes. The CPU retention policy skips large ring switch
+requirements that runtime streams. The harness rejects growth of retained
+cache entries during commit or prove. Consequently, `Commit` and `Prove`
+measure hot-cache work plus intentional streamed work, while `Prepared NTT
+cache size` reports the exact shared matrix footprint at the prewarm boundary.
+Compression cache entries are operation driven and are not included in that
+setup line. `CpuPreparedSetup::ntt_cache_bytes` reports the complete actual
+resident total when an application needs it.
+
+Each profile run prints the default CPU resource policy before it starts. The
+report includes the maximum cached ring switch extent and the sparse
+commitment scratch bytes for each worker. This makes runs comparable when
+those deployment limits change.
 
 ## NTT matvec microbenchmarks
 
@@ -120,6 +330,12 @@ The first group sweeps ring degrees 64, 128, 256, and 512 and output ranks 1,
 rank 4. Every shape includes the current i8/L8 prover path and unified i16
 L8/L10/L11 paths. Labels state whether the exact i16 path uses only the base
 CRT residues or also the optional i16 tail.
+
+On a host with AVX-512IFMA, the labels also identify the `ifma52` exact cache
+when the field, degree, width, and signed bound select it. This label means
+canonical 50-bit residues in `u64` lanes. It does not mean that the ordinary
+i32 NTT has switched to the width-aware AVX-512 transform. Production x86 i32
+NTT dispatch still selects AVX2.
 
 The equal-output group compares D64/rank-8, D128/rank-4, D256/rank-2, and
 D512/rank-1 at widths 128, 256, 512, and 1024. All four return 512 field

@@ -41,7 +41,7 @@ impl<E: Field> SetupContributionPlan<E> {
         }
 
         for group in &self.groups {
-            let (_, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
+            let (_, _t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
             let a_view = setup
                 .shared_matrix
                 .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
@@ -59,19 +59,30 @@ impl<E: Field> SetupContributionPlan<E> {
                 )?;
             }
 
-            let b_view = setup
-                .shared_matrix
-                .ring_view_dyn(group.n_b, group.t_cols, d_b)?;
-            for (row_idx, &row_weight) in group.b_weights.iter().enumerate() {
-                if row_weight.is_zero() {
-                    continue;
-                }
+            let b_view = setup.shared_matrix.ring_view_dyn(
+                group.physical_b.physical_rows(),
+                group.physical_b.physical_input_width(),
+                d_b,
+            )?;
+            let direct = group
+                .direct_scan_weights
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?;
+            let b_setup_weights = group
+                .physical_b
+                .contract_logical_column_weights(&direct.t)?;
+            for row_idx in 0..group.physical_b.physical_rows() {
                 let row = b_view.row_flat(row_idx)?;
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
-                    t_eq_slice,
-                    row_weight,
+                    checked_slice(
+                        &b_setup_weights,
+                        row_idx * group.physical_b.physical_input_width(),
+                        group.physical_b.physical_input_width(),
+                        "physical B setup weights",
+                    )?,
+                    E::one(),
                     alpha_pows_b,
                 )?;
             }

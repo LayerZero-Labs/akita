@@ -1,8 +1,11 @@
 use super::*;
+use crate::api::commitment::commit_outer_slices;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{CommitInnerPlan, OperationCtx};
+use crate::compute::{CommitInnerPlan, OperationCtx, RuntimeCommitBackendFor};
 use crate::kernels::linear::decompose_commit_blocks_into;
-use akita_types::{dispatch_for_field, CompressionChainPlan, TerminalCommittedGroupParams};
+use akita_types::{
+    dispatch_for_field, CommittedSourceEncoding, CompressionChainPlan, TerminalCommittedGroupParams,
+};
 
 /// Public state bound for the witness produced by one intermediate fold.
 pub enum NextWitnessState<F: Field> {
@@ -36,34 +39,47 @@ pub struct NextWitnessStateOutput<F: Field> {
 #[inline(never)]
 pub fn commit_w<Cfg, B>(
     commit_params: &CommittedGroupParams,
+    fold_level: usize,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: Field + CanonicalEncoding,
-    B: CommitmentComputeBackend<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    B: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>,
 {
     let dims = commit_params.role_dims();
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
-    validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
+    let slice_geometry = validate_commit_level_params::<Cfg::Field>(
+        commit_params,
+        expanded.as_ref(),
+        fold_level,
+        1,
+    )?;
 
     let (packed_witness, inner_rows, commitment, compression_witness) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
         dims.d_a(),
         |D_A| {
-            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE == 1 {
-                None
-            } else {
-                Some(tensor_pack_recursive_witness::<
-                    Cfg::Field,
-                    Cfg::ExtField,
-                    D_A,
-                >(logical_w)?)
+            let packed_witness = match commit_params.source_encoding {
+                CommittedSourceEncoding::CanonicalCoefficientTable => None,
+                CommittedSourceEncoding::TensorSubfieldProjection { extension_degree } => {
+                    if extension_degree != <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE {
+                        return Err(AkitaError::InvalidSetup(
+                            "recursive tensor source encoding does not match the protocol extension degree"
+                                .into(),
+                        ));
+                    }
+                    Some(tensor_pack_recursive_witness::<
+                        Cfg::Field,
+                        Cfg::ExtField,
+                        D_A,
+                    >(logical_w)?)
+                }
             };
             let w = packed_witness.as_ref().unwrap_or(logical_w);
             let committed_coeff_len = w.committed_coeff_len()?;
@@ -90,7 +106,10 @@ where
 
             let w_view = w.view::<Cfg::Field, D_A>()?;
             let plan = CommitInnerPlan::from_level(commit_params);
-            let inner = w_view.commit_inner(backend, prepared, plan)?;
+            let inner_group = backend.commit_inner_group(prepared, vec![w_view], plan)?;
+            let [inner] = inner_group
+                .try_into()
+                .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
                 commit_params.num_live_blocks,
@@ -110,17 +129,14 @@ where
                         commit_params.num_digits_outer,
                         commit_params.log_basis_outer,
                     )?;
-                    validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-                    let outer_input = decomposed_inner_rows.typed_planes::<D_B>()?;
-                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
+                    let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = commit_outer_slices(
+                        backend,
                         prepared,
                         commit_params.outer_commit_matrix.output_rank(),
-                        outer_input,
+                        std::iter::once(&decomposed_inner_rows),
+                        &slice_geometry,
                         commit_params.log_basis_outer,
                     )?;
-                    if u.len() != commit_params.outer_commit_matrix.output_rank() {
-                        return Err(AkitaError::InvalidProof);
-                    }
                     let source = RingVec::from_ring_elems(&u);
                     if !commit_params.payload_mode.is_compressed() {
                         Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))
@@ -149,7 +165,7 @@ where
                             .ok_or(AkitaError::InvalidProof)?
                             .ring_dimension();
                         let payload = RingVec::from_coeffs_with_ring_dim(
-                            output.terminal.coefficients().to_vec(),
+                            output.terminal.into_coefficients(),
                             terminal_ring_dim,
                         )?;
                         Ok::<_, AkitaError>((
@@ -191,8 +207,8 @@ pub fn commit_terminal_w<Cfg, B>(
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: Field + CanonicalEncoding + Field,
-    B: CommitmentComputeBackend<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    B: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>,
 {
     let ring_dim = commit_params.d_a();
     let backend = commit_ctx.backend();
@@ -215,30 +231,17 @@ where
             };
             let witness = packed_witness.as_ref().unwrap_or(logical_w);
             let view = witness.view::<Cfg::Field, D_A>()?;
-            let rows = view.commit_inner_rows(
-                backend,
-                prepared,
-                commit_params.inner_commit_matrix.output_rank(),
-                commit_params.num_positions_per_block,
-                commit_params.num_digits_inner,
-                commit_params.log_basis_inner,
-            )?;
-            let coeff_len = rows
-                .iter()
-                .try_fold(0usize, |len, row| {
-                    len.checked_add(row.len().checked_mul(D_A)?)
-                })
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut coeffs = Vec::with_capacity(coeff_len);
-            for row in rows {
-                for ring in row {
-                    coeffs.extend_from_slice(ring.coefficients());
-                }
-            }
-            Ok::<_, AkitaError>((
-                packed_witness,
-                RingVec::from_coeffs_with_ring_dim(coeffs, D_A)?,
-            ))
+            let plan = CommitInnerPlan {
+                n_a: commit_params.inner_commit_matrix.output_rank(),
+                num_positions_per_block: commit_params.num_positions_per_block,
+                num_digits_inner: commit_params.num_digits_inner,
+                log_basis_inner: commit_params.log_basis_inner,
+            };
+            let inner_group = backend.commit_inner_group(prepared, vec![view], plan)?;
+            let [inner] = inner_group
+                .try_into()
+                .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
+            Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows()))
         }
     )?;
     Ok(NextWitnessStateOutput {

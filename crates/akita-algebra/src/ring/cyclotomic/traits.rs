@@ -2,9 +2,6 @@ use super::*;
 
 impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     /// Samples a ring element with uniformly random coefficients.
-    ///
-    /// Inherent because the rebuilt `jolt-field` folds sampling into `Field`,
-    /// and `CyclotomicRing` is a ring, not a field.
     pub fn random<R: RngCore>(rng: &mut R) -> Self {
         Self {
             coeffs: from_fn(|_| F::random(rng)),
@@ -163,8 +160,6 @@ impl<'a, F: Field, const D: usize> Product<&'a Self> for CyclotomicRing<F, D> {
 
 impl<F: Field, const D: usize> AdditiveGroup for CyclotomicRing<F, D> {}
 impl<F: Field, const D: usize> Ring for CyclotomicRing<F, D> {
-    // The integer embedding maps into the constant coefficient, matching the
-    // `F -> CyclotomicRing` embedding used throughout the ring backends.
     fn from_u64(v: u64) -> Self {
         Self::from_slice(&[F::from_u64(v)])
     }

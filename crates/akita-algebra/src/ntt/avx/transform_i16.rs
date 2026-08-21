@@ -3,7 +3,10 @@ use std::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::montgomery::{mont_mul_16x_i16_avx2, reduce_range_16x_i16_avx2};
+use super::montgomery::{
+    forward_dif_tail_i16_avx2, inverse_dit_head_i16_avx2, mont_mul_16x_i16_avx2,
+    reduce_range_16x_i16_avx2,
+};
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime};
 
@@ -36,7 +39,7 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
     }
 
     let mut len = D / 2;
-    while len > 0 {
+    while len >= 16 {
         let twiddle_base = len - 1;
         let mut start = 0usize;
         while start < D {
@@ -74,20 +77,44 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
         len /= 2;
     }
 
-    let mut i = 0usize;
-    while i + 16 <= D {
+    if D.is_multiple_of(16) && len == 8 {
         unsafe {
-            let values = _mm256_loadu_si256(ptr.add(i) as *const __m256i);
-            _mm256_storeu_si256(
-                ptr.add(i) as *mut __m256i,
-                reduce_range_16x_i16_avx2(values, p),
-            );
+            forward_dif_tail_i16_avx2::<D>(ptr, tw.fwd_twiddles.as_ptr() as *const i16, p, pinv);
         }
-        i += 16;
-    }
-    while i < D {
-        a[i] = prime.reduce_range(a[i]);
-        i += 1;
+    } else {
+        while len > 0 {
+            let twiddle_base = len - 1;
+            let mut start = 0usize;
+            while start < D {
+                for j in 0..len {
+                    let w = tw.fwd_twiddles[twiddle_base + j];
+                    let u = a[start + j];
+                    let v = a[start + j + len];
+                    a[start + j] =
+                        prime.reduce_range(MontCoeff::from_raw(u.raw().wrapping_add(v.raw())));
+                    a[start + j + len] =
+                        prime.mul(MontCoeff::from_raw(u.raw().wrapping_sub(v.raw())), w);
+                }
+                start += 2 * len;
+            }
+            len /= 2;
+        }
+
+        let mut i = 0usize;
+        while i + 16 <= D {
+            unsafe {
+                let values = _mm256_loadu_si256(ptr.add(i) as *const __m256i);
+                _mm256_storeu_si256(
+                    ptr.add(i) as *mut __m256i,
+                    reduce_range_16x_i16_avx2(values, p),
+                );
+            }
+            i += 16;
+        }
+        while i < D {
+            a[i] = prime.reduce_range(a[i]);
+            i += 1;
+        }
     }
 }
 
@@ -103,6 +130,12 @@ pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
     let ptr = a.as_mut_ptr() as *mut i16;
 
     let mut len = 1usize;
+    if D >= 16 && D.is_multiple_of(16) {
+        unsafe {
+            inverse_dit_head_i16_avx2::<D>(ptr, tw.inv_twiddles.as_ptr() as *const i16, p, pinv);
+        }
+        len = 16;
+    }
     while len < D {
         let twiddle_base = len - 1;
         let mut start = 0usize;

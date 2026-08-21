@@ -2,7 +2,8 @@
 //!
 //! Used by Akita stage sumchecks for compact-witness folding.
 
-use jolt_field::{Field, Ring, Unreduced};
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring};
 
 /// Precomputed lookup table for folding pairs of small integer values at a
 /// fixed challenge `r`.

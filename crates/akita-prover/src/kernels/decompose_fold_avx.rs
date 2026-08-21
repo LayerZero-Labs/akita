@@ -13,10 +13,9 @@ use std::arch::x86_64::*;
 ///
 /// For each challenge term `(pos, coeff)`, rotates the `digit_plane` by `pos`
 /// positions in the negacyclic ring (X^D + 1) and adds or subtracts the
-/// widened `i8` values into the `i32` `acc`. Small magnitudes like `±2` reuse
-/// the unit add/sub kernel multiple times so two-magnitude families
-/// (e.g. exact-shell challenges with `max_abs_coeff <= 2`) stay on the SIMD
-/// fast path.
+/// widened `i8` values into the `i32` `acc`. Coefficients `±2` use one
+/// widened, doubled add/sub pass so two-magnitude challenge families stay on
+/// the SIMD fast path without repeating a full rotation.
 ///
 /// # Safety
 ///
@@ -40,14 +39,8 @@ pub(crate) unsafe fn sparse_mul_acc_avx(
         match coeff {
             1 => acc_rotated_add(digit_plane, acc, d, p, split),
             -1 => acc_rotated_sub(digit_plane, acc, d, p, split),
-            2 => {
-                acc_rotated_add(digit_plane, acc, d, p, split);
-                acc_rotated_add(digit_plane, acc, d, p, split);
-            }
-            -2 => {
-                acc_rotated_sub(digit_plane, acc, d, p, split);
-                acc_rotated_sub(digit_plane, acc, d, p, split);
-            }
+            2 => acc_rotated_add_twice(digit_plane, acc, p, split),
+            -2 => acc_rotated_sub_twice(digit_plane, acc, p, split),
             _ => {
                 for _ in 0..coeff.unsigned_abs() {
                     if coeff > 0 {
@@ -58,6 +51,189 @@ pub(crate) unsafe fn sparse_mul_acc_avx(
                 }
             }
         }
+    }
+}
+
+/// Branch-free AVX2 kernel for a prepared ±1-only challenge.
+///
+/// # Safety
+///
+/// `digit_plane` and `acc` must each address `d` valid elements, every
+/// position must be below `d`, and `d` must be a multiple of 16.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn sparse_mul_acc_pm1_avx(
+    digit_plane: *const i8,
+    acc: *mut i32,
+    d: usize,
+    positive: &[u32],
+    negative: &[u32],
+) {
+    debug_assert!(d.is_multiple_of(16));
+    for &position in positive {
+        let position = position as usize;
+        acc_rotated_add(digit_plane, acc, d, position, d - position);
+    }
+    for &position in negative {
+        let position = position as usize;
+        acc_rotated_sub(digit_plane, acc, d, position, d - position);
+    }
+}
+
+/// Signed-i16 variant used by large inner decomposition bases.
+///
+/// # Safety
+///
+/// - `digit_plane` must point to at least `d` valid `i16` values.
+/// - `acc` must point to at least `d` valid `i32` values.
+/// - Every challenge position must be less than `d`.
+/// - `positions` and `coeffs` must have equal lengths.
+/// - `d` must be a multiple of 8.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn sparse_mul_acc_i16_avx(
+    digit_plane: *const i16,
+    acc: *mut i32,
+    d: usize,
+    positions: &[u32],
+    coeffs: &[i8],
+) {
+    debug_assert!(d.is_multiple_of(8));
+    for (&pos, &coeff) in positions.iter().zip(coeffs.iter()) {
+        let p = pos as usize;
+        let split = d - p;
+        match coeff {
+            1 => {
+                acc_segment_i16_add(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_sub(digit_plane.add(split), acc, p);
+                }
+            }
+            -1 => {
+                acc_segment_i16_sub(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_add(digit_plane.add(split), acc, p);
+                }
+            }
+            2 => {
+                acc_segment_i16_add_twice(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_sub_twice(digit_plane.add(split), acc, p);
+                }
+            }
+            -2 => {
+                acc_segment_i16_sub_twice(digit_plane, acc.add(p), split);
+                if p > 0 {
+                    acc_segment_i16_add_twice(digit_plane.add(split), acc, p);
+                }
+            }
+            _ => {
+                for _ in 0..coeff.unsigned_abs() {
+                    if coeff > 0 {
+                        acc_segment_i16_add(digit_plane, acc.add(p), split);
+                        if p > 0 {
+                            acc_segment_i16_sub(digit_plane.add(split), acc, p);
+                        }
+                    } else {
+                        acc_segment_i16_sub(digit_plane, acc.add(p), split);
+                        if p > 0 {
+                            acc_segment_i16_add(digit_plane.add(split), acc, p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Branch-free AVX2 i16 kernel for a prepared ±1-only challenge.
+///
+/// # Safety
+///
+/// `digit_plane` and `acc` must each address `d` valid elements, every
+/// position must be below `d`, and `d` must be a multiple of 8.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn sparse_mul_acc_i16_pm1_avx(
+    digit_plane: *const i16,
+    acc: *mut i32,
+    d: usize,
+    positive: &[u32],
+    negative: &[u32],
+) {
+    debug_assert!(d.is_multiple_of(8));
+    for &position in positive {
+        let position = position as usize;
+        let split = d - position;
+        acc_segment_i16_add(digit_plane, acc.add(position), split);
+        if position > 0 {
+            acc_segment_i16_sub(digit_plane.add(split), acc, position);
+        }
+    }
+    for &position in negative {
+        let position = position as usize;
+        let split = d - position;
+        acc_segment_i16_sub(digit_plane, acc.add(position), split);
+        if position > 0 {
+            acc_segment_i16_add(digit_plane.add(split), acc, position);
+        }
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_add(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_cvtepi16_epi32(values);
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_add_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) += i32::from(*src.add(i));
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_sub(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_cvtepi16_epi32(values);
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_sub_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) -= i32::from(*src.add(i));
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_add_twice(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_slli_epi32::<1>(_mm256_cvtepi16_epi32(values));
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_add_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) += 2 * i32::from(*src.add(i));
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_i16_sub_twice(src: *const i16, dst: *mut i32, len: usize) {
+    let chunks = len / 8;
+    for i in 0..chunks {
+        let offset = i * 8;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let widened = _mm256_slli_epi32::<1>(_mm256_cvtepi16_epi32(values));
+        let current = _mm256_loadu_si256(dst.add(offset).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_sub_epi32(current, widened));
+    }
+    for i in chunks * 8..len {
+        *dst.add(i) -= 2 * i32::from(*src.add(i));
     }
 }
 
@@ -87,6 +263,22 @@ unsafe fn acc_rotated_sub(digits: *const i8, acc: *mut i32, d: usize, p: usize, 
         acc_segment_add(digits.add(split), acc, p);
     }
     let _ = d;
+}
+
+#[inline(always)]
+unsafe fn acc_rotated_add_twice(digits: *const i8, acc: *mut i32, p: usize, split: usize) {
+    acc_segment_add_twice(digits, acc.add(p), split);
+    if p > 0 {
+        acc_segment_sub_twice(digits.add(split), acc, p);
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_rotated_sub_twice(digits: *const i8, acc: *mut i32, p: usize, split: usize) {
+    acc_segment_sub_twice(digits, acc.add(p), split);
+    if p > 0 {
+        acc_segment_add_twice(digits.add(split), acc, p);
+    }
 }
 
 /// Widen `i8` source values to `i32` and add into accumulator.
@@ -145,5 +337,41 @@ unsafe fn acc_segment_sub(src: *const i8, dst: *mut i32, len: usize) {
     for i in 0..rem {
         let val = *src.add(base + i) as i32;
         *dst.add(base + i) -= val;
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_add_twice(src: *const i8, dst: *mut i32, len: usize) {
+    let chunks = len / 16;
+    for i in 0..chunks {
+        let offset = i * 16;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let low = _mm256_slli_epi32::<1>(_mm256_cvtepi8_epi32(values));
+        let high = _mm256_slli_epi32::<1>(_mm256_cvtepi8_epi32(_mm_srli_si128::<8>(values)));
+        let dst_low = _mm256_loadu_si256(dst.add(offset).cast());
+        let dst_high = _mm256_loadu_si256(dst.add(offset + 8).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_add_epi32(dst_low, low));
+        _mm256_storeu_si256(dst.add(offset + 8).cast(), _mm256_add_epi32(dst_high, high));
+    }
+    for i in chunks * 16..len {
+        *dst.add(i) += 2 * i32::from(*src.add(i));
+    }
+}
+
+#[inline(always)]
+unsafe fn acc_segment_sub_twice(src: *const i8, dst: *mut i32, len: usize) {
+    let chunks = len / 16;
+    for i in 0..chunks {
+        let offset = i * 16;
+        let values = _mm_loadu_si128(src.add(offset).cast());
+        let low = _mm256_slli_epi32::<1>(_mm256_cvtepi8_epi32(values));
+        let high = _mm256_slli_epi32::<1>(_mm256_cvtepi8_epi32(_mm_srli_si128::<8>(values)));
+        let dst_low = _mm256_loadu_si256(dst.add(offset).cast());
+        let dst_high = _mm256_loadu_si256(dst.add(offset + 8).cast());
+        _mm256_storeu_si256(dst.add(offset).cast(), _mm256_sub_epi32(dst_low, low));
+        _mm256_storeu_si256(dst.add(offset + 8).cast(), _mm256_sub_epi32(dst_high, high));
+    }
+    for i in chunks * 16..len {
+        *dst.add(i) -= 2 * i32::from(*src.add(i));
     }
 }

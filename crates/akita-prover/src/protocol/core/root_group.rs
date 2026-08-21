@@ -2,29 +2,45 @@
 
 use super::*;
 use crate::compute::{
-    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
-    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
+    RuntimeCoefficientPackingBackendFor, RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
+    RuntimeTensorBackendFor, RuntimeTensorSource, SubringCoefficientPackingBatchKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use crate::{PreparedProverGroup, RootTensorProjectionPoly};
-use akita_challenges::Challenges;
-use akita_types::LevelParamsLike;
-use jolt_field::Ring;
-use jolt_field::Unreduced;
+use crate::PreparedProverGroup;
+use akita_types::{
+    coefficient_packing_scalar_opening, LevelParamsLike, OpeningFamily, OpeningMethod,
+    PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+};
+use jolt_field::AdditiveGroup;
+
+pub(crate) struct PreparedEvaluationTraceGroup<F: Field, E: Field> {
+    pub(crate) point: PreparedOpeningPoint<F, E>,
+    pub(crate) folded_by_claim: Vec<RingVec<F>>,
+}
+
+pub(crate) struct PreparedCoefficientPackingGroup<F: Field, E: Field> {
+    pub(crate) point: PreparedSubringCoefficientPackingPoint<E>,
+    pub(crate) partials_by_claim: Vec<SubringCoefficientPackingPartials<F>>,
+}
 
 pub(crate) struct PreparedGroupOpening<F: Field, E: Field> {
-    pub(in crate::protocol) point: PreparedOpeningPoint<F, E>,
-    pub(in crate::protocol) folded_by_claim: Vec<RingVec<F>>,
-    pub(in crate::protocol) scalar_openings: Vec<E>,
+    pub(crate) kind:
+        OpeningFamily<PreparedEvaluationTraceGroup<F, E>, PreparedCoefficientPackingGroup<F, E>>,
+    pub(crate) scalar_openings: Vec<E>,
 }
 
 pub(crate) trait RootProverGroupMeta<F: Field> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128>;
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
 {
@@ -38,20 +54,22 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
+        opening_method: OpeningMethod,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError>;
 
     fn probe_fold(
         &self,
         ctx: &OperationCtx<'_, F, B>,
-        challenges: &Challenges,
+        challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError>;
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError>;
 }
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + MulBaseUnreduced<F>,
     B: ComputeBackendSetup<F>,
 {
@@ -63,19 +81,12 @@ where
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>;
 
-    fn tensor_project(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-    ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError>;
-
     fn extension_opening_terms(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
+        claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
@@ -106,14 +117,26 @@ where
         }
         Ok(num_vars)
     }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
+        self.polynomial_refs().iter().try_fold(0u128, |sum, poly| {
+            crate::compute::RootPolyMeta::<F>::exact_integer_coeff_l2_sq(*poly)
+                .and_then(|energy| sum.checked_add(energy))
+        })
+    }
 }
 
 impl<F, E, P, B> RootProverGroupOpening<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + 'static,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     P: RuntimeRootProvePoly<F>,
-    B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
+    B: ComputeBackendSetup<F>
+        + DigitRowsComputeBackend<F>
+        + RuntimeOpeningProveBackendFor<F, P>
+        + RuntimeCoefficientPackingBackendFor<F, P, E>,
 {
     fn prepare_opening(
         &self,
@@ -124,12 +147,86 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
+        opening_method: OpeningMethod,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_dimension,
             |D| {
+                if let OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension,
+                } = opening_method
+                {
+                    let geometry = SubringCoefficientPackingGeometry::try_new(
+                        E::DEGREE,
+                        D,
+                        challenge_subring_dimension,
+                    )?;
+                    let source_num_vars = self.num_vars()?;
+                    let polys = self.polynomial_refs();
+                    let first = polys.first().ok_or_else(|| {
+                        AkitaError::InvalidInput("opening group must be nonempty".into())
+                    })?;
+                    let num_live_positions =
+                        <P as crate::compute::RootPolyShape<F, D>>::num_live_ring_elems(*first);
+                    if polys.iter().any(|poly| {
+                        <P as crate::compute::RootPolyShape<F, D>>::num_live_ring_elems(*poly)
+                            != num_live_positions
+                            || <P as crate::compute::RootPolyShape<F, D>>::num_vars(*poly)
+                                != source_num_vars
+                    }) || num_live_positions.div_ceil(num_positions_per_block) != num_live_blocks
+                    {
+                        return Err(AkitaError::InvalidInput(
+                            "coefficient-packing source shape disagrees within its group".into(),
+                        ));
+                    }
+                    let point = PreparedSubringCoefficientPackingPoint::new(
+                        geometry,
+                        basis,
+                        num_live_positions,
+                        num_positions_per_block,
+                        source_num_vars,
+                        protocol_point,
+                    )?;
+                    let batch =
+                        <P as crate::compute::RootOpeningSource<F, D>>::opening_batch(polys)?;
+                    let partials_by_claim =
+                        SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
+                            ctx.backend(),
+                            Some(ctx.prepared()),
+                            batch,
+                            SubringCoefficientPackingPlan { point: &point },
+                        )?;
+                    if partials_by_claim.len() != polys.len() {
+                        return Err(AkitaError::InvalidSize {
+                            expected: polys.len(),
+                            actual: partials_by_claim.len(),
+                        });
+                    }
+                    let scalar_openings = partials_by_claim
+                        .iter()
+                        .map(|partials| {
+                            coefficient_packing_scalar_opening::<F, E>(
+                                geometry,
+                                point.num_live_blocks(),
+                                std::slice::from_ref(partials),
+                                &[E::one()],
+                                point.live_block_weights(),
+                                point.tail_weights(),
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(PreparedGroupOpening {
+                        kind: OpeningFamily::SubringCoefficientPacking(
+                            PreparedCoefficientPackingGroup {
+                                point,
+                                partials_by_claim,
+                            },
+                        ),
+                        scalar_openings,
+                    });
+                }
                 let (point, (folded_rings, folded_by_claim)) =
                     prepare_and_evaluate_opening_group::<F, E, P, B, D>(
                         ctx.backend(),
@@ -154,11 +251,13 @@ where
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok::<_, AkitaError>(PreparedGroupOpening {
-                    point,
-                    folded_by_claim: folded_by_claim
-                        .iter()
-                        .map(|rows| RingVec::from_ring_elems(rows).into_compact())
-                        .collect(),
+                    kind: OpeningFamily::EvaluationTrace(PreparedEvaluationTraceGroup {
+                        point,
+                        folded_by_claim: folded_by_claim
+                            .iter()
+                            .map(|rows| RingVec::from_ring_elems(rows).into_compact())
+                            .collect(),
+                    }),
                     scalar_openings,
                 })
             }
@@ -168,10 +267,10 @@ where
     fn probe_fold(
         &self,
         ctx: &OperationCtx<'_, F, B>,
-        challenges: &Challenges,
+        challenges: &crate::protocol::fold_grind::GroupFoldChallenges,
         root_params: &CommittedGroupParams,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError> {
+    ) -> Result<crate::protocol::fold_grind::FoldProbeOutput<F>, AkitaError> {
         let ring_dimension = params.inner_commit_matrix_params().ring_dimension();
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -179,22 +278,19 @@ where
             ring_dimension,
             |D| {
                 let point_indices = (0..self.num_polynomials()).collect::<Vec<_>>();
-                let (witness, centered) =
+                let (witness, coefficients) =
                     crate::protocol::fold_grind::fold_probe_witness_kernel::<F, P, B, D>(
                         ctx.backend(),
                         Some(ctx.prepared()),
-                        challenges,
+                        challenges.ambient_a(),
                         self.polynomial_refs(),
                         &point_indices,
                         root_params,
                         params,
                     )?;
-                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldGrindGroupOutput {
+                Ok::<_, AkitaError>(crate::protocol::fold_grind::FoldProbeOutput {
                     witness,
-                    centered_per_chunk: centered
-                        .into_iter()
-                        .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                        .collect(),
+                    coefficients,
                     challenges: challenges.clone(),
                 })
             }
@@ -204,9 +300,10 @@ where
 
 impl<F, E, P, B> RootProverGroupTensor<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: Ring + Unreduced + Field + CanonicalEncoding + akita_serialization::AkitaSerialize + 'static,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RuntimeRootProvePoly<F> + RuntimeTensorSource<F>,
     B: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E>,
 {
     fn prepare_extension_opening(
@@ -229,31 +326,12 @@ where
         )
     }
 
-    fn tensor_project(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-    ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError> {
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_dimension,
-            |D| {
-                self.polynomial_refs()
-                    .iter()
-                    .map(|poly| tensor_root_projection::<F, P, E, B, D>(backend, prepared, *poly))
-                    .collect()
-            }
-        )
-    }
-
     fn extension_opening_terms(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
         ring_dimension: usize,
-        row_coefficients: &[E],
+        claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
     ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
@@ -265,7 +343,7 @@ where
                 backend,
                 prepared,
                 self.polynomial_refs(),
-                row_coefficients,
+                claim_coefficients,
                 tail_point,
                 eta,
             )

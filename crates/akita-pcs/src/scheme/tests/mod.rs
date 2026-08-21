@@ -3,45 +3,40 @@
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
-use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{
-    DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
-};
+use akita_prover::{DensePoly, OneHotPoly, PreparedProverGroup, SelectedProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
 use akita_types::DigitRangePlan;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
-    lagrange_weights, monomial_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field,
+    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field, RingVec,
 };
 use akita_types::{
-    AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, RingVec,
-    TerminalLevelProofShape,
+    AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, TerminalLevelProofShape,
 };
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
-use jolt_field::Zero;
+use jolt_field::{One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-type Cfg = fp128::D64Dense;
+type Cfg = fp128::Dense;
 type F = fp128::Field;
-const D: usize = Cfg::D;
+const D: usize = 512;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
-type OneHotCfg = fp128::D64OneHot;
-type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
-const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` uses K=256 one-hot chunks, spanning `K/D = 4` ring elements.
+type OneHotCfg = fp128::OneHot;
+const ONEHOT_D: usize = 256;
+// `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
-type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
+
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -54,9 +49,8 @@ type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
+mod coefficient_packing;
 mod dense_group;
-mod fp32_ext4;
-mod heterogeneous_group;
 mod layout;
 mod onehot;
 mod single;
@@ -70,12 +64,7 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    let profiles = batch_profiles::<C>(&claims)?;
-    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
-    Ok((
-        selection,
-        ProverOpeningData::new(claims, hints, polynomials)?,
-    ))
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
 }
 
 fn selected_statement<'a, C>(
@@ -95,32 +84,8 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    let selection = C::resolve_catalog_row_for_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
-}
-
-fn batch_profiles<C>(
-    claims: &OpeningClaims<'_, C::ExtField, CommittedGroup<C::Field>>,
-) -> Result<CommittedGroupBatchProfile, AkitaError>
-where
-    C: CommitmentConfig,
-{
-    let (final_group, precommitteds) = claims
-        .groups()
-        .split_last()
-        .ok_or_else(|| AkitaError::InvalidInput("opening data requires a group".into()))?;
-    Ok(CommittedGroupBatchProfile {
-        final_group: *final_group.commitment().profile(),
-        precommitteds: precommitteds
-            .iter()
-            .map(|group| *group.commitment().profile())
-            .collect(),
-    })
-}
-
-fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
-    let num_ring_elems = output_witness_len.div_ceil(level_d);
-    num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
 }
 
 /// Batched recursion already consults the byte planner before folding
@@ -128,104 +93,6 @@ fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
 /// fixed points, not enforce the single-proof shrink-ratio heuristic.
 fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
     witness_len <= MIN_W_LEN_FOR_FOLDING || witness_len >= prev_w_len
-}
-
-/// Derive the structural proof shape from the schedule. The terminal carries
-/// only optional EOR, its grind nonce, and the clear terminal response.
-fn expected_same_point_batched_shape(
-    max_num_vars: usize,
-    num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
-) -> AkitaBatchedProofShape {
-    let opening_batch =
-        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule =
-        OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
-    let root_step = &schedule.root;
-    let root_params = &root_step.params.final_group.commitment;
-    let num_fold_levels = schedule.num_fold_levels();
-    let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
-
-    assert!(
-        num_fold_levels >= 2,
-        "folded-only schedules have a root and terminal fold"
-    );
-
-    let root_successor = schedule.recursive_folds.first();
-    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .opening_payload_geometry()
-            .expect("opening payload geometry")
-            .transmitted_coefficients()
-    };
-    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
-        params
-            .outer_payload_geometry()
-            .expect("commitment payload geometry")
-            .transmitted_coefficients()
-    };
-    let root_shape = LevelProofShape {
-        extension_opening_reduction: None,
-        opening_payload_coeffs: opening_payload_coeffs(root_params),
-        stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
-            .expect("scheduled root range basis")
-            .stage_shapes(root_rounds),
-        stage2_sumcheck_proof: vec![3; root_rounds],
-        stage3_sumcheck: None,
-        next_witness_binding: match root_successor {
-            Some(successor) => {
-                let next_level_params = &successor.params.witness;
-                NextWitnessBindingShape::OuterPayload {
-                    coeffs: commitment_payload_coeffs(next_level_params),
-                }
-            }
-            None => NextWitnessBindingShape::TerminalInnerState,
-        },
-    };
-    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
-    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
-    // terminal step. (We've already consumed the root.)
-    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
-    let mut input_witness_len = root_step.output_witness_len;
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        assert_eq!(step.input_witness_len, input_witness_len);
-        let level_params = &step.params.witness;
-        let output_witness_len = step.output_witness_len;
-        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
-        recursive_folds.push(LevelProofShape {
-            extension_opening_reduction: None,
-            opening_payload_coeffs: opening_payload_coeffs(level_params),
-            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
-                .expect("scheduled range basis")
-                .stage_shapes(rounds),
-            stage2_sumcheck_proof: vec![3; rounds],
-            stage3_sumcheck: None,
-            next_witness_binding: match schedule.recursive_folds.get(index + 1) {
-                Some(successor) => {
-                    let next_level_params = &successor.params.witness;
-                    NextWitnessBindingShape::OuterPayload {
-                        coeffs: commitment_payload_coeffs(next_level_params),
-                    }
-                }
-                None => NextWitnessBindingShape::TerminalInnerState,
-            },
-        });
-        input_witness_len = output_witness_len;
-    }
-
-    // Terminal fold step (always present in the multi-fold case); the
-    // structural terminal field encodes its witness shape.
-    assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
-    let terminal = TerminalLevelProofShape {
-        extension_opening_reduction: None,
-        terminal_response: schedule.terminal.params.response_shape.clone(),
-    };
-
-    AkitaBatchedProofShape {
-        root: root_shape,
-        recursive_folds,
-        terminal,
-    }
 }
 
 fn prover_claims<'a, P>(
@@ -266,13 +133,20 @@ fn verifier_claims<'a>(
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     let len = 1usize << num_vars;
     let evals: Vec<F> = (0..len).map(|i| F::from_u64(i as u64)).collect();
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
+    let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
     (poly, evals)
 }
 
 fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
+    C::resolve_catalog_row_for_opening(&opening_batch)
+        .expect("singleton commitment layout")
+        .schedule()
+        .root
+        .params
+        .final_group
+        .commitment
+        .clone()
 }
 
 type VerifyFixture = (
@@ -291,13 +165,24 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let (poly, evals) = make_dense_poly(full_num_vars);
     let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
-    let (commitment, hint) =
-        Scheme::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack).unwrap();
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = Scheme::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -332,12 +217,131 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     )
 }
 
-fn dense_opening(evals: &[F], point: &[F]) -> F {
-    let lw = lagrange_weights(point).unwrap();
-    evals
-        .iter()
-        .zip(lw.iter())
-        .fold(F::zero(), |a, (&c, &w)| a + c * w)
+fn debug_make_onehot_poly(
+    num_vars: usize,
+    _ring_dimension: usize,
+    seed: u64,
+) -> OneHotPoly<OneHotF, u8> {
+    let total_field = 1usize << num_vars;
+    let total_chunks = total_field / BENCH_ONEHOT_K;
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices: Vec<Option<u8>> = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
+        .collect();
+
+    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
+}
+
+fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
+    let num_ring_elems = output_witness_len.div_ceil(level_d);
+    num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
+}
+
+/// Derive the structural proof shape from the schedule. The terminal carries
+/// only optional EOR, its grind nonce, and the clear terminal response.
+fn expected_same_point_batched_shape(
+    max_num_vars: usize,
+    num_claims: usize,
+    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+) -> AkitaBatchedProofShape {
+    let opening_batch =
+        akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
+    let schedule = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+        .expect("batched root runtime plan")
+        .into_schedule();
+    let root_step = &schedule.root;
+    let root_params = &root_step.params.final_group.commitment;
+    let num_fold_levels = schedule.num_fold_levels();
+    let root_rounds = batched_shape_rounds(root_params.d_a(), root_step.output_witness_len);
+
+    assert!(
+        num_fold_levels >= 2,
+        "folded-only schedules have a root and terminal fold"
+    );
+
+    let root_successor = schedule.recursive_folds.first();
+    let opening_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .opening_payload_geometry()
+            .expect("opening payload geometry")
+            .transmitted_coefficients()
+    };
+    let commitment_payload_coeffs = |params: &akita_types::CommittedGroupParams| {
+        params
+            .outer_payload_geometry()
+            .expect("commitment payload geometry")
+            .transmitted_coefficients()
+    };
+    let root_stage1 = DigitRangePlan::new(1usize << root_params.log_basis_open)
+        .expect("scheduled root range basis")
+        .proof_shapes_for_route(
+            root_rounds,
+            root_params.inner_commit_matrix.security_route(),
+        )
+        .expect("scheduled root Stage 1 shape");
+    let root_shape = LevelProofShape {
+        extension_opening_reduction: None,
+        opening_payload_coeffs: opening_payload_coeffs(root_params),
+        stage1_stages: root_stage1.0,
+        stage1_norm: root_stage1.1,
+        stage2_sumcheck_proof: vec![3; root_rounds],
+        stage3_sumcheck: None,
+        next_witness_binding: match root_successor {
+            Some(successor) => {
+                let next_level_params = &successor.params.witness;
+                NextWitnessBindingShape::OuterPayload {
+                    coeffs: commitment_payload_coeffs(next_level_params),
+                }
+            }
+            None => NextWitnessBindingShape::TerminalInnerState,
+        },
+    };
+    // After Phase 1, the recursive suffix has `num_fold_levels - 1` steps in
+    // total: `num_fold_levels - 2` intermediate steps followed by exactly one
+    // terminal step. (We've already consumed the root.)
+    let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    let mut input_witness_len = root_step.output_witness_len;
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        assert_eq!(step.input_witness_len, input_witness_len);
+        let level_params = &step.params.witness;
+        let output_witness_len = step.output_witness_len;
+        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
+        let stage1 = DigitRangePlan::new(1usize << level_params.log_basis_open)
+            .expect("scheduled range basis")
+            .proof_shapes_for_route(rounds, level_params.inner_commit_matrix.security_route())
+            .expect("scheduled Stage 1 shape");
+        recursive_folds.push(LevelProofShape {
+            extension_opening_reduction: None,
+            opening_payload_coeffs: opening_payload_coeffs(level_params),
+            stage1_stages: stage1.0,
+            stage1_norm: stage1.1,
+            stage2_sumcheck_proof: vec![3; rounds],
+            stage3_sumcheck: None,
+            next_witness_binding: match schedule.recursive_folds.get(index + 1) {
+                Some(successor) => {
+                    let next_level_params = &successor.params.witness;
+                    NextWitnessBindingShape::OuterPayload {
+                        coeffs: commitment_payload_coeffs(next_level_params),
+                    }
+                }
+                None => NextWitnessBindingShape::TerminalInnerState,
+            },
+        });
+        input_witness_len = output_witness_len;
+    }
+    // Terminal fold step (always present in the multi-fold case); the
+    // structural terminal field encodes its witness shape.
+    assert_eq!(schedule.terminal.input_witness_len, input_witness_len);
+    let terminal = TerminalLevelProofShape {
+        extension_opening_reduction: None,
+        terminal_response: schedule.terminal.params.response_shape.clone(),
+    };
+    AkitaBatchedProofShape {
+        root: root_shape,
+        recursive_folds,
+        terminal,
+    }
 }
 
 fn debug_random_point(nv: usize) -> Vec<OneHotF> {
@@ -347,56 +351,30 @@ fn debug_random_point(nv: usize) -> Vec<OneHotF> {
         .collect()
 }
 
-fn debug_make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<OneHotF, u8> {
-    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    let ring_dimension = layout.d_a();
-    let num_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + ring_dimension.trailing_zeros() as usize;
-    // `total_ring` ring elements of degree D cover `2^num_vars` field elements,
-    // grouped into `2^num_vars / K` one-hot chunks.
-    let total_field = total_ring * ring_dimension;
-    assert_eq!(total_field, 1usize << num_vars);
-    let total_chunks = total_field / BENCH_ONEHOT_K;
-
-    let mut rng = StdRng::seed_from_u64(seed);
-    let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
-        .collect();
-
-    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, ring_dimension, indices)
-        .expect("debug onehot poly")
-}
-
 fn opening_from_poly_at<const D_OPEN: usize>(
     poly: &OneHotPoly<OneHotF, u8>,
     point: &[OneHotF],
-    layout: &CommittedGroupParams,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
 ) -> OneHotF {
     let alpha_bits = D_OPEN.trailing_zeros() as usize;
-    assert_eq!(
-        point.len(),
-        alpha_bits + layout.position_index_bits() + layout.block_index_bits()
-    );
-
     let inner_point = &point[..alpha_bits];
     let reduced_point = &point[alpha_bits..];
     let ring_opening_point = ring_opening_point_from_field(
         reduced_point,
-        layout.num_positions_per_block,
-        layout.num_live_blocks,
+        num_positions_per_block,
+        num_live_blocks,
         BasisMode::Lagrange,
     )
     .expect("opening point shape should match layout");
-
     let opening = OpeningFoldKernel::<_, OneHotF, D_OPEN>::evaluate_and_fold(
-        &CpuBackend,
+        &CpuBackend::DEFAULT,
         None,
         poly.opening_view().expect("opening view"),
         OpeningFoldPlan::Base {
             live_block_weights: &ring_opening_point.live_block_weights,
             position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.num_positions_per_block,
+            num_positions_per_block,
         },
     )
     .expect("evaluate_and_fold");
@@ -410,13 +388,20 @@ fn opening_from_poly_at<const D_OPEN: usize>(
 fn opening_from_poly(
     poly: &OneHotPoly<OneHotF, u8>,
     point: &[OneHotF],
-    layout: &CommittedGroupParams,
+    ring_dimension: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
 ) -> OneHotF {
     akita_types::dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         OneHotF,
-        layout.d_a(),
-        |D_OPEN| Ok(opening_from_poly_at::<D_OPEN>(poly, point, layout))
+        ring_dimension,
+        |D_OPEN| Ok(opening_from_poly_at::<D_OPEN>(
+            poly,
+            point,
+            num_positions_per_block,
+            num_live_blocks,
+        ))
     )
     .expect("supported one-hot opening ring dimension")
 }

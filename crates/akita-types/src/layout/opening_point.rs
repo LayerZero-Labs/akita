@@ -2,9 +2,9 @@
 
 use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_error::AkitaError;
-use jolt_field::{Field, Ring};
-
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
+use jolt_field::Field;
+use jolt_field::Ring;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
 const BLOCK_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
@@ -267,7 +267,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::One;
+    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;

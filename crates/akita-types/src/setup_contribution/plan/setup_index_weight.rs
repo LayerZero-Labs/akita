@@ -1,9 +1,10 @@
-use super::types::ProjectedEqPairTensor;
+use super::physical_b::build_group_b_setup_tensors;
+use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState};
 use super::*;
 use akita_algebra::fft::field_pow;
 use akita_algebra::{
     offset_eq::{
-        eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+        eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
         EqPairTensorFamily, OffsetEqWindow,
     },
     ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
@@ -12,6 +13,7 @@ use akita_algebra::{
 struct GroupSetupIndexWeights<E> {
     projection_scales: [Option<Vec<E>>; 3],
     column_weights: [Vec<E>; 3],
+    physical_b_weights: Vec<E>,
 }
 
 impl<E: Field> SetupContributionPlan<E> {
@@ -38,12 +40,14 @@ impl<E: Field> SetupContributionPlan<E> {
             let high_point = point
                 .get(low_variable_count..)
                 .ok_or(AkitaError::InvalidProof)?;
-            let factored = factor_aligned_role_tensors(tensors, ratio)?;
+            let mut factored = tensors.to_vec();
+            factor_aligned_role_tensors(&mut factored, ratio)?;
             let equality = OffsetEqWindow::new(high_point)?;
             let mut weights = materialize_eq_tensor_left(&equality, &factored, output_len)?;
             let projection = role_projection_evaluation(
                 alpha,
-                self.projection_geometry.base_ring_dim(),
+                self.relation_address_geometry
+                    .relation_coefficient_block_len(),
                 low_point,
             )?;
             if projection != E::one() {
@@ -60,7 +64,8 @@ impl<E: Field> SetupContributionPlan<E> {
             tensors,
             ratio,
             alpha,
-            self.projection_geometry.base_ring_dim(),
+            self.relation_address_geometry
+                .relation_coefficient_block_len(),
         )?;
         materialize_eq_tensor_left(
             self.relation_address.equality_window(),
@@ -77,28 +82,33 @@ impl<E: Field> SetupContributionPlan<E> {
             .groups
             .iter()
             .map(|group| -> Result<_, AkitaError> {
+                let column_weights = [
+                    self.materialize_role_tensor_weights(
+                        group.a_relation_ratio,
+                        &group.a_tensors,
+                        group.z_cols,
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.b_relation_ratio,
+                        &group.physical_b.relation_tensors,
+                        group.physical_b.logical_input_width(),
+                        alpha,
+                    )?,
+                    self.materialize_role_tensor_weights(
+                        group.d_relation_ratio,
+                        &group.d_tensors,
+                        group.d_col_range.len(),
+                        alpha,
+                    )?,
+                ];
+                let physical_b_weights = group
+                    .physical_b
+                    .contract_logical_column_weights(&column_weights[1])?;
                 Ok(GroupSetupIndexWeights {
                     projection_scales: self.group_projection_scales(group, alpha)?,
-                    column_weights: [
-                        self.materialize_role_tensor_weights(
-                            group.a_ratio,
-                            &group.a_tensors,
-                            group.z_cols,
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.b_ratio,
-                            &group.b_tensors,
-                            group.t_cols,
-                            alpha,
-                        )?,
-                        self.materialize_role_tensor_weights(
-                            group.d_ratio,
-                            &group.d_tensors,
-                            group.d_col_range.len(),
-                            alpha,
-                        )?,
-                    ],
+                    column_weights,
+                    physical_b_weights,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -133,15 +143,17 @@ impl<E: Field> SetupContributionPlan<E> {
         self.setup_index_tensors
             .iter()
             .try_fold(E::zero(), |evaluation, batch| {
-                if batch.ratio == 1 {
+                let ratio = batch.ratio;
+                let families = &batch.families;
+                if ratio == 1 {
                     return Ok(evaluation
-                        + eval_eq_pair_tensor_families(
+                        + eval_boolean_pair_tensor_families::<_, false, false>(
                             rho_setup_idx,
-                            self.relation_address.point(),
-                            &batch.families,
+                            self.setup_relation_address.point(),
+                            families,
                         )?);
                 }
-                let low_variable_count = batch.ratio.trailing_zeros() as usize;
+                let low_variable_count = ratio.trailing_zeros() as usize;
                 let setup_low_point =
                     rho_setup_idx
                         .get(..low_variable_count)
@@ -161,36 +173,51 @@ impl<E: Field> SetupContributionPlan<E> {
                     self.projection_geometry.base_ring_dim(),
                     setup_low_point,
                 )?;
-                let relation_point = self.relation_address.point();
-                let contraction = if role_tensors_are_aligned(&batch.families, batch.ratio) {
-                    let relation_low_point = relation_point
-                        .get(..low_variable_count)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let relation_high_point = relation_point
-                        .get(low_variable_count..)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let factored = factor_aligned_role_tensors(&batch.families, batch.ratio)?;
-                    let relation_projection = role_projection_evaluation(
-                        alpha,
-                        self.projection_geometry.base_ring_dim(),
-                        relation_low_point,
-                    )?;
-                    relation_projection
-                        * eval_eq_pair_tensor_families(
+                let relation_point = self.setup_relation_address.point();
+                let contraction = match batch.state {
+                    ProjectedEqPairTensorState::RelationFactored => {
+                        let relation_low_point = relation_point
+                            .get(..low_variable_count)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let relation_high_point = relation_point
+                            .get(low_variable_count..)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let relation_projection = role_projection_evaluation(
+                            alpha,
+                            self.projection_geometry.base_ring_dim(),
+                            relation_low_point,
+                        )?;
+                        relation_projection
+                            * eval_boolean_pair_tensor_families::<_, false, false>(
+                                setup_high_point,
+                                relation_high_point,
+                                families,
+                            )?
+                    }
+                    ProjectedEqPairTensorState::Native => {
+                        let projected = project_role_tensors(
+                            families,
+                            ratio,
+                            alpha,
+                            self.projection_geometry.base_ring_dim(),
+                        )?;
+                        eval_boolean_pair_tensor_families::<_, false, false>(
                             setup_high_point,
-                            relation_high_point,
-                            &factored,
+                            relation_point,
+                            &projected,
                         )?
-                } else {
-                    let projected = project_role_tensors(
-                        &batch.families,
-                        batch.ratio,
-                        alpha,
-                        self.projection_geometry.base_ring_dim(),
-                    )?;
-                    eval_eq_pair_tensor_families(setup_high_point, relation_point, &projected)?
+                    }
                 };
                 Ok(evaluation + setup_projection * contraction)
+            })
+            .and_then(|evaluation| {
+                Ok(evaluation
+                    * role_projection_evaluation(
+                        alpha,
+                        self.relation_address_geometry
+                            .relation_coefficient_block_len(),
+                        &self.relation_base_bridge_point,
+                    )?)
             })
     }
 
@@ -203,14 +230,22 @@ impl<E: Field> SetupContributionPlan<E> {
             let [d_tensors, b_tensors, a_tensors] =
                 build_group_role_tensors(relation_geometry, group, witness_layout)?;
             group.d_tensors = d_tensors;
-            group.b_tensors = b_tensors;
+            group.physical_b.relation_tensors = b_tensors;
             group.a_tensors = a_tensors;
+            group.physical_b.setup_tensors =
+                build_group_b_setup_tensors(relation_geometry, group, witness_layout)?;
         }
         let mut batches = Vec::<ProjectedEqPairTensor<E>>::new();
         for group in &self.groups {
             self.append_d_tensors(group, &mut batches)?;
             self.append_b_tensors(group, &mut batches)?;
             self.append_a_tensors(group, &mut batches)?;
+        }
+        for batch in &mut batches {
+            if batch.ratio > 1 && role_tensors_are_aligned(&batch.families, batch.ratio) {
+                factor_aligned_role_tensors(&mut batch.families, batch.ratio)?;
+                batch.state = ProjectedEqPairTensorState::RelationFactored;
+            }
         }
         Ok(batches)
     }
@@ -258,7 +293,7 @@ impl<E: Field> SetupContributionPlan<E> {
         let mut weight = E::zero();
         for (group, weights) in self.groups.iter().zip(group_weights) {
             let scales = &weights.projection_scales;
-            let [z_eq, t_eq, e_eq] = &weights.column_weights;
+            let [z_eq, _t_eq, e_eq] = &weights.column_weights;
             let d_idx = setup_idx / group.d_ratio;
             let d_footprint = self
                 .d_rows
@@ -279,15 +314,12 @@ impl<E: Field> SetupContributionPlan<E> {
             }
 
             let b_idx = setup_idx / group.b_ratio;
-            let b_footprint = group
-                .n_b
-                .checked_mul(group.t_cols)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?;
+            let b_footprint = group.physical_b.physical_footprint()?;
             if b_idx < b_footprint {
-                let b_col = b_idx % group.t_cols;
-                let b_row = b_idx / group.t_cols;
-                let term =
-                    group.b_weights[b_row] * *t_eq.get(b_col).ok_or(AkitaError::InvalidProof)?;
+                let term = *weights
+                    .physical_b_weights
+                    .get(b_idx)
+                    .ok_or(AkitaError::InvalidProof)?;
                 weight += scales[1]
                     .as_ref()
                     .map_or(term, |scale| scale[setup_idx % group.b_ratio] * term);
@@ -319,17 +351,24 @@ impl<E: Field> SetupContributionPlan<E> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(());
         }
-        for tensor in &group.d_tensors {
-            push_projected_tensor(
-                batches,
-                group.d_ratio,
+        let lifted = group
+            .d_tensors
+            .iter()
+            .map(|tensor| {
                 lift_role_tensor(
                     tensor,
                     group.d_col_range.start,
                     self.d_physical_cols,
                     &self.d_weights,
-                )?,
-            );
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for tensor in compact_affine_unit_families(lifted, group.num_claims)? {
+            push_projected_tensor(
+                batches,
+                group.d_ratio,
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
@@ -339,15 +378,20 @@ impl<E: Field> SetupContributionPlan<E> {
         group: &SetupContributionGroupPlan<E>,
         batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
-        if group.n_b == 0 {
+        if group.physical_b.physical_rows == 0 {
             return Ok(());
         }
-        for tensor in &group.b_tensors {
+        let tensors = if group.physical_b.geometry().slice_count().is_sliced() {
+            group.physical_b.setup_tensors.clone()
+        } else {
+            compact_affine_unit_families(group.physical_b.setup_tensors.clone(), group.num_claims)?
+        };
+        for tensor in tensors {
             push_projected_tensor(
                 batches,
                 group.b_ratio,
-                lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights)?,
-            );
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
@@ -360,15 +404,75 @@ impl<E: Field> SetupContributionPlan<E> {
         if group.n_a == 0 {
             return Ok(());
         }
-        for tensor in &group.a_tensors {
+        let lifted = group
+            .a_tensors
+            .iter()
+            .map(|tensor| lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights))
+            .collect::<Result<Vec<_>, _>>()?;
+        for tensor in compact_affine_unit_families(lifted, 1)? {
             push_projected_tensor(
                 batches,
                 group.a_ratio,
-                lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights)?,
-            );
+                rebase_relation_tensor(&tensor, self.relation_base_bridge_ratio()?)?,
+            )?;
         }
         Ok(())
     }
+
+    fn relation_base_bridge_ratio(&self) -> Result<usize, AkitaError> {
+        let relation_base = self
+            .relation_address_geometry
+            .relation_coefficient_block_len();
+        self.projection_geometry
+            .base_ring_dim()
+            .checked_div(relation_base)
+            .filter(|ratio| {
+                relation_base != 0
+                    && self
+                        .projection_geometry
+                        .base_ring_dim()
+                        .is_multiple_of(relation_base)
+                    && ratio.is_power_of_two()
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "setup base does not decompose over the relation base".into(),
+                )
+            })
+    }
+}
+
+fn rebase_relation_tensor<E: Field>(
+    tensor: &EqPairTensorFamily<E>,
+    bridge_ratio: usize,
+) -> Result<EqPairTensorFamily<E>, AkitaError> {
+    if bridge_ratio == 0
+        || !bridge_ratio.is_power_of_two()
+        || !tensor.right_offset.is_multiple_of(bridge_ratio)
+        || tensor
+            .axes
+            .iter()
+            .any(|axis| !axis.right_stride.is_multiple_of(bridge_ratio))
+    {
+        return Err(AkitaError::InvalidSetup(
+            "relation tensor does not align to the Stage 3 setup base".into(),
+        ));
+    }
+    let axes = tensor
+        .axes
+        .iter()
+        .cloned()
+        .map(|mut axis| {
+            axis.right_stride /= bridge_ratio;
+            axis
+        })
+        .collect();
+    EqPairTensorFamily::new(
+        tensor.left_offset,
+        tensor.right_offset / bridge_ratio,
+        tensor.scalar,
+        axes,
+    )
 }
 
 fn build_group_role_tensors<E: Field>(
@@ -376,56 +480,37 @@ fn build_group_role_tensors<E: Field>(
     group: &SetupContributionGroupPlan<E>,
     witness_layout: &WitnessLayout,
 ) -> Result<[Vec<EqPairTensorFamily<E>>; 3], AkitaError> {
-    let (b_subcolumns, d_subcolumns) =
-        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-    let source_lanes = group.a_ratio;
+    let (b_subcolumns, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
+    let d_subcolumns = group.opening_subcolumns;
+    let source_lanes = group.a_relation_ratio;
     let a_relation_ring_stride = source_lanes;
 
-    let d_block_setup_stride = checked_mul(
-        d_subcolumns,
-        group.depth_open,
-        "setup D block stride overflow",
-    )?;
-    let d_block_relation_stride = checked_mul(
-        group.depth_open,
-        source_lanes,
-        "setup D relation stride overflow",
-    )?;
-    let d_subcolumn_relation_stride = checked_mul(
-        group.depth_open,
-        group.d_ratio,
-        "setup D subcolumn relation stride overflow",
-    )?;
-    let b_a_row_setup_stride = checked_mul(
-        group.depth_commit,
-        b_subcolumns,
-        "setup B A-row stride overflow",
-    )?;
-    let b_block_setup_stride = checked_mul(
-        group.n_a,
-        b_a_row_setup_stride,
-        "setup B block stride overflow",
-    )?;
-    let b_a_row_relation_stride = checked_mul(
-        group.depth_commit,
-        source_lanes,
-        "setup B relation A-row stride overflow",
-    )?;
-    let b_subcolumn_relation_stride = checked_mul(
-        group.depth_commit,
-        group.b_ratio,
-        "setup B subcolumn relation stride overflow",
-    )?;
-    let b_block_relation_stride = checked_mul(
-        group.n_a,
-        b_a_row_relation_stride,
-        "setup B relation block stride overflow",
-    )?;
-    let a_relation_column_stride = checked_mul(
-        group.fold_gadget.len(),
-        a_relation_ring_stride,
-        "setup A relation column stride overflow",
-    )?;
+    let d_block_setup_stride = checked::product([d_subcolumns, group.depth_open])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D block stride overflow".into()))?;
+    let opening_relation_lanes = checked::product([d_subcolumns, group.d_relation_ratio])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D opening lane count overflow".into()))?;
+    let d_block_relation_stride = checked::product([group.depth_open, opening_relation_lanes])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D relation stride overflow".into()))?;
+    let d_subcolumn_relation_stride = checked::product([group.depth_open, group.d_relation_ratio])
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup D subcolumn relation stride overflow".into())
+        })?;
+    let b_a_row_setup_stride = checked::product([group.depth_commit, b_subcolumns])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B A-row stride overflow".into()))?;
+    let b_block_setup_stride = checked::product([group.n_a, b_a_row_setup_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B block stride overflow".into()))?;
+    let b_a_row_relation_stride = checked::product([group.depth_commit, source_lanes])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation A-row stride overflow".into()))?;
+    let b_subcolumn_relation_stride =
+        checked::product([group.depth_commit, group.b_relation_ratio]).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup B subcolumn relation stride overflow".into())
+        })?;
+    let b_block_relation_stride = checked::product([group.n_a, b_a_row_relation_stride])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation block stride overflow".into()))?;
+    let a_relation_column_stride =
+        checked::product([group.fold_gadget.len(), a_relation_ring_stride]).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup A relation column stride overflow".into())
+        })?;
     let fold_weights = group
         .fold_gadget
         .iter()
@@ -436,15 +521,20 @@ fn build_group_role_tensors<E: Field>(
     let mut d_tensors = Vec::new();
     let mut b_tensors = Vec::new();
     let mut a_tensors = Vec::new();
+    // Emission is unit-major with claim as the inner index. Structured replay
+    // consumes D/B tensors at `unit * num_claims + claim`; changing this order
+    // requires changing that index contract at the same time.
     for unit in witness_layout.units_for_group(group.group_id)? {
         for claim in 0..group.num_claims {
+            if unit.num_live_blocks() == 0 {
+                continue;
+            }
             let d_setup_column = claim
                 .checked_mul(group.num_live_blocks)
                 .and_then(|base| base.checked_add(unit.global_block_start()))
                 .and_then(|base| base.checked_mul(d_block_setup_stride))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
             let d_witness_coefficient = unit.e_coefficient_index(
-                group.role_dims.d_a(),
                 group.role_dims.d_d(),
                 group.num_claims,
                 group.depth_open,
@@ -464,7 +554,7 @@ fn build_group_role_tensors<E: Field>(
                 d_relation_lane_start,
                 E::one(),
                 vec![
-                    EqPairTensorAxis::unit(group.depth_open, 1, group.d_ratio),
+                    EqPairTensorAxis::unit(group.depth_open, 1, group.d_relation_ratio),
                     EqPairTensorAxis::unit(
                         d_subcolumns,
                         group.depth_open,
@@ -478,7 +568,7 @@ fn build_group_role_tensors<E: Field>(
                 ],
             )?);
 
-            if group.n_b != 0 {
+            if group.physical_b.logical_rows()? != 0 {
                 let b_setup_column = claim
                     .checked_mul(group.num_live_blocks)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
@@ -507,7 +597,7 @@ fn build_group_role_tensors<E: Field>(
                     b_relation_lane_start,
                     E::one(),
                     vec![
-                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_ratio),
+                        EqPairTensorAxis::unit(group.depth_commit, 1, group.b_relation_ratio),
                         EqPairTensorAxis::unit(
                             b_subcolumns,
                             group.depth_commit,
@@ -577,6 +667,82 @@ fn lift_role_tensor<E: Field>(
     )
 }
 
+/// Collapse equal-width unit families into one explicit affine unit axis.
+///
+/// Families are chunk-major with `families_per_unit` semantic lanes inside
+/// each chunk. Unequal or non-affine layouts retain their original families.
+fn compact_affine_unit_families<E: Field>(
+    families: Vec<EqPairTensorFamily<E>>,
+    families_per_unit: usize,
+) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+    if families_per_unit == 0 || !families.len().is_multiple_of(families_per_unit) {
+        return Err(AkitaError::InvalidSetup(
+            "setup tensor families disagree with unit lanes".into(),
+        ));
+    }
+    let unit_count = families.len() / families_per_unit;
+    if unit_count <= 1 {
+        return Ok(families);
+    }
+
+    let mut compact = Vec::with_capacity(families_per_unit);
+    for lane in 0..families_per_unit {
+        let first = families.get(lane).ok_or(AkitaError::InvalidProof)?;
+        let second = families
+            .get(families_per_unit + lane)
+            .ok_or(AkitaError::InvalidProof)?;
+        let Some(left_stride) = second.left_offset.checked_sub(first.left_offset) else {
+            return Ok(families);
+        };
+        let Some(right_stride) = second.right_offset.checked_sub(first.right_offset) else {
+            return Ok(families);
+        };
+        for unit in 1..unit_count {
+            let family_index = unit
+                .checked_mul(families_per_unit)
+                .and_then(|index| index.checked_add(lane))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup unit index overflow".into()))?;
+            let family = families.get(family_index).ok_or(AkitaError::InvalidProof)?;
+            let expected_left = first
+                .left_offset
+                .checked_add(left_stride.checked_mul(unit).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit left stride overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit left offset overflow".into())
+                })?;
+            let expected_right = first
+                .right_offset
+                .checked_add(right_stride.checked_mul(unit).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit right stride overflow".into())
+                })?)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup unit right offset overflow".into())
+                })?;
+            if family.left_offset != expected_left
+                || family.right_offset != expected_right
+                || family.scalar != first.scalar
+                || family.axes != first.axes
+            {
+                return Ok(families);
+            }
+        }
+        let mut axes = first.axes.clone();
+        axes.push(EqPairTensorAxis::unit(
+            unit_count,
+            left_stride,
+            right_stride,
+        ));
+        compact.push(EqPairTensorFamily::new(
+            first.left_offset,
+            first.right_offset,
+            first.scalar,
+            axes,
+        )?);
+    }
+    Ok(compact)
+}
+
 fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
     ratio.is_power_of_two()
         && tensors.iter().all(|tensor| {
@@ -589,29 +755,21 @@ fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: 
 }
 
 fn factor_aligned_role_tensors<E: Field>(
-    tensors: &[EqPairTensorFamily<E>],
+    tensors: &mut [EqPairTensorFamily<E>],
     ratio: usize,
-) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
+) -> Result<(), AkitaError> {
     if ratio <= 1 || !role_tensors_are_aligned(tensors, ratio) {
         return Err(AkitaError::InvalidSetup(
             "setup role tensors are not aligned to their native lane count".into(),
         ));
     }
-    tensors
-        .iter()
-        .map(|tensor| {
-            let mut axes = tensor.axes.clone();
-            for axis in &mut axes {
-                axis.right_stride /= ratio;
-            }
-            EqPairTensorFamily::new(
-                tensor.left_offset,
-                tensor.right_offset / ratio,
-                tensor.scalar,
-                axes,
-            )
-        })
-        .collect()
+    for tensor in tensors {
+        tensor.right_offset /= ratio;
+        for axis in &mut tensor.axes {
+            axis.right_stride /= ratio;
+        }
+    }
+    Ok(())
 }
 
 fn role_projection_evaluation<E: Field>(
@@ -654,40 +812,30 @@ fn push_projected_tensor<E: Field>(
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ratio: usize,
     family: EqPairTensorFamily<E>,
-) {
-    if let Some(batch) = batches.iter_mut().find(|batch| batch.ratio == ratio) {
-        batch.families.push(family);
-    } else {
-        batches.push(ProjectedEqPairTensor {
+) -> Result<(), AkitaError> {
+    match batches.iter_mut().find(|batch| batch.ratio == ratio) {
+        Some(batch) if batch.state == ProjectedEqPairTensorState::Native => {
+            batch.families.push(family);
+        }
+        Some(_) => {
+            return Err(AkitaError::InvalidSetup(
+                "projected tensors pushed after relation factoring".into(),
+            ));
+        }
+        None => batches.push(ProjectedEqPairTensor {
             ratio,
             families: vec![family],
-        });
+            state: ProjectedEqPairTensorState::Native,
+        }),
     }
-}
-
-fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
-    lhs.checked_mul(rhs)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
-fn divide_aligned(
-    value: usize,
-    divisor: usize,
-    context: &'static str,
-) -> Result<usize, AkitaError> {
-    value
-        .checked_div(divisor)
-        .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+    Ok(())
 }
 
 #[cfg(test)]
 mod projection_tests {
     use super::*;
     use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
-    use akita_algebra::One;
-    use akita_algebra::Ring;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 
@@ -727,7 +875,7 @@ mod projection_tests {
             &setup_point[..ratio.trailing_zeros() as usize],
         );
         let got = setup_projection
-            * eval_eq_pair_tensor_families(
+            * eval_boolean_pair_tensor_families::<_, false, false>(
                 &setup_point[ratio.trailing_zeros() as usize..],
                 &relation_point,
                 &projected,

@@ -2,7 +2,6 @@ use super::coeffs::balanced_decompose_centered_i32_i8_into;
 use super::evals::build_w_evals_compact;
 use akita_algebra::CyclotomicRing;
 use jolt_field::{Prime128OffsetA7F7, Ring};
-
 use std::array::from_fn;
 
 #[test]

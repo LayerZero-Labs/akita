@@ -3,7 +3,8 @@
 use super::CyclotomicRing;
 use crate::fft::field_pow;
 use akita_error::AkitaError;
-use jolt_field::{ExtField, Field, MulBaseUnreduced, Unreduced, Zero};
+use jolt_field::Unreduced;
+use jolt_field::{ExtField, Field, MulBaseUnreduced, Zero};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
@@ -168,7 +169,6 @@ where
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::poly::multilinear_eval;
     use jolt_field::{One, Prime128OffsetA7F7};

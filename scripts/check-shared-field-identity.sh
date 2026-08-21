@@ -10,22 +10,35 @@ set -euo pipefail
 # below as a permanent regression guard.
 export CARGO_TERM_COLOR=always
 
-metadata="$(cargo metadata --format-version 1 --locked)"
+check_workspace() {
+  local label="$1"
+  local manifest="$2"
+  local metadata
+  local akita_identities
+  local identities
+  local count
 
-akita_identities="$(jq -r '.packages[] | select(.name == "akita-field") | .id' <<<"$metadata" | sort -u)"
-if [[ -n "$akita_identities" ]]; then
-  echo "error: integrated dependency graph still contains akita-field" >&2
-  printf '%s\n' "$akita_identities" >&2
-  exit 1
-fi
+  metadata="$(cargo metadata --format-version 1 --locked --manifest-path "$manifest")"
 
-identities="$(jq -r '.packages[] | select(.name == "jolt-field") | .id' <<<"$metadata" | sort -u)"
-count="$(grep -c . <<<"$identities" || true)"
+  akita_identities="$(jq -r '.packages[] | select(.name == "akita-field") | .id' <<<"$metadata" | sort -u)"
+  if [[ -n "$akita_identities" ]]; then
+    echo "error: $label dependency graph still contains akita-field" >&2
+    printf '%s\n' "$akita_identities" >&2
+    exit 1
+  fi
 
-if [[ "$count" -ne 1 ]]; then
-  echo "error: expected exactly one jolt-field package identity, found $count" >&2
-  printf '%s\n' "$identities" >&2
-  exit 1
-fi
+  identities="$(jq -r '.packages[] | select(.name == "jolt-field") | .id' <<<"$metadata" | sort -u)"
+  count="$(grep -c . <<<"$identities" || true)"
 
-printf 'shared field identity: %s\n' "$identities"
+  if [[ "$count" -ne 1 ]]; then
+    echo "error: expected exactly one jolt-field package identity in $label, found $count" >&2
+    printf '%s\n' "$identities" >&2
+    exit 1
+  fi
+
+  printf 'shared field identity (%s): %s\n' "$label" "$identities"
+}
+
+check_workspace root Cargo.toml
+check_workspace fuzz fuzz/Cargo.toml
+check_workspace recursion-profile profile/akita-recursion/Cargo.toml

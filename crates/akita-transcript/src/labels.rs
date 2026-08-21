@@ -37,12 +37,28 @@ pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 /// Absorb the stage-1 final `range_image_evaluation` before the batching challenge.
 pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
+/// Absorb the exact public integer square sum on an L2-selected fold.
+pub const ABSORB_L2_NORM_INTEGER: &[u8] = b"ak/a/l2n";
+/// Absorb one canonical blockwise limb inner-product claim.
+pub const ABSORB_L2_NORM_SUBCLAIM: &[u8] = b"ak/a/l2s";
+/// Absorb one final Stage-1 physical response or limb evaluation.
+pub const ABSORB_L2_VIRTUAL_EVALUATION: &[u8] = b"ak/a/l2v";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
 pub const ABSORB_SUMCHECK_INTERSTAGE_CLAIM: &[u8] = b"ak/a/sci";
 /// Challenge for batched sumcheck coefficient sampling.
 pub const CHALLENGE_SUMCHECK_BATCH: &[u8] = b"ak/c/scb";
+/// Challenge for compressing parallel EOR claims into one sumcheck.
+pub const CHALLENGE_EOR_CLAIM_BATCH: &[u8] = b"ak/c/ecb";
+/// Absorb the individual EOR terminal claims before application batching.
+pub const ABSORB_EOR_FINAL_CLAIM: &[u8] = b"ak/a/efc";
+/// Challenge batching canonical blockwise L2 norm subclaims.
+pub const CHALLENGE_L2_NORM_BATCH: &[u8] = b"ak/c/l2b";
+/// Challenge merging the range and norm identities in the final Stage-1 leaf.
+pub const CHALLENGE_L2_NORM_MERGE: &[u8] = b"ak/c/l2m";
+/// Challenge batching Stage-2 bindings of L2 virtual evaluations.
+pub const CHALLENGE_L2_VIRTUAL_BATCH: &[u8] = b"ak/c/l2v";
 /// Challenge batching the support-restricted negative-binary compression check.
 pub const CHALLENGE_COMPRESSION_BINARY: &[u8] = b"ak/c/cb";
 /// Challenge for batching stage-1 inter-stage claims into the next tree stage.
@@ -54,33 +70,12 @@ pub const CHALLENGE_STOP_CONDITION: &[u8] = b"ak/c/st";
 
 /// Absorb the terminal compressed opening payload before sampling fold challenges.
 pub const ABSORB_OPENING_PAYLOAD: &[u8] = b"ak/a/v";
-/// Challenge label for witness-fold sparse ring elements `c_i` (flat shape).
+/// Challenge label for witness-fold sparse ring elements `c_i`.
 ///
 /// Prefixes the sparse-challenge Fiat–Shamir absorb buffer for one draw batch.
 /// The buffer is appended under [`ABSORB_SPARSE_CHALLENGE`]; this string is not
 /// absorbed by itself into the positional production sponge.
 pub const CHALLENGE_WITNESS_FOLD: &[u8] = b"ak/c/wf";
-/// Challenge label for the high factor `α` in a tensor-shaped fold round.
-///
-/// Tensor folds sample fold-high and fold-low sparse challenges per claim and
-/// use `c_{p,q} = α_p · β_q`. This prefixes the absorb buffer for the
-/// **fold-high** draw batch (under [`ABSORB_SPARSE_CHALLENGE`]). After the
-/// fold-high challenges are expanded, [`ABSORB_FOLD_HIGH`] commits their digest
-/// before the fold-low batch is drawn.
-pub const CHALLENGE_FOLD_HIGH: &[u8] = b"ak/c/wfh";
-/// Digest of the sampled high tensor factor, appended between high and low draws.
-///
-/// Canonical hash of the fold-high sparse-challenge vector (`fold_high_digest`).
-/// Prevents choosing the fold-low factor `β` adaptively after seeing `α`. This
-/// is a real transcript append (positional sponge); it is not the challenges
-/// themselves.
-pub const ABSORB_FOLD_HIGH: &[u8] = b"ak/a/wfh";
-/// Challenge label for the low factor `β` in a tensor-shaped fold round.
-///
-/// Prefixes the absorb buffer for the **fold-low** draw batch (under
-/// [`ABSORB_SPARSE_CHALLENGE`]), after [`ABSORB_FOLD_HIGH`]. There is no
-/// symmetric digest absorb for the fold-low vector.
-pub const CHALLENGE_FOLD_LOW: &[u8] = b"ak/c/wfl";
 
 /// Absorb field-element evaluation claims for γ-batching.
 pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
@@ -119,18 +114,23 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_RANGE_IMAGE_EVALUATION,
+    ABSORB_L2_NORM_INTEGER,
+    ABSORB_L2_NORM_SUBCLAIM,
+    ABSORB_L2_VIRTUAL_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_EOR_CLAIM_BATCH,
+    ABSORB_EOR_FINAL_CLAIM,
+    CHALLENGE_L2_NORM_BATCH,
+    CHALLENGE_L2_NORM_MERGE,
+    CHALLENGE_L2_VIRTUAL_BATCH,
     CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
     ABSORB_STOP_CONDITION,
     CHALLENGE_STOP_CONDITION,
     ABSORB_OPENING_PAYLOAD,
     CHALLENGE_WITNESS_FOLD,
-    CHALLENGE_FOLD_HIGH,
-    ABSORB_FOLD_HIGH,
-    CHALLENGE_FOLD_LOW,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,

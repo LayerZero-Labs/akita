@@ -11,8 +11,7 @@ use crate::{
     SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
-use akita_algebra::Zero;
-use jolt_field::{Field, Prime128OffsetA7F7};
+use jolt_field::{Field, One, Prime128OffsetA7F7, Zero};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -50,7 +49,11 @@ fn trace_layout(
     let mut lp = lp;
     lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1).unwrap();
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&lp, &opening_batch, &relation_geometry, num_chunks, 1).unwrap();
     let opening_source_len = witness_layout.live_coeff_len() / (1usize << ring_bits);
     let required_col_bits = witness_layout
         .live_coeff_len()
@@ -358,8 +361,16 @@ mod ring_live_block_weights {
 
     fn run_closed_form_matches_dense_table<F, E, const D: usize, const K: usize>()
     where
-        F: jolt_field::Field + jolt_field::CanonicalEncoding + jolt_field::Ring,
-        E: crate::FpExtEncoding<F> + jolt_field::ExtField<F> + jolt_field::Field + jolt_field::Ring,
+        F: jolt_field::Field
+            + jolt_field::CanonicalEncoding
+            + jolt_field::Ring
+            + jolt_field::Field
+            + jolt_field::Field,
+        E: crate::FpExtEncoding<F>
+            + jolt_field::ExtField<F>
+            + jolt_field::Field
+            + jolt_field::Ring
+            + jolt_field::Field,
     {
         let layout = ring_live_block_weights_layout::<D>();
         let mut rng = StdRng::seed_from_u64(0x7ACE_1000 + D as u64);
@@ -402,8 +413,16 @@ mod ring_live_block_weights {
 
     fn run_witness_dot_matches_ring_subfield_inner_product<F, E, const D: usize, const K: usize>()
     where
-        F: jolt_field::Field + jolt_field::CanonicalEncoding + jolt_field::Ring,
-        E: crate::FpExtEncoding<F> + jolt_field::ExtField<F> + jolt_field::Field + jolt_field::Ring,
+        F: jolt_field::Field
+            + jolt_field::CanonicalEncoding
+            + jolt_field::Ring
+            + jolt_field::Field
+            + jolt_field::Field,
+        E: crate::FpExtEncoding<F>
+            + jolt_field::ExtField<F>
+            + jolt_field::Field
+            + jolt_field::Ring
+            + jolt_field::Field,
     {
         let layout = ring_live_block_weights_layout::<D>();
         let mut rng = StdRng::seed_from_u64(0x7ACE_2000 + D as u64);
@@ -567,7 +586,6 @@ mod ring_live_block_weights {
 mod closed_terms {
     use super::*;
     use crate::{basis_weights, embed_ring_subfield_vector, reduce_inner_opening_to_ring_element};
-    use akita_algebra::One;
     use akita_error::AkitaError;
     use jolt_field::{Ext2, Fp32, FpExt4, FpExt8};
 
@@ -607,7 +625,8 @@ mod closed_terms {
         E: crate::FpExtEncoding<Fk>
             + jolt_field::ExtField<Fk>
             + jolt_field::Field
-            + jolt_field::Ring,
+            + jolt_field::Ring
+            + jolt_field::Field,
     {
         let mut rng = StdRng::seed_from_u64(seed);
         for _ in 0..8 {

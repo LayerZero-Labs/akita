@@ -19,7 +19,6 @@
 //! - `2` — verifier rejected the proof.
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
@@ -29,8 +28,9 @@ use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
 
 type F = fp128::Field;
-const D: usize = 64;
-type Cfg = fp128::D64OneHot;
+type Cfg = fp128::OneHot;
+/// Concrete ring view used by the recursion artifact's fixed input schema.
+const SOURCE_VIEW_D: usize = 256;
 
 fn verification_status(result: Result<(), AkitaError>) -> u32 {
     match result {
@@ -39,14 +39,8 @@ fn verification_status(result: Result<(), AkitaError>) -> u32 {
     }
 }
 
-const _: () = {
-    // Hard-fail at compile time if the guest monomorphization drifts away from
-    // the config and host artifact generator (`../artifact/src/main.rs`).
-    assert!(D == <Cfg as CommitmentConfig>::D);
-};
-
-// Memory limits sized for the Akita verifier with `D=64 OneHot`. Blob size
-// scales with `nv` (≈4 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
+// Memory limits sized for the adaptive fp128 OneHot verifier. Blob size
+// scales with `nv` (≈2.6 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
 // We give:
 //   - `max_input_size` = 768 MiB so large nv blobs fit with headroom.
 //                        Keep this literal equal to
@@ -79,12 +73,13 @@ fn akita_verify(input: &[u8]) -> u32 {
         feature = "trusted-benchmark-artifact",
         akita_trusted_benchmark_artifact
     ))]
-    let decoded_result = AkitaJoltInputs::<F, D>::read_trusted_host_artifact_bytes(input);
+    let decoded_result =
+        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes::<Cfg>(input);
     #[cfg(not(any(
         feature = "trusted-benchmark-artifact",
         akita_trusted_benchmark_artifact
     )))]
-    let decoded_result = AkitaJoltInputs::<F, D>::read_from_bytes(input);
+    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(input);
 
     let decoded = match decoded_result {
         Ok(decoded) => decoded,

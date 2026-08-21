@@ -12,7 +12,6 @@
 #![warn(missing_docs)]
 #![warn(unreachable_pub)]
 
-pub mod backend;
 pub mod eq_poly;
 pub mod fft;
 pub mod module;
@@ -24,7 +23,6 @@ pub mod split_eq;
 pub mod uni_poly;
 
 // Flat re-exports for convenience.
-pub use backend::{CrtReconstruct, NttPrimeOps, NttTransform, RingBackend, ScalarBackend};
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
 pub use fft::SmoothFftField;
 pub use jolt_field::{
@@ -33,22 +31,19 @@ pub use jolt_field::{
 pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
-pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
+pub use ntt::{
+    CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth, RADIX_BITS,
+};
 pub use ring::{
-    balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CenteredMontLut,
-    CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
-    I16TailParams,
+    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring,
+    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttConvertibleField,
+    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, Ifma52NttMatrix,
+    Ifma52Params,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};
 
 /// Fallible parallel fold-reduce over a range.
-///
-/// With `parallel`: `range.into_par_iter().try_fold(identity, fold_op).try_reduce(identity, reduce_op)`.
-/// Without: `range.into_iter().try_fold(identity(), fold_op)`.
-///
-/// Companion to the `cfg_*` macros re-exported from `jolt-field`, which does
-/// not provide a fallible fold-reduce.
 #[macro_export]
 macro_rules! cfg_try_fold_reduce {
     ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{

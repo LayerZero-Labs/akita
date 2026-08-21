@@ -1,17 +1,30 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{
-    proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
-};
+use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
-};
-use jolt_field::One;
+use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use jolt_field::{Fp32, FpExt2, TwoNr};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
+
+#[test]
+fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
+    let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    assert!(!super::fold::extension_opening_reduction_enabled(
+        packing, true
+    ));
+    assert!(!super::fold::extension_opening_reduction_enabled(
+        packing,
+        <E as ExtField<F>>::DEGREE > 1,
+    ));
+    assert!(super::fold::extension_opening_reduction_enabled(
+        akita_types::OpeningMethod::EvaluationTrace,
+        true,
+    ));
+}
 
 #[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
@@ -39,7 +52,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         ring_dimension: 64,
     }];
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
@@ -55,7 +68,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 }
 
 #[test]
-fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
+fn extension_opening_reduction_shares_challenges_across_groups() {
     let short_witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 64]);
     let mut long_digits = vec![0; 3 * 64];
     long_digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
@@ -86,17 +99,17 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
-        &crate::compute::CpuBackend,
+        &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
         "recursive",
     )
-    .expect("all groups should reduce through one sumcheck");
+    .expect("all groups should reduce through one shared challenge sequence");
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);
-    assert_ne!(proved.row_coefficients, vec![E::one(); 2]);
+    assert_eq!(proved.reduction.proof.final_claims.len(), 2);
     assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 
@@ -109,17 +122,15 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
-    let pre_params =
-        PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
-            .expect("precommit params");
     let precommitted =
-        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
-    let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
+        OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
+            .expect("independent profile");
+    let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
     })
-    .expect("multi-group schedule");
+    .expect("multi-group schedule")
+    .into_schedule();
     let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {

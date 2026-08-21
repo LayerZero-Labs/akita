@@ -14,7 +14,7 @@ fn assert_single_i8_chunk_paths<F: Field + CanonicalEncoding, const D: usize>(co
     let log_basis = 6;
     let modulus = (-F::one())
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
+        .expect("Akita field element must fit in u128")
         + 1;
     let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
@@ -51,7 +51,7 @@ fn assert_single_i8_chunk_paths<F: Field + CanonicalEncoding, const D: usize>(co
 fn assert_fused_split_eq_zpre_chunks<F: Field + CanonicalEncoding, const D: usize>(cols: usize) {
     let modulus = (-F::one())
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
+        .expect("Akita field element must fit in u128")
         + 1;
     let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
@@ -64,9 +64,8 @@ fn assert_fused_split_eq_zpre_chunks<F: Field + CanonicalEncoding, const D: usiz
     .expect("CRT+NTT dispatch should support this field and ring dimension");
     let z_pre = vec![[32_768i32; D]; cols];
 
-    let (_d_rows, _b_rows, a_rows) =
-        fused_split_eq_quotients::<F, D>(&slot, 0, 0, 1, &[], &[], &z_pre, 32_768)
-            .expect("fused split-eq rows");
+    let fused = fused_split_eq_quotients::<F, D>(&slot, 0, 1, &[], &z_pre, 32_768)
+        .expect("fused split-eq rows");
 
     let z = centered_i32_ring(&z_pre[0]);
     let term = quotient_from_cyclic_and_negacyclic(&cyclic_product(&row, &z), &(row * z));
@@ -75,7 +74,7 @@ fn assert_fused_split_eq_zpre_chunks<F: Field + CanonicalEncoding, const D: usiz
         acc
     });
 
-    assert_eq!(a_rows, vec![expected]);
+    assert_eq!(fused.a_quotients, vec![expected]);
 }
 
 #[test]
@@ -90,7 +89,10 @@ fn mat_vec_mul_ntt_single_i8_chunks_q128() {
     const D: usize = 64;
     let cols = 2_050;
     let log_basis = 6;
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
@@ -121,7 +123,10 @@ fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
     const D: usize = 64;
     let cols = 2_050;
     let log_basis = 6;
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let half = F::from_u128_reduced(modulus / 2);
     let row = CyclotomicRing::from_coefficients([half; D]);
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);

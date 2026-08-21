@@ -158,7 +158,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         &self,
         compact_range_image: &[V],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.rounds_completed < self.num_vars);
         debug_assert_eq!(
             compact_range_image.len(),
             self.live_x_cols * (1usize << (self.num_vars - self.col_bits))
@@ -242,7 +242,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         &self,
         range_image: &[E],
     ) -> EqFactoredUniPoly<E> {
-        debug_assert!(self.rounds_completed < self.col_bits);
+        debug_assert!(self.rounds_completed < self.num_vars);
         let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -250,68 +250,34 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         let current_x_half = 1usize << (self.current_x_width() - 1);
         let live_pairs = self.live_x_cols.div_ceil(2);
         let block_size = num_first.min(live_pairs);
+        let tiles = crate::protocol::sumcheck::ReductionTiles::new(y_len, live_pairs, block_size);
 
         let polynomial_precomputation = &self.polynomial_precomputation;
         let full_num_coeffs_q = polynomial_precomputation.degree_q + 1;
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
-            0..y_len,
+            tiles.work_items(),
             || vec![E::Product::zero(); num_coeffs_q],
-            |mut outer_accum, y| {
+            |mut outer_accum, work_item| {
                 debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
+                let tile = tiles.decode(work_item);
+                let y = tile.outer;
+                let blk = tile.inner.start;
+                let blk_end = tile.inner.end;
                 let row_start = y * self.live_x_cols;
                 let row = &range_image[row_start..row_start + self.live_x_cols];
                 let j_base = y * current_x_half;
                 let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
                 let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let j_high = (j_base + blk) >> first_bits;
+                let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let blk_len = blk_end - blk;
+                let full_chunks = blk_len / 4;
 
-                let mut blk = 0usize;
-                while blk < live_pairs {
-                    let blk_end = (blk + block_size).min(live_pairs);
-                    let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                    let blk_len = blk_end - blk;
-                    let full_chunks = blk_len / 4;
-
-                    for chunk in 0..full_chunks {
-                        let pair_base = blk + chunk * 4;
-                        let mut pairs = [(E::zero(), E::zero()); 4];
-                        for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
-                            let left = 2 * pair_x;
-                            let left_range_image = row[left];
-                            let right_range_image = if left + 1 < self.live_x_cols {
-                                row[left + 1]
-                            } else {
-                                E::zero()
-                            };
-                            pairs[slot] = (left_range_image, right_range_image);
-                        }
-
-                        compute_entry_coefficients_x4(
-                            &mut batch_out,
-                            polynomial_precomputation,
-                            [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
-                            [
-                                pairs[0].1 - pairs[0].0,
-                                pairs[1].1 - pairs[1].0,
-                                pairs[2].1 - pairs[2].0,
-                                pairs[3].1 - pairs[3].0,
-                            ],
-                        );
-
-                        for (slot, _) in pairs.iter().enumerate() {
-                            let pair_x = pair_base + slot;
-                            let j_low = (j_base + pair_x) & (num_first - 1);
-                            let e_in = e_first[j_low];
-                            accumulate_dense_entry_coeffs(
-                                &mut inner_accum[..num_coeffs_q],
-                                &batch_out[slot][..full_num_coeffs_q],
-                                e_in,
-                            );
-                        }
-                    }
-
-                    for pair_x in blk + full_chunks * 4..blk_end {
+                for chunk in 0..full_chunks {
+                    let pair_base = blk + chunk * 4;
+                    let mut pairs = [(E::zero(), E::zero()); 4];
+                    for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                         let left = 2 * pair_x;
                         let left_range_image = row[left];
                         let right_range_image = if left + 1 < self.live_x_cols {
@@ -319,27 +285,60 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         } else {
                             E::zero()
                         };
-                        compute_entry_coefficients(
-                            &mut entry_buf,
-                            polynomial_precomputation,
-                            left_range_image,
-                            right_range_image - left_range_image,
-                        );
+                        pairs[slot] = (left_range_image, right_range_image);
+                    }
+
+                    compute_entry_coefficients_x4(
+                        &mut batch_out,
+                        polynomial_precomputation,
+                        [pairs[0].0, pairs[1].0, pairs[2].0, pairs[3].0],
+                        [
+                            pairs[0].1 - pairs[0].0,
+                            pairs[1].1 - pairs[1].0,
+                            pairs[2].1 - pairs[2].0,
+                            pairs[3].1 - pairs[3].0,
+                        ],
+                    );
+
+                    for (slot, _) in pairs.iter().enumerate() {
+                        let pair_x = pair_base + slot;
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
                         accumulate_dense_entry_coeffs(
                             &mut inner_accum[..num_coeffs_q],
-                            &entry_buf[..full_num_coeffs_q],
+                            &batch_out[slot][..full_num_coeffs_q],
                             e_in,
                         );
                     }
+                }
 
-                    let e_out = e_second[j_high];
-                    for k in 0..num_coeffs_q {
-                        let inner_reduced = E::reduce_product(inner_accum[k]);
-                        outer_accum[k] += e_out.mul_unreduced(inner_reduced);
-                    }
-                    blk = blk_end;
+                for pair_x in blk + full_chunks * 4..blk_end {
+                    let left = 2 * pair_x;
+                    let left_range_image = row[left];
+                    let right_range_image = if left + 1 < self.live_x_cols {
+                        row[left + 1]
+                    } else {
+                        E::zero()
+                    };
+                    compute_entry_coefficients(
+                        &mut entry_buf,
+                        polynomial_precomputation,
+                        left_range_image,
+                        right_range_image - left_range_image,
+                    );
+                    let j_low = (j_base + pair_x) & (num_first - 1);
+                    let e_in = e_first[j_low];
+                    accumulate_dense_entry_coeffs(
+                        &mut inner_accum[..num_coeffs_q],
+                        &entry_buf[..full_num_coeffs_q],
+                        e_in,
+                    );
+                }
+
+                let e_out = e_second[j_high];
+                for k in 0..num_coeffs_q {
+                    let inner_reduced = E::reduce_product(inner_accum[k]);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
 
                 outer_accum

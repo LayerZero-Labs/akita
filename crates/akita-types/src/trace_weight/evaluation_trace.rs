@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
@@ -11,7 +12,6 @@ use crate::{
     dispatch_for_field, gadget_row_scalars, BasisMode, CommittedGroupParams, FlatBooleanDomain,
     FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
-use akita_error::AkitaError;
 
 /// Reject extension degrees with no evaluation-trace implementation.
 pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), AkitaError> {
@@ -164,7 +164,7 @@ pub fn prepare_evaluation_trace_group_parameters<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<Vec<EvaluationTraceGroupParameters<E>>, AkitaError>
 where
-    F: Field + CanonicalEncoding + Ring + Field,
+    F: Field + CanonicalEncoding + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     if inputs.prepared_points.len() != inputs.opening_batch.num_groups()
@@ -210,7 +210,6 @@ where
                     .try_fold(0usize, |expected_start, (expected_chunk, unit)| {
                         if unit.chunk_index() != expected_chunk
                             || unit.global_block_start() != expected_start
-                            || unit.num_live_blocks() == 0
                         {
                             return Err(AkitaError::InvalidSetup(
                                 "trace witness chunks do not form one ordered block partition"

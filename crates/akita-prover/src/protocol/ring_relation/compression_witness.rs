@@ -45,7 +45,9 @@ impl<F: Field> CompressionWitnessMaterialization<F> {
     }
 }
 
-impl<F: Field + CanonicalEncoding> CompressionSourceWitness<F> {
+impl<F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize>
+    CompressionSourceWitness<F>
+{
     pub(crate) fn from_outer_hint(
         group_index: usize,
         plan: &CompressionChainPlan,
@@ -86,7 +88,7 @@ pub(crate) fn materialize_compression_witness<F, B>(
     AkitaError,
 >
 where
-    F: Field + CanonicalEncoding,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     B: CompressionComputeBackend<F>,
 {
     if outer_sources.len() != layout.groups.len() {

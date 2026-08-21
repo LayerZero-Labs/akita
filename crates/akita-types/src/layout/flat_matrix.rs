@@ -301,7 +301,7 @@ impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        std::mem::size_of::<usize>()
+        self.num_field_elements().serialized_size(compress)
             + self
                 .data
                 .iter()
@@ -421,12 +421,30 @@ impl<'a, F: Field, const D: usize> RingMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Zero;
-    use jolt_field::Prime128Offset275;
+    use jolt_field::{One, Prime128Offset275, Ring, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     type F = Prime128Offset275;
+
+    #[test]
+    fn serialized_size_matches_wire_output() {
+        let flat = FlatMatrix::from_flat_data(vec![F::zero(), F::one(), F::from_u64(7)]);
+        for compress in [Compress::No, Compress::Yes] {
+            let mut bytes = Vec::new();
+            flat.serialize_with_mode(&mut bytes, compress)
+                .expect("serialize flat matrix");
+            assert_eq!(flat.serialized_size(compress), bytes.len());
+            assert_eq!(
+                flat.serialized_size(compress),
+                8 + flat
+                    .data
+                    .iter()
+                    .map(|field| field.serialized_size(compress))
+                    .sum::<usize>()
+            );
+        }
+    }
 
     #[test]
     fn ring_view_roundtrip() {

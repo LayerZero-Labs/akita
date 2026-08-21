@@ -6,8 +6,7 @@ use akita_types::{
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
-use jolt_field::One;
-use jolt_field::{Fp32, Prime128OffsetA7F7};
+use jolt_field::{Fp32, One, Prime128OffsetA7F7};
 
 type F = Fp32<251>;
 const D: usize = 64;
@@ -45,7 +44,13 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     )
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
-    let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 1).unwrap();
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+        &valid_lp,
+        &opening_batch,
+    )
+    .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&valid_lp, &opening_batch, &relation_geometry, 1, 1).unwrap();
     let setup_groups = vec![SetupContributionGroupInputs {
         group_id: 0,
         num_claims: 1,
@@ -63,6 +68,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
+        1,
         vec![F::one(); 4].into(),
         &witness_layout,
         &setup_groups,
@@ -118,7 +124,11 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
     let quotient_depth = r_decomp_levels::<MixedF>(lp.log_basis_open);
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, quotient_depth).unwrap();
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout =
+        WitnessLayout::new(&lp, &opening_batch, &relation_geometry, 1, quotient_depth).unwrap();
     let role_dims = lp.role_dims();
     let relation_address_geometry =
         RelationAddressGeometry::new(role_dims, D_PROJECTED, witness_layout.live_coeff_len())
@@ -131,17 +141,14 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: PreparedChallengeEvals::Flat(
-                (0..lp.num_live_blocks)
-                    .map(|index| MixedF::from_u64(31 + index as u64))
-                    .collect(),
-            ),
+            c_alphas: (0..lp.num_live_blocks)
+                .map(|index| MixedF::from_u64(31 + index as u64))
+                .collect(),
             opening_a_evals: (0..lp.num_positions_per_block)
                 .map(|index| MixedF::from_u64(41 + index as u64))
                 .collect(),
             group_id: 0,
             num_claims: 1,
-            num_live_blocks: lp.num_live_blocks,
             depth_fold,
             a_row_start: 1,
             b_row_start: 1 + lp.inner_commit_matrix.output_rank(),
@@ -152,6 +159,7 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             level_params: lp,
             opening_batch,
             witness_layout: Arc::new(witness_layout),
+            extension_degree: 1,
         }),
         setup_plan_cache: Default::default(),
     };

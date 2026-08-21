@@ -1,13 +1,9 @@
-use crate::compute::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
-};
+use crate::compute::requirements::RoutedNttRequirement;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
-use jolt_field::{CanonicalEncoding, Field, Unreduced};
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Process-local identity of one physical backend cache owner.
@@ -57,6 +53,20 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
+    /// Whether this routed request remains resident for its operation cluster.
+    ///
+    /// Prewarming and planned memory reporting both use this decision. The
+    /// default retains every requirement. A backend that streams an operation
+    /// must override this method with the same policy used by its runtime
+    /// kernel.
+    fn ntt_requirement_is_cached(
+        &self,
+        _prepared: &Self::PreparedSetup,
+        _requirement: RoutedNttRequirement,
+    ) -> Result<bool, AkitaError> {
+        Ok(true)
+    }
+
     /// Process-local identity used to deduplicate physically shared cache state.
     ///
     /// The default treats the prepared value itself as the cache owner. A
@@ -85,6 +95,22 @@ where
         &self,
         prepared: &'a Self::PreparedSetup,
     ) -> &'a AkitaExpandedSetup<F>;
+
+    /// Drop backend-designated releasable NTT slots and return the freed bytes.
+    /// Slots rebuild on next use. Backends may retain small reusable caches and
+    /// backends without droppable caches return `Ok(0)`.
+    ///
+    /// Release must not invalidate active readers. A backend may require the
+    /// caller to prevent concurrent cache construction if release must leave
+    /// the cache empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when backend-owned cache state cannot be updated.
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> Result<usize, AkitaError> {
+        let _unused = prepared;
+        Ok(0)
+    }
 
     /// Ensure explicit setup metadata and backend-prepared state match.
     fn validate_prepared_setup(
@@ -162,81 +188,4 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-}
-
-/// Commitment row operations for migrated root/ring commitment work.
-pub trait CommitmentComputeBackend<F>: DigitRowsComputeBackend<F>
-where
-    F: Field + CanonicalEncoding,
-{
-    /// Dense A-side commit rows.
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-
-    /// One-hot A-side commit rows.
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: Unreduced;
-
-    /// Sparse signed-ring A-side commit rows.
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: Unreduced;
-
-    /// Recursive witness A-side commit rows.
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
-}
-
-/// Ring-switch relation operations for migrated proving work.
-pub trait RingSwitchComputeBackend<F>: CyclicRowsComputeBackend<F>
-where
-    F: Field + CanonicalEncoding,
-{
-    /// Fused cyclic/quotient rows used by ring-switch finalization.
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: Field;
-
-    /// A-side quotient rows for an additional public-row segment.
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: Field;
-}
-
-/// Full first-PR prover compute surface.
-pub trait ProverComputeBackend<F>:
-    CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>
-where
-    F: Field + CanonicalEncoding,
-{
-}
-
-impl<F, B> ProverComputeBackend<F> for B
-where
-    F: Field + CanonicalEncoding,
-    B: CommitmentComputeBackend<F> + RingSwitchComputeBackend<F>,
-{
 }

@@ -47,8 +47,8 @@ impl<E: Field> TensorEqualityFactor<E> {
                 actual: materialize_at,
             });
         }
-        checked_table_len(tail_point.len())?;
-        checked_table_len(tail_point.len() - materialize_at)?;
+        reduction_table_len(tail_point.len())?;
+        reduction_table_len(tail_point.len() - materialize_at)?;
 
         let eta_weights = EqPolynomial::evals(&eta)?;
         let basis = (0..width)
@@ -274,7 +274,7 @@ impl<E: Field + Unreduced> TensorEqualityFactor<E> {
     /// each product is widened into `E::Product` and the
     /// `state.len() == E::DEGREE` terms are summed before a single
     /// `reduce_product`. The per-coefficient reduction is additive over
-    /// the accumulator and the wide sum cannot overflow (`DEGREE` is a small
+    /// the accumulator and the wide sum cannot overflow (`EXT_DEGREE` is a small
     /// power of two — 4 here — far below the accumulator's >= 2^63 headroom), so
     /// the result is byte-identical to `eval_state_at_suffix`.
     ///

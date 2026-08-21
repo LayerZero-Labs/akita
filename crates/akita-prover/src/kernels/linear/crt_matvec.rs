@@ -31,7 +31,7 @@ pub(super) fn precompute_dense_mat_ntt_with_params<
     cfg_iter!(mat)
         .map(|row| {
             row.iter()
-                .map(|a| CyclotomicCrtNtt::from_ring_with_params(a, params))
+                .map(|a| CyclotomicCrtNtt::from_ring(a, params))
                 .collect()
         })
         .collect()
@@ -50,7 +50,7 @@ fn mat_vec_mul_dense_with_params<
 ) -> Vec<CyclotomicRing<F, D>> {
     let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = vec
         .iter()
-        .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
+        .map(|v| CyclotomicCrtNtt::from_ring(v, params))
         .collect();
 
     mat.iter()
@@ -58,10 +58,10 @@ fn mat_vec_mul_dense_with_params<
             debug_assert_eq!(row.len(), ntt_vec.len());
             let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
             for (a, x_ntt) in row.iter().zip(ntt_vec.iter()) {
-                let a_ntt = CyclotomicCrtNtt::from_ring_with_params(a, params);
+                let a_ntt = CyclotomicCrtNtt::from_ring(a, params);
                 accumulate_pointwise_product_into(&mut acc, &a_ntt, x_ntt, params);
             }
-            acc.to_ring_with_params(params)
+            acc.to_ring(params)
         })
         .collect()
 }
@@ -82,7 +82,7 @@ fn mat_vec_mul_dense_many_with_params<
         .map(|vec| {
             let ntt_vec: Vec<CyclotomicCrtNtt<W, K, D>> = vec
                 .iter()
-                .map(|v| CyclotomicCrtNtt::from_ring_with_params(v, params))
+                .map(|v| CyclotomicCrtNtt::from_ring(v, params))
                 .collect();
 
             ntt_mat
@@ -93,7 +93,7 @@ fn mat_vec_mul_dense_many_with_params<
                     for (a_ntt, x_ntt) in row_ntt.iter().zip(ntt_vec.iter()) {
                         accumulate_pointwise_product_into(&mut acc, a_ntt, x_ntt, params);
                     }
-                    acc.to_ring_with_params(params)
+                    acc.to_ring(params)
                 })
                 .collect()
         })

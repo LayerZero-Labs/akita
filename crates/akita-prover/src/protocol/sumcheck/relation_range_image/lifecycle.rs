@@ -1,7 +1,60 @@
 use super::*;
-use jolt_field::{Field, Ring, Unreduced};
+
+fn stage2_geometry(
+    lane_bits: usize,
+    coefficient_bits: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let lane_bits_u32 = u32::try_from(lane_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+    let coefficient_bits_u32 = u32::try_from(coefficient_bits)
+        .map_err(|_| AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string()))?;
+    let lane_capacity = 1usize
+        .checked_shl(lane_bits_u32)
+        .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+    let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
+        AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+    })?;
+    Ok((lane_capacity, coeff_count))
+}
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    /// Create a stage-2 instance containing only the virtual range-image term.
+    ///
+    /// This is the standalone companion to
+    /// [`DigitRangeProver`](crate::protocol::sumcheck::DigitRangeProver):
+    /// stage 1 proves that the compact balanced-digit table is pointwise in
+    /// range, while this sumcheck links its carried range-image claim
+    /// `S(r) = range_image_evaluation` to an opening of the same digit table
+    /// through `S = w(w + 1)`. No relation or evaluation-trace term is
+    /// included.
+    pub fn new_virtual_only(
+        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
+        stage1_point: &[E],
+        range_image_evaluation: E,
+        b: usize,
+        live_lane_count: usize,
+        lane_bits: usize,
+        coefficient_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
+        Self::new(
+            E::one(),
+            w_evals_compact,
+            stage1_point,
+            range_image_evaluation,
+            b,
+            vec![E::zero(); coeff_count],
+            vec![E::zero(); lane_capacity],
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
+            E::zero(),
+            PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
+            E::zero(),
+            None,
+        )
+    }
+
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
@@ -17,8 +70,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         lane_bits: usize,
         coefficient_bits: usize,
         relation_claim: E,
-        evaluation_trace: PreparedProverEvaluationTrace<E>,
-        trace_opening_claim: E,
+        linear_terms: PreparedProverLinearTerms<E>,
+        linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError> {
         let w_evals_compact = w_evals_compact.into();
@@ -30,23 +83,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 "live_lane_count must be at least 1".to_string(),
             ));
         }
-        let lane_bits_u32 = u32::try_from(lane_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
-        let coefficient_bits_u32 = u32::try_from(coefficient_bits).map_err(|_| {
-            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-        })?;
-        let lane_capacity = 1usize
-            .checked_shl(lane_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+        let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         if live_lane_count > lane_capacity {
             return Err(AkitaError::InvalidSize {
                 expected: lane_capacity,
                 actual: live_lane_count,
             });
         }
-        let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
-            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
-        })?;
         let witness_len = live_lane_count
             .checked_mul(coeff_count)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
@@ -74,40 +117,57 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 actual: relation_lane_weights.len(),
             });
         }
-        evaluation_trace.validate_len(witness_len)?;
+        linear_terms.validate_len(witness_len)?;
 
-        // Self-consistency check: the materialized relation-weight table must
-        // reproduce `relation_claim` (which is established independently by
-        // `relation_claim_from_layout_extension` and bound into the sumcheck
-        // input claim). This is a full-domain
+        // Self-consistency check: the materialized ordinary relation weights
+        // plus the structured linear weights must reproduce the combined
+        // relation claim. Packing keeps its Z contribution in the structured
+        // representation, so checking the ordinary table in isolation would
+        // reject a valid factored relation. This is a full-domain
         // `O(lane_capacity * coeff_count)` pass, so it is gated to
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let relation_boolean_sum = w_evals_compact
+            let (ordinary_relation_sum, structured_relation_sum) = w_evals_compact
                 .chunks_exact(coeff_count)
                 .zip(&relation_lane_weights)
-                .fold(E::zero(), |acc, (lane_values, &lane_weight)| {
-                    acc + lane_values.iter().zip(&common_alpha_factor).fold(
-                        E::zero(),
-                        |lane_acc, (&w, &alpha)| {
-                            lane_acc + lane_weight * alpha * E::from_i64(i64::from(w))
-                        },
-                    )
-                });
-            if relation_boolean_sum != relation_claim {
+                .enumerate()
+                .fold(
+                    (E::zero(), E::zero()),
+                    |(ordinary, structured), (lane, (lane_values, &lane_weight))| {
+                        lane_values
+                            .iter()
+                            .zip(&common_alpha_factor)
+                            .enumerate()
+                            .fold(
+                                (ordinary, structured),
+                                |(ordinary, structured), (coefficient, (&w, &alpha))| {
+                                    let witness = E::from_i64(i64::from(w));
+                                    (
+                                        ordinary + witness * lane_weight * alpha,
+                                        structured
+                                            + witness
+                                                * linear_terms.get(lane, coefficient, coeff_count),
+                                    )
+                                },
+                            )
+                    },
+                );
+            if ordinary_relation_sum + structured_relation_sum
+                != relation_claim + linear_opening_claim
+            {
                 return Err(AkitaError::InvalidInput(
-                    "materialized relation-weight table does not match the relation claim".into(),
+                    "materialized relation weights do not match the combined relation claim".into(),
                 ));
             }
         }
 
-        let relation_trace_claim = relation_claim + trace_opening_claim;
+        let relation_linear_claim = relation_claim + linear_opening_claim;
         let additional_claim = additional_relation_terms
             .as_ref()
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
-            batching_coeff * range_image_evaluation + relation_trace_claim + additional_claim;
+            batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
         let use_two_round_prefix = can_use_stage2_two_round_prefix(coefficient_bits, b);
 
         Ok(Self {
@@ -120,11 +180,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             common_alpha_factor,
             relation_lane_weights,
             additional_relation_terms,
-            evaluation_trace,
+            linear_terms,
             live_lane_count,
             lane_bits,
             num_vars,
-            relation_trace_claim,
+            relation_linear_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
             compact_prefix_stage1_point: use_two_round_prefix.then(|| stage1_point.to_vec()),
@@ -161,12 +221,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
         let ordinary_relation =
             witness * self.common_alpha_factor[0] * self.relation_lane_weights[0];
-        let trace_claim = witness * self.evaluation_trace.final_value()?;
+        let linear_claim = witness * self.linear_terms.final_value()?;
         let additional = self
             .additional_relation_terms
             .as_ref()
             .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
-        Ok(virtual_claim + ordinary_relation + trace_claim + additional)
+        Ok(virtual_claim + ordinary_relation + linear_claim + additional)
     }
 
     pub(super) fn additional_round_polynomial(&self) -> Option<UniPoly<E>> {
@@ -332,7 +392,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 compact_witness,
                 &self.common_alpha_factor,
                 &self.relation_lane_weights,
-                &self.evaluation_trace,
+                &self.linear_terms,
                 &stage1_point,
                 self.b,
                 self.live_lane_count,
@@ -344,7 +404,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 &proof,
                 &stage1_point,
                 self.range_image_evaluation,
-                self.relation_trace_claim,
+                self.relation_linear_claim,
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");

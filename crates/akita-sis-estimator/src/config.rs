@@ -177,7 +177,7 @@ pub enum SearchMode {
     Exhaustive,
     /// Exhaustively scan in parallel.
     ExhaustiveParallel,
-    /// Future pruned search with a proof that skipped cells cannot win.
+    /// Production ADPS16/LGSA zeta search using the proven profile endpoints.
     ProvenPruned,
 }
 
@@ -200,8 +200,8 @@ pub struct EstimateConfig {
 }
 
 impl EstimateConfig {
-    /// Akita infinity table generation profile: ADPS16 quantum + LGSA with
-    /// exhaustive beta and zeta search.
+    /// Akita infinity table certificate profile: ADPS16 quantum + LGSA with
+    /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
         Self {
@@ -210,18 +210,23 @@ impl EstimateConfig {
             },
             optimizer: OptimizerConfig::OptimizeZeta {
                 beta: SearchMode::Exhaustive,
-                zeta: SearchMode::Exhaustive,
+                zeta: SearchMode::ProvenPruned,
             },
             ..Self::default()
         }
     }
 
-    /// Akita Euclidean table generation profile: BDGL16 with the Euclidean
-    /// SIS lattice path used by the shipped 128-bit L2 table.
+    /// Akita Euclidean table generation profile: ADPS16 quantum at 128 bits.
+    ///
+    /// The Euclidean SIS geometry determines the required BKZ block size. The
+    /// reduction is priced with the same ADPS16 quantum model as the production
+    /// coefficient-L∞ table.
     #[must_use]
     pub fn akita_euclidean_table() -> Self {
         Self {
-            red_cost_model: ReductionCostModel::Bdgl16,
+            red_cost_model: ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
+            },
             ..Self::default()
         }
     }
@@ -375,6 +380,16 @@ mod tests {
                     mode: Adps16Mode::Quantum,
                 },
                 minimum_log2_rop: 128.0,
+            }
+        );
+    }
+
+    #[test]
+    fn euclidean_table_uses_the_quantum_adps16_gate() {
+        assert_eq!(
+            EstimateConfig::akita_euclidean_table().red_cost_model,
+            ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
             }
         );
     }

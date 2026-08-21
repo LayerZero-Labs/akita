@@ -9,11 +9,9 @@ mod recursive_prefixes;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::AkitaProverSetup;
-use akita_serialization::Valid;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 #[cfg(feature = "disk-persistence")]
-use akita_serialization::{
-    AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Validate,
-};
+use akita_serialization::{Compress, SerializationError, Validate};
 #[cfg(any(feature = "disk-persistence", test))]
 use akita_types::AkitaExpandedSetup;
 #[cfg(feature = "disk-persistence")]
@@ -22,8 +20,8 @@ use akita_types::{
     AkitaScheduleLookupKey, AkitaSetupDescriptor, AkitaSetupSeed, FlatMatrix,
     PolynomialGroupLayout, SetupPrefixProverRegistry,
 };
-use jolt_field::{CanonicalEncoding, Field, Unreduced};
-
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field};
 #[cfg(feature = "disk-persistence")]
 use std::fmt::Write as _;
 #[cfg(feature = "disk-persistence")]
@@ -78,9 +76,16 @@ pub fn new_prover_setup<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<AkitaProverSetup<F>, AkitaError>
 where
-    F: Field + CanonicalEncoding + Unreduced + Valid + akita_serialization::AkitaSerialize,
+    F: Field
+        + CanonicalEncoding
+        + Unreduced
+        + Valid
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
+    akita_config::validate_config_policy::<Cfg>()?;
     if max_num_batched_polys == 0 {
         return Err(AkitaError::InvalidSetup(
             "max_num_batched_polys must be at least 1".to_string(),
@@ -155,26 +160,27 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     // `digest_effective_schedule`. Akita is still in development, so the cache
     // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
-    let raw_schedule =
-        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
-            Ok(schedule) => {
-                let digest = digest_effective_schedule(&schedule);
-                let mut hex = String::with_capacity(digest.len() * 2);
-                for byte in digest {
-                    let _ = write!(hex, "{byte:02x}");
-                }
-                format!(
-                    "planner_flat_v2_nv{}_batch{}_{hex}",
-                    schedule_lookup_key.num_vars(),
-                    schedule_lookup_key.num_polynomials(),
-                )
+    let raw_schedule = match Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+        schedule_lookup_key,
+    )) {
+        Ok(schedule) => {
+            let digest = digest_effective_schedule(schedule.schedule());
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
             }
-            Err(_) => format!(
-                "miss_nv{}_batch{}",
+            format!(
+                "planner_flat_v2_nv{}_batch{}_{hex}",
                 schedule_lookup_key.num_vars(),
                 schedule_lookup_key.num_polynomials(),
-            ),
-        };
+            )
+        }
+        Err(_) => format!(
+            "miss_nv{}_batch{}",
+            schedule_lookup_key.num_vars(),
+            schedule_lookup_key.num_polynomials(),
+        ),
+    };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -323,7 +329,7 @@ fn serialize_public_matrix_cache<F: Field + AkitaSerialize>(
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn save_prover_setup<
-    F: Field + CanonicalEncoding + Valid + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + Valid + AkitaSerialize + AkitaDeserialize<Context = ()>,
     Cfg: CommitmentConfig<Field = F>,
 >(
     setup: &AkitaProverSetup<F>,
@@ -416,7 +422,7 @@ pub(crate) fn save_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 pub(crate) fn load_prover_setup<
-    F: Field + Valid + CanonicalEncoding + AkitaSerialize,
+    F: Field + Valid + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + 'static,
     Cfg: CommitmentConfig<Field = F>,
 >(
     max_num_vars: usize,
@@ -585,9 +591,55 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_types::SetupMatrixCapacity;
+    #[cfg(feature = "disk-persistence")]
+    use jolt_field::Zero;
 
-    type Cfg = fp128::D64Dense;
+    type Cfg = fp128::Dense;
     type TestF = fp128::Field;
+
+    #[derive(Clone)]
+    struct WrongModulusProfileConfig;
+
+    impl CommitmentConfig for WrongModulusProfileConfig {
+        type Field = TestF;
+        type ExtField = <Cfg as CommitmentConfig>::ExtField;
+
+        const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
+            Cfg::RING_DIMENSION_SCHEDULE_MODE;
+
+        fn decomposition() -> akita_types::DecompositionParams {
+            Cfg::decomposition()
+        }
+
+        fn ring_challenge_config(
+            d: usize,
+        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
+            Cfg::ring_challenge_config(d)
+        }
+
+        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+            akita_types::SisModulusProfileId::Q64Offset59
+        }
+
+        fn setup_matrix_capacity(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
+            panic!("invalid config reached setup capacity materialization")
+        }
+
+        fn opening_basis_range() -> (u32, u32) {
+            Cfg::opening_basis_range()
+        }
+
+        fn inner_basis_range() -> (u32, u32) {
+            Cfg::inner_basis_range()
+        }
+
+        fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+            Cfg::committed_source_class()
+        }
+    }
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
@@ -618,12 +670,17 @@ mod tests {
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // The D128 catalog begins at nv=13; the D64 catalog begins at nv=14,
-        // the first singleton shapes with the required root and suffix folds.
-        new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
-            .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Dense>(14, 1)
-            .expect("small-D fp128 preset should accept the default field");
+        // The D64 catalog begins at nv=14, the first singleton shape with the
+        // required root and suffix folds.
+        new_prover_setup::<fp128::Field, fp128::Dense>(14, 1)
+            .expect("fp128 dense preset should accept the default field");
+    }
+
+    #[test]
+    fn setup_rejects_a_mismatched_field_profile_before_materialization() {
+        let error = new_prover_setup::<TestF, WrongModulusProfileConfig>(14, 1)
+            .expect_err("field modulus and SIS profile must agree");
+        assert!(error.to_string().contains("does not match field modulus"));
     }
 
     #[cfg(feature = "disk-persistence")]
@@ -729,7 +786,7 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
+                    scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
                     CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
                     OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
@@ -773,6 +830,7 @@ mod tests {
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
+                        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
                         log_basis_inner: 1,
                         num_digits_inner: 1,
                         inner_commit_matrix,
@@ -780,12 +838,14 @@ mod tests {
                         num_digits_outer: 1,
                         outer_commit_matrix,
                     },
-                    log_basis_open: 1,
-                    fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-                    num_digits_open: 1,
-                    num_digits_fold: 1,
+                    opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                        akita_challenges::SparseChallengeConfig::pm1_only(0),
+                        1,
+                        1,
+                        1,
+                    ),
                 };
-                let id = setup_prefix_slot_id(1, commitment_params.clone());
+                let id = scheduled_setup_prefix(1, commitment_params.clone()).slot_id();
                 let compression_plan = CompressionChainPlan::for_complete_source(
                     commitment_params
                         .layout
@@ -835,8 +895,6 @@ mod tests {
                     .prefix_slots
                     .insert(SetupPrefixSlot {
                         id,
-                        natural_len: 1,
-                        padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
                             rows: vec![commitment_row; commitment_rows],
                         },
@@ -1029,25 +1087,32 @@ mod tests {
 
                 let disk_setup = load_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
 
-                let lp = Cfg::get_params_for_batched_commitment(
+                let lp = Cfg::resolve_catalog_row_for_opening(
                     &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )
-                .unwrap();
+                .unwrap()
+                .schedule()
+                .root
+                .params
+                .final_group
+                .commitment
+                .clone();
                 let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
                 let commit_u = |setup: &AkitaProverSetup<TestF>| {
-                    let prepared = CpuBackend.prepare_setup(setup).unwrap();
+                    let prepared = CpuBackend::DEFAULT.prepare_setup(setup).unwrap();
                     let plan = CommitInnerPlan::from_level(&lp);
-                    let inner = RootCommitKernel::commit_inner(
-                        &CpuBackend,
-                        &prepared,
-                        RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap(),
-                        plan,
-                    )
-                    .unwrap();
+                    let mut inner_group = CpuBackend::DEFAULT
+                        .commit_inner_group(
+                            &prepared,
+                            vec![RootCommitSource::<TestF, TEST_D>::commit_view(&poly).unwrap()],
+                            plan,
+                        )
+                        .unwrap();
+                    let inner = inner_group.pop().expect("singleton commit result");
                     let n_a = lp.inner_commit_matrix.output_rank();
                     let blocks = (0..lp.num_live_blocks)
                         .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
@@ -1059,11 +1124,32 @@ mod tests {
                             TEST_D,
                         >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
                         .unwrap();
-                    CpuBackend
+                    let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
+                        lp.outer_slice_count,
+                        lp.num_live_blocks,
+                        1,
+                        n_a,
+                        lp.num_digits_outer,
+                        TEST_D,
+                        TEST_D,
+                    )
+                    .unwrap();
+                    let block_width = slice_geometry.ring_elements_per_block_per_polynomial();
+                    let range = slice_geometry
+                        .block_ranges()
+                        .iter()
+                        .max_by_key(|range| range.len())
+                        .unwrap();
+                    let plane_start = range.start * block_width;
+                    let plane_end = range.end * block_width;
+                    let mut slice_digits =
+                        digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
+                    slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
+                    CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),
-                            digits.typed_planes::<TEST_D>().unwrap(),
+                            &slice_digits,
                             lp.log_basis_outer,
                         )
                         .unwrap()

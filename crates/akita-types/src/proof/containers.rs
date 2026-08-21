@@ -1,4 +1,5 @@
 use super::*;
+use akita_error::checked;
 
 /// D-erased storage for a sequence of ring elements as raw field-element
 /// coefficients.
@@ -91,6 +92,14 @@ impl<F: Field> RingVec<F> {
         }
         Self {
             coeffs,
+            ring_dim: D,
+        }
+    }
+
+    /// Consume typed coefficient rows without copying their elements.
+    pub fn from_coefficient_rows<const D: usize>(coeffs: Vec<[F; D]>) -> Self {
+        Self {
+            coeffs: coeffs.into_flattened(),
             ring_dim: D,
         }
     }
@@ -251,7 +260,7 @@ impl<F: Field> RingVec<F> {
     /// Debug-asserts `ring_dim == D` (or compact mode with divisible length).
     /// Release builds perform no shape checks.
     #[inline]
-    pub fn as_ring_slice_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
+    fn as_ring_slice_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
         debug_assert!(D > 0);
         debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
         debug_assert!(self.coeffs.len().is_multiple_of(D));
@@ -267,7 +276,7 @@ impl<F: Field> RingVec<F> {
 
     /// Hot-path borrow of a single ring element after construction fixed `D`.
     #[inline]
-    pub fn as_single_ring_trusted<const D: usize>(&self) -> &CyclotomicRing<F, D> {
+    fn as_single_ring_trusted<const D: usize>(&self) -> &CyclotomicRing<F, D> {
         debug_assert_eq!(self.coeffs.len(), D);
         debug_assert!(self.ring_dim == 0 || self.ring_dim == D);
         // SAFETY: one `D`-sized coefficient block is one ring element.
@@ -299,6 +308,9 @@ impl<F: Field> RingVec<F> {
     /// well-formed for ring dimension `D`, or if it contains more than one
     /// element.
     pub fn as_single_ring<const D: usize>(&self) -> Result<&CyclotomicRing<F, D>, AkitaError> {
+        if D == 0 {
+            return Err(AkitaError::InvalidProof);
+        }
         if self.ring_dim == D && self.coeffs.len() == D {
             return Ok(self.as_single_ring_trusted::<D>());
         }
@@ -529,11 +541,9 @@ pub struct DigitBlockIter<'a> {
 }
 
 /// Sum block sizes with overflow checking.
-fn checked_total_planes(block_sizes: &[usize]) -> Result<usize, AkitaError> {
-    block_sizes.iter().try_fold(0usize, |acc, &size| {
-        acc.checked_add(size)
-            .ok_or_else(|| AkitaError::InvalidInput("digit block size overflow".to_string()))
-    })
+fn total_planes(block_sizes: &[usize]) -> Result<usize, AkitaError> {
+    checked::sum(block_sizes.iter().copied())
+        .ok_or_else(|| AkitaError::InvalidInput("digit block size overflow".to_string()))
 }
 
 impl DigitBlocks {
@@ -554,7 +564,7 @@ impl DigitBlocks {
     /// Returns an error if the block sizes overflow the total plane count or if
     /// the resulting digit length overflows.
     pub fn zeroed(block_sizes: Vec<usize>, digit_stride: usize) -> Result<Self, AkitaError> {
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let total_digits = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -577,7 +587,7 @@ impl DigitBlocks {
         block_sizes: Vec<usize>,
         digit_stride: usize,
     ) -> Result<Self, AkitaError> {
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let expected = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -604,7 +614,7 @@ impl DigitBlocks {
     /// Returns an error if any plane width differs from `digit_stride`.
     pub fn from_blocks(blocks: Vec<Vec<Vec<i8>>>, digit_stride: usize) -> Result<Self, AkitaError> {
         let block_sizes: Vec<usize> = blocks.iter().map(Vec::len).collect();
-        let total_planes = checked_total_planes(&block_sizes)?;
+        let total_planes = total_planes(&block_sizes)?;
         let total_digits = total_planes
             .checked_mul(digit_stride)
             .ok_or_else(|| AkitaError::InvalidInput("digit block length overflow".to_string()))?;
@@ -863,10 +873,8 @@ impl Valid for DigitBlocks {
                 "digit blocks require a non-zero digit stride".to_string(),
             ));
         }
-        let total_planes = self.block_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                SerializationError::InvalidData("digit block size overflow".to_string())
-            })
+        let total_planes = checked::sum(self.block_sizes.iter().copied()).ok_or_else(|| {
+            SerializationError::InvalidData("digit block size overflow".to_string())
         })?;
         let expected = total_planes.checked_mul(self.digit_stride).ok_or_else(|| {
             SerializationError::InvalidData("digit block length overflow".to_string())
@@ -922,10 +930,8 @@ impl AkitaDeserialize for DigitBlocks {
         let digit_stride = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let block_sizes =
             Vec::<usize>::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let total_planes = block_sizes.iter().try_fold(0usize, |acc, &size| {
-            acc.checked_add(size).ok_or_else(|| {
-                SerializationError::InvalidData("digit block size overflow".to_string())
-            })
+        let total_planes = checked::sum(block_sizes.iter().copied()).ok_or_else(|| {
+            SerializationError::InvalidData("digit block size overflow".to_string())
         })?;
         let total_digits = total_planes.checked_mul(digit_stride).ok_or_else(|| {
             SerializationError::InvalidData("digit block length overflow".to_string())

@@ -2,13 +2,13 @@
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
+#[cfg(test)]
 use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
 use crate::{CommittedGroup, OpeningScheduleSelection};
-use akita_error::AkitaError;
-use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
+use akita_error::{checked, AkitaError};
+use akita_transcript::labels::ABSORB_BATCH_SHAPE;
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
@@ -145,11 +145,22 @@ impl OpeningClaimsLayout {
             .sum()
     }
 
+    /// Collapse this batch into the single group shape used by extension
+    /// opening reduction sizing.
+    ///
+    /// The opening point uses the maximum group-local arity, while the partial
+    /// count uses the checked sum of polynomials across every group.
+    pub fn aggregate_polynomial_group_layout(&self) -> Result<PolynomialGroupLayout, AkitaError> {
+        self.check()?;
+        Ok(PolynomialGroupLayout::new(
+            self.max_num_vars(),
+            self.checked_num_total_polynomials()?,
+        ))
+    }
+
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
-        self.groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.num_polynomials())
-                .ok_or(AkitaError::InvalidProof)
-        })
+        checked::sum(self.groups.iter().map(|group| group.num_polynomials()))
+            .ok_or(AkitaError::InvalidProof)
     }
 
     /// Number of polynomials in each group.
@@ -208,12 +219,12 @@ impl OpeningClaimsLayout {
         if group_index >= self.groups.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let start = self.groups[..group_index]
-            .iter()
-            .try_fold(0usize, |acc, group| {
-                acc.checked_add(group.num_polynomials())
-                    .ok_or(AkitaError::InvalidProof)
-            })?;
+        let start = checked::sum(
+            self.groups[..group_index]
+                .iter()
+                .map(|group| group.num_polynomials()),
+        )
+        .ok_or(AkitaError::InvalidProof)?;
         let end = start
             .checked_add(self.groups[group_index].num_polynomials())
             .ok_or(AkitaError::InvalidProof)?;
@@ -419,6 +430,42 @@ impl<'a, E: Clone, F: Field> GroupBatchStatement<'a, E, F> {
     }
 }
 
+impl<'a, E: Clone, F: Field> OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+    /// Layout reconstructed from the frozen commitment profiles.
+    pub fn committed_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        self.check()?;
+        let mut groups = Vec::with_capacity(self.groups.len());
+        for group in &self.groups {
+            let declared = group.commitment.profile().group;
+            if declared.num_vars() != group.point.len()
+                || declared.num_polynomials() != group.evaluations.len()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            groups.push(declared);
+        }
+        OpeningClaimsLayout::from_groups(groups)
+    }
+}
+
+impl<'a, E: Clone, F: Field> OpeningClaims<'a, E, CommittedGroup<F>> {
+    /// Layout reconstructed from the frozen commitment profiles.
+    pub fn committed_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        self.check()?;
+        let mut groups = Vec::with_capacity(self.groups.len());
+        for group in &self.groups {
+            let declared = group.commitment.profile().group;
+            if declared.num_vars() != group.point.len()
+                || declared.num_polynomials() != group.evaluations.len()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            groups.push(declared);
+        }
+        OpeningClaimsLayout::from_groups(groups)
+    }
+}
+
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     /// Build public claims from ordered groups.
     pub fn from_groups(groups: Vec<PolynomialGroupClaims<'a, F, C>>) -> Result<Self, AkitaError> {
@@ -474,10 +521,12 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 
     fn checked_num_total_polynomials(&self) -> Result<usize, AkitaError> {
-        self.groups.iter().try_fold(0usize, |acc, group| {
-            acc.checked_add(group.evaluations.len())
-                .ok_or(AkitaError::InvalidProof)
-        })
+        checked::sum(
+            self.groups
+                .iter()
+                .map(PolynomialGroupClaims::num_evaluations),
+        )
+        .ok_or(AkitaError::InvalidProof)
     }
 
     /// Number of polynomials/evaluations in each group.
@@ -554,30 +603,28 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Bind claimed evaluations and derive their public-row batching coefficients.
-pub fn derive_public_row_coefficients<F, L, T>(
+/// Sample row-batching coefficients in the caller-selected transcript domain.
+///
+/// Claimed values must already have been absorbed. Keeping message binding
+/// separate makes the phase boundary explicit. The caller chooses whether this
+/// is an early protocol-local compression or the later application batch and
+/// must use the corresponding transcript phase.
+pub fn sample_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
-    openings: &[L],
+    challenge_label: &'static [u8],
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
-    F: Field + CanonicalEncoding + AkitaSerialize,
+    F: Field + CanonicalEncoding,
     L: ExtField<F>,
     T: Transcript<F>,
 {
     layout.check()?;
-    if openings.len() != layout.num_total_polynomials() {
-        return Err(AkitaError::InvalidSize {
-            expected: layout.num_total_polynomials(),
-            actual: openings.len(),
-        });
-    }
-    append_claim_values_to_transcript::<F, L, T>(openings, transcript);
     if layout.num_total_polynomials() == 1 {
         return Ok(vec![L::one()]);
     }
     Ok((0..layout.num_total_polynomials())
-        .map(|_| sample_ext_challenge::<F, L, T>(transcript, CHALLENGE_EVAL_BATCH))
+        .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
         .collect())
 }
 
@@ -592,10 +639,8 @@ fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Ring;
-    use akita_algebra::Zero;
     use akita_transcript::AkitaTranscript;
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 
@@ -692,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    fn from_root_groups_appends_final_group_after_precommitteds() {
+    fn from_root_groups_appends_final_group_after_precommitted_groups() {
         let precommitteds = [
             PolynomialGroupLayout::new(2, 1),
             PolynomialGroupLayout::new(3, 2),
@@ -716,6 +761,31 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_opening_layout_preserves_grouped_claim_count_for_eor() {
+        let precommitteds = [PolynomialGroupLayout::new(10, 2)];
+        let final_group = PolynomialGroupLayout::new(8, 1);
+        let aggregate = OpeningClaimsLayout::from_root_groups(&precommitteds, final_group)
+            .expect("root layout")
+            .aggregate_polynomial_group_layout()
+            .expect("aggregate layout");
+
+        assert_eq!(aggregate, PolynomialGroupLayout::new(10, 3));
+        let final_only_bytes = crate::extension_opening_reduction_level_bytes(128, 4, final_group)
+            .expect("final-only EOR bytes");
+        let aggregate_bytes = crate::extension_opening_reduction_level_bytes(128, 4, aggregate)
+            .expect("aggregate EOR bytes");
+        assert!(final_only_bytes > 0);
+        let extra_partial_bytes = 2 * 4 * crate::field_bytes(128);
+        let extra_round_bytes =
+            2 * crate::EXTENSION_OPENING_REDUCTION_DEGREE * crate::field_bytes(128);
+        let extra_terminal_claim_bytes = 2 * crate::field_bytes(128);
+        assert_eq!(
+            aggregate_bytes - final_only_bytes,
+            extra_partial_bytes + extra_round_bytes + extra_terminal_claim_bytes
+        );
+    }
+
+    #[test]
     fn public_row_coefficients_bind_against_claim_cancellation() {
         let layout = OpeningClaimsLayout::from_groups(vec![
             PolynomialGroupLayout::singleton(2),
@@ -728,9 +798,13 @@ mod tests {
 
         let target = |values: &[F]| {
             let mut transcript = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
-            let coefficients =
-                derive_public_row_coefficients::<F, F, _>(&layout, values, &mut transcript)
-                    .expect("derive coefficients");
+            append_claim_values_to_transcript::<F, F, _>(values, &mut transcript);
+            let coefficients = sample_row_coefficients::<F, F, _>(
+                &layout,
+                akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+                &mut transcript,
+            )
+            .expect("derive coefficients");
             layout
                 .batched_eval_target(&coefficients, values)
                 .expect("batched target")

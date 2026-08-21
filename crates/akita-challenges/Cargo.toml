@@ -16,10 +16,13 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 sha3 = "0.10.8"
+smallvec = { version = "1.15.2", features = ["const_generics"] }
 tracing = "0.1"
 
 [dev-dependencies]
@@ -30,7 +33,9 @@ name = "sparse_challenge"
 harness = false
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+transcript-blake2b = ["akita-transcript/transcript-blake2b"]
+transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
 
 [lints]

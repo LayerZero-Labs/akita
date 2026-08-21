@@ -1,4 +1,10 @@
-//! Protocol errors shared by Akita crates.
+//! Protocol errors and checked integer arithmetic shared by Akita crates.
+
+#![deny(missing_docs)]
+#![warn(unreachable_pub)]
+
+/// Checked integer formulas shared by Akita's layout and validation code.
+pub mod checked;
 
 /// Errors that can occur in Akita PCS operations.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -36,15 +42,4 @@ pub enum AkitaError {
     /// Setup data is missing or invalid.
     #[error("Invalid or missing setup file: {0}")]
     InvalidSetup(String),
-}
-
-impl From<jolt_field::FieldError> for AkitaError {
-    fn from(error: jolt_field::FieldError) -> Self {
-        match error {
-            jolt_field::FieldError::InvalidInput(message) => Self::InvalidInput(message),
-            jolt_field::FieldError::InvalidSize { expected, actual } => {
-                Self::InvalidSize { expected, actual }
-            }
-        }
-    }
 }

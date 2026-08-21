@@ -1,7 +1,8 @@
 use super::exact_prefix::SplitEqualitySuffixMass;
 use super::MAX_TREE_STAGE_Q_DEGREE;
 use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Unreduced, Zero};
+use jolt_field::Unreduced;
+use jolt_field::{Field, Zero};
 
 #[inline]
 fn accumulate_canonical_blocks<E: Field>(

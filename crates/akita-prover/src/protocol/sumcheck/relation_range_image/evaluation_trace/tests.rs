@@ -1,23 +1,21 @@
 use super::*;
-use jolt_field::Zero;
 
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
-use akita_config::{proof_optimized::fp128, CommitmentConfig};
+use akita_config::proof_optimized::fp128;
 use akita_types::{
     basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
-    DigitRangePlan, EvaluationTraceInputs, FpExtEncoding, OpeningClaimsLayout,
-    PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
-    RingMultiplierOpeningPoint, WitnessLayout,
+    CommittedGroupParams, DigitRangePlan, EvaluationTraceInputs, FpExtEncoding,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
+    RingMultiplierOpeningPoint, SisModulusProfileId, WitnessLayout,
 };
-use jolt_field::{Ext2, ExtField, Ring};
+use jolt_field::{Ext2, ExtField, One, Ring, Zero};
 
-type Cfg = fp128::D128Dense;
 type F = fp128::Field;
-const D: usize = Cfg::D;
+const D: usize = 128;
 const NUM_VARIABLES: usize = 16;
 
 fn fold_prepared_trace_at_point<E: Field>(
-    mut trace: PreparedProverEvaluationTrace<E>,
+    mut trace: PreparedProverLinearTerms<E>,
     live_len: usize,
     coeff_count: usize,
     point: &[E],
@@ -80,10 +78,28 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
-    let level_params = Cfg::get_params_for_batched_commitment(&opening_batch).unwrap();
+    let level_params = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        D,
+        3,
+        2,
+        4,
+        3,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(D)
+            .expect("D128 challenge"),
+    )
+    .with_decomp(64, (1usize << NUM_VARIABLES) / D, 2, 2, 2)
+    .expect("local EvaluationTrace geometry");
+    let relation_witness_geometry =
+        akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(
+            &level_params,
+            &opening_batch,
+        )
+        .unwrap();
     let witness_layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
+        &relation_witness_geometry,
         2,
         r_decomp_levels::<F>(level_params.log_basis_open),
     )
@@ -91,7 +107,9 @@ where
     let live_len = witness_layout.live_coeff_len();
     let relation_address_geometry =
         RelationAddressGeometry::new(level_params.role_dims(), D, live_len).unwrap();
+    let common_coefficient_count = relation_address_geometry.relation_coefficient_block_len();
     let plan = RelationRangeImagePlan::new(
+        relation_witness_geometry,
         relation_address_geometry,
         DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
         witness_layout,
@@ -100,8 +118,8 @@ where
     .unwrap();
     let digit_witness_domain = plan.digit_witness_domain();
     let group_params = level_params.group_params(&opening_batch, 0).unwrap();
-    let alpha_variables = D.trailing_zeros() as usize;
-    let base_outer_point = vec![F::zero(); NUM_VARIABLES - alpha_variables];
+    let base_outer_point =
+        vec![F::zero(); group_params.position_index_bits() + group_params.block_index_bits()];
     let ring_opening_point = ring_opening_point_from_field(
         &base_outer_point,
         group_params.num_positions_per_block(),
@@ -109,14 +127,24 @@ where
         basis,
     )
     .unwrap();
-    let prepared_points = vec![PreparedOpeningPoint::from_parts(
-        (0..NUM_VARIABLES)
-            .map(|index| E::from_u64(17 + 2 * index as u64))
-            .collect(),
-        ring_opening_point.clone(),
-        RingMultiplierOpeningPoint::from_base(&ring_opening_point),
-        CyclotomicRing::<F, D>::one(),
-    )];
+    let padded_point = (0..NUM_VARIABLES)
+        .map(|index| E::from_u64(17 + 2 * index as u64))
+        .collect();
+    let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&ring_opening_point);
+    let prepared_point = akita_types::dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        group_params.inner_commit_matrix_params().ring_dimension(),
+        |D_G| {
+            Ok::<_, akita_error::AkitaError>(PreparedOpeningPoint::from_parts(
+                padded_point,
+                ring_multiplier_point,
+                CyclotomicRing::<F, D_G>::one(),
+            ))
+        }
+    )
+    .unwrap();
+    let prepared_points = vec![prepared_point];
     let claim_coefficients = vec![E::from_u64(41), E::from_u64(43)];
     let semantic_trace = build_evaluation_trace_weights::<F, E>(EvaluationTraceInputs {
         digit_witness_domain: plan.digit_witness_domain(),
@@ -139,9 +167,17 @@ where
     let mut padded_expected_table = expected_table.clone();
     padded_expected_table.resize(1usize << point.len(), E::zero());
 
-    for coeff_count in [D, D / 2, D / 4] {
-        let prepared =
-            PreparedProverEvaluationTrace::new(&semantic_trace, coeff_count, output_scale).unwrap();
+    for coeff_count in [
+        common_coefficient_count,
+        common_coefficient_count / 2,
+        common_coefficient_count / 4,
+    ] {
+        let prepared = PreparedProverLinearTerms::from_evaluation_trace(
+            &semantic_trace,
+            coeff_count,
+            output_scale,
+        )
+        .unwrap();
         assert_eq!(prepared.materialize_dense(), expected_table,);
         let folded = fold_prepared_trace_at_point(prepared, live_len, coeff_count, &point);
         assert_eq!(
@@ -149,8 +185,8 @@ where
             multilinear_eval(&padded_expected_table, &point).unwrap()
         );
     }
-    for malformed_common_count in [0, 3, D * 2] {
-        assert!(PreparedProverEvaluationTrace::new(
+    for malformed_common_count in [0, 3, common_coefficient_count * 2] {
+        assert!(PreparedProverLinearTerms::from_evaluation_trace(
             &semantic_trace,
             malformed_common_count,
             output_scale,
@@ -191,8 +227,9 @@ fn projected_semantic_trace_oracle_uses_role_native_subcolumns() {
         .collect::<Vec<_>>();
 
     for coeff_count in [2, 4] {
-        let prepared = PreparedProverEvaluationTrace::new(&weights, coeff_count, output_scale)
-            .expect("projected trace geometry");
+        let prepared =
+            PreparedProverLinearTerms::from_evaluation_trace(&weights, coeff_count, output_scale)
+                .expect("projected trace geometry");
         assert_eq!(prepared.materialize_dense(), expected);
         assert_eq!(
             fold_prepared_trace_at_point(prepared, expected.len(), coeff_count, &point),
@@ -220,7 +257,7 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
     let r1 = F::from_u64(41);
 
     let mut one_round =
-        PreparedProverEvaluationTrace::from_dense(dense.clone(), live_lane_count, coeff_count);
+        PreparedProverLinearTerms::from_dense(dense.clone(), live_lane_count, coeff_count);
     let one_round_allocations = one_round
         .sources
         .iter()
@@ -241,7 +278,7 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
     assert_eq!(one_round.materialize_dense(), expected_one_round);
 
     let mut two_round =
-        PreparedProverEvaluationTrace::from_dense(dense.clone(), live_lane_count, coeff_count);
+        PreparedProverLinearTerms::from_dense(dense.clone(), live_lane_count, coeff_count);
     let two_round_allocations = two_round
         .sources
         .iter()
@@ -260,4 +297,58 @@ fn coefficient_folds_reuse_prepared_source_buffers() {
         })
         .collect::<Vec<_>>();
     assert_eq!(two_round.materialize_dense(), expected_two_round);
+}
+
+#[test]
+fn structured_linear_terms_reject_malformed_arena_and_incompatible_merge() {
+    let valid = StructuredLinearWeights {
+        sources: vec![(1..=8)
+            .map(|value| F::from_u64(value as u64))
+            .collect::<Vec<_>>()
+            .into()],
+        segments: vec![StructuredLinearSegment {
+            physical_coefficient_start: 0,
+            source_coefficient_start: 0,
+            coefficient_count: 8,
+        }],
+        terms: vec![StructuredLinearTerm {
+            factor: F::from_u64(11),
+            source_index: 0,
+            segment_range: 0..1,
+        }],
+        physical_field_len: 8,
+    };
+    assert!(PreparedProverLinearTerms::from_structured_weights(&valid, 4).is_ok());
+
+    let mut malformed = valid.clone();
+    malformed.sources.clear();
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.terms.clear();
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.terms[0].source_index = 1;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.terms[0].segment_range = 1..1;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.terms[0].segment_range = 0..2;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.segments[0].coefficient_count = 0;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.segments[0].physical_coefficient_start = 1;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.segments[0].source_coefficient_start = 4;
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+    let mut malformed = valid.clone();
+    malformed.sources[0] = vec![F::one(); 6].into();
+    assert!(PreparedProverLinearTerms::from_structured_weights(&malformed, 4).is_err());
+
+    let mut prepared = PreparedProverLinearTerms::from_structured_weights(&valid, 4).unwrap();
+    let incompatible = PreparedProverLinearTerms::from_dense(vec![F::one(); 8], 4, 2);
+    assert!(prepared.merge(incompatible).is_err());
 }

@@ -7,7 +7,7 @@ Fiat-Shamir transcript support for Akita.
 Akita's transcript hardening has three active pieces:
 
 1. `AkitaInstanceDescriptor` bytes are bound into the spongefish preamble through `DomainSeparator.instance(...)`.
-2. `AkitaTranscript` is backed by spongefish. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Cargo `--all-features` builds also resolve to Blake2b.
+2. `AkitaTranscript` is backed by spongefish. The default backend is Blake2b; `--no-default-features --features transcript-keccak` selects Keccak instead. Exactly one backend must be selected. Builds with neither or both backend features fail closed.
 3. `LoggingTranscript` is available behind `logging-transcript` for tests and schedule inspection.
 
 Production labels are diagnostics only. `Label` is a zero-sized type when `logging-transcript` is disabled, and labels are never absorbed into the production sponge. Positional order plus the instance descriptor preamble are the protocol transcript domain.
@@ -36,4 +36,4 @@ cargo test -p akita-pcs --features logging-transcript --test transcript_hardenin
 cargo test -p akita-pcs --features logging-transcript --test transcript_hardening_proptest
 ```
 
-For the full design and deferred follow-ups, see `specs/transcript-hardening.md`.
+For the full design, see [`book/src/how/transcript.md`](../../book/src/how/transcript.md).

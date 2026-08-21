@@ -1,17 +1,15 @@
-//! Rotated-challenge accumulation for decompose-fold (dense D32/D64 high-weight path).
+//! Rotated-challenge accumulation for decompose-fold (dense D64 high-weight path).
 
 use super::{extract_balanced_digit, peel_first_balanced_digit_i32, to_signed, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use jolt_field::{CanonicalEncoding, Field};
 
-const D32_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 24;
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
 #[inline(always)]
 pub(crate) fn should_use_rotated_challenge<const D: usize>(challenge: &SparseChallenge) -> bool {
-    (D == 32 && challenge.positions.len() >= D32_ROTATED_CHALLENGE_MIN_WEIGHT
-        || D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
+    (D == 64 && challenge.positions.len() >= D64_ROTATED_CHALLENGE_MIN_WEIGHT)
         && challenge.positions.len() == challenge.coeffs.len()
 }
 
@@ -133,19 +131,19 @@ fn decompose_ring_full_challenge_accumulate_fast<F: Field + CanonicalEncoding, c
         let mut c0 = to_signed(
             ring.coeffs[base]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128"),
+                .expect("Akita field element must fit in u128"),
             p,
         );
         let mut c1 = to_signed(
             ring.coeffs[base + 1]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128"),
+                .expect("Akita field element must fit in u128"),
             p,
         );
         let mut c2 = to_signed(
             ring.coeffs[base + 2]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128"),
+                .expect("Akita field element must fit in u128"),
             p,
         );
         let rot0 = &rotated[base];
@@ -170,7 +168,7 @@ fn decompose_ring_full_challenge_accumulate_fast<F: Field + CanonicalEncoding, c
         let mut c = to_signed(
             ring.coeffs[idx]
                 .to_u128_checked()
-                .expect("canonical prime-field value fits in u128"),
+                .expect("Akita field element must fit in u128"),
             p,
         );
         for plane in acc.iter_mut() {
@@ -204,13 +202,13 @@ fn decompose_ring_full_challenge_accumulate_overflow<
 
         let canonical0 = ring.coeffs[base]
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let canonical1 = ring.coeffs[base + 1]
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let canonical2 = ring.coeffs[base + 2]
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
 
         let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
         let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
@@ -243,7 +241,7 @@ fn decompose_ring_full_challenge_accumulate_overflow<
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
         let canonical = ring.coeffs[idx]
             .to_u128_checked()
-            .expect("canonical prime-field value fits in u128");
+            .expect("Akita field element must fit in u128");
         let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
         if d0 != 0 {
             add_scaled_rotated_row(first_acc, rot, d0);

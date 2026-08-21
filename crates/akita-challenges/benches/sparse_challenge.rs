@@ -1,4 +1,4 @@
-//! Microbenchmarks for ring fold challenge sampling at `D=64`.
+//! Microbenchmarks for ring fold challenge sampling.
 //!
 //! Compares production signed-sparse `(31, 10)` against pm1-only `{23, 0}` at
 //! the same ring degree to bracket position-shuffle vs sign-decode cost.
@@ -15,13 +15,13 @@
 #![allow(missing_docs)]
 
 use akita_challenges::{
-    sample_sparse_challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
+    sample_sparse_challenges, Challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
     D64_PRODUCTION_PM2_COUNT,
 };
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use jolt_field::{Prime128OffsetA7F7, Ring};
+use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
 type F = Prime128OffsetA7F7;
 
@@ -76,5 +76,146 @@ fn bench_batch(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(sparse_challenge, bench_batch);
+fn bench_sparse_ladder(c: &mut Criterion) {
+    const BATCH: usize = 1 << 12;
+    let mut group = c.benchmark_group("sparse_challenge_ladder_batch_4096");
+    group.throughput(Throughput::Elements(BATCH as u64));
+    for ring_d in [256usize, 512, 1024, 2048] {
+        let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d)
+            .expect("production challenge configuration");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(ring_d),
+            &ring_d,
+            |b, &ring_d| {
+                b.iter(|| {
+                    let mut tr = fresh_transcript();
+                    let challenges = sample_sparse_challenges::<F, _>(
+                        &mut tr,
+                        b"bench/sparse-ladder",
+                        ring_d,
+                        BATCH,
+                        black_box(&cfg),
+                        0,
+                    )
+                    .expect("batch sparse challenges");
+                    black_box(challenges)
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_sparse_evaluation(c: &mut Criterion) {
+    let alpha = F::from_u64(17);
+    let mut power = F::one();
+    let alpha_powers = (0..D)
+        .map(|_| {
+            let current = power;
+            power *= alpha;
+            current
+        })
+        .collect::<Vec<_>>();
+
+    let mut group = c.benchmark_group("sparse_challenge_evaluation");
+    for batch in [64usize, 256, 512, 1024, 2048, 4096, 1 << 16] {
+        let mut transcript = fresh_transcript();
+        let sampled = sample_sparse_challenges::<F, _>(
+            &mut transcript,
+            b"bench/evaluation",
+            D,
+            batch,
+            &cfg_signed_sparse_production(),
+            0,
+        )
+        .expect("batch sparse challenges");
+        let challenges = Challenges::from_sparse(sampled, batch, 1).expect("valid batch layout");
+        group.throughput(Throughput::Elements(batch as u64));
+        group.bench_with_input(
+            BenchmarkId::new("hybrid", batch),
+            &challenges,
+            |b, challenges| {
+                b.iter(|| {
+                    black_box(
+                        challenges
+                            .evals_at_pows::<F, F>(black_box(&alpha_powers))
+                            .expect("valid challenge evaluations"),
+                    );
+                });
+            },
+        );
+        if batch >= 512 {
+            group.bench_with_input(
+                BenchmarkId::new("sequential", batch),
+                &challenges,
+                |b, challenges| {
+                    b.iter(|| {
+                        black_box(
+                            challenges
+                                .as_slice()
+                                .iter()
+                                .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_powers))
+                                .collect::<Result<Vec<_>, _>>()
+                                .expect("valid challenge evaluations"),
+                        );
+                    });
+                },
+            );
+        }
+    }
+    for batch in [1024, 2048, 4096] {
+        for ring_d in [128usize, 256, 512, 1024, 2048] {
+            let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d)
+                .expect("production challenge configuration");
+            let mut transcript = fresh_transcript();
+            let sampled = sample_sparse_challenges::<F, _>(
+                &mut transcript,
+                b"bench/evaluation-ladder",
+                ring_d,
+                batch,
+                &cfg,
+                0,
+            )
+            .expect("batch sparse challenges");
+            let challenges =
+                Challenges::from_sparse(sampled, batch, 1).expect("valid batch layout");
+            let mut power = F::one();
+            let alpha_powers = (0..ring_d)
+                .map(|_| {
+                    let current = power;
+                    power *= alpha;
+                    current
+                })
+                .collect::<Vec<_>>();
+            for mode in ["hybrid", "sequential"] {
+                group.bench_with_input(
+                    BenchmarkId::new(format!("d{ring_d}_{mode}"), batch),
+                    &challenges,
+                    |b, challenges| {
+                        b.iter(|| {
+                            let evaluations = if mode == "hybrid" {
+                                challenges.evals_at_pows::<F, F>(&alpha_powers)
+                            } else {
+                                challenges
+                                    .as_slice()
+                                    .iter()
+                                    .map(|challenge| challenge.eval_at_pows::<F, F>(&alpha_powers))
+                                    .collect()
+                            };
+                            black_box(evaluations.expect("valid challenge evaluations"));
+                        });
+                    },
+                );
+            }
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(
+    sparse_challenge,
+    bench_batch,
+    bench_sparse_ladder,
+    bench_sparse_evaluation
+);
 criterion_main!(sparse_challenge);

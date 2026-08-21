@@ -1,16 +1,34 @@
 # Akita Planner
 
-The `akita-planner` crate is responsible for computing the parameters of each fold level in the Akita PCS, with the goal of minimizing proof size for a given field, ring dimension, number of variables, and number of polynomials to be batched.
+The `akita-planner` crate computes the parameters of each fold level in the
+Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
+direct and recursive schedules minimize first-direct padded setup capacity,
+then proof bytes and total setup.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
-The planner covers the parameter-selection features supported by Akita, including batching, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
+The planner covers the parameter-selection features supported by Akita,
+including batching and extension fields. For each case it resolves the fold
+parameters under the selection policy bound into the generated catalog.
 
 The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
 
 ## What The Planner Optimizes
 
-Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
+Akita proofs fold the witness at the root, may fold it through more recursive
+levels, and then send the terminal witness directly. The planner chooses the
+best complete schedule under the configured selection policy.
+
+The complete schedule orders are:
+
+```text
+uniform direct: (proof bytes, total setup, descriptor)
+adaptive direct or recursive: (first-direct padded capacity, proof bytes,
+                               total setup, descriptor)
+```
+
+For a direct schedule, the first direct edge is the root. For an offloaded
+schedule, it is the first edge after the setup-prefix chain.
 
 The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
 typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
@@ -20,7 +38,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 ## Inputs And Outputs
 
 The public search entry point is
-`find_schedule(&key, &precommitted_fold_witness_norms, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+`find_schedule(&key, final_honest_fold_policy, &precommitted_honest_fold_policies, &policy, ring_challenge_config)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
@@ -43,22 +61,31 @@ multiplicity is always `1`; multi-group roots derive those counts from
 - The scalar SIS policy identifier.
 - Decomposition parameters, including the basis search range.
 - Claim and challenge extension degrees.
-- Ring-subfield norm bound.
-- One-hot chunk size.
+- Ring dimension mode and recursive setup capability.
+- Selection policy and optional setup field budget.
 
-The `ring_challenge_config` closure supplies the sparse challenge configuration for a ring dimension, and the `fold_challenge_shape_at_level` closure supplies the fold challenge shape for a level. They are closures instead of config methods so the planner stays independent of `CommitmentConfig`.
+Source laws are separate planner-only values. For example, the one-hot policy
+owns its exact chunk size while runtime schedule keys retain only public group
+geometry.
+
+The `ring_challenge_config` closure supplies the sparse challenge configuration for an A-role dimension. It is a closure instead of a config method so the planner stays independent of `CommitmentConfig`.
+
+`PlannerPolicy::ring_dimension_schedule_mode` is the only dimension-domain
+authority. Uniform policies carry one A, B, and D value in that mode. Adaptive
+policies carry separate bounded domains. The selected schedule records the
+exact dimensions used at each level.
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the strict table entry point:
+Most runtime callers use `resolve_generated_catalog_row_for_key`, not the DP directly. Resolution is the strict table entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
-2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
+2. If a catalog is supplied, `resolve_generated_catalog_row_for_key` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact
    `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
 4. If there is no catalog or no matching entry, the request is unsupported.
 
-Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
+Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and ring-challenge closure. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
 ## Search Model
 
@@ -71,10 +98,12 @@ For a fixed field, ring dimension, decomposition policy, and opening shape, the 
 
 Once those values are chosen, the rest of the level is derived rather than independently searched. Digit counts, coefficient-`L∞` bounds, matrix widths, and SIS-secure ranks come from the shared `akita_types::sis` helpers. The planner builds the A, B, and D Ajtai key parameters from those derived values and then scores the resulting proof size.
 
-Conceptually, a candidate level answers two questions:
+Conceptually, a candidate level answers three questions:
 
 - How many bytes does it cost to prove the next witness?
 - How many field elements will the next witness contain?
+- What padded setup capacity is exposed at the first direct edge, and what is
+  the total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
 
@@ -94,21 +123,32 @@ At the root, the planner iterates over the configured `log_basis` range and over
 
 Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
-The planner fails with `UnsupportedSchedule` when no candidate contains at least two folds. Degenerate inputs are rejected instead of producing a separate proof topology.
+Root contraction is only a search ordering hint. The planner admits contractive
+and noncontractive root candidates into one suffix search and selects a complete
+schedule only with `SelectionPolicyId`. It returns `UnsupportedSchedule` only
+when no valid complete schedule exists in the audited fold domain.
 
 ## Recursive Suffix Search
 
 Recursive levels do not enumerate the full exponential tree of all possible `(log_basis, block_index_bits)` choices at every depth. That would make schedule search too expensive as the number of levels grows.
 
-Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans the valid `block_index_bits` choices and keeps the candidate that minimizes the next witness length. This is a local shrinking rule: recursive levels commit dense balanced-digit witnesses, and reducing the next witness length is the main driver for making the remaining suffix cheaper.
+Instead, `derive_fold_candidates` scans the valid `block_index_bits` choices for
+each recursive `log_basis`. `FoldCandidatePolicy::Best` keeps the best
+contracting candidate under the local layout score. `Frontier` retains every
+contracting split candidate needed by proof-first, adaptive-dimension, or
+setup-offloading search.
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
 
 - Terminate after this fold and ship the clear terminal response.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
-The memoized suffix state tracks the level, current witness length, and active
-basis choices. Ordinary recursive folds construct the single canonical
+The memoized suffix state tracks the level, current witness length, active
+basis choices, and parent-visible geometry. Uniform direct search keeps its
+proof-first frontier. Adaptive direct and recursive search share one projected
+frontier: a first-direct setup projection and a proof-payload projection. A
+candidate is pruned only when both projections make it irrelevant to every
+parent transition. Ordinary recursive folds construct the single canonical
 consistency/A/B/D relation and produce another recursive witness. The typed
 terminal fold constructs no relation matrix or quotient: it receives
 transcript-bound inner `t` from its predecessor and checks raw `e`, `t`, and
@@ -120,9 +160,9 @@ terminal binds inner `t` and contributes no duplicate `u` bytes. This is a
 schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
-terminate only if doing so still produces the required root-plus-suffix folded
-topology. In the supported parameter ranges, schedules do not need deeper
-recursion, and the cap keeps verifier-reachable fallback work bounded.
+terminate only when the current state can feed the terminal directly. In the
+supported parameter ranges, schedules do not need deeper recursion, and the cap
+keeps planner work bounded.
 
 ## Proof-Size Accounting
 
@@ -173,13 +213,22 @@ another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
-One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and dense roots use dense balanced-digit witness bounds.
+The committed-source class is declared by the preset, not inferred from a bound: a
+one-hot root uses a sparse committed-witness norm, while recursive levels and every
+balanced signed-digit root use dense balanced-digit witness bounds.
+
+`log_commit_bound` is a separate knob — the declared source coefficient bound,
+anywhere from `1` to the field width. It does not select the sizing rule; it sets
+the A-role digit depth `ceil(log_commit_bound / log_basis_inner)`, and through that
+the A input width, the SIS rank, and the next-level witness length. A bounded dense
+family (`fp128::DenseBounded`) differs from its full-width sibling in that parameter
+alone.
 
 ## Generated Tables
 
 The planner owns the generated schedule-table representation and expansion
-logic. Generated table data is emitted into the `akita-schedules` crate during
-local/CI bootstrap. Compact entries mirror the protocol topology:
+logic. Deterministic generated table data is tracked in the `akita-schedules`
+crate. Compact entries mirror the protocol topology:
 
 - `GeneratedRootFold` records the root-only challenge form, exact fold digits
   and cap, ordered precommitted groups, final-group commitment, open matrix,
@@ -212,11 +261,74 @@ To regenerate schedule tables:
 scripts/generate-schedule-tables.sh
 ```
 
+During planner development, pass one or more generated family module names to
+plan and publish only those families. The generator validates the names against
+the canonical family registry and reports the elapsed time and key counts for
+each selected family:
+
+```bash
+scripts/generate-schedule-tables.sh fp32_dense
+scripts/generate-schedule-tables.sh fp32_dense fp64_dense
+```
+
+Add `--row-progress` when one of those searches is slow. It reports start,
+completion, elapsed time, and the selected objective, proof bytes, total setup,
+first-direct capacity, dimensions, and fold count for each flattened row
+request. It is disabled by default.
+
+`--check-catalog` is a same-revision drift guard. It compares the union of the
+compiled and regenerated keys and labels those sides explicitly in its stable
+tab-separated report. The report includes added, removed, changed, and equal
+rows, with compiled and regenerated setup capacity, proof payload, fold count,
+and row identity. This check requires the generator's `catalog-check` feature;
+the repository script selects it automatically. Add `--catalog-report <path>`
+to keep that report separate from live progress on standard error.
+
+Revision audits are separate. `--catalog-snapshot <path>` writes one stable row
+per regenerated family and logical catalog key. To compare another revision,
+generate its snapshot before switching revisions, then pass that file through
+`--catalog-baseline <snapshot>`. The resulting `--catalog-report` is the
+complete baseline/current logical-key union. It includes exact lookup and row
+digests, first-direct padded capacity, total setup fields, proof bytes, fold
+counts, successor witness lengths, per-level EOR bytes, opening methods,
+packing geometry, and A security routes.
+The command writes the complete report, including intentional removals. This
+repository permits catalog-breaking revisions, so baseline/current policy is
+reviewed from the checked evidence. Same-head drift remains an automatic
+failure under `--check-catalog`.
+
+Targeted generation leaves the shared `mod.rs` wiring complete. Before a
+planner change is committed, run the unfiltered command above so every tracked
+family is regenerated.
+
+One generator run reuses a successful scalar schedule when grouped key
+construction and scalar row emission need the same producer configuration and
+layout. The cache lasts for one run and stores the complete selected
+`FoldSchedule`. Before parallel row planning starts, the generator copies the
+cached results into the family specifications and drops the mutable cache.
+The generator also prepares independent families in parallel. When two
+families need the same producer schedule, one computes it and the other waits
+for that exact result.
+
+The remaining scalar and grouped requests from every selected family are
+flattened into one ordered queue. `AKITA_SCHEDULE_GEN_JOBS` bounds the number of
+complete planner searches in the batch generator and defaults to `2`.
+Each search stays sequential. The generator puts each result back in its input
+family and sorts each family by the runtime lookup order. Worker completion
+order therefore does not affect generated bytes.
+
+The generated-table drift guard uses the same worker bound while comparing
+tracked rows with fresh DP results.
+
+Generic CI and Jolt smoke jobs compile the tracked tables directly. The
+dedicated all-schedules drift job is the sole CI regeneration owner and rejects
+any byte difference from the tracked catalog.
+
 The family list is in
 `akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the
 emitter and drift-guard tests so generated entries and regeneration hooks stay
 aligned. The family name selects the catalog class and planner policy: field,
-dense versus one-hot roots, tensor roots, chunking, and direct versus recursive
+dense versus one-hot roots, canonical root sources, chunking, and direct versus recursive
 verifier setup are encoded in the family row. Explicit custom rows are limited
 to D64 families; the standalone custom-catalog path does not accept ring
 dimension as an input.
@@ -227,9 +339,9 @@ of precommitted groups:
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:32:2 \
-  --precommitted-group fp128_d64_onehot:16:1 \
-  --precommitted-group fp128_d64_dense:15:2
+  --final-group fp128_onehot:32:2 \
+  --precommitted-group fp128_onehot:16:1 \
+  --precommitted-group fp128_dense:15:2
 ```
 
 The explicit flags are:
@@ -245,9 +357,9 @@ Each numeric slot accepts either a single value or an inclusive range written as
 ```bash
 cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated \
-  --final-group fp128_d64_onehot:30..=32:2..=4 \
-  --precommitted-group fp128_d64_onehot:14..=16:1 \
-  --precommitted-group fp128_d64_dense:15:1..=2
+  --final-group fp128_onehot:30..=32:2..=4 \
+  --precommitted-group fp128_onehot:14..=16:1 \
+  --precommitted-group fp128_dense:15:1..=2
 ```
 
 The generator expands the cartesian product of the final-group range and every
@@ -263,29 +375,26 @@ standalone precommit profile registry remains deduplicated.
 
 The lookup key carries the root vector counts needed for batched openings. Root B and D widths are sized with the batch factor directly, and the root proof-size formula uses the root `z` vector count.
 
-Recursive levels are always single-claim levels: after the root fold, the next witness is one packed object that is folded or shipped.
-
-### Tensor Challenges
-
-Some presets use a tensor-shaped level-0 fold challenge. Catalog identity records the root fold shape, so tensor and flat tables cannot be accidentally interchanged when both policies otherwise have the same field and ring dimension.
-
-Recursive levels use the flat fold shape in the current planner search.
+Witness-only recursive levels open one claim. A level that consumes an incoming setup prefix opens two groups and two claims: the recursive witness and the attached prefix.
 
 ### Extension Fields
 
-`PlannerPolicy` carries both claim and challenge extension degrees. When the claim field is an extension, the planner adds the extension-opening reduction proof bytes at the root and recursive levels.
+`PlannerPolicy` carries both claim and challenge extension degrees. Emitted folds
+at levels 0 and 1 use subring coefficient packing and do not carry EOR. Later
+`EvaluationTrace` suffixes and the terminal opening retain method-aware EOR
+pricing when the claim field is an extension.
 
 ## Crate Boundary
 
 The dependency direction is:
 
 ```text
-akita-config -> akita-schedules -> akita-types / akita-challenges / akita-field
+akita-config -> akita-schedules -> akita-types / akita-challenges / jolt-field
 akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_schedules::resolve_schedule`. Runtime resolution is strict and never invokes planner search.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::resolve_catalog_row_for_key` to strict generated-row resolution. Runtime resolution never invokes planner search.
 
 This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 

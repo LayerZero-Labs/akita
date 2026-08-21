@@ -13,9 +13,7 @@ use crate::{
     OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
-use akita_algebra::One;
-use akita_algebra::Ring;
-use jolt_field::{Ext2, Prime128OffsetA7F7};
+use jolt_field::{Ext2, One, Prime128OffsetA7F7, Ring};
 
 type F = Prime128OffsetA7F7;
 const D: usize = 8;
@@ -34,7 +32,10 @@ fn layout() -> TraceWeightLayout {
     .with_decomp(1, 2, 1, 2, 2)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1).unwrap();
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
+            .unwrap();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, &relation_geometry, 1, 1).unwrap();
     let opening_source_len = witness_layout.live_coeff_len() / D;
     TraceWeightLayout {
         ring_bits: 3,

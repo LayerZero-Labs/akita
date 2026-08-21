@@ -6,362 +6,190 @@ use super::*;
 /// Base field for the default fp128 presets.
 pub type Field = Prime128OffsetA7F7;
 
-/// Dense `D=128` preset for planner-backed experiments.
+/// Default dense preset with a dimension-free flat public matrix and
+/// planner-selected per-level A/B/D commitment dimensions.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D128Dense;
+pub struct Dense;
 
-/// Dense adaptive `D=64` preset.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64Dense;
+impl Dense {
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
+}
 
-/// Binary onehot generated `D=64` preset.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHot;
-
-/// Binary onehot `D=64`, `K=16` preset with planner-derived schedules.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotK16;
-
-/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D128OneHot;
-
-/// Binary onehot `D=256` tableless preset for mixed-ring experiments.
-/// fp128 certifies all three commitment roles at this dimension.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D256OneHot;
-
-/// Binary onehot preset with a D256 uniform planner policy and planner-selected
-/// per-level commitment dimensions.
+/// Default binary onehot preset with a dimension-free flat public matrix and
+/// planner-selected per-level A/B/D commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
 /// and verification resolve the exact generated catalog row.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct MixedDimFp128OneHot;
+pub struct OneHot;
 
-impl MixedDimFp128OneHot {
-    /// Audited commitment-role dimension candidates used by offline planning.
-    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
-        akita_types::CommitmentRingDims::uniform(64),
-        akita_types::CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        },
-        akita_types::CommitmentRingDims::uniform(128),
-        akita_types::CommitmentRingDims {
-            inner: 256,
-            outer: 128,
-            opening: 128,
-        },
-    ];
+impl OneHot {
+    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
+    pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
+    pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }
 
-/// Tableless policy marker for a `D = 512` inner (A-role) root.
+/// Direct multi-chunk companion of [`OneHot`] using the W8R2 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunk;
+
+/// Direct multi-chunk companion of [`OneHot`] using the W2R2 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunkW2R2;
+
+/// Direct multi-chunk companion of [`OneHot`] using the W4R2 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OneHotMultiChunkW4R2;
+
+/// Direct multi-chunk companion of [`Dense`] using the W8R2 profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DenseMultiChunk;
+
+/// Dense preset for witnesses known to fit an **unsigned 64-bit** magnitude
+/// inside the 128-bit field, i.e. `u64`-valued coefficients.
 ///
-/// fp128 certifies the A role at `D = 512` for the Q128 profile, but not B/D.
-/// Consequently this preset is used only as the envelope type for the
-/// three-band mixed-role builder, which keeps B/D within their audited
-/// dimensions; it cannot produce a standalone uniform-D512 schedule.
+/// Same field, same SIS modulus profile, and the same balanced signed-digit
+/// source class as [`Dense`]; the only difference is the declared committed-source
+/// bound. That roughly halves the A-role digit depth, and with it the A input
+/// width, the shared setup matrix, and the level-1 witness the whole recursion
+/// suffix inherits. Opening witnesses stay full-width
+/// (`log_open_bound = Some(128)`), because `t̂` / `ŵ` carry genuine field
+/// elements.
+///
+/// # Why the bound is `65` and not `64`
+///
+/// [`akita_types::DecompositionParams::log_commit_bound`] is a **signed** bit
+/// width: `k` denotes the centered range `[-2^(k-1), 2^(k-1) - 1]`, because the
+/// gadget decomposition works on centered representatives and balanced digits are
+/// themselves signed. A `u64` reaches `u64::MAX = 2^64 - 1`, so it needs one sign
+/// bit plus 64 magnitude bits — `log_commit_bound = 65`, not `64`. Declaring `64`
+/// would cover only `[-2^63, 2^63 - 1]` and miss half of a uniform `u64`
+/// distribution.
+///
+/// [`Self::MAX_CENTERED_MAGNITUDE`] states the same fact without the
+/// signed-bit-width indirection; prefer it when asserting your data fits.
+///
+/// # What you must guarantee
+///
+/// This is a **different commitment**, not a cheaper encoding of [`Dense`]: its
+/// catalog identity differs, and it is binding and complete only for polynomials
+/// whose centered coefficients lie inside the declared range. `commit` rejects an
+/// out-of-range coefficient rather than committing a truncation, so a caller that
+/// cannot guarantee the bound must use [`Dense`].
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D512OneHot;
+pub struct DenseBounded;
 
-/// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
-/// layout parameter with its sibling but prices the chunked witness layout.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotMultiChunk;
+impl DenseBounded {
+    /// Committed-source bound as a **signed** bit width.
+    ///
+    /// `65` means the centered range `[-2^64, 2^64 - 1]`, which contains every
+    /// `u64`. See the type docs for why this is `65` rather than `64`.
+    pub const LOG_COMMIT_BOUND: u32 = 65;
 
-/// Multi-chunk companion with `2` witness chunks and `2` leading fold levels.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotMultiChunkW2R2;
+    /// Largest centered magnitude this preset commits, on the positive side.
+    ///
+    /// Exactly `u64::MAX`, so `u64`-valued coefficients sit on the endpoint and
+    /// anything above is rejected at `commit`.
+    pub const MAX_CENTERED_MAGNITUDE: u128 = (1u128 << (Self::LOG_COMMIT_BOUND - 1)) - 1;
+}
 
-/// Multi-chunk companion with `4` witness chunks and `2` leading fold levels.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64OneHotMultiChunkW4R2;
+// The preset's whole reason to exist, enforced at compile time rather than left
+// to a test: the declared bound must contain every `u64`. `LOG_COMMIT_BOUND` is a
+// *signed* bit width, so a value of 64 would silently cover only `[-2^63, 2^63-1]`
+// and miss half of a uniform `u64` distribution. Asserted directly on the
+// magnitude, so there is no derived boolean to drift from it — and because the
+// macro is configured from `LOG_COMMIT_BOUND` itself, this covers the value that
+// actually builds the preset.
+const _: () = assert!(
+    DenseBounded::MAX_CENTERED_MAGNITUDE >= u64::MAX as u128,
+    "fp128::DenseBounded must declare a bound containing every u64"
+);
 
-/// Multi-chunk (distributed-prover) companion of [`D64Dense`].
-#[derive(Clone, Copy, Debug, Default)]
-pub struct D64DenseMultiChunk;
-
 impl_proof_optimized_preset!(
-    D128Dense,
+    Dense,
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
     128,
     128,
-    128,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
-    schedules = (
-        "schedules-fp128-d128-dense",
-        "fp128_d128_dense",
-        fp128_d128_dense_table
-    )
+    source = balanced_digits,
+    schedules = ("schedules-fp128-dense", "fp128_dense", fp128_dense_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
 );
 impl_proof_optimized_preset!(
-    D128OneHot,
+    DenseBounded,
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
     128,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    // One declaration, not two: the macro takes an expression, so the preset is
+    // configured from the same constant callers read. A signed bit width of 65 is
+    // `[-2^64, 2^64 - 1]`, the smallest declaration containing every `u64`.
+    DenseBounded::LOG_COMMIT_BOUND,
+    source = balanced_digits,
     schedules = (
-        "schedules-fp128-d128-onehot",
-        "fp128_d128_onehot",
-        fp128_d128_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    D64Dense,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    64,
-    128,
-    128,
-    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64),
-    schedules = (
-        "schedules-fp128-d64-dense",
-        "fp128_d64_dense",
-        fp128_d64_dense_table
-    )
-);
-impl_proof_optimized_preset!(
-    D64OneHot,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    64,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp128-d64-onehot",
-        "fp128_d64_onehot",
-        fp128_d64_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    D64OneHotK16,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    64,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 4)
-);
-impl_proof_optimized_preset!(
-    D256OneHot,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    256,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp128-d256-onehot",
-        "fp128_d256_onehot",
-        fp128_d256_onehot_table
-    )
-);
-impl_proof_optimized_preset!(
-    MixedDimFp128OneHot,
-    Field,
-    Field,
-    akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    256,
-    128,
-    1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
-    schedules = (
-        "schedules-fp128-mixed-dim-onehot",
-        "fp128_mixed_dim_onehot",
-        fp128_mixed_dim_onehot_table
+        "schedules-fp128-dense-bounded",
+        "fp128_dense_bounded",
+        fp128_dense_bounded_table
     ),
-    selection_policy =
-        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
-    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &Dense::A_RING_DIMENSIONS,
+        potential_b_dimensions: &Dense::B_RING_DIMENSIONS,
+        potential_d_dimensions: &Dense::D_RING_DIMENSIONS,
+    }
 );
 impl_proof_optimized_preset!(
-    D512OneHot,
+    OneHot,
     Field,
     Field,
     akita_types::SisModulusProfileId::Q128OffsetA7F7,
-    512,
     128,
     1,
-    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 2)
+    source = unit_one_hot,
+    schedules = ("schedules-fp128-onehot", "fp128_onehot", fp128_onehot_table),
+    ring_dimension_schedule_mode = akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+        num_search_levels: akita_schedules::ADAPTIVE_SEARCH_LEVELS,
+        suffix_dimensions: &[64],
+        potential_a_dimensions: &OneHot::A_RING_DIMENSIONS,
+        potential_b_dimensions: &OneHot::B_RING_DIMENSIONS,
+        potential_d_dimensions: &OneHot::D_RING_DIMENSIONS,
+    }
 );
 impl_multi_chunk_companion!(
-    D64OneHotMultiChunk,
-    D64OneHot,
+    OneHotMultiChunk,
+    OneHot,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-d64-onehot-multi-chunk",
-    fp128_d64_onehot_multi_chunk_table
+    "schedules-fp128-onehot-multi-chunk",
+    fp128_onehot_multi_chunk_table
 );
 impl_multi_chunk_companion!(
-    D64OneHotMultiChunkW2R2,
-    D64OneHot,
+    OneHotMultiChunkW2R2,
+    OneHot,
     akita_types::MultiChunkProfileId::W2R2,
-    "schedules-fp128-d64-onehot-multi-chunk-w2r2",
-    fp128_d64_onehot_multi_chunk_w2r2_table
+    "schedules-fp128-onehot-multi-chunk-w2r2",
+    fp128_onehot_multi_chunk_w2r2_table
 );
 impl_multi_chunk_companion!(
-    D64OneHotMultiChunkW4R2,
-    D64OneHot,
+    OneHotMultiChunkW4R2,
+    OneHot,
     akita_types::MultiChunkProfileId::W4R2,
-    "schedules-fp128-d64-onehot-multi-chunk-w4r2",
-    fp128_d64_onehot_multi_chunk_w4r2_table
+    "schedules-fp128-onehot-multi-chunk-w4r2",
+    fp128_onehot_multi_chunk_w4r2_table
 );
 impl_multi_chunk_companion!(
-    D64DenseMultiChunk,
-    D64Dense,
+    DenseMultiChunk,
+    Dense,
     akita_types::MultiChunkProfileId::W8R2,
-    "schedules-fp128-d64-dense-multi-chunk",
-    fp128_d64_dense_multi_chunk_table
+    "schedules-fp128-dense-multi-chunk",
+    fp128_dense_multi_chunk_table
 );
-
-/// Concrete fp128 preset selected by a schedule-family query.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fp128Preset {
-    /// Dense adaptive `D=64` preset.
-    D64Dense,
-    /// Dense `D=128` preset (comparison / legacy; D64 is smaller under
-    /// committed-fold A-role pricing).
-    D128Dense,
-    /// Binary onehot generated `D=64` preset.
-    D64OneHot,
-    /// Binary onehot `D=128` preset (comparison / legacy; D64 is smaller under
-    /// committed-fold A-role pricing).
-    D128OneHot,
-}
-
-impl Fp128Preset {
-    /// Ring dimension used by this preset.
-    pub const fn ring_dimension(self) -> usize {
-        match self {
-            Self::D64Dense | Self::D64OneHot => 64,
-            Self::D128Dense | Self::D128OneHot => 128,
-        }
-    }
-
-    /// Whether this preset is onehot-oriented.
-    pub const fn is_onehot(self) -> bool {
-        matches!(self, Self::D64OneHot | Self::D128OneHot)
-    }
-
-    /// Stable human-readable preset name.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::D64Dense => "D64Dense",
-            Self::D128Dense => "D128Dense",
-            Self::D64OneHot => "D64OneHot",
-            Self::D128OneHot => "D128OneHot",
-        }
-    }
-}
-
-/// Best generated schedule for one fp128 preset family.
-#[derive(Clone, Debug)]
-pub struct Fp128ScheduleSelection {
-    /// Selected concrete preset.
-    pub preset: Fp128Preset,
-    /// Runtime schedule selected for the supplied lookup key.
-    pub schedule: FoldSchedule,
-    /// Non-protocol planner estimate used to compare presets.
-    pub estimate: akita_types::FoldScheduleEstimate,
-}
-
-fn candidate<Cfg: CommitmentConfig>(
-    preset: Fp128Preset,
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    let lookup_key = AkitaScheduleLookupKey::single(key);
-    let Some(catalog) = Cfg::schedule_catalog() else {
-        return Ok(None);
-    };
-    let Some(entry) = akita_schedules::generated::table_entry(catalog, &lookup_key) else {
-        return Ok(None);
-    };
-    let policy = crate::policy_of::<Cfg>();
-    let estimate = akita_schedules::estimate_proof_bytes(
-        entry,
-        &lookup_key,
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-    let schedule = Cfg::runtime_schedule(lookup_key)?;
-    Ok(Some(Fp128ScheduleSelection {
-        preset,
-        schedule,
-        estimate: akita_types::FoldScheduleEstimate {
-            estimated_root_direct_payload_bytes: estimate,
-            estimated_root_stage3_payload_bytes: 0,
-            estimated_recursive_direct_payload_bytes: Vec::new(),
-            estimated_recursive_stage3_payload_bytes: Vec::new(),
-            estimated_terminal_direct_payload_bytes: 0,
-            estimated_terminal_response_payload_bytes: 0,
-            estimated_num_setup_field_elements: 0,
-            first_direct_setup_field_len: None,
-            selected_offload_edges: 0,
-        },
-    }))
-}
-
-fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
-where
-    I: IntoIterator<Item = Option<Fp128ScheduleSelection>>,
-{
-    candidates.into_iter().flatten().min_by_key(|selection| {
-        (
-            selection
-                .estimate
-                .estimated_proof_payload_bytes()
-                .unwrap_or(usize::MAX),
-            selection.preset.ring_dimension(),
-        )
-    })
-}
-
-/// Select the best dense fp128 preset for a schedule lookup key.
-///
-/// The key carries singleton and multi-group batch shape data, so
-/// this helper can be used by profile tooling without manually comparing
-/// typed preset schedule tables. A genuine planner failure propagates as an
-/// error; supported keys yield a folded schedule for each candidate preset.
-///
-/// # Errors
-///
-/// Propagates a planner / runtime-schedule failure (invalid key shape,
-/// witness overflow, or an uncovered SIS-floor width).
-pub fn best_dense_schedule(
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D64Dense>(Fp128Preset::D64Dense, key)?,
-        candidate::<D128Dense>(Fp128Preset::D128Dense, key)?,
-    ]))
-}
-
-/// Select the best onehot fp128 preset for a schedule lookup key.
-///
-/// A genuine planner failure propagates as an error; for any valid key every
-/// preset yields a schedule, so the best one is always returned.
-///
-/// # Errors
-///
-/// Propagates a planner / runtime-schedule failure (invalid key shape,
-/// witness overflow, or an uncovered SIS-floor width).
-pub fn best_onehot_schedule(
-    key: PolynomialGroupLayout,
-) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    Ok(best_by_exact_bytes([
-        candidate::<D64OneHot>(Fp128Preset::D64OneHot, key)?,
-        candidate::<D128OneHot>(Fp128Preset::D128OneHot, key)?,
-    ]))
-}

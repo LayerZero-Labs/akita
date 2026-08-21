@@ -4,22 +4,21 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_schedules::resolve_schedule;
-use akita_types::PolynomialGroupLayout;
+use akita_schedules::resolve_generated_catalog_row_for_key;
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[test]
 fn miswired_catalog_rejects_before_lookup() {
-    let wrong_catalog = akita_schedules::fp128_d64_onehot_table();
+    let wrong_catalog = akita_schedules::fp128_onehot_table();
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let err = resolve_schedule(
-        key,
-        &policy_of::<fp128::D64Dense>(),
-        fp128::D64Dense::ring_challenge_config,
-        fp128::D64Dense::fold_challenge_shape_at_level,
+    let err = resolve_generated_catalog_row_for_key(
+        &AkitaScheduleLookupKey::single(key),
+        &policy_of::<fp128::Dense>(),
+        fp128::Dense::ring_challenge_config,
         Some(wrong_catalog),
     )
-    .expect_err("D64 dense preset must reject D64 one-hot catalog");
+    .expect_err("adaptive dense preset must reject adaptive one-hot catalog");
 
     assert!(
         matches!(err, akita_error::AkitaError::InvalidSetup(_)),

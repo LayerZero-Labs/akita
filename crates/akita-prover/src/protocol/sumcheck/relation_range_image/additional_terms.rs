@@ -4,7 +4,7 @@ use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPol
 use akita_error::AkitaError;
 use akita_sumcheck::reduce_signed_accum;
 use jolt_field::Unreduced;
-use jolt_field::{Field, Zero};
+use jolt_field::{Field, Ring, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
 
@@ -28,7 +28,7 @@ pub(crate) struct AdditionalRelationTerms<E: Field> {
     domain_len: usize,
 }
 
-impl<E: Field> AdditionalRelationTerms<E> {
+impl<E: Field + Ring> AdditionalRelationTerms<E> {
     pub(crate) fn new(
         compact_witness: &[i8],
         domain_len: usize,
@@ -381,8 +381,8 @@ impl<E: Field> AdditionalRelationTerms<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
+    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7 as F;
-    use jolt_field::{One, Ring, Zero};
 
     fn equality_point(domain_len: usize) -> Vec<F> {
         (0..domain_len.trailing_zeros() as usize)

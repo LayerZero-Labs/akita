@@ -2,12 +2,12 @@ use super::*;
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks, ProverComputeStack,
-    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
-    SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend,
 };
-use crate::RootTensorProjectionPoly;
-
 use akita_types::AkitaCommitmentHint;
+use jolt_field::AdditiveGroup;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
@@ -70,11 +70,15 @@ where
     Cfg: CommitmentConfig,
     Cfg::Field: Field
         + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Field
         + Unreduced
+        + Field
+        + Field
         + PseudoMersenne
         + Ring
-        + akita_serialization::AkitaSerialize
         + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + Unreduced
@@ -83,12 +87,16 @@ where
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    C: crate::compute::CommitmentComputeBackend<Cfg::Field>
+    C: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     O: SuffixOpeningProveBackend<Cfg::Field>
         + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
-        + DigitRowsComputeBackend<Cfg::Field>
+        + RuntimeCoefficientPackingBackendFor<
+            Cfg::Field,
+            RecursiveFoldSource<Cfg::Field>,
+            Cfg::ExtField,
+        > + DigitRowsComputeBackend<Cfg::Field>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
     TS: SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
@@ -104,6 +112,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
+    schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;
     let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
@@ -210,12 +219,12 @@ fn prove_terminal_suffix<F, E, T, C, O, TS, R>(
 where
     F: Field
         + CanonicalEncoding
-        + Field
+        + akita_serialization::AkitaSerialize
         + Unreduced
         + Field
         + Ring
-        + 'static
-        + akita_serialization::AkitaSerialize,
+        + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + Unreduced
@@ -282,7 +291,7 @@ where
     let polys = [&logical_source];
     let logical_group = PreparedProverGroup::from_refs(&polys)?;
     let needs_reduction = E::DEGREE > 1;
-    let (protocol_point, reduction, row_coefficients) = if needs_reduction {
+    let (protocol_point, reduction) = if needs_reduction {
         let eor_inputs = vec![ExtensionOpeningGroupInput {
             group: &logical_group,
             point: &sumcheck_challenges,
@@ -302,10 +311,9 @@ where
                 .next()
                 .ok_or(AkitaError::InvalidProof)?,
             Some(proved.reduction),
-            Some(proved.row_coefficients),
         )
     } else {
-        (sumcheck_challenges, None, None)
+        (sumcheck_challenges, None)
     };
     for coordinate in &protocol_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
@@ -334,7 +342,6 @@ where
                 alpha_bits,
                 BasisMode::Lagrange,
                 &opening_batch,
-                row_coefficients,
                 transcript,
             )?;
             // The EOR proof binds the carried extension-field opening to its
@@ -414,11 +421,15 @@ pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
 where
     F: Field
         + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Field
         + Unreduced
+        + Field
+        + Field
         + PseudoMersenne
         + Ring
-        + akita_serialization::AkitaSerialize
         + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
         + Unreduced
@@ -428,14 +439,13 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
-        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>,
+        + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>,
     O: DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveWitnessFlat>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+        + RuntimeCoefficientPackingBackendFor<F, RecursiveFoldSource<F>, E>,
     C: ComputeBackendSetup<F>,
-    R: DigitRowsComputeBackend<F>,
+    R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let SuffixProverState {
         w,
@@ -474,7 +484,6 @@ where
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let needs_extension_reduction = E::DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -482,7 +491,7 @@ where
         .setup_prefix
         .as_ref()
         .map(|id| {
-            prefix_slots.get(id).ok_or_else(|| {
+            prefix_slots.get(&id.slot_id()).ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "planned setup-prefix slot is missing from prover setup".into(),
                 )
@@ -503,6 +512,10 @@ where
         &witness_polys[..],
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
+    let opening_batch = block_claims.opening_layout()?;
+    let opening_method = super::fold::uniform_opening_method(level_params, &opening_batch)?;
+    let needs_extension_reduction =
+        super::fold::extension_opening_reduction_enabled(opening_method, E::DEGREE > 1);
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
@@ -543,9 +556,7 @@ mod tests {
     use super::*;
     use crate::protocol::core::fold_kernels::prepare_evaluation_trace_claim;
     use akita_transcript::AkitaTranscript;
-    use jolt_field::Fp32;
-    use jolt_field::One;
-    use jolt_field::Zero;
+    use jolt_field::{Fp32, One, Zero};
 
     type TestF = Fp32<251>;
 
@@ -555,11 +566,11 @@ mod tests {
         let reduction = Some(ExtensionOpeningReduction {
             proof: ExtensionOpeningReductionProof {
                 partials: Vec::new(),
-                sumcheck: SumcheckProof {
+                sumcheck: akita_sumcheck::SumcheckProof {
                     round_polys: Vec::new(),
                 },
+                final_claims: vec![TestF::one()],
             },
-            final_claim: TestF::one(),
             final_factors: vec![TestF::one()],
         });
 
@@ -569,7 +580,6 @@ mod tests {
             &reduction,
             &openings,
             &opening_batch,
-            Some(vec![TestF::one()]),
             &mut transcript,
         ) {
             Ok(_) => panic!("non-zk EOR mismatch should reject"),
@@ -580,5 +590,34 @@ mod tests {
             matches!(err, AkitaError::InvalidProof),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn late_application_batch_rejects_beta_orthogonal_terminal_error() {
+        let openings = [TestF::zero(), TestF::zero()];
+        // This error vector cancels under the possible early batch (1, 1).
+        // The independent application batch must still reject it.
+        let reduction = Some(ExtensionOpeningReduction {
+            proof: ExtensionOpeningReductionProof {
+                partials: Vec::new(),
+                sumcheck: akita_sumcheck::SumcheckProof {
+                    round_polys: Vec::new(),
+                },
+                final_claims: vec![TestF::one(), -TestF::one()],
+            },
+            final_factors: vec![TestF::one()],
+        });
+
+        let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
+        let mut transcript =
+            AkitaTranscript::<TestF>::new(b"test/suffix-independent-late-eor-batch");
+        let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
+            &reduction,
+            &openings,
+            &opening_batch,
+            &mut transcript,
+        );
+
+        assert!(matches!(result, Err(AkitaError::InvalidProof)));
     }
 }

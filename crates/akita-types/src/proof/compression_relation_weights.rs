@@ -2,17 +2,17 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
-    eval_eq_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
+    eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
 use crate::{
-    gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, RelationRowFamily, RingRelationInstance, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    RelationRowFamily, RingRelationInstance, WitnessLayout,
 };
 
 #[derive(Clone, Debug)]
@@ -125,7 +125,7 @@ impl NegativeBinarySupport {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        eval_eq_pair_tensor_families(equality_point, point, &families)
+        eval_boolean_pair_tensor_families::<_, false, false>(equality_point, point, &families)
     }
 }
 
@@ -337,7 +337,7 @@ fn push_recomposition<F, E>(
 ) -> Result<(), AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F>,
+    E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
     if !source_ring_dim.is_multiple_of(digit_ring_dim)
         || source_row_count.checked_mul(source_ring_dim) != Some(source_coefficients)
@@ -389,22 +389,25 @@ pub fn build_compression_relation_weights<F, E>(
 ) -> Result<CompressionRelationWeights<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
-    let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let relation_geometry =
+        crate::RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
+    let relation_layout = relation_geometry.rhs_layout();
     let row_families = relation_layout.row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
     let coefficient_block_len = lp
         .compression_relation_address_geometry(
             opening_batch,
+            instance.extension_degree(),
             outgoing_ring_dimension,
             witness_layout.live_coeff_len(),
         )?
         .coefficient_block_len();
     let maximum_dimension = row_families
         .iter()
-        .map(|row| row.ring_dim())
+        .map(|row| row.geometry().polynomial_modulus_dimension())
         .max()
         .ok_or(AkitaError::InvalidProof)?;
     let mut weights = CompressionRelationWeights {
@@ -457,7 +460,7 @@ where
         opening_stage.range().start,
         opening_stage.map().ring_dimension(),
         opening_plan.source_coefficients(),
-        relation_layout.opening_ring_dim,
+        relation_layout.d_ring_dimension,
         d_start,
         relation_layout.n_d,
         field_bits,
@@ -582,7 +585,7 @@ where
                 .enumerate()
         {
             weights.push(
-                witness_layout.r_coefficient_index(row_index, digit, 0)?,
+                witness_layout.r_coefficient_index(row_index, digit, 0, 0)?,
                 map.ring_dimension(),
                 0,
                 -(row_weight * denominator * E::lift_base(gadget)),
@@ -595,8 +598,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7 as F;
-    use jolt_field::{One, Ring};
 
     #[test]
     fn sparse_evaluator_matches_dense_materialization() {

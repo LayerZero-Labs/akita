@@ -1,9 +1,10 @@
 use std::array::from_fn;
 
+use crate::ntt::crt::modular_inverse;
 use crate::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_error::AkitaError;
 
-use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt};
+use super::{CrtNttParamSet, CyclotomicCrtNtt};
 
 /// CRT parameters with an i32 prefix and one i16 exactness tail prime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,10 +23,11 @@ impl<const K: usize, const D: usize> I16TailParams<K, D> {
     pub fn new(wide: CrtNttParamSet<i32, K, D>, tail: CrtNttParamSet<i16, 1, D>) -> Self {
         let tail_modulus = i64::from(tail.primes[0].p);
         let tail_gamma: [i64; K] = from_fn(|i| {
-            mod_inverse_i64(
-                i64::from(wide.primes[i].p).rem_euclid(tail_modulus),
-                tail_modulus,
+            modular_inverse(
+                i64::from(wide.primes[i].p).rem_euclid(tail_modulus) as u64,
+                tail_modulus as u64,
             )
+            .expect("CRT tail prime must be coprime to the base profile") as i64
         });
         // The final mixed-radix digit is affine in the tail residue and the
         // already reconstructed wide digits. Precompute that linear form so
@@ -59,79 +61,50 @@ pub fn mat_vec_i16_with_tail<F: Field + CanonicalEncoding, const K: usize, const
     rhs: &[[i16; D]],
     params: &I16TailParams<K, D>,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-    if rhs.len() != num_cols {
-        return Err(AkitaError::InvalidProof);
-    }
-    let required = num_rows
-        .checked_mul(num_cols)
-        .ok_or(AkitaError::InvalidProof)?;
-    let wide_matrix = wide_matrix.get(..required).ok_or_else(|| {
-        AkitaError::InvalidSetup("prepared base NTT matrix prefix is undersized".into())
-    })?;
-    let tail_matrix = tail_matrix.get(..required).ok_or_else(|| {
-        AkitaError::InvalidSetup("prepared i16-tail NTT matrix prefix is undersized".into())
-    })?;
-    if num_rows == 0 || num_cols == 0 {
-        return Ok(vec![CyclotomicRing::zero(); num_rows]);
-    }
-
-    let rhs_abs_bound = rhs
-        .iter()
-        .flatten()
-        .map(|&digit| i32::from(digit).unsigned_abs())
-        .max()
-        .unwrap_or(0) as i32;
-    let wide_lut = CenteredMontLut::new(&params.wide, rhs_abs_bound);
-    let tail_lut = CenteredMontLut::new(&params.tail, rhs_abs_bound);
-    let mut wide_accumulators = vec![CyclotomicCrtNtt::zero(); num_rows];
-    let mut tail_accumulators = vec![CyclotomicCrtNtt::zero(); num_rows];
-    for (column, digits) in rhs.iter().enumerate() {
-        if digits.iter().all(|&digit| digit == 0) {
-            continue;
-        }
-        let wide_digits = digits.map(i32::from);
-        let wide_rhs =
-            CyclotomicCrtNtt::from_centered_i32_with_lut(&wide_digits, &params.wide, &wide_lut);
-        let tail_rhs =
-            CyclotomicCrtNtt::from_centered_i32_with_lut(&wide_digits, &params.tail, &tail_lut);
-        for (((wide_accumulator, tail_accumulator), wide_row), tail_row) in wide_accumulators
-            .iter_mut()
-            .zip(&mut tail_accumulators)
-            .zip(wide_matrix.chunks_exact(num_cols))
-            .zip(tail_matrix.chunks_exact(num_cols))
-        {
-            let wide_entry = wide_row.get(column).ok_or_else(|| {
-                AkitaError::InvalidSetup("prepared base NTT matrix row is undersized".into())
-            })?;
-            let tail_entry = tail_row.get(column).ok_or_else(|| {
-                AkitaError::InvalidSetup("prepared i16-tail NTT matrix row is undersized".into())
-            })?;
-            wide_accumulator.add_assign_pointwise_mul_with_params(
-                wide_entry,
-                &wide_rhs,
-                &params.wide,
-            );
-            tail_accumulator.add_assign_pointwise_mul_with_params(
-                tail_entry,
-                &tail_rhs,
-                &params.tail,
-            );
-        }
-    }
+    let wide_accumulators =
+        CyclotomicCrtNtt::mat_vec_i16_ntt(wide_matrix, num_rows, num_cols, rhs, &params.wide)?;
+    let tail_accumulators =
+        CyclotomicCrtNtt::mat_vec_i16_ntt(tail_matrix, num_rows, num_cols, rhs, &params.tail)?;
     Ok(wide_accumulators
         .iter()
         .zip(&tail_accumulators)
-        .map(|(wide, tail)| split_to_ring(wide, tail, params))
+        .map(|(wide, tail)| ntt_with_i16_tail_to_ring(wide, tail, params))
         .collect())
 }
 
-fn split_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
+/// Reconstruct one negacyclic NTT accumulator from a wide CRT prefix and its
+/// exactness-only i16 tail.
+pub fn ntt_with_i16_tail_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     wide_ntt: &CyclotomicCrtNtt<i32, K, D>,
     tail_ntt: &CyclotomicCrtNtt<i16, 1, D>,
     params: &I16TailParams<K, D>,
 ) -> CyclotomicRing<F, D> {
     let wide = wide_ntt.centered_coefficients_with_params(&params.wide);
     let tail = tail_ntt.centered_coefficients_with_params(&params.tail);
+    mixed_coefficients_to_ring(&wide, &tail, params)
+}
+
+/// Reconstruct one cyclic NTT accumulator from a wide CRT prefix and its
+/// exactness-only i16 tail.
+pub fn cyclic_ntt_with_i16_tail_to_ring<
+    F: Field + CanonicalEncoding,
+    const K: usize,
+    const D: usize,
+>(
+    wide_ntt: &CyclotomicCrtNtt<i32, K, D>,
+    tail_ntt: &CyclotomicCrtNtt<i16, 1, D>,
+    params: &I16TailParams<K, D>,
+) -> CyclotomicRing<F, D> {
+    let wide = wide_ntt.centered_cyclic_coefficients_with_params(&params.wide);
+    let tail = tail_ntt.centered_cyclic_coefficients_with_params(&params.tail);
+    mixed_coefficients_to_ring(&wide, &tail, params)
+}
+
+fn mixed_coefficients_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
+    wide: &[[i32; D]; K],
+    tail: &[[i16; D]; 1],
+    params: &I16TailParams<K, D>,
+) -> CyclotomicRing<F, D> {
     let tail_modulus = i64::from(params.tail.primes[0].p);
     let mut field_product = F::one();
     let field_weights: [F; K] = from_fn(|i| {
@@ -142,29 +115,17 @@ fn split_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     let tail_field_weight = field_product;
 
     let coefficients = from_fn(|d| {
-        let mut digits = [0i64; K];
-        if K != 0 {
-            digits[0] = i64::from(wide[0][d]);
-        }
-        for i in 1..K {
-            let modulus = i64::from(params.wide.primes[i].p);
-            let mut value = i64::from(wide[i][d]);
-            for (j, digit) in digits[..i].iter().enumerate() {
-                value = (value - digit).rem_euclid(modulus);
-                value = (value * i64::from(params.wide.garner.gamma[i][j])) % modulus;
-            }
-            if value > modulus / 2 {
-                value -= modulus;
-            }
-            digits[i] = value;
-        }
+        let moduli = params.wide.primes.map(|prime| prime.p as u64);
+        let residues = from_fn(|limb| i128::from(wide[limb][d]));
+        let digits = params.wide.garner.centered_mixed_radix(residues, moduli);
 
-        let tail_digit = i64::from(tail[0][d]) * params.tail_residue_weight
+        let tail_digit = i128::from(tail[0][d]) * i128::from(params.tail_residue_weight)
             + digits
                 .iter()
                 .zip(params.tail_digit_weights)
-                .map(|(digit, weight)| digit * weight)
-                .sum::<i64>();
+                .map(|(digit, weight)| *digit * i128::from(weight))
+                .sum::<i128>();
+        let tail_modulus = i128::from(tail_modulus);
         let mut tail_digit = tail_digit.rem_euclid(tail_modulus);
         if tail_digit > tail_modulus / 2 {
             tail_digit -= tail_modulus;
@@ -172,28 +133,17 @@ fn split_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
 
         let mut result = F::zero();
         for (digit, weight) in digits.iter().zip(field_weights) {
-            result += F::from_i64(*digit) * weight;
+            result += F::from_i128(*digit) * weight;
         }
-        result + F::from_i64(tail_digit) * tail_field_weight
+        result + F::from_i128(tail_digit) * tail_field_weight
     });
     CyclotomicRing::from_coefficients(coefficients)
-}
-
-fn mod_inverse_i64(a: i64, modulus: i64) -> i64 {
-    let (mut old_r, mut r) = (a, modulus);
-    let (mut old_s, mut s) = (1i64, 0i64);
-    while r != 0 {
-        let quotient = old_r / r;
-        (old_r, r) = (r, old_r - quotient * r);
-        (old_s, s) = (s, old_s - quotient * s);
-    }
-    debug_assert_eq!(old_r.abs(), 1);
-    old_s.rem_euclid(modulus)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ntt::prime::I32_LAZY_DOT_BATCH;
     use crate::ntt::tables::{
         q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
         Q64_PRIMES,
@@ -207,7 +157,9 @@ mod tests {
     {
         let tail_params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
         let params = I16TailParams::new(wide_params.clone(), tail_params.clone());
-        let matrix = (0..6)
+        const NUM_ROWS: usize = 2;
+        const NUM_COLS: usize = I32_LAZY_DOT_BATCH + 1;
+        let matrix = (0..NUM_ROWS * NUM_COLS)
             .map(|entry| {
                 CyclotomicRing::<F, D>::from_coefficients(from_fn(|coefficient| {
                     F::from_i64(((entry * 17 + coefficient * 5) % 31) as i64 - 15)
@@ -216,13 +168,13 @@ mod tests {
             .collect::<Vec<_>>();
         let wide = matrix
             .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &wide_params))
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &wide_params))
             .collect::<Vec<_>>();
         let tail = matrix
             .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &tail_params))
+            .map(|ring| CyclotomicCrtNtt::from_ring(ring, &tail_params))
             .collect::<Vec<_>>();
-        let rhs = (0..3)
+        let rhs = (0..NUM_COLS)
             .map(|column| {
                 from_fn(|coefficient| match (column + coefficient) % 6 {
                     0 => i16::MIN,
@@ -235,7 +187,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let expected = matrix
-            .chunks_exact(3)
+            .chunks_exact(NUM_COLS)
             .map(|row| {
                 row.iter()
                     .zip(&rhs)
@@ -248,7 +200,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            mat_vec_i16_with_tail::<F, K, D>(&wide, &tail, 2, 3, &rhs, &params)
+            mat_vec_i16_with_tail::<F, K, D>(&wide, &tail, NUM_ROWS, NUM_COLS, &rhs, &params)
                 .expect("split i16 matvec"),
             expected
         );

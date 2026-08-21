@@ -1,20 +1,20 @@
 //! Prover-owned helpers for the Akita ring-switch handoff.
-use crate::api::commitment::{
-    validate_commit_inner_shape, validate_commit_level_params, validate_commit_outer_input_nonempty,
-};
+use crate::api::commitment::{validate_commit_inner_shape, validate_commit_level_params};
 use crate::protocol::ring_relation::compute_multi_group_relation_quotient;
-use crate::{tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveWitnessFlat};
+use crate::{tensor_pack_recursive_witness, RecursiveWitnessFlat};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::DigitBlocks;
-use akita_types::RingRelationInstance;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
     CompressionRelationWeights, FpExtEncoding, RingVec,
+};
+use akita_types::{
+    CoefficientPackingBatchSemantics, DigitBlocks, OpeningFamily, RelationRangeImagePlan,
+    RingRelationInstance,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -30,7 +30,7 @@ pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::build_w_evals_compact;
-pub use finalize::ring_switch_finalize;
+pub(crate) use finalize::ring_switch_finalize;
 pub use relation_weights::{
     build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
@@ -58,4 +58,12 @@ pub struct RingSwitchOutput<E: Field> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+/// Transcript-complete ring-switch state and the exact relation authority
+/// compiled from its freshly sampled challenges.
+pub(crate) struct RingSwitchFinalization<E: Field> {
+    pub(crate) output: RingSwitchOutput<E>,
+    pub(crate) relation_plan: RelationRangeImagePlan,
+    pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,
 }

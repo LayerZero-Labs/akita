@@ -18,8 +18,6 @@
 
 #![allow(missing_docs)]
 
-use jolt_field::{CanonicalEncoding, One, Zero};
-
 mod common;
 
 use akita_config::proof_optimized::fp128;
@@ -31,10 +29,10 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
 use common::{
-    dense_field_evals, init_rayon_pool, opening_from_poly, prove_input, random_point,
+    dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
     run_on_large_stack, verify_input, F,
 };
-
+use jolt_field::{CanonicalEncoding, One, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -110,25 +108,31 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
-
+    let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .expect("schedule")
+        .into_schedule();
     let evals = dense_field_evals(poly_nv, 0xdead_beef_0000 + poly_nv as u64);
-    let poly = DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly");
+    let poly = DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-    let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
+    let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout, BasisMode::Lagrange);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup_source =
         AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
             .expect("larger verifier materialization");
@@ -170,9 +174,16 @@ where
         .expect_err("one-field-short verifier setup must reject");
     }
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
 
     let poly_refs: [&DensePoly<F>; 1] = [&poly];
     let commitments = [commitment];
@@ -214,35 +225,43 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
 
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
-    let layout = Cfg::get_params_for_batched_commitment(&opening_layout).expect("layout");
-    let schedule = Cfg::get_params_for_prove(&opening_layout).expect("schedule");
+    let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .expect("layout");
+    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
+        .expect("schedule")
+        .into_schedule();
+    let root_d = layout.d_a();
     let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
-        total_ring * D,
+        total_ring * root_d,
         1usize << poly_nv,
         "onehot layout mismatch at nv={poly_nv}"
     );
-    let total_chunks = total_ring * D / k;
+    let total_chunks = total_ring * root_d / k;
 
     let mut rng = StdRng::seed_from_u64(0xdead_beef_0001 + poly_nv as u64);
     let indices: Vec<Option<usize>> = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..k)))
         .collect();
-    let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
+    let poly = OneHotPoly::<F, usize>::new(k, indices.clone()).expect("onehot poly");
 
     let pt = random_point(poly_nv, 0xcafe_0001 + poly_nv as u64);
     let expected_opening = onehot_lagrange_opening(&indices, k, &pt);
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup_source =
         AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
             .expect("larger verifier materialization");
@@ -271,9 +290,16 @@ where
         verifier_capacity.num_field_elements
     );
 
-    let (commitment, hint) =
-        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
-            .expect("commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        std::slice::from_ref(&poly),
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("commit");
 
     let poly_refs: [&OneHotPoly<F, usize>; 1] = [&poly];
     let commitments = [commitment];
@@ -353,40 +379,50 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
-    let layout = Cfg::get_params_for_batched_commitment(
-        &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
+    let layout =
+        akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
+            .expect("batched layout");
     let polys: Vec<DensePoly<F>> = (0..commit_batch)
         .map(|idx| {
             let mut rng = StdRng::seed_from_u64(0xbeef_cafe_0000 + idx as u64);
             let evals: Vec<F> = (0..1usize << poly_nv)
                 .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
                 .collect();
-            DensePoly::<F>::from_field_evals(poly_nv, D, &evals).expect("dense poly")
+            DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly")
         })
         .collect();
 
     let pt = random_point(poly_nv, 0xbabe_0000 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly::<D, _>(poly, &pt, &layout))
+        .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&DensePoly<F>> = polys.iter().collect();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
-        .expect("batched commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("batched commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -420,12 +456,9 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
 
 /// Batched onehot round-trip.
 ///
-/// Important: onehot polys bake their `(block_index_bits, position_index_bits)` block split in at
-/// construction time, unlike dense polys which rebuild blocks from the
-/// prover-supplied `num_positions_per_block`. Under batched commits that split must match
-/// the layout the prover will use, which is
-/// `test_support::akita_batched_root_layout(nv, setup_polys)` — i.e., sized
-/// for the setup's `max_num_batched_polys`, not for a lone poly.
+/// The construction dimension is metadata rather than storage authority, but
+/// it must still match the root layout so setup-capacity failures are tested
+/// with a polynomial of exactly `poly_nv` variables.
 fn run_onehot_batched_e2e<Cfg, const D: usize>(
     setup_nv: usize,
     setup_polys: usize,
@@ -435,16 +468,17 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    assert_eq!(Cfg::D, D);
+    assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
+    let root_d = layout.d_a();
     let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    assert_eq!(total_ring * D, 1usize << poly_nv);
-    let total_chunks = total_ring * D / k;
+    assert_eq!(total_ring * root_d, 1usize << poly_nv);
+    let total_chunks = total_ring * root_d / k;
 
     let (polys, onehot_indices): (Vec<_>, Vec<_>) = (0..commit_batch)
         .map(|idx| {
@@ -452,7 +486,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             let indices: Vec<Option<usize>> = (0..total_chunks)
                 .map(|_| Some(rng.gen_range(0..k)))
                 .collect();
-            let poly = OneHotPoly::<F, usize>::new(k, D, indices.clone()).expect("onehot poly");
+            let poly = OneHotPoly::<F, usize>::new(k, indices.clone()).expect("onehot poly");
             (poly, indices)
         })
         .unzip();
@@ -465,16 +499,27 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv, setup_polys).unwrap();
-    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    let stack =
-        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
-            .expect("stack");
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
+    let stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend::DEFAULT,
+        &prepared,
+        setup.expanded.as_ref(),
+    )
+    .expect("stack");
     let verifier_setup =
         AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
 
     let poly_refs: Vec<&OneHotPoly<F, usize>> = polys.iter().collect();
-    let (commitment, hint) = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack)
-        .expect("batched onehot commit");
+    let akita_prover::CommitOutput {
+        committed_group: commitment,
+        hint,
+    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
+        &setup,
+        &polys,
+        &stack,
+        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+    )
+    .expect("batched onehot commit");
     let commitments = [commitment];
     let hints = vec![hint];
     let opening_groups = [&openings[..]];
@@ -594,27 +639,17 @@ macro_rules! preset_module {
     };
 }
 
-// Multipoint/batched setup sizing falls through to the planner DP via the
-// default `runtime_schedule` fallback, so bare presets suffice — even
-// tables-only configs (`D128*` has no table at all).
 preset_module!(
-    d128_dense,
-    fp128::D128Dense,
-    128,
+    adaptive_dense,
+    fp128::Dense,
+    256,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
-    d64_dense,
-    fp128::D64Dense,
-    64,
-    run_dense_e2e,
-    run_dense_batched_e2e
-);
-preset_module!(
-    d64_onehot,
-    fp128::D64OneHot,
-    64,
+    adaptive_onehot,
+    fp128::OneHot,
+    256,
     run_onehot_e2e,
     run_onehot_batched_e2e
 );

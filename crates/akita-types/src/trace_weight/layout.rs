@@ -74,7 +74,6 @@ impl TraceWeightLayout {
             .witness_layout
             .unit_for_block(self.group_id, global_block)?;
         let physical_index = unit.e_coefficient_index(
-            self.source_ring_dim,
             self.opening_ring_dim,
             num_claims,
             self.num_digits_open,
@@ -142,6 +141,9 @@ impl TraceWeightLayout {
                 AkitaError::InvalidSetup("trace claim offset overflow".to_string())
             })?;
             for unit in self.witness_layout.units_for_group(self.group_id)? {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let last_global = unit
                     .global_block_start()
                     .checked_add(unit.num_live_blocks().checked_sub(1).ok_or_else(|| {

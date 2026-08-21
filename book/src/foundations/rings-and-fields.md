@@ -8,9 +8,6 @@ subfield where extension-field points live, and the norms that control folding.
 This page folds directly from paper §2.1, with the concrete low-degree
 arithmetic from implementation appendix B.1.4.
 
-Paths under `crates/jolt-field` refer to the canonical package in the Jolt
-repository; Akita imports those types directly.
-
 ## The ring and partial splitting
 
 \\( R_q = \mathbb{Z}_q[X]/(X^d+1) \\) with \\( d = 2^\alpha \\); when
@@ -34,7 +31,7 @@ the concrete degree-2 and degree-4 arithmetic in the implementation
 **Sources to fold in**
 
 - Paper §2.1 ("Extension-field embedding", "Ring-subfield coordinates"; Hachi Thm 2 / Lemma 4), App B.1.4 `sec:akita-ext-fields` (degree-2/4 multiplication tables, tower squaring/inversion, the \\( K=4 \\) trace map).
-- `crates/jolt-field/src/ext/` (`fp_ext2.rs`, `fp_ext4.rs`, `fp_ext8.rs`, `lift.rs`, `native_algebra.rs`).
+- Jolt's `jolt-field` Solinas extension modules.
 
 ## Base-field coefficients vs extension evaluation points
 
@@ -47,7 +44,40 @@ reduction later resolves.
 **Sources to fold in**
 
 - Paper §2.1 ("Base-field coefficients and extension-field points").
-- `crates/jolt-field/src/ext/lift.rs`, `ext/mod.rs`.
+- Jolt's `jolt-field` extension and algebra modules.
+
+## Challenge subrings and coefficient packing
+
+For extension degree `k`, coefficient packing uses three rings:
+
+```text
+R = K[X]/(X^d_A+1),
+S = K[Y]/(Y^s+1),
+C = E[Y]/(Y^s+1).
+```
+
+The A ring `R` holds committed data. The challenge subring `S` holds sparse
+fold challenges. The extension opening ring `C` holds partial evaluations.
+The dimensions satisfy `d_A = k h s`.
+
+The challenge subring embeds into the A ring by `Y -> X^(k h)`. This embedding
+acts only on one A coefficient axis. The partial evaluation contracts the
+other axis and keeps `s` coefficients in `E`. A packed partial therefore has
+`k` base field coordinate planes of length `s`. Its physical width is `k s`,
+but its polynomial modulus still has dimension `s`.
+
+The schedule selects `s`. It does not change the extension degree or the
+committed field. The implementation uses one canonical extension basis and one
+canonical coefficient order.
+
+See [Root fold and ring switching](../how/proving/root-fold-ring-switch.md#subring-coefficient-packing)
+for the coefficient grid, the commutation rule that makes packing valid, and a
+worked fp32 example.
+
+**Implementation map**
+
+- `crates/akita-types/src/subring_coefficient_packing.rs`.
+- `crates/akita-types/src/proof/coefficient_packing_relation.rs`.
 
 ## Norms, invertibility, and challenge families
 

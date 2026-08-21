@@ -18,7 +18,7 @@ pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
 ///
 /// Compression maps and NTT kernels have separate, field-profile-specific
 /// dispatch domains. Their smaller dimensions must not enter role admission.
-pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 4] = [64, 128, 256, 512];
+pub const SUPPORTED_COMMITMENT_RING_DIMS: [usize; 6] = [64, 128, 256, 512, 1024, 2048];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
@@ -97,8 +97,8 @@ impl CommitmentRingDims {
         self.inner
     }
 
-    /// Ring dimension for B-role data: next-witness digit commitments (`t_hat`),
-    /// COMMIT and B_inner relation rows.
+    /// Ring dimension for B-role data: next-witness digit commitments (`t_hat`)
+    /// and the slice-major B relation rows.
     #[must_use]
     pub const fn d_b(self) -> usize {
         self.outer
@@ -232,12 +232,12 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
                 .field_bits(),
         )?;
         group.commitment.validate()?;
-        if group.commitment.log_basis_open != final_params.log_basis_open {
+        if group.commitment.opening.log_basis_open != final_params.log_basis_open {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
             )));
         }
-        if group.commitment.fold_challenge_config.weight() == 0 {
+        if group.commitment.opening.fold_challenge_config.weight() == 0 {
             return Err(AkitaError::InvalidSetup(format!(
                 "root precommitted group {group_index} has an empty fold challenge"
             )));
@@ -269,7 +269,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
             .terminal
             .input_witness_len
             .is_multiple_of(terminal_d)
-        || terminal.inner_commit_matrix.sis_table_key().ring_dimension as usize != terminal_d
+        || terminal.inner_commit_matrix.ring_dimension() != terminal_d
     {
         return Err(AkitaError::InvalidSetup(
             "terminal inner ring dimension is inconsistent with witness length".to_string(),
@@ -280,7 +280,7 @@ pub fn validate_schedule_ring_dims(schedule: &FoldSchedule) -> Result<(), AkitaE
 
 pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
     let dims = lp.role_dims();
-    let a_ring = lp.inner_commit_matrix.sis_table_key().ring_dimension as usize;
+    let a_ring = lp.inner_commit_matrix.ring_dimension();
     let b_ring = lp.outer_commit_matrix.sis_table_key().ring_dimension as usize;
     let d_ring = lp.open_commit_matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {

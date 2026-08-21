@@ -1,8 +1,5 @@
 #![allow(missing_docs)]
 
-use akita_algebra::One;
-use akita_algebra::Ring;
-use akita_algebra::Zero;
 use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
@@ -13,8 +10,7 @@ use akita_sumcheck::{
 };
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
-use jolt_field::{Field, Fp64};
-
+use jolt_field::{Field, Fp64, One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;

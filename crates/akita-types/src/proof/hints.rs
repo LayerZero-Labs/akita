@@ -488,8 +488,7 @@ where
 mod tests {
     use super::*;
     use crate::sis::SisModulusProfileId;
-    use akita_algebra::Ring;
-    use jolt_field::{Fp32, Zero};
+    use jolt_field::{Fp32, Ring, Zero};
 
     type F = Fp32<251>;
 

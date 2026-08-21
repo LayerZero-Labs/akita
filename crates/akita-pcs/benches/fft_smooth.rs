@@ -1,12 +1,14 @@
 #![allow(missing_docs)]
 
-use akita_pcs::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
-use akita_pcs::SmoothFftField;
+use akita_algebra::fft::SmoothFftField;
+use akita_algebra::fft::{field_pow, primitive_nth_root, rs_extend_fft, SmoothDomain};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Field, One, Prime128Offset2355, Prime128OffsetA7F7, Zero};
-
+use jolt_field::{Field, One, Zero};
+use jolt_field::{Prime128Offset2355, Prime128OffsetA7F7};
 use rand::{rngs::StdRng, SeedableRng};
 
+#[cfg(feature = "parallel")]
+use jolt_field::Ring;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 #[cfg(feature = "parallel")]
@@ -133,7 +135,7 @@ fn run_rs_expand_256_par<Fld>(
     domain_size: usize,
     seed_tag: u64,
 ) where
-    Fld: Field + Debug + Send + Sync,
+    Fld: Field + Ring + Debug + Send + Sync,
 {
     let k = 256usize;
     let count = 32_768usize;

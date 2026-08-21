@@ -10,7 +10,7 @@ pub fn try_centered_i8<F: Field + CanonicalEncoding>(
 ) -> Option<i8> {
     let canonical = coeff
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128");
+        .expect("Akita field element must fit in u128");
     let centered = if canonical > half_q {
         -((q - canonical) as i128)
     } else {
@@ -82,7 +82,7 @@ pub fn decompose_rows_i8_into<F: Field + CanonicalEncoding, const D: usize>(
     }
     let q = (-F::one())
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
+        .expect("Akita field element must fit in u128")
         + 1;
     let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
@@ -143,7 +143,7 @@ where
     let dst_blocks = out.split_typed_blocks_mut::<D_ROLE>()?;
     let q = (-F::one())
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
+        .expect("Akita field element must fit in u128")
         + 1;
     let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis, q);
     #[cfg(feature = "parallel")]

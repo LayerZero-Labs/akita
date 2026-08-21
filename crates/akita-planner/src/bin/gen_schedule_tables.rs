@@ -1,16 +1,35 @@
 //! Generate schedule tables using the offline DP planner.
 
+mod catalog_policy_report;
+mod catalog_snapshot;
+mod generation_output_path;
+
+use catalog_policy_report::catalog_policy_signature;
+#[cfg(all(test, feature = "catalog-check"))]
+use catalog_policy_report::source_encoding_signature;
+#[cfg(test)]
+use generation_output_path::resolved_output_path;
+use generation_output_path::validate_explicit_output_isolation;
+
+use akita_planner::emit::{
+    bounded_parallel_filter_map, offline_planning_worker_count, GroupedGenerationRequest,
+    MaterializationDiagnostics, PrecommittedProducer,
+};
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, ALL_GENERATED_FAMILIES,
+    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{
-    refresh_generated_wiring, run_regen_fmt, write_family_module,
-    write_precommitted_profiles_module, EmitSpec,
+    publish_generated_outputs, render_generated_outputs_with_validation, EmitSpec,
 };
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{
+    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    FoldSchedule, PolynomialGroupLayout,
+};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Default)]
 struct ExplicitRows {
@@ -21,6 +40,11 @@ struct ExplicitRows {
 struct ParsedArgs {
     base_dir: PathBuf,
     wiring_only: bool,
+    check_catalog: bool,
+    catalog_report: Option<PathBuf>,
+    catalog_snapshot: Option<PathBuf>,
+    catalog_baseline: Option<PathBuf>,
+    row_progress: bool,
     family_filter: Option<Vec<String>>,
     explicit_rows: ExplicitRows,
 }
@@ -44,7 +68,12 @@ fn generator_command() -> &'static str {
 
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-gen \
-     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [family_module_name ...] \
+     --bin gen_schedule_tables -- <output-dir> [--wiring-only] [--check-catalog] \
+     [--catalog-report <path>] [--catalog-snapshot <path>] \
+     [--catalog-baseline <snapshot>] [--row-progress] \
+     [family_module_name ...]\n\
+     positional family names select only those generated families; omit them \
+     to generate every family \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
      [--precommitted-group family:num_vars_or_range:num_polys_or_range ...]"
 }
@@ -66,10 +95,6 @@ fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
     ALL_GENERATED_FAMILIES
         .iter()
         .find(|family| family.module_name == name)
-}
-
-fn explicit_family_is_d64(name: &str) -> bool {
-    family_by_name(name).is_some_and(|family| (family.policy)().uniform_ring_dimension == 64)
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {
@@ -112,12 +137,20 @@ fn parse_explicit_group(raw: &str) -> Result<ExplicitGroup, String> {
 }
 
 fn parse_args() -> Result<ParsedArgs, String> {
-    let raw_args: Vec<String> = env::args().skip(1).collect();
+    parse_args_from(env::args().skip(1).collect())
+}
+
+fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     if raw_args.is_empty() {
         return Err(usage().to_string());
     }
     let base_dir = PathBuf::from(&raw_args[0]);
     let mut wiring_only = false;
+    let mut check_catalog = false;
+    let mut catalog_report = None;
+    let mut catalog_snapshot = None;
+    let mut catalog_baseline = None;
+    let mut row_progress = false;
     let mut family_args = Vec::new();
     let mut explicit_rows = ExplicitRows::default();
     let mut i = 1;
@@ -126,6 +159,44 @@ fn parse_args() -> Result<ParsedArgs, String> {
             "--wiring-only" => {
                 wiring_only = true;
                 i += 1;
+            }
+            "--check-catalog" => {
+                check_catalog = true;
+                i += 1;
+            }
+            "--row-progress" => {
+                row_progress = true;
+                i += 1;
+            }
+            "--catalog-report" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-report requires a path".to_string())?;
+                if catalog_report.is_some() {
+                    return Err("--catalog-report may be supplied only once".to_string());
+                }
+                catalog_report = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--catalog-snapshot" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-snapshot requires a path".to_string())?;
+                if catalog_snapshot.is_some() {
+                    return Err("--catalog-snapshot may be supplied only once".to_string());
+                }
+                catalog_snapshot = Some(PathBuf::from(value));
+                i += 2;
+            }
+            "--catalog-baseline" => {
+                let value = raw_args
+                    .get(i + 1)
+                    .ok_or_else(|| "--catalog-baseline requires a path".to_string())?;
+                if catalog_baseline.is_some() {
+                    return Err("--catalog-baseline may be supplied only once".to_string());
+                }
+                catalog_baseline = Some(PathBuf::from(value));
+                i += 2;
             }
             "--final-group" => {
                 let value = raw_args
@@ -161,19 +232,6 @@ fn parse_args() -> Result<ParsedArgs, String> {
     if !explicit_rows.precommitted_groups.is_empty() && explicit_rows.final_group.is_none() {
         return Err("--precommitted-group requires --final-group".to_string());
     }
-    let explicit_families = explicit_rows.family_names();
-    let mut non_d64_families = explicit_families
-        .iter()
-        .filter(|family| !explicit_family_is_d64(family.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    non_d64_families.sort();
-    if !non_d64_families.is_empty() {
-        return Err(format!(
-            "explicit rows require D64 schedule families; got {}",
-            non_d64_families.join(", ")
-        ));
-    }
     if let Some(final_group) = &explicit_rows.final_group {
         if !family_args.is_empty()
             && (family_args.len() != 1 || family_args[0] != final_group.family)
@@ -187,37 +245,381 @@ fn parse_args() -> Result<ParsedArgs, String> {
     let family_filter = if let Some(final_group) = &explicit_rows.final_group {
         Some(vec![final_group.family.clone()])
     } else if family_args.is_empty() {
-        if explicit_families.is_empty() {
-            None
-        } else {
-            Some(explicit_families.into_iter().collect())
-        }
+        None
     } else {
         Some(family_args)
     };
     if wiring_only && family_filter.is_some() {
         return Err("--wiring-only does not accept family filters or explicit rows".to_string());
     }
+    let catalog_rows_requested =
+        check_catalog || catalog_snapshot.is_some() || catalog_baseline.is_some();
+    if catalog_rows_requested && (wiring_only || explicit_rows.final_group.is_some()) {
+        return Err("catalog checks and snapshots require ordinary generated rows".to_string());
+    }
+    if check_catalog && !cfg!(feature = "catalog-check") {
+        return Err("--check-catalog requires the `catalog-check` feature".to_string());
+    }
+    if catalog_report.is_some() && !check_catalog && catalog_baseline.is_none() {
+        return Err("--catalog-report requires --check-catalog or --catalog-baseline".to_string());
+    }
+    if catalog_baseline.is_some() && family_filter.is_some() {
+        return Err("--catalog-baseline requires the complete generated family set".to_string());
+    }
     Ok(ParsedArgs {
         base_dir,
         wiring_only,
+        check_catalog,
+        catalog_report,
+        catalog_snapshot,
+        catalog_baseline,
+        row_progress,
         family_filter,
         explicit_rows,
     })
 }
 
-impl ExplicitRows {
-    fn family_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let Some(final_group) = &self.final_group {
-            push_unique_name(&mut names, &final_group.family);
-        }
-        for group in &self.precommitted_groups {
-            push_unique_name(&mut names, &group.family);
-        }
-        names
-    }
+fn selected_families(family_filter: Option<&[String]>) -> Vec<&'static GeneratedFamily> {
+    ALL_GENERATED_FAMILIES
+        .iter()
+        .filter(|family| {
+            family_filter.is_none_or(|names| names.iter().any(|name| name == family.module_name))
+        })
+        .collect()
+}
 
+fn validate_materialized_catalog(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<CatalogComparison, String> {
+    let family = family_by_name(spec.module_name)
+        .ok_or_else(|| format!("unknown generated family: {}", spec.module_name))?;
+    let table = (family.schedule_catalog)().ok_or_else(|| {
+        format!(
+            "{}: compiled catalog is unavailable; build with all schedule features",
+            spec.module_name
+        )
+    })?;
+    compare_materialized_catalog(spec, table, entries)
+}
+
+struct CatalogComparison {
+    report: String,
+    changed_rows: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CatalogRowMetrics {
+    setup_fields: usize,
+    first_direct_setup_capacity: Option<usize>,
+    proof_bytes: usize,
+    fold_levels: usize,
+    row_digest: String,
+    policy_signature: String,
+}
+
+const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
+
+fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
+    let final_group = CommittedGroupProfile::try_from_params(
+        key.final_group,
+        &schedule.root.params.final_group.commitment,
+    )
+    .map_err(|error| format!("derive final committed profile: {error}"))?;
+    let profiles = CommittedGroupBatchProfile {
+        final_group,
+        precommitteds: key.precommitteds.clone(),
+    };
+    let digest = schedule_row_digest(&profiles, schedule)
+        .map_err(|error| format!("derive schedule row digest: {error}"))?;
+    Ok(digest
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn catalog_row_metrics(
+    spec: &EmitSpec,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+) -> Result<CatalogRowMetrics, String> {
+    let proof_bytes =
+        akita_schedules::expanded_schedule_proof_payload_bytes(key, schedule, &spec.policy)
+            .map_err(|error| format!("estimate proof payload: {error}"))?;
+    let setup_fields = akita_types::setup_matrix_capacity_for_schedule(schedule)
+        .map_err(|error| format!("estimate setup capacity: {error}"))?
+        .num_field_elements;
+    let first_direct_setup_capacity = (spec.policy.selection_policy
+        == akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload)
+        .then(|| {
+            akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
+                schedule,
+                &key.opening_layout()?,
+            )
+        })
+        .transpose()
+        .map_err(|error| format!("estimate first direct setup capacity: {error}"))?;
+    Ok(CatalogRowMetrics {
+        setup_fields,
+        first_direct_setup_capacity,
+        proof_bytes,
+        fold_levels: schedule.num_fold_levels(),
+        row_digest: row_digest_hex(key, schedule)?,
+        policy_signature: catalog_policy_signature(spec, schedule)?,
+    })
+}
+
+fn compact_catalog_key(key: &AkitaScheduleLookupKey) -> String {
+    let id = catalog_lookup_key_digest(key);
+    format!(
+        "nv={};polys={};precommits={};key={id}",
+        key.final_group.num_vars(),
+        key.final_group.num_polynomials(),
+        key.precommitteds.len(),
+    )
+}
+
+fn catalog_logical_key(key: &AkitaScheduleLookupKey) -> String {
+    use std::fmt::Write as _;
+
+    let mut logical = format!(
+        "final={}:{};precommitted=",
+        key.final_group.num_vars(),
+        key.final_group.num_polynomials(),
+    );
+    for (index, precommitted) in key.precommitteds.iter().enumerate() {
+        if index != 0 {
+            logical.push(',');
+        }
+        write!(
+            logical,
+            "{}:{}",
+            precommitted.group.num_vars(),
+            precommitted.group.num_polynomials(),
+        )
+        .expect("writing to String cannot fail");
+    }
+    logical
+}
+
+fn catalog_lookup_key_digest(key: &AkitaScheduleLookupKey) -> String {
+    akita_types::instance_descriptor::digest_descriptor_bytes(&key.canonical_descriptor_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn catalog_snapshot_row(
+    spec: &EmitSpec,
+    key: &AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    logical_key: String,
+) -> Result<catalog_snapshot::CatalogSnapshotRow, String> {
+    let metrics = catalog_row_metrics(spec, key, schedule)?;
+    Ok(catalog_snapshot::CatalogSnapshotRow {
+        schema: catalog_snapshot::SnapshotSchema::Current,
+        family: spec.module_name.to_string(),
+        logical_key,
+        lookup_key_digest: catalog_lookup_key_digest(key),
+        setup_fields: metrics.setup_fields,
+        first_direct_setup_capacity: metrics.first_direct_setup_capacity,
+        proof_bytes: metrics.proof_bytes,
+        fold_levels: metrics.fold_levels,
+        row_digest: metrics.row_digest,
+        policy: metrics.policy_signature,
+    })
+}
+
+fn optional_metric(
+    value: Option<&CatalogRowMetrics>,
+    field: fn(&CatalogRowMetrics) -> usize,
+) -> String {
+    value
+        .map(field)
+        .map_or_else(|| "-".to_string(), |value| value.to_string())
+}
+
+fn optional_digest(value: Option<&CatalogRowMetrics>) -> &str {
+    value.map_or("-", |metrics| metrics.row_digest.as_str())
+}
+
+fn optional_policy(value: Option<&CatalogRowMetrics>) -> &str {
+    value.map_or("-", |metrics| metrics.policy_signature.as_str())
+}
+
+fn compare_materialized_catalog(
+    spec: &EmitSpec,
+    table: akita_schedules::GeneratedScheduleTable,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<CatalogComparison, String> {
+    let rows = entries
+        .iter()
+        .map(|entry| (entry.key(), entry.schedule().clone()))
+        .collect::<Vec<_>>();
+    compare_catalog_rows(spec, table, &rows)
+}
+
+fn compare_catalog_rows(
+    spec: &EmitSpec,
+    table: akita_schedules::GeneratedScheduleTable,
+    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
+) -> Result<CatalogComparison, String> {
+    let mut old_rows = table
+        .entries
+        .iter()
+        .copied()
+        .map(|entry| {
+            let key = entry.to_runtime_lookup_key();
+            let schedule = akita_schedules::schedule_from_entry(
+                &entry,
+                &key,
+                &spec.policy,
+                spec.ring_challenge_config,
+            )
+            .map_err(|error| format!("{}: expand compiled row: {error}", spec.module_name))?;
+            Ok((key, schedule))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    old_rows
+        .sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
+
+    let mut report = String::new();
+    let mut old_index = 0;
+    let mut new_index = 0;
+    let mut changed_rows = 0;
+    while old_index < old_rows.len() || new_index < entries.len() {
+        let ordering = match (old_rows.get(old_index), entries.get(new_index)) {
+            (Some((old, _)), Some((new, _))) => akita_schedules::runtime_schedule_key_cmp(old, new),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => break,
+        };
+        let (status, key, old_schedule, new_schedule) = match ordering {
+            std::cmp::Ordering::Less => {
+                let (key, schedule) = &old_rows[old_index];
+                old_index += 1;
+                ("removed", key, Some(schedule), None)
+            }
+            std::cmp::Ordering::Greater => {
+                let (key, schedule) = &entries[new_index];
+                new_index += 1;
+                ("added", key, None, Some(schedule))
+            }
+            std::cmp::Ordering::Equal => {
+                let (key, old_schedule) = &old_rows[old_index];
+                let (_, new_schedule) = &entries[new_index];
+                old_index += 1;
+                new_index += 1;
+                let status = if old_schedule == new_schedule {
+                    "equal"
+                } else {
+                    "changed"
+                };
+                (status, key, Some(old_schedule), Some(new_schedule))
+            }
+        };
+        if status != "equal" {
+            changed_rows += 1;
+        }
+        let old_metrics = old_schedule
+            .map(|schedule| catalog_row_metrics(spec, key, schedule))
+            .transpose()?;
+        let new_metrics = new_schedule
+            .map(|schedule| catalog_row_metrics(spec, key, schedule))
+            .transpose()?;
+        use std::fmt::Write as _;
+        writeln!(
+            report,
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            spec.module_name,
+            status,
+            compact_catalog_key(key),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.setup_fields),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.setup_fields),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.proof_bytes),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.proof_bytes),
+            optional_metric(old_metrics.as_ref(), |metrics| metrics.fold_levels),
+            optional_metric(new_metrics.as_ref(), |metrics| metrics.fold_levels),
+            optional_digest(old_metrics.as_ref()),
+            optional_digest(new_metrics.as_ref()),
+            optional_policy(old_metrics.as_ref()),
+            optional_policy(new_metrics.as_ref()),
+        )
+        .map_err(|error| format!("write catalog comparison: {error}"))?;
+    }
+    Ok(CatalogComparison {
+        report,
+        changed_rows,
+    })
+}
+
+fn materialized_snapshot_rows(
+    spec: &EmitSpec,
+    entries: &[akita_planner::emit::MaterializedEntry],
+) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
+    let mut logical_key_counts = std::collections::BTreeMap::new();
+    for entry in entries {
+        *logical_key_counts
+            .entry(catalog_logical_key(&entry.key()))
+            .or_insert(0usize) += 1;
+    }
+    entries
+        .iter()
+        .map(|entry| {
+            let key = entry.key();
+            let mut logical_key = catalog_logical_key(&key);
+            let is_ambiguous = logical_key_counts
+                .get(&logical_key)
+                .copied()
+                .unwrap_or_default()
+                > 1;
+            let producers_match_family = entry
+                .precommitted_producers()
+                .iter()
+                .all(|producer| producer.source_contract() == spec.source_contract);
+            if is_ambiguous && !producers_match_family {
+                use std::fmt::Write as _;
+                logical_key.push_str(";producer_contracts=");
+                for (index, producer) in entry.precommitted_producers().iter().enumerate() {
+                    if index != 0 {
+                        logical_key.push(',');
+                    }
+                    let contract = producer.source_contract();
+                    match contract.class() {
+                        akita_types::sis::CommittedSourceClass::UnitOneHot {
+                            source_chunk_size,
+                        } => write!(
+                            logical_key,
+                            "onehot(chunk={source_chunk_size},bound={})",
+                            contract.decomposition().log_commit_bound,
+                        ),
+                        akita_types::sis::CommittedSourceClass::BalancedSignedDigit => write!(
+                            logical_key,
+                            "balanced(bound={})",
+                            contract.decomposition().log_commit_bound,
+                        ),
+                    }
+                    .map_err(|error| format!("write producer contract key: {error}"))?;
+                }
+            }
+            catalog_snapshot_row(spec, &key, entry.schedule(), logical_key)
+        })
+        .collect()
+}
+
+#[cfg(all(test, feature = "catalog-check"))]
+fn catalog_snapshot_rows(
+    spec: &EmitSpec,
+    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
+) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
+    entries
+        .iter()
+        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule, catalog_logical_key(key)))
+        .collect()
+}
+
+impl ExplicitRows {
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
             .as_ref()
@@ -243,18 +645,6 @@ impl ExplicitRange {
     }
 }
 
-fn push_unique_name(names: &mut Vec<String>, name: &str) {
-    if !names.iter().any(|existing| existing == name) {
-        names.push(name.to_string());
-    }
-}
-
-fn push_unique_profile(profiles: &mut Vec<CommittedGroupProfile>, profile: CommittedGroupProfile) {
-    if !profiles.contains(&profile) {
-        profiles.push(profile);
-    }
-}
-
 fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: PolynomialGroupLayout) {
     if !layouts.contains(&layout) {
         layouts.push(layout);
@@ -262,14 +652,8 @@ fn push_unique_layout(layouts: &mut Vec<PolynomialGroupLayout>, layout: Polynomi
 }
 
 fn push_unique_group_batch_key(
-    keys: &mut Vec<(
-        AkitaScheduleLookupKey,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    )>,
-    candidate: (
-        AkitaScheduleLookupKey,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    ),
+    keys: &mut Vec<GroupedGenerationRequest>,
+    candidate: GroupedGenerationRequest,
 ) {
     if !keys.contains(&candidate) {
         keys.push(candidate);
@@ -277,16 +661,9 @@ fn push_unique_group_batch_key(
 }
 
 fn expand_precommitted_choices(
+    preplans: &GenerationPreplans,
     groups: &[ExplicitGroup],
-) -> Result<
-    Vec<
-        Vec<(
-            CommittedGroupProfile,
-            akita_types::sis::HonestFoldPolicySpec,
-        )>,
-    >,
-    String,
-> {
+) -> Result<Vec<Vec<PrecommittedProducer>>, String> {
     groups
         .iter()
         .map(|group| {
@@ -296,7 +673,7 @@ fn expand_precommitted_choices(
                 .layouts()
                 .into_iter()
                 .map(|layout| {
-                    (precommitted_family.explicit_precommitted_group)(layout)
+                    (precommitted_family.explicit_precommitted_group)(preplans, layout)
                         .map_err(|e| format!("{}: explicit precommitted group: {e}", group.family))
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -305,50 +682,47 @@ fn expand_precommitted_choices(
 }
 
 fn push_precommitted_combinations(
-    choices: &[Vec<(
-        CommittedGroupProfile,
-        akita_types::sis::HonestFoldPolicySpec,
-    )>],
+    choices: &[Vec<PrecommittedProducer>],
     index: usize,
-    profiles: &mut Vec<CommittedGroupProfile>,
-    policies: &mut Vec<akita_types::sis::HonestFoldPolicySpec>,
-    out: &mut Vec<(
-        Vec<CommittedGroupProfile>,
-        Vec<akita_types::sis::HonestFoldPolicySpec>,
-    )>,
+    producers: &mut Vec<PrecommittedProducer>,
+    out: &mut Vec<Vec<PrecommittedProducer>>,
 ) {
     if index == choices.len() {
-        out.push((profiles.clone(), policies.clone()));
+        out.push(producers.clone());
         return;
     }
-    for (profile, policy) in &choices[index] {
-        profiles.push(*profile);
-        policies.push(*policy);
-        push_precommitted_combinations(choices, index + 1, profiles, policies, out);
-        policies.pop();
-        profiles.pop();
+    for producer in &choices[index] {
+        producers.push(*producer);
+        push_precommitted_combinations(choices, index + 1, producers, out);
+        producers.pop();
     }
 }
 
 fn emit_spec_with_overrides(
     family: &GeneratedFamily,
+    preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
     generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
-    let mut spec = emit_spec_for_family(family, base_dir, generator_command)
-        .map_err(|e| format!("{}: emit spec: {e}", family.module_name))?;
     if !explicit_rows.has_family(family) {
-        return Ok(spec);
+        return emit_spec_for_family(family, preplans, base_dir, generator_command)
+            .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
+
+    // Explicit sweeps replace the catalog key set. Start from the cheap wiring
+    // shape so a one-key diagnostic does not first plan every default grouped
+    // root merely to discard those rows below.
+    let mut spec = wiring_emit_spec(family, base_dir)
+        .map_err(|e| format!("{}: producer contract: {e}", family.module_name))?;
+    spec.generator_command = generator_command;
 
     let final_group = explicit_rows
         .final_group
         .as_ref()
         .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
     spec.keys.clear();
-    spec.group_batch_keys.clear();
-    spec.precommitted_profiles.clear();
+    spec.grouped_requests.clear();
     let final_layouts = final_group.layouts();
 
     if explicit_rows.precommitted_groups.is_empty() {
@@ -360,88 +734,221 @@ fn emit_spec_with_overrides(
         return Ok(spec);
     }
 
-    let precommitted_choices = expand_precommitted_choices(&explicit_rows.precommitted_groups)?;
+    let precommitted_choices =
+        expand_precommitted_choices(preplans, &explicit_rows.precommitted_groups)?;
     let mut precommitted_combinations = Vec::new();
     push_precommitted_combinations(
         &precommitted_choices,
         0,
         &mut Vec::new(),
-        &mut Vec::new(),
         &mut precommitted_combinations,
     );
 
-    for (precommitteds, precommitted_honest_fold_policies) in precommitted_combinations {
-        for profile in &precommitteds {
-            push_unique_profile(&mut spec.precommitted_profiles, *profile);
-        }
+    for producers in precommitted_combinations {
         for final_layout in &final_layouts {
             push_unique_group_batch_key(
-                &mut spec.group_batch_keys,
-                (
-                    AkitaScheduleLookupKey {
-                        final_group: *final_layout,
-                        precommitteds: precommitteds.clone(),
-                    },
-                    precommitted_honest_fold_policies.clone(),
-                ),
+                &mut spec.grouped_requests,
+                GroupedGenerationRequest::new(*final_layout, producers.clone()),
             );
         }
     }
-    spec.precommitted_profiles
-        .sort_by_key(CommittedGroupProfile::canonical_descriptor_bytes);
     Ok(spec)
 }
 
 fn main() -> Result<(), String> {
+    let generation_started = Instant::now();
     let args = parse_args()?;
+    validate_explicit_output_isolation(&args.base_dir, &args.explicit_rows)?;
     fs::create_dir_all(&args.base_dir)
         .map_err(|e| format!("create {}: {e}", args.base_dir.display()))?;
-    let families_to_write = ALL_GENERATED_FAMILIES
-        .iter()
-        .filter(|family| {
-            args.family_filter
-                .as_ref()
-                .is_none_or(|names| names.iter().any(|name| name == family.module_name))
-        })
-        .collect::<Vec<_>>();
+    let families_to_write = selected_families(args.family_filter.as_deref());
 
-    if !args.wiring_only {
+    let specs = if args.wiring_only {
+        Vec::new()
+    } else {
         let generator_command = generator_command();
-        let specs = families_to_write
+        let preplans = GenerationPreplans::default();
+        let indexed_families = families_to_write
             .iter()
-            .map(|family| {
-                emit_spec_with_overrides(
-                    family,
-                    args.base_dir.clone(),
-                    &args.explicit_rows,
-                    generator_command,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        for spec in &specs {
-            let dest = write_family_module(spec)
-                .map_err(|e| format!("{}: write family module: {e}", spec.module_name))?;
-            println!("wrote {}", dest.display());
-            let dest = write_precommitted_profiles_module(spec).map_err(|e| {
-                format!("{}: write precommit registry module: {e}", spec.module_name)
-            })?;
-            println!("wrote {}", dest.display());
+            .enumerate()
+            .map(|(index, family)| (index, *family))
+            .collect::<Vec<_>>();
+        let family_count = indexed_families.len();
+        let workers = offline_planning_worker_count(family_count);
+        let mut specs = bounded_parallel_filter_map(&indexed_families, workers, |item| {
+            let (index, family) = *item;
+            let family_started = Instant::now();
+            eprintln!(
+                "preparing schedule family requests and dependency schedules {}/{}: {}",
+                index + 1,
+                family_count,
+                family.module_name
+            );
+            let spec = emit_spec_with_overrides(
+                family,
+                &preplans,
+                args.base_dir.clone(),
+                &args.explicit_rows,
+                generator_command,
+            )?;
+            eprintln!(
+                "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
+                index + 1,
+                family_count,
+                family.module_name,
+                spec.keys.len(),
+                spec.grouped_requests.len(),
+                family_started.elapsed(),
+            );
+            Ok(Some(spec))
+        })?;
+        for (family, spec) in families_to_write.iter().zip(&mut specs) {
+            preplans.attach_to_spec(family, spec);
         }
-    }
+        drop(preplans);
+        specs
+    };
 
     let mod_path = args.base_dir.join("mod.rs");
     let wiring_specs = ALL_GENERATED_FAMILIES
         .iter()
-        .map(|family| wiring_emit_spec(family, args.base_dir.clone()))
-        .collect::<Vec<_>>();
-    if mod_path.exists() {
-        refresh_generated_wiring(&sorted_unique_specs(&wiring_specs), &mod_path)?;
-        println!("updated {}", mod_path.display());
+        .map(|family| {
+            wiring_emit_spec(family, args.base_dir.clone())
+                .map_err(|error| format!("{}: producer contract: {error}", family.module_name))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mod_path = if mod_path.exists() {
+        Some(mod_path)
     } else if args.wiring_only {
         return Err(format!("missing {}", mod_path.display()));
     } else {
         println!("skipped missing {}", mod_path.display());
+        None
+    };
+    let check_catalog = args.check_catalog;
+    let collect_catalog_snapshot =
+        args.catalog_snapshot.is_some() || args.catalog_baseline.is_some();
+    let mut catalog_drift_report = if check_catalog {
+        CATALOG_DRIFT_REPORT_HEADER.to_string()
+    } else {
+        String::new()
+    };
+    let mut changed_catalog_rows = 0usize;
+    let mut current_catalog_rows = Vec::new();
+    let outputs = render_generated_outputs_with_validation(
+        &specs,
+        &sorted_unique_specs(&wiring_specs),
+        mod_path.as_deref(),
+        MaterializationDiagnostics {
+            row_progress: args.row_progress,
+        },
+        |spec, entries| {
+            if check_catalog {
+                let comparison = validate_materialized_catalog(spec, entries)?;
+                catalog_drift_report.push_str(&comparison.report);
+                changed_catalog_rows = changed_catalog_rows
+                    .checked_add(comparison.changed_rows)
+                    .ok_or_else(|| "catalog comparison row count overflow".to_string())?;
+            }
+            if collect_catalog_snapshot {
+                current_catalog_rows.extend(materialized_snapshot_rows(spec, entries)?);
+            }
+            Ok(())
+        },
+    )?;
+    if check_catalog {
+        if should_emit_catalog_drift_report(args.catalog_baseline.is_some(), changed_catalog_rows) {
+            if let Some(path) = &args.catalog_report {
+                fs::write(path, &catalog_drift_report)
+                    .map_err(|error| format!("write {}: {error}", path.display()))?;
+                eprintln!("wrote catalog drift comparison {}", path.display());
+            } else {
+                eprint!("{catalog_drift_report}");
+            }
+        }
+        if changed_catalog_rows != 0 {
+            return Err(format!(
+                "compiled catalog differs from the planner in {changed_catalog_rows} rows"
+            ));
+        }
     }
-    run_regen_fmt()?;
+    if let Some(path) = &args.catalog_snapshot {
+        let snapshot = catalog_snapshot::write_snapshot(current_catalog_rows.clone())?;
+        fs::write(path, snapshot).map_err(|error| format!("write {}: {error}", path.display()))?;
+        eprintln!("wrote catalog snapshot {}", path.display());
+    }
+    if let Some(path) = &args.catalog_baseline {
+        let baseline = fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let comparison = catalog_snapshot::compare_snapshots(
+            catalog_snapshot::parse_snapshot(&baseline)?,
+            current_catalog_rows,
+        )?;
+        if let Some(report_path) = &args.catalog_report {
+            fs::write(report_path, &comparison.report)
+                .map_err(|error| format!("write {}: {error}", report_path.display()))?;
+            eprintln!(
+                "wrote catalog revision comparison {}",
+                report_path.display()
+            );
+        } else {
+            eprint!("{}", comparison.report);
+        }
+        eprintln!(
+            "catalog revision comparison: {} added, {} removed, {} changed, {} equal",
+            comparison.added_rows,
+            comparison.removed_rows,
+            comparison.changed_rows,
+            comparison.equal_rows,
+        );
+    }
+    let publish_started = args.row_progress.then(Instant::now);
+    if args.row_progress {
+        eprintln!(
+            "schedule generation phase: publish {} generated outputs",
+            outputs.len(),
+        );
+    }
+    let destinations = publish_generated_outputs(outputs)?;
+    if let Some(started) = publish_started {
+        eprintln!(
+            "schedule generation phase complete: published {} outputs in {:.2?}",
+            destinations.len(),
+            started.elapsed(),
+        );
+    }
+    for destination in &destinations {
+        println!("wrote {}", destination.display());
+    }
+    if args.wiring_only {
+        eprintln!(
+            "finished schedule module wiring and published {} files in {:.2?}",
+            destinations.len(),
+            generation_started.elapsed(),
+        );
+    } else {
+        eprintln!(
+            "finished {} schedule {} and published {} files in {:.2?}",
+            specs.len(),
+            if specs.len() == 1 {
+                "family"
+            } else {
+                "families"
+            },
+            destinations.len(),
+            generation_started.elapsed(),
+        );
+    }
     Ok(())
 }
+
+const fn should_emit_catalog_drift_report(
+    has_catalog_baseline: bool,
+    changed_catalog_rows: usize,
+) -> bool {
+    !has_catalog_baseline || changed_catalog_rows != 0
+}
+
+#[cfg(test)]
+#[path = "gen_schedule_tables_tests.rs"]
+mod tests;

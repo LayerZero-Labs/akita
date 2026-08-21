@@ -8,8 +8,8 @@ use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvalua
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    FpExtEncoding, RelationAddressGeometry, RelationRowFamily,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
+    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -28,8 +28,12 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let row_families =
-        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_families()?;
+    let relation_geometry = RelationWitnessGeometry::for_level(
+        &context.level_params,
+        &context.opening_batch,
+        context.extension_degree,
+    )?;
+    let row_families = relation_geometry.rhs_layout().row_families()?;
     let quotient_row_dims = row_families
         .iter()
         .filter(|family| {
@@ -38,7 +42,7 @@ where
                 RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
             )
         })
-        .map(|family| family.ring_dim())
+        .map(|family| family.geometry().polynomial_modulus_dimension())
         .collect::<Vec<_>>();
     let prepared_point = PreparedRelationPoint::new(
         point,
@@ -72,11 +76,10 @@ where
     {
         let _span = tracing::info_span!("relation_structured_groups").entered();
         for group in &evaluator.groups {
-            let block_challenges = group.structured_block_challenges::<F>()?;
             structured_evaluation += plan
                 .evaluate_structured_group::<F>(
                     group.group_id,
-                    &block_challenges,
+                    &group.c_alphas,
                     &group.opening_a_evals,
                     alpha,
                 )
@@ -102,12 +105,14 @@ where
         )?
     };
     let quotient_evaluation =
-        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
-            AkitaError::InvalidInput(format!("relation quotient failed: {error:?}"))
-        })?;
+        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families).map_err(
+            |error| AkitaError::InvalidInput(format!("relation quotient failed: {error:?}")),
+        )?;
 
     let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
-    evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    if deferred_setup_claim.is_some() {
+        evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    }
     Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
 }
 
@@ -115,6 +120,7 @@ where
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     prepared_point: &PreparedRelationPoint<E>,
+    row_families: &[RelationRowFamily],
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -124,8 +130,6 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let row_families =
-        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_families()?;
     let rows = row_families.len();
     if rows
         != context
@@ -142,11 +146,16 @@ where
     for (row, family) in row_families.iter().enumerate() {
         if matches!(
             family,
-            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+            RelationRowFamily::CompressionF { .. }
+                | RelationRowFamily::CompressionH { .. }
+                | RelationRowFamily::Consistency {
+                    opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { .. },
+                    ..
+                }
         ) {
             continue;
         }
-        let row_dimension = family.ring_dim();
+        let row_dimension = family.geometry().polynomial_modulus_dimension();
         let role_factors = prepared_point.for_dimension(row_dimension)?;
         let denominator = role_factors
             .powers
@@ -160,8 +169,11 @@ where
             .get(row)
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
+        let mut row_evaluation = E::zero();
         for (digit, &gadget) in quotient_gadget.iter().enumerate() {
-            let physical_coefficient = context.witness_layout.r_coefficient_index(row, digit, 0)?;
+            let physical_coefficient = context
+                .witness_layout
+                .r_coefficient_index(row, digit, 0, 0)?;
             let lane_start = canonical_relation_lane_index(
                 evaluator.relation_address_geometry,
                 physical_coefficient,
@@ -171,8 +183,9 @@ where
                 lane_start,
                 &role_factors.lane_powers,
             )?;
-            evaluation -= lane_evaluation * row_weight * denominator * E::lift_base(gadget);
+            row_evaluation += lane_evaluation.mul_base(gadget);
         }
+        evaluation -= row_evaluation * row_weight * denominator;
     }
     Ok(evaluation)
 }

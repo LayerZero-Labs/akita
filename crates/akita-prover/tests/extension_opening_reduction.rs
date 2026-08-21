@@ -1,9 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_algebra::poly::multilinear_eval;
-use akita_algebra::One;
-use akita_algebra::Ring;
-use akita_algebra::Zero;
 use akita_error::AkitaError;
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
@@ -22,8 +19,8 @@ use akita_types::{
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use jolt_field::{
-    Ext2, ExtField, Field, FpExt4, Prime128Offset275, Prime24Offset3, Prime30Offset35,
-    Prime31Offset19, Prime32Offset99, Prime64Offset59,
+    Ext2, ExtField, Field, FpExt4, One, Prime128Offset275, Prime24Offset3, Prime30Offset35,
+    Prime31Offset19, Prime32Offset99, Prime64Offset59, Ring, Zero,
 };
 
 type F = Prime128Offset275;
@@ -1066,12 +1063,15 @@ mod delayed_product_sum_contract {
         fn from_u64(v: u64) -> Self {
             Self(Inner::from_u64(v))
         }
+
         fn from_i64(v: i64) -> Self {
             Self(Inner::from_i64(v))
         }
+
         fn from_u128(v: u128) -> Self {
             Self(Inner::from_u128(v))
         }
+
         fn from_i128(v: i128) -> Self {
             Self(Inner::from_i128(v))
         }
@@ -1116,8 +1116,6 @@ mod delayed_product_sum_contract {
             Self(Inner::from_u64(accum.0))
         }
 
-        // The wide (i32-lane) path is not exercised by these tests; reuse the
-        // wrapping accumulator so the impl stays total.
         type Wide = WrappingU64Accum;
         fn scale_wide(self, small: i32) -> WrappingU64Accum {
             WrappingU64Accum(self.0.to_limbs().wrapping_mul(small as i64 as u64))
@@ -1128,8 +1126,8 @@ mod delayed_product_sum_contract {
     }
 
     impl From<LossyField> for WrappingU64Accum {
-        fn from(x: LossyField) -> Self {
-            Self(x.0.to_limbs())
+        fn from(value: LossyField) -> Self {
+            Self(value.0.to_limbs())
         }
     }
 

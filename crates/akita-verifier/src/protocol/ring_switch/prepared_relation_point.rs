@@ -248,10 +248,8 @@ impl<E: Field> PreparedRelationPoint<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::One;
     use jolt_field::Prime128OffsetA7F7;
-    use jolt_field::Ring;
-    use jolt_field::Zero;
+    use jolt_field::{One, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

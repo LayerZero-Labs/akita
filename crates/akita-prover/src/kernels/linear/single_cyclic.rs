@@ -22,34 +22,34 @@ pub fn mat_vec_mul_ntt_single_i8<F: Field + CanonicalEncoding, const D: usize>(
         log_basis,
         "for single predecomposed digit mat-vec",
     )?;
-    Ok(match slot {
-        PreparedNttCache::Q32 { neg, params: p, .. } => {
-            let neg = neg.as_deref().ok_or_else(|| {
-                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-            })?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
-        }
-        PreparedNttCache::Q64 { neg, params: p, .. } => {
-            let neg = neg.as_deref().ok_or_else(|| {
-                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-            })?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
-        }
-        PreparedNttCache::Q128 { neg, params: p, .. } => {
-            let neg = neg.as_deref().ok_or_else(|| {
-                AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into())
-            })?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
-        }
+    Ok(if let Some(base) = slot.q32_base() {
+        let neg = base
+            .negacyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+    } else if let Some(base) = slot.q64_base() {
+        let neg = base
+            .negacyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+    } else if let Some(base) = slot.q128_base() {
+        let neg = base
+            .negacyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("negacyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, base.params())
+    } else {
+        return Err(AkitaError::InvalidSetup(
+            "signed-i8 matvec requires a base-profile NTT cache".into(),
+        ));
     })
 }
 
@@ -69,34 +69,34 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: Field + CanonicalEncoding, const D: u
         log_basis,
         "for cyclic single predecomposed digit mat-vec",
     )?;
-    Ok(match slot {
-        PreparedNttCache::Q32 { cyc, params: p, .. } => {
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
-        }
-        PreparedNttCache::Q64 { cyc, params: p, .. } => {
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
-        }
-        PreparedNttCache::Q128 { cyc, params: p, .. } => {
-            let cyc = cyc
-                .as_deref()
-                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
-            let rows: Vec<&[_]> = (0..num_rows)
-                .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
-                .collect();
-            mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
-        }
+    Ok(if let Some(base) = slot.q32_base() {
+        let cyc = base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+    } else if let Some(base) = slot.q64_base() {
+        let cyc = base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+    } else if let Some(base) = slot.q128_base() {
+        let cyc = base
+            .cyclic()
+            .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
+        let rows: Vec<&[_]> = (0..num_rows)
+            .map(|i| &cyc[i * num_cols..(i + 1) * num_cols])
+            .collect();
+        mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, base.params())
+    } else {
+        return Err(AkitaError::InvalidSetup(
+            "cyclic NTT domain not prepared".into(),
+        ));
     })
 }
 
@@ -133,7 +133,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
         n_a,
         vec_len,
         chunk_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         chunk_width,
         params,
         |accs, start, end| {
@@ -147,7 +147,7 @@ pub(super) fn mat_vec_mul_single_i8_with_params<
                 }
             }
         },
-        |acc, params| acc.to_ring_with_params(params),
+        |acc, params| acc.to_ring(params),
     )
 }
 
@@ -184,7 +184,7 @@ pub(super) fn mat_vec_mul_single_i8_cyclic_with_params<
         n_a,
         vec_len,
         chunk_width,
-        base_tile_width::<W, K, D>(),
+        base_tile_width::<W, K, D>(n_a),
         chunk_width,
         params,
         |accs, start, end| {

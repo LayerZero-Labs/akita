@@ -7,8 +7,12 @@
 use crate::field_modulus;
 use crate::sis::compression::{min_compression_secure_rank, COMPRESSION_SIS_COEFF_LINF_BOUND};
 use crate::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use jolt_field::{CanonicalEncoding, Field};
+
+mod chain;
+
+pub use chain::CompressionChainPlan;
 
 /// Maximum complete B/D image accepted by the compression protocol.
 pub const MAX_COMPRESSION_INPUT_BYTES: usize = 8 * 1024;
@@ -239,18 +243,6 @@ fn profile_field_bits(profile: SisModulusProfileId) -> usize {
     profile.field_bits() as usize
 }
 
-fn checked_div_ceil(value: usize, divisor: usize, context: &str) -> Result<usize, AkitaError> {
-    if divisor == 0 {
-        return Err(AkitaError::InvalidSetup(format!(
-            "{context} divisor is zero"
-        )));
-    }
-    value
-        .checked_add(divisor - 1)
-        .map(|sum| sum / divisor)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
-}
-
 /// One checked rank-one negative-binary compression map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompressionMapPlan {
@@ -293,8 +285,9 @@ impl CompressionMapPlan {
         let real_digit_count = input_coefficients
             .checked_mul(field_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("compression digit length overflow".into()))?;
-        let input_width =
-            checked_div_ceil(real_digit_count, ring_dimension, "compression input width")?;
+        let input_width = checked::div_ceil(real_digit_count, ring_dimension).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression input width divisor is zero".into())
+        })?;
         let padded_digit_count = input_width.checked_mul(ring_dimension).ok_or_else(|| {
             AkitaError::InvalidSetup("compression digit capacity overflow".into())
         })?;
@@ -388,219 +381,6 @@ impl CompressionMapPlan {
     }
 }
 
-/// Complete checked compression plan for one flat source image.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompressionChainPlan {
-    policy: CompressionPolicyId,
-    modulus_profile: SisModulusProfileId,
-    field_bits: usize,
-    field_bytes: usize,
-    source_coefficients: usize,
-    maps: Vec<CompressionMapPlan>,
-}
-
-impl CompressionChainPlan {
-    /// Validate an already derived canonical chain.
-    pub fn new(
-        modulus_profile: SisModulusProfileId,
-        source_coefficients: usize,
-        maps: Vec<CompressionMapPlan>,
-    ) -> Result<Self, AkitaError> {
-        let field_bits = profile_field_bits(modulus_profile);
-        let field_bytes = field_bits.div_ceil(8);
-        let source_bytes = source_coefficients
-            .checked_mul(field_bytes)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression source byte length overflow".into())
-            })?;
-        if source_coefficients == 0 {
-            return Err(AkitaError::InvalidInput(
-                "compression source must be nonempty".into(),
-            ));
-        }
-        if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
-            return Err(AkitaError::InvalidInput(format!(
-                "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
-            )));
-        }
-        if maps.len() != COMPRESSION_MAP_COUNT {
-            return Err(AkitaError::InvalidSetup(format!(
-                "compression chain must contain exactly {COMPRESSION_MAP_COUNT} maps"
-            )));
-        }
-        let mut expected_input = source_coefficients;
-        let mut previous_dimension: Option<usize> = None;
-        for map in &maps {
-            if map.modulus_profile() != modulus_profile {
-                return Err(AkitaError::InvalidSetup(
-                    "compression map profile disagrees with its chain".into(),
-                ));
-            }
-            if map.input_coefficients() != expected_input {
-                return Err(AkitaError::InvalidSetup(
-                    "compression map input does not continue the preceding image".into(),
-                ));
-            }
-            if let Some(previous) = previous_dimension {
-                if previous.checked_div(2) != Some(map.ring_dimension()) {
-                    return Err(AkitaError::InvalidSetup(
-                        "compression ring dimensions must halve at each map".into(),
-                    ));
-                }
-            }
-            expected_input = map.output_coefficients();
-            previous_dimension = Some(map.ring_dimension());
-        }
-        let terminal_bytes = expected_input.checked_mul(field_bytes).ok_or_else(|| {
-            AkitaError::InvalidSetup("compression terminal byte length overflow".into())
-        })?;
-        if terminal_bytes != COMPRESSION_TARGET_BYTES {
-            return Err(AkitaError::InvalidSetup(format!(
-                "compression terminal is {terminal_bytes} bytes, expected {COMPRESSION_TARGET_BYTES}"
-            )));
-        }
-        Ok(Self {
-            policy: COMPRESSION_POLICY,
-            modulus_profile,
-            field_bits,
-            field_bytes,
-            source_coefficients,
-            maps,
-        })
-    }
-
-    /// Derive and validate the canonical complete-image chain.
-    pub fn for_complete_source(
-        modulus_profile: SisModulusProfileId,
-        source_coefficients: usize,
-    ) -> Result<Self, AkitaError> {
-        Self::try_for_complete_source(modulus_profile, source_coefficients)?.ok_or_else(|| {
-            let field_bits = profile_field_bits(modulus_profile);
-            let source_bytes = source_coefficients.saturating_mul(field_bits.div_ceil(8));
-            AkitaError::InvalidInput(format!(
-                "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
-            ))
-        })
-    }
-
-    /// Candidate-aware derivation. `None` means only that the source exceeds
-    /// the protocol cap; malformed and uncertified shapes remain errors.
-    pub fn try_for_complete_source(
-        modulus_profile: SisModulusProfileId,
-        source_coefficients: usize,
-    ) -> Result<Option<Self>, AkitaError> {
-        let field_bits = profile_field_bits(modulus_profile);
-        let field_bytes = field_bits.div_ceil(8);
-        let source_bytes = source_coefficients
-            .checked_mul(field_bytes)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression source byte length overflow".into())
-            })?;
-        if source_coefficients == 0 {
-            return Self::new(modulus_profile, source_coefficients, Vec::new()).map(Some);
-        }
-        if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
-            return Ok(None);
-        }
-        let mut maps = Vec::with_capacity(COMPRESSION_MAP_COUNT);
-        let mut input_coefficients = source_coefficients;
-        for ring_dimension in compression_ring_dimensions(modulus_profile) {
-            let map =
-                CompressionMapPlan::new(modulus_profile, input_coefficients, ring_dimension, 1)?;
-            input_coefficients = map.output_coefficients();
-            let output_bytes = input_coefficients.checked_mul(field_bytes).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression output byte length overflow".into())
-            })?;
-            maps.push(map);
-            if output_bytes == COMPRESSION_TARGET_BYTES {
-                return Self::new(modulus_profile, source_coefficients, maps).map(Some);
-            }
-            if output_bytes < COMPRESSION_TARGET_BYTES {
-                return Err(AkitaError::InvalidSetup(
-                    "compression ladder undershot its terminal target".into(),
-                ));
-            }
-        }
-        Err(AkitaError::InvalidSetup(format!(
-            "compression ladder did not reach {COMPRESSION_TARGET_BYTES} bytes"
-        )))
-    }
-
-    /// Fixed protocol policy that determines this plan.
-    #[must_use]
-    pub fn policy(&self) -> CompressionPolicyId {
-        self.policy
-    }
-
-    /// Exact modulus profile.
-    #[must_use]
-    pub fn modulus_profile(&self) -> SisModulusProfileId {
-        self.modulus_profile
-    }
-
-    /// Canonical modulus bit width.
-    #[must_use]
-    pub fn field_bits(&self) -> usize {
-        self.field_bits
-    }
-
-    /// Canonical field byte width.
-    #[must_use]
-    pub fn field_bytes(&self) -> usize {
-        self.field_bytes
-    }
-
-    /// Complete source coefficient count.
-    #[must_use]
-    pub fn source_coefficients(&self) -> usize {
-        self.source_coefficients
-    }
-
-    /// Ordered checked map plans.
-    #[must_use]
-    pub fn maps(&self) -> &[CompressionMapPlan] {
-        &self.maps
-    }
-
-    /// Exact terminal coefficient count.
-    #[must_use]
-    pub fn terminal_coefficients(&self) -> usize {
-        self.maps.last().map_or(0, |map| map.output_coefficients())
-    }
-
-    /// Total persistent packed stage-witness bytes.
-    pub fn packed_witness_bytes(&self) -> Result<usize, AkitaError> {
-        self.maps.iter().try_fold(0usize, |total, map| {
-            total.checked_add(map.packed_digit_bytes()).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression packed witness bytes overflow".into())
-            })
-        })
-    }
-
-    /// Equivalent persistent bytes for an `i8` digit representation.
-    pub fn unpacked_witness_bytes(&self) -> Result<usize, AkitaError> {
-        self.maps.iter().try_fold(0usize, |total, map| {
-            total.checked_add(map.real_digit_count()).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression unpacked witness bytes overflow".into())
-            })
-        })
-    }
-
-    /// Largest universal-setup matrix prefix required by any map in fields.
-    pub fn max_setup_field_elements(&self) -> Result<usize, AkitaError> {
-        self.maps.iter().try_fold(0usize, |maximum, map| {
-            let fields = map
-                .output_rank()
-                .checked_mul(map.input_width())
-                .and_then(|len| len.checked_mul(map.ring_dimension()))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression setup envelope overflow".into())
-                })?;
-            Ok(maximum.max(fields))
-        })
-    }
-}
-
 /// Bit-packed negative-binary digits for one checked map.
 ///
 /// Bit one encodes `-1`; bit zero encodes `0`. Padding through the final ring
@@ -633,9 +413,9 @@ impl PackedNegativeBinary {
         let mut bytes = vec![0u8; map.packed_digit_bytes()];
         let modulus = field_modulus::<F>();
         for (coefficient_index, coefficient) in coefficients.iter().enumerate() {
-            let canonical = coefficient.to_u128_checked().ok_or_else(|| {
-                AkitaError::InvalidInput("noncanonical compression coefficient".into())
-            })?;
+            let canonical = coefficient
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128");
             let magnitude = if canonical == 0 {
                 0
             } else {
@@ -824,6 +604,12 @@ impl<F: Field + CanonicalEncoding> CompressionTerminalPayload<F> {
     pub fn coefficients(&self) -> &[F] {
         &self.coefficients
     }
+
+    /// Consume the terminal payload and return its coefficient storage.
+    #[must_use]
+    pub fn into_coefficients(self) -> Vec<F> {
+        self.coefficients
+    }
 }
 
 #[cfg(test)]
@@ -910,6 +696,7 @@ mod tests {
                 dimensions
             );
             assert_eq!(plan.policy(), COMPRESSION_POLICY);
+            assert_eq!(plan.source_bytes(), MAX_COMPRESSION_INPUT_BYTES);
             assert_eq!(plan.terminal_coefficients() * field_bytes, 128);
             assert_eq!(
                 plan.max_setup_field_elements().unwrap(),
@@ -926,6 +713,7 @@ mod tests {
                 MAX_COMPRESSION_INPUT_BYTES / field_bytes + 1
             )
             .is_err());
+            assert!(CompressionChainPlan::try_for_complete_source(profile, usize::MAX).is_err());
         }
     }
 
@@ -960,12 +748,10 @@ mod tests {
         assert!(CompressionMapPlan::new(profile, 64, 32, 1).is_err());
 
         let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
-        assert!(CompressionChainPlan::new(profile, 64, vec![plan.maps()[0]]).is_err());
         let wrong_continuation =
             CompressionMapPlan::new(profile, 15, plan.maps()[1].ring_dimension(), 1).unwrap();
         assert!(
-            CompressionChainPlan::new(profile, 64, vec![plan.maps()[0], wrong_continuation])
-                .is_err()
+            CompressionChainPlan::new(profile, 64, [plan.maps()[0], wrong_continuation]).is_err()
         );
         assert!(CompressionChainWitness::new(plan.clone(), Vec::new()).is_err());
         assert!(CompressionTerminalPayload::<Prime128OffsetA7F7>::new(

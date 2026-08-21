@@ -9,8 +9,8 @@ use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript
 use akita_types::tensor_opening_split;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
-use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, Fold, Unreduced};
-
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field};
+use jolt_field::{Fold, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::hint::black_box;
@@ -37,7 +37,7 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
 
 fn random_ext<F, E>(rng: &mut StdRng) -> E
 where
-    F: Field + CanonicalEncoding + CanonicalBytes,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
     let coeffs = (0..E::DEGREE)
@@ -46,12 +46,12 @@ where
     E::from_base_slice(&coeffs)
 }
 
-fn onehot_sparse_tensor_witness<F, E>(
+fn sparse_suffix_tensor_witness<F, E>(
     num_vars: usize,
     num_polys: usize,
 ) -> SparseExtensionOpeningWitness<E>
 where
-    F: Field + CanonicalEncoding + CanonicalBytes,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>().unwrap();
@@ -110,7 +110,7 @@ where
 
 fn sparse_tensor_term<F, E>(num_vars: usize, num_polys: usize) -> ExtensionOpeningReductionTerm<E>
 where
-    F: Field + CanonicalEncoding + CanonicalBytes,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
     let (split_bits, _) = tensor_opening_split::<F, E>().unwrap();
@@ -122,7 +122,7 @@ where
     let eta = (0..split_bits)
         .map(|_| random_ext::<F, E>(&mut rng))
         .collect::<Vec<_>>();
-    let witness = onehot_sparse_tensor_witness::<F, E>(num_vars, num_polys);
+    let witness = sparse_suffix_tensor_witness::<F, E>(num_vars, num_polys);
     let lazy_rounds = tail_vars.min(
         akita_prover::protocol::extension_opening_reduction::SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
     );
@@ -138,7 +138,7 @@ where
 
 fn bench_case<F, E>(c: &mut Criterion, label: &str)
 where
-    F: Field + CanonicalEncoding + CanonicalBytes,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F> + Unreduced + Fold + akita_serialization::AkitaSerialize,
 {
     let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
@@ -148,7 +148,7 @@ where
     let input_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap();
 
     let mut group = c.benchmark_group(format!(
-        "extension_opening_reduction/{label}/onehot_nv{num_vars}_np{num_polys}"
+        "extension_opening_reduction/{label}/sparse_suffix_nv{num_vars}_np{num_polys}"
     ));
     configure_group(&mut group);
     group.bench_function("prove_sumcheck", |b| {

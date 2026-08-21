@@ -19,7 +19,7 @@ RISC-V targets and applies Jolt's `[patch.crates-io]` overrides for
 | `host/`      | bin  | Compiles the guest, runs Jolt prove/verify, prints cycle counts. |
 | `guest/`     | bin  | `#[jolt::provable]` RISC-V program that runs the Akita verifier. |
 
-## Quick start (`nv=32`, OneHot D=64 — canonical target)
+## Quick start (`nv=32`, adaptive OneHot — canonical target)
 
 You need the [Jolt CLI](https://github.com/a16z/jolt) installed
 (`cargo install --path .` from a clone of `jolt` at the same rev this
@@ -42,9 +42,9 @@ AKITA_NUM_VARS=32 \
     ./target/release/akita-recursion-artifact
 
 # 3. Compile the guest to RISC-V, emulate it, and report cycle markers.
-#    Trace-only (no Jolt prover) because at nv=32 the trace is on the order of
-#    ~8 G cycles at D=64, still above the current `max_trace_length = 4 G` in
-#    `#[jolt::provable]` attribute (see "Open follow-ups" below).
+#    Start with trace-only (no Jolt prover) when measuring a new adaptive
+#    schedule. Confirm the trace fits the current `max_trace_length = 4 G`
+#    before running the full prover (see "Open follow-ups" below).
 #    `--trace-output /dev/null` keeps the raw trace bytes off disk while
 #    preserving the cycle-marker output.
 ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
@@ -54,14 +54,13 @@ ZEROOS_GUEST_RUSTFLAGS=-Zunstable-options \
     --input target/akita_recursion_inputs_nv32.bin
 ```
 
-Expected output (Apple Silicon laptop, ≈ 22 min wall clock; D=64 OneHot,
-order-of-magnitude — rerun `--trace-only` for fresh numbers):
+Expected output shape (rerun `--trace-only` for current adaptive numbers):
 
 ```
 "deserialize_input": … (dominated by expanded verifier-setup decode)
 "transcript_init":   …
 "akita_verify":      …
-trace length: ~8 G cycles
+trace length: …
 trace done
 ```
 
@@ -71,10 +70,9 @@ that lives inside the blob; the proof itself is a tiny fraction.
 ## Running the full prove pipeline
 
 The full pipeline (Dory preprocessing → Jolt prove → Jolt verify) runs
-end-to-end at smaller arities where the trace fits under
-`max_trace_length = 4 G`. Drop the `AKITA_NUM_VARS` override down (e.g.
-`AKITA_NUM_VARS=20` produces a ≈ 4 MiB blob and a ≈ 150 M-cycle trace)
-and remove `--trace-only`:
+end-to-end at arities where the trace fits under `max_trace_length = 4 G`.
+Start with `AKITA_NUM_VARS=20`, measure it with `--trace-only`, and then remove
+`--trace-only` once the trace bound is confirmed:
 
 ```bash
 AKITA_NUM_VARS=20 ./target/release/akita-recursion-artifact
@@ -134,7 +132,7 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
 
 ## How it works
 
-1. **`artifact`** runs `AkitaCommitmentScheme::<64, fp128::D64OneHot>` →
+1. **`artifact`** runs `AkitaCommitmentScheme::<fp128::OneHot>` →
    `setup_prover` → `commit` → `batched_prove` over a synthetic OneHot
    polynomial, sanity-verifies on the host, and serializes
    `(transcript_domain, num_vars, opening_point, opening, commitment,
@@ -167,12 +165,18 @@ rm -rf /tmp/akita-recursion-targets /tmp/jolt-guest-targets
    feature list to `guest`. A production recursion circuit must use strict
    setup validation or bind an externally checked setup commitment.
 
-## Why we pin D=64 (not D=32) for Jolt cycle benches
+## Adaptive dimension pin and historical D64 measurements
 
-A natural surprise: a smaller ring `D` can make on-CPU proofs smaller, but
-**D=32 is not a valid A-role fold degree** (`d_a ≥ 64`) after the ring-dim
-cutover, and historical D=32 Jolt traces were **more** expensive than D=64 at
-equal `num_vars`. Three compounding effects explained the old D=32 penalty:
+The artifact, host, and guest share a fixed source-view dimension `D = 256`, the
+adaptive preset's root envelope. The generated `nv=20` and `nv=32` scalar rows both use
+A=D256 at the root and may transition to smaller per-level dimensions. The
+artifact rejects any requested arity whose selected root A dimension does not
+match this Jolt monomorphization.
+
+Historical D64 measurements remain useful context, but they do not describe
+the current adaptive binary. D32 is not a valid A-role fold degree (`d_a ≥ 64`),
+and historical D32 Jolt traces were more expensive than fixed D64 at equal
+`num_vars`. Three compounding effects explained the old D32 penalty:
 
 1. **More recursion levels.** Folding nv=32 to a tractable terminal
    takes 6 levels at D=64 vs 7 at D=32. Each level adds a full
@@ -187,11 +191,11 @@ equal `num_vars`. Three compounding effects explained the old D=32 penalty:
    cycle. Smaller-D work doesn't compress into fewer RV64
    instructions.
 
-For reference: OneHot **D=64** `nv=32` produces a trace on the order of
-**~8 G cycles** (~30% cheaper inside Jolt than the retired D=32 configuration)
-while remaining the production fp128 preset.
+For historical reference, fixed-D64 OneHot at `nv=32` produced a trace on the
+order of 8 G cycles, about 30% cheaper inside Jolt than the retired D32
+configuration. Remeasure before making claims about the adaptive preset.
 
-## Optimization history at `nv=20` (D=64)
+## Historical optimization results at `nv=20` (fixed D64)
 
 Two guest-level changes landed during bring-up. They live in the git
 history; numbers measured against the D=64 OneHot configuration are:
@@ -212,13 +216,13 @@ size.
 
 ## Open follow-ups
 
-1. **Full prove at `nv=32`** on a beefier host. Requires:
-   - Bumping `max_trace_length` past ~8 G in the `#[jolt::provable]`
-     attribute (currently 4 G — fine for `nv ≤ 20`, insufficient at
-     `nv=32`).
+1. **Remeasure and run a full adaptive prove at `nv=32`** on a beefier host.
+   Requires:
+   - Measuring the adaptive trace and, if necessary, increasing
+     `max_trace_length` beyond the current 4 G limit.
    - Server-class memory headroom (guest heap is sized for large nv=32 blobs).
-   - Expected wall clock at typical zkVM throughput (~500 kHz):
-     **~6 h+** of proving.
+   - Estimating wall clock from the newly measured trace rather than the
+     historical fixed-D64 result.
 
 2. **Make `deserialize_input` cheaper.** At `nv=32` it dominates the trace.
    Most of that is decoding the expanded verifier-setup matrix. Options:

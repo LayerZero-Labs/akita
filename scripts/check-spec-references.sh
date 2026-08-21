@@ -26,7 +26,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 # Removed identifiers. Do not list Q16/Fp16 here: live specs may discuss retired
-# small-field profiles by name (see crt-ntt-prime-profiles, remove-fp16).
+# small-field profiles by name (see remove-fp16).
 dead_patterns=(
   'akita-scheme'
   'akita-cfg'
@@ -56,26 +56,90 @@ dead_patterns=(
   'direct_witness_bytes'
   'segment_typed_witness_shape_from_groups'
   'dispatch_ring_dim_result'
+  'ExactNegacyclic \{ width, log_basis \}'
+  'ChallengeShape'
+  'ChallengeLabels'
+  'TensorChallenges'
+  'PreparedAffineFactors'
+  'PreparedChallengeEvals'
+  'FoldWitnessLinfCapPolicy'
+  'BoundedL1Norm'
+  'akita-challenges/src/tensor\.rs'
+  'CommitmentProver'
+  'CommitmentWithHint'
+  'CommittedGroupWithHint'
+  'FinalCommittedGroupWithHint'
+  'batched_commit'
+  'commit_group\b'
+  'commit_final_group'
+  'commit_with_params'
+  'batched_commit_with_params'
+  'get_params_for_prove'
+  'get_params_for_batched_commitment'
+  'runtime_schedule\b'
+  'committed_group_profile'
+  'resolve_generated_precommitted_group_profile'
+  'resolve_group_batch_schedule'
+  'plan_standalone_precommit'
+  'StandalonePrecommitPlan'
+  'StandalonePrecommitCandidate'
+  'prepare_batched_commit_inputs'
+  'padded_scalar_batch_num_vars'
+  'validate_scalar_point_matches_poly_arity'
+  'emit_precommitted_profiles_module'
+  'prior_group_profiles'
+  'PriorGroupProfiles'
+  'PriorGroupContext'
+  'NoPriorGroups'
+  'WithPriorGroups'
+  'scheduler_without_prior_groups'
+  'scheduler_with_prior_groups'
+  'explicit_without_prior_groups'
+  'explicit_with_prior_groups'
+  'profile_without_prior_groups'
+  'sole_profile'
+  '_precommitted\.rs'
+  'api/scheme\.rs'
+  'RootTensorProjectionPoly\b'
+  'RootTensorProjectionView\b'
+  'RootTensorProjectionBatchView\b'
+  'SparseRingPoly\b'
+  'SparseRingView\b'
+  'SparseRingBatchView\b'
+  'root_tensor_projection_enabled\b'
+  'root_tensor_projection_enabled_for_width\b'
+  '\bProveBackendFor\b'
+  'ProjectBackendFor\b'
+  'CommitmentConfig::D\b'
+  'uniform_ring_dimension\b'
+  'setup_prefix_inner_ring_dimension\b'
+  'ProtocolDispatchSlot::UniformPolicy\b'
+  'validate_ring_subfield_role\b'
+  'RootPolyMeta::num_ring_elems\b'
+  'meta_ring_elems\b'
+  'total_ring_elems\b'
 )
 
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
-# Synced with specs/PRUNING.md "Keep as live specs". CI scans only these unless --all.
+# Synced with specs/PRUNING.md and book/src/foundations/spec-index.md. CI scans
+# only these live design records unless --all.
 live_specs=(
-  specs/setup-layout-repack.md
-  specs/setup-offloading-planner.md
-  specs/eor-streamed-prover.md
+  specs/akita-compute-backend-metal.md
+  specs/dyadic-chunk-partition.md
+  specs/flat-public-matrix-and-exact-ntt-cache.md
+  specs/fold-linf-rejection.md
+  specs/heterogeneous-group-source-contracts.md
+  specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
-  specs/schedule-catalog-ownership.md
-  specs/planner-incidence-generalization.md
-  specs/multi-group-batching.md
-  specs/akita-pcs-crate-decomposition.md
-  specs/crt-ntt-prime-profiles.md
-  specs/eor-sumcheck-prover-acceleration.md
-  specs/cross-repo-field-microbench.md
+  specs/role-native-projected-digit-layout.md
+  specs/runtime-ring-cutover.md
+  specs/selective-l2-fold-security-sizing.md
+  specs/setup-offloading-planner.md
+  specs/sis-quantum128-scalar-n-table.md
+  specs/structured-e-term.md
+  specs/subring-coefficient-packing.md
 )
-# Excluded from CI until stale `akita-scheme` / `_with_policy` refs are scrubbed:
-# specs/akita-compute-backend-metal.md, specs/transcript-immediate-fixes.md
 
 missing_live=()
 for f in "${live_specs[@]}"; do
@@ -100,16 +164,34 @@ else
   search_paths=(specs)
 fi
 
+# A spec whose header declares it a historical snapshot documents an
+# implementation as it landed, so pre-cutover names in it are the record, not a
+# stale reference. Same convention as scripts/check-doc-dead-symbols.sh.
+is_historical_snapshot() {
+  head -n 12 "$1" | grep -qiE 'historical (snapshot|spec|design record)'
+}
+
 matches=""
 if [[ "$scope" == "live" ]]; then
   for f in "${search_paths[@]}"; do
-    hit="$(rg -n "$pattern" "$f" 2>/dev/null || true)"
+    if is_historical_snapshot "$f"; then
+      continue
+    fi
+    hit="$(rg -n --with-filename "$pattern" "$f" 2>/dev/null || true)"
     if [[ -n "$hit" ]]; then
       matches+="$hit"$'\n'
     fi
   done
 else
-  matches="$(rg -n --glob '!specs/archive/**' --glob '!specs/PRUNING.md' "$pattern" specs 2>/dev/null || true)"
+  for f in $(rg -l --glob '!specs/archive/**' --glob '!specs/PRUNING.md' "$pattern" specs 2>/dev/null || true); do
+    if is_historical_snapshot "$f"; then
+      continue
+    fi
+    hit="$(rg -n --with-filename "$pattern" "$f" 2>/dev/null || true)"
+    if [[ -n "$hit" ]]; then
+      matches+="$hit"$'\n'
+    fi
+  done
 fi
 
 if [[ -n "$matches" ]]; then

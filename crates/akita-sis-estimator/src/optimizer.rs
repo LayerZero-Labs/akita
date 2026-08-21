@@ -3,13 +3,17 @@
 use std::collections::HashSet;
 
 use crate::{
-    config::{EstimateConfig, OptimizerConfig, SearchMode},
+    config::{EstimateConfig, OptimizerConfig, ReductionCostModel, SearchMode, ShapeModel},
     cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     lattice::cost_infinity_fixed,
     math::{log2_biguint, log2_positive},
     params::{Bound, SisParameters},
-    reduction::delta::{beta as beta_from_delta, BETA_SEARCH_MAX},
+    reduction::{
+        adps16_log2_cost,
+        delta::{beta as beta_from_delta, BETA_SEARCH_MAX},
+    },
+    simulator::lgsa_stable_dimension,
 };
 use num_traits::{One, ToPrimitive};
 #[cfg(feature = "parallel")]
@@ -92,10 +96,82 @@ fn cost_zeta_search(
             })?
             .ok_or_else(empty_range_error("zeta"))
         }
-        SearchMode::ProvenPruned => Err(EstimatorError::Unsupported {
-            feature: "proven-pruned zeta search",
-        }),
+        SearchMode::ProvenPruned => proven_pruned_zeta_search(beta_mode, params, config),
     }
+}
+
+fn proven_pruned_zeta_search(
+    beta_mode: SearchMode,
+    params: &SisParameters,
+    config: &EstimateConfig,
+) -> Result<LatticeCost> {
+    let adps16_mode = match config.red_cost_model {
+        ReductionCostModel::Adps16 { mode } => mode,
+        _ => {
+            return Err(EstimatorError::Unsupported {
+                feature: "proven-pruned zeta search outside exhaustive ADPS16/LGSA",
+            })
+        }
+    };
+    if config.red_shape_model != ShapeModel::Lgsa
+        || !matches!(
+            beta_mode,
+            SearchMode::Exhaustive | SearchMode::ExhaustiveParallel
+        )
+    {
+        return Err(EstimatorError::Unsupported {
+            feature: "proven-pruned zeta search outside exhaustive ADPS16/LGSA",
+        });
+    }
+
+    let m = explicit_m(params)?;
+    let lattice_dimension = config.lattice_dimension.unwrap_or(m).min(m);
+    let beta_stop = beta_search_stop(params, config)?;
+    let beta_start = MIN_BETA.min(beta_stop);
+    let mut best = None::<LatticeCost>;
+
+    for beta in beta_start..beta_stop.max(beta_start.saturating_add(1)) {
+        // ADPS16's fixed-beta reduction price is a lower bound on the total
+        // attack cost. Once it exceeds the best complete candidate, every
+        // larger beta is provably unable to win.
+        if best
+            .as_ref()
+            .is_some_and(|current| adps16_log2_cost(beta, adps16_mode) > cost_order(current.rop))
+        {
+            break;
+        }
+        // For fixed beta, LGSA has two dimension regimes. Before the stable
+        // dimension its q-ary/GSA prefix grows to the complete profile; after
+        // it, added coordinates are unit vectors. In the first regime the
+        // modeled attack cost is minimized at the complete-profile endpoint.
+        // In the stable regime the Dilithium branch is constant, while the
+        // Matzov branch has a single interior maximum in attack cost, so its
+        // minimum is at one of the two endpoints. Therefore the stable
+        // transition and its immediate predecessor, together with zeta=0 and
+        // zeta=1, cover the complete zeta domain for each beta. The predecessor
+        // points retain the q-vector transition used by lattice-estimator.
+        let stable_dimension = lgsa_stable_dimension(u64::from(params.n), &params.q, beta)?
+            .clamp(u64::from(beta), lattice_dimension);
+        let before_stable = stable_dimension.saturating_sub(1).max(u64::from(beta));
+        let before_full = lattice_dimension.saturating_sub(1).max(u64::from(beta));
+        for effective_dimension in [
+            before_stable,
+            stable_dimension,
+            before_full,
+            lattice_dimension,
+        ] {
+            let zeta = lattice_dimension - effective_dimension;
+            let candidate = cost_infinity_fixed(beta, params, zeta, config)?;
+            if best
+                .as_ref()
+                .is_none_or(|current| cost_leq(&candidate, current))
+            {
+                best = Some(candidate);
+            }
+        }
+    }
+
+    best.ok_or_else(empty_range_error("zeta"))
 }
 
 fn cost_zeta_with_mode(
@@ -192,7 +268,7 @@ where
     let mut direction = -1i8;
     let mut next_x = Some(search_stop);
     let mut best_x = None;
-    let mut best = None;
+    let mut best = None::<LatticeCost>;
     let mut seen = HashSet::new();
 
     while let Some(x) = next_search_x(next_x, &seen, initial_low, initial_high) {
@@ -200,10 +276,12 @@ where
         let candidate = f(x.saturating_mul(precision))?;
         seen.insert(x);
 
-        let is_better = match &best {
-            None => true,
-            Some(current) => cost_leq(&candidate, current),
-        };
+        let is_equal = best
+            .as_ref()
+            .is_some_and(|current| cost_order(candidate.rop) == cost_order(current.rop));
+        let is_better = best
+            .as_ref()
+            .is_none_or(|current| cost_leq(&candidate, current));
         if best_x.is_none() {
             best_x = Some(x);
             best = Some(candidate.clone());
@@ -211,7 +289,14 @@ where
         if is_better {
             best_x = Some(x);
             best = Some(candidate);
-            if direction.unsigned_abs() != 1 {
+            if is_equal && direction == -1 {
+                // Preserve lattice-estimator's preference for the lowest
+                // zeta on an equal-cost plateau, but bisect the plateau rather
+                // than walking it one coordinate at a time.
+                direction = -2;
+                search_stop = x;
+                next_x = Some(ceil_div(search_start + search_stop, 2));
+            } else if direction.unsigned_abs() != 1 {
                 direction = -1;
                 next_x = x.checked_sub(1);
             } else if direction == -1 {
@@ -447,4 +532,53 @@ fn sage_sanity_check(mut cost: LatticeCost) -> LatticeCost {
         }
     }
     cost
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::Adps16Mode,
+        params::{akita_q128, akita_q32, akita_q64, SisNorm},
+    };
+
+    fn exhaustive_config(zeta: SearchMode) -> EstimateConfig {
+        EstimateConfig {
+            red_cost_model: ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
+            },
+            red_shape_model: ShapeModel::Lgsa,
+            optimizer: OptimizerConfig::OptimizeZeta {
+                beta: SearchMode::Exhaustive,
+                zeta,
+            },
+            ..EstimateConfig::default()
+        }
+    }
+
+    #[test]
+    fn proven_pruned_matches_finite_exhaustive_domains() {
+        let cases = [
+            (32, akita_q32(), 384, 2),
+            (64, akita_q32(), 768, 127),
+            (64, akita_q64(), 768, 32_767),
+            (128, akita_q64(), 1_024, 1_048_575),
+            (64, akita_q128(), 768, 67_108_863),
+            (128, akita_q128(), 1_024, 536_870_911),
+        ];
+        for (n, q, m, bound) in cases {
+            let params =
+                SisParameters::try_new(n, q, Some(m), Bound::from_u64(bound), SisNorm::Infinity)
+                    .unwrap();
+            let exhaustive =
+                estimate_infinity(&params, &exhaustive_config(SearchMode::Exhaustive)).unwrap();
+            let pruned =
+                estimate_infinity(&params, &exhaustive_config(SearchMode::ProvenPruned)).unwrap();
+            assert_eq!(
+                cost_order(pruned.rop),
+                cost_order(exhaustive.rop),
+                "n={n} m={m} bound={bound}: pruned={pruned:?}, exhaustive={exhaustive:?}"
+            );
+        }
+    }
 }

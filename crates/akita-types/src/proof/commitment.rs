@@ -7,7 +7,8 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommittedGroupProfile, CompressionChainPlan, PolynomialGroupLayout,
+    detect_field_modulus, CommitmentSliceCount, CommittedGroupProfile, CompressionChainPlan,
+    PolynomialGroupLayout,
 };
 
 type MatrixFields = (
@@ -155,7 +156,7 @@ impl<F: Field> Commitment<F> {
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        F: Field + CanonicalEncoding + AkitaSerialize,
+        F: CanonicalEncoding + AkitaSerialize,
     {
         self.0
             .append_flat_to_transcript(label, ring_dim, transcript)
@@ -209,14 +210,12 @@ impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
         self.commitment.check()?;
         let source_coefficients = self
             .profile
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(self.profile.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "committed-group coefficient count overflow".to_string(),
-                )
-            })?;
+            .outer_slice_count
+            .complete_source_coefficients(
+                self.profile.outer_commit_matrix.output_rank(),
+                self.profile.outer_commit_matrix.ring_dimension(),
+            )
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let expected_coeffs = CompressionChainPlan::for_complete_source(
             self.profile
                 .outer_commit_matrix
@@ -265,14 +264,17 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for C
         ] {
             write_usize(&mut writer, value)?;
         }
+        write_usize(&mut writer, profile.outer_slice_count.get())?;
         profile
             .log_basis_inner
             .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, profile.num_digits_inner)?;
-        for matrix in [
-            profile.inner_commit_matrix.sis_table_key(),
-            profile.outer_commit_matrix.sis_table_key(),
-        ] {
+        let inner_table_key = profile.inner_commit_matrix.sis_table_key().ok_or_else(|| {
+            SerializationError::InvalidData(
+                "precommitted group cannot use an L2 A security route".into(),
+            )
+        })?;
+        for matrix in [inner_table_key, profile.outer_commit_matrix.sis_table_key()] {
             matrix
                 .modulus_profile
                 .tag()
@@ -318,7 +320,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> AkitaSerialize for C
     fn serialized_size(&self, compress: Compress) -> usize {
         const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
         1 + 16
-            + 24
+            + 32
             + 4
             + 8
             + MATRIX_SIZE
@@ -402,9 +404,12 @@ where
         }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
+        let group = PolynomialGroupLayout::new(num_vars, num_polynomials);
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
+        let outer_slice_count = CommitmentSliceCount::try_new(read_usize(&mut reader)?)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let log_basis_inner =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
         let num_digits_inner = read_usize(&mut reader)?;
@@ -438,10 +443,11 @@ where
 
         let descriptor = CommittedGroupProfile {
             version,
-            group: PolynomialGroupLayout::new(num_vars, num_polynomials),
+            group,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
+            outer_slice_count,
             log_basis_inner,
             num_digits_inner,
             inner_commit_matrix,
@@ -454,14 +460,12 @@ where
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let source_coefficients = descriptor
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| {
-                SerializationError::InvalidData(
-                    "committed-group coefficient count overflow".to_string(),
-                )
-            })?;
+            .outer_slice_count
+            .complete_source_coefficients(
+                descriptor.outer_commit_matrix.output_rank(),
+                descriptor.outer_commit_matrix.ring_dimension(),
+            )
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let num_coeffs = CompressionChainPlan::for_complete_source(
             descriptor
                 .outer_commit_matrix
@@ -561,6 +565,7 @@ mod committed_group_tests {
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 32,
             num_live_blocks: 1,
+            outer_slice_count: CommitmentSliceCount::ONE,
             log_basis_inner: 1,
             num_digits_inner: 1,
             inner_commit_matrix,
@@ -618,7 +623,19 @@ mod committed_group_tests {
         )
         .is_err());
 
-        let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
+        let mut invalid_slice_count = bytes.clone();
+        let slice_count_offset = 1 + 2 * 8 + 3 * 8;
+        invalid_slice_count[slice_count_offset..slice_count_offset + 8]
+            .copy_from_slice(&3u64.to_le_bytes());
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            invalid_slice_count.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
+        let inner_matrix_role_offset = 1 + 2 * 8 + 1 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
         assert!(CommittedGroup::<F>::deserialize_with_mode(
@@ -640,6 +657,39 @@ mod committed_group_tests {
     }
 
     #[test]
+    fn committed_group_rejects_slicing_geometry_mutations_without_panicking() {
+        let baseline = group();
+        let outer = baseline.profile.outer_commit_matrix;
+        let mut malformed = Vec::new();
+
+        let mut wrong_count = baseline.clone();
+        wrong_count.profile.outer_slice_count = CommitmentSliceCount::TWO;
+        malformed.push(wrong_count);
+
+        let mut wrong_polynomial_count = baseline.clone();
+        wrong_polynomial_count.profile.group = PolynomialGroupLayout::new(11, 2);
+        malformed.push(wrong_polynomial_count);
+
+        let mut wrong_physical_width = baseline.clone();
+        wrong_physical_width.profile.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width() + 1,
+            outer.coeff_linf_bound(),
+            outer.ring_dimension(),
+        );
+        malformed.push(wrong_physical_width);
+
+        for candidate in malformed {
+            let result = std::panic::catch_unwind(|| candidate.check());
+            assert!(result.is_ok(), "malformed descriptor must not panic");
+            assert!(result.unwrap().is_err(), "malformed descriptor must reject");
+        }
+    }
+
+    #[test]
     fn committed_group_reaudits_unchecked_sis_descriptors() {
         let baseline = group();
         let inner = baseline.profile.inner_commit_matrix;
@@ -650,25 +700,31 @@ mod committed_group_tests {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                inner.coeff_linf_bound(),
+                inner.coeff_linf_bound().expect("L infinity test matrix"),
                 inner.ring_dimension(),
             ),
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
-                inner.sis_table_key().table_digest,
+                inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 inner.sis_modulus_profile(),
                 inner.output_rank().saturating_sub(1),
                 inner.input_width(),
-                inner.coeff_linf_bound(),
+                inner.coeff_linf_bound().expect("L infinity test matrix"),
                 inner.ring_dimension(),
             ),
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
-                inner.sis_table_key().table_digest,
+                inner
+                    .sis_table_key()
+                    .expect("L infinity test matrix")
+                    .table_digest,
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                inner.coeff_linf_bound() - 1,
+                inner.coeff_linf_bound().expect("L infinity test matrix") - 1,
                 inner.ring_dimension(),
             ),
         ];

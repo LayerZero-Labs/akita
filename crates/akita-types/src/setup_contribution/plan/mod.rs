@@ -19,6 +19,7 @@
 //! one base-dimension scan.
 
 mod kernels;
+mod physical_b;
 mod prepare;
 mod scan;
 mod segments;
@@ -29,7 +30,10 @@ mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
-pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan};
+pub(crate) use types::{
+    DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
+};
+pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
@@ -38,10 +42,18 @@ use crate::dispatch_for_field;
 use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
+use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
-use akita_error::AkitaError;
+fn divide_aligned(
+    value: usize,
+    divisor: usize,
+    context: &'static str,
+) -> Result<usize, AkitaError> {
+    checked::exact_div(value, divisor).ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
+
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{

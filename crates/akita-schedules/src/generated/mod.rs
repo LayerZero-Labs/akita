@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-pub const MAX_COMMIT_MATRIX_SLICES: u32 = 16;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedBlockGeometry {
     pub live_ring_elements_per_claim: u64,
@@ -19,14 +17,12 @@ pub struct GeneratedInnerCommitMatrix {
 pub struct GeneratedOuterCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedOpenCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,20 +30,15 @@ pub struct GeneratedCommittedGroup {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub outer_commit_matrix: GeneratedOuterCommitMatrix,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedRootFinalChallenge {
-    Flat,
-    Tensor { fold_low_len: u32 },
+    pub outer_slice_count: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
-    pub challenge: GeneratedRootFinalChallenge,
     pub num_digits_inner: u32,
     pub num_digits_fold: u32,
+    pub opening_method: akita_types::OpeningMethod,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -55,7 +46,7 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
+    pub opening_method: akita_types::OpeningMethod,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,15 +66,18 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
-    pub num_digits_fold: u32,
-    pub commitment: GeneratedCommittedGroup,
+    /// Exact frozen commitment identity emitted by the planner.
+    pub commitment: akita_types::CommittedGroupProfile,
+    pub opening: akita_types::GroupOpeningPlan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
+    pub opening_method: akita_types::OpeningMethod,
     pub witness: GeneratedCommittedGroup,
     pub num_digits_fold: u32,
+    pub response_l2_sq_cap: Option<u128>,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
     pub witness_partition: GeneratedWitnessPartition,
@@ -94,23 +88,14 @@ pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
     pub num_digits_inner: u32,
+    pub fold_log_basis: u32,
+    pub fold_digit_count: u32,
     pub inner_output_rank: u32,
     pub inner_coeff_linf_bound: u128,
-    pub z_admission_linf_cap: u128,
+    pub response_l2_sq_cap: Option<u128>,
+    pub z_linf_cap: Option<u128>,
     pub z_rice_low_bits: u32,
     pub z_payload_bytes: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedPrecommittedProfile {
-    pub group: akita_types::PolynomialGroupLayout,
-    pub commitment: GeneratedCommittedGroup,
-    pub num_digits_inner: u32,
-    pub inner_output_rank: u32,
-    pub inner_coeff_linf_bound: u128,
-    pub num_digits_outer: u32,
-    pub outer_output_rank: u32,
-    pub outer_coeff_linf_bound: u128,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,29 +125,28 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
+    pub selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     pub selection_policy: crate::SelectionPolicyId,
+    pub recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
-    pub uniform_ring_dimension: usize,
-    pub setup_prefix_inner_ring_dimension: usize,
+    pub sis_l2_table_digest: akita_types::SisL2TableDigest,
     pub decomposition: akita_types::DecompositionParams,
-    pub ring_subfield_norm_bound: u32,
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
-    pub basis_range: (u32, u32),
+    pub inner_basis_range: (u32, u32),
+    pub opening_basis_range: (u32, u32),
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
     pub witness_chunk: akita_types::ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 
-    pub root_fold_shape: akita_challenges::TensorChallengeShape,
-    /// Complete ordered A/B/D domain used to generate this catalog, including
-    /// candidates that did not win an emitted row.
-    pub ring_dimension_candidates: &'static [akita_types::CommitmentRingDims],
+    /// Complete uniform or adaptive dimension policy used to generate this catalog.
+    pub ring_dimension_schedule_mode: crate::RingDimensionScheduleMode,
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
@@ -172,7 +156,6 @@ pub struct GeneratedScheduleCatalogIdentity {
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedScheduleTable {
     pub entries: &'static [GeneratedFoldScheduleEntry],
-    pub precommitted_profiles: &'static [GeneratedPrecommittedProfile],
     pub identity: GeneratedScheduleCatalogIdentity,
 }
 
@@ -181,13 +164,14 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
+    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
+    SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout,
 };
-pub use akita_types::{SisModulusProfileId, SisTableDigest};
+pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
 /// Returns true when `entries` are ordered for [`table_entry`] binary search.
@@ -343,6 +327,153 @@ fn precommitted_group_key_eq(
     generated == layout
 }
 
+/// Returns an error when the generated key does not match the runtime key.
+pub(crate) fn validate_entry_key(
+    generated: &GeneratedFoldScheduleEntry,
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> Result<(), akita_error::AkitaError> {
+    if schedule_key_eq(generated, key) {
+        Ok(())
+    } else {
+        Err(akita_error::AkitaError::InvalidSetup(
+            "generated schedule key mismatch".to_string(),
+        ))
+    }
+}
+
+// @generated schedule module wiring begin
+#[cfg(feature = "fp128-dense")]
+pub mod fp128_dense;
+#[cfg(feature = "fp128-dense-bounded")]
+pub mod fp128_dense_bounded;
+#[cfg(feature = "fp128-dense-multi-chunk")]
+pub mod fp128_dense_multi_chunk;
+#[cfg(feature = "fp128-onehot")]
+pub mod fp128_onehot;
+#[cfg(feature = "fp128-onehot-multi-chunk")]
+pub mod fp128_onehot_multi_chunk;
+#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
+pub mod fp128_onehot_multi_chunk_w2r2;
+#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
+pub mod fp128_onehot_multi_chunk_w4r2;
+#[cfg(feature = "fp128-onehot-recursive")]
+pub mod fp128_onehot_recursive;
+#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
+pub mod fp128_onehot_recursive_multi_chunk_w8r2;
+#[cfg(feature = "fp32-dense")]
+pub mod fp32_dense;
+#[cfg(feature = "fp32-onehot")]
+pub mod fp32_onehot;
+#[cfg(feature = "fp64-dense")]
+pub mod fp64_dense;
+#[cfg(feature = "fp64-onehot")]
+pub mod fp64_onehot;
+
+#[cfg(feature = "fp128-dense")]
+pub fn fp128_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense::FP128_DENSE_SCHEDULES,
+        identity: fp128_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-dense-bounded")]
+pub fn fp128_dense_bounded_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense_bounded::FP128_DENSE_BOUNDED_SCHEDULES,
+        identity: fp128_dense_bounded::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-dense-multi-chunk")]
+pub fn fp128_dense_multi_chunk_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_dense_multi_chunk::FP128_DENSE_MULTI_CHUNK_SCHEDULES,
+        identity: fp128_dense_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot")]
+pub fn fp128_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot::FP128_ONEHOT_SCHEDULES,
+        identity: fp128_onehot::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot-multi-chunk")]
+pub fn fp128_onehot_multi_chunk_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot_multi_chunk::FP128_ONEHOT_MULTI_CHUNK_SCHEDULES,
+        identity: fp128_onehot_multi_chunk::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot-multi-chunk-w2r2")]
+pub fn fp128_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot_multi_chunk_w2r2::FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
+        identity: fp128_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot-multi-chunk-w4r2")]
+pub fn fp128_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot_multi_chunk_w4r2::FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
+        identity: fp128_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot-recursive")]
+pub fn fp128_onehot_recursive_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES,
+        identity: fp128_onehot_recursive::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-onehot-recursive-multi-chunk-w8r2")]
+pub fn fp128_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_onehot_recursive_multi_chunk_w8r2::FP128_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
+        identity: fp128_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp32-dense")]
+pub fn fp32_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp32_dense::FP32_DENSE_SCHEDULES,
+        identity: fp32_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp32-onehot")]
+pub fn fp32_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp32_onehot::FP32_ONEHOT_SCHEDULES,
+        identity: fp32_onehot::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp64-dense")]
+pub fn fp64_dense_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp64_dense::FP64_DENSE_SCHEDULES,
+        identity: fp64_dense::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp64-onehot")]
+pub fn fp64_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp64_onehot::FP64_ONEHOT_SCHEDULES,
+        identity: fp64_onehot::CATALOG_IDENTITY,
+    }
+}
+// @generated schedule module wiring end
+
 #[cfg(test)]
 mod mixed_dimension_key_tests {
     use super::{precommitted_group_key_eq, precommitted_group_sort_key};
@@ -358,6 +489,7 @@ mod mixed_dimension_key_tests {
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 8,
             num_live_blocks: 4,
+            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
             log_basis_inner: 4,
             num_digits_inner: 2,
             inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
@@ -415,291 +547,3 @@ mod mixed_dimension_key_tests {
         }
     }
 }
-
-/// Returns an error when the generated key does not match the runtime key.
-pub(crate) fn validate_entry_key(
-    generated: &GeneratedFoldScheduleEntry,
-    key: &akita_types::AkitaScheduleLookupKey,
-) -> Result<(), akita_error::AkitaError> {
-    if schedule_key_eq(generated, key) {
-        Ok(())
-    } else {
-        Err(akita_error::AkitaError::InvalidSetup(
-            "generated schedule key mismatch".to_string(),
-        ))
-    }
-}
-
-pub(crate) fn validate_certified_bases(
-    log_basis_inner: u32,
-    log_basis_outer: u32,
-    log_basis_open: u32,
-    policy: &crate::PlannerPolicy,
-    context: &str,
-) -> Result<(), akita_error::AkitaError> {
-    let (min, max) = policy.basis_range;
-    for (role, basis) in [
-        ("inner", log_basis_inner),
-        ("outer", log_basis_outer),
-        ("open", log_basis_open),
-    ] {
-        if basis < min || basis > max {
-            return Err(akita_error::AkitaError::InvalidSetup(format!(
-                "{context} {role} basis {basis} outside policy range [{min}, {max}]"
-            )));
-        }
-    }
-    if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
-        return Err(akita_error::AkitaError::InvalidSetup(format!(
-            "{context} certified open basis must dominate inner and outer bases"
-        )));
-    }
-    Ok(())
-}
-
-// @generated schedule module wiring begin
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense;
-#[cfg(feature = "fp128-d128-dense")]
-pub mod fp128_d128_dense_precommitted;
-#[cfg(feature = "fp128-d128-onehot")]
-pub mod fp128_d128_onehot;
-#[cfg(feature = "fp128-d128-onehot")]
-pub mod fp128_d128_onehot_precommitted;
-#[cfg(feature = "fp128-d256-onehot")]
-pub mod fp128_d256_onehot;
-#[cfg(feature = "fp128-d256-onehot")]
-pub mod fp128_d256_onehot_precommitted;
-#[cfg(feature = "fp128-d64-dense")]
-pub mod fp128_d64_dense;
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub mod fp128_d64_dense_multi_chunk;
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub mod fp128_d64_dense_multi_chunk_precommitted;
-#[cfg(feature = "fp128-d64-dense")]
-pub mod fp128_d64_dense_precommitted;
-#[cfg(feature = "fp128-d64-onehot")]
-pub mod fp128_d64_onehot;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub mod fp128_d64_onehot_multi_chunk;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub mod fp128_d64_onehot_multi_chunk_precommitted;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub mod fp128_d64_onehot_multi_chunk_w2r2;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub mod fp128_d64_onehot_multi_chunk_w2r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub mod fp128_d64_onehot_multi_chunk_w4r2;
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub mod fp128_d64_onehot_multi_chunk_w4r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot")]
-pub mod fp128_d64_onehot_precommitted;
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub mod fp128_d64_onehot_recursive;
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2;
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted;
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub mod fp128_d64_onehot_recursive_precommitted;
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub mod fp128_d64_onehot_tensor;
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub mod fp128_d64_onehot_tensor_precommitted;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot;
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub mod fp128_mixed_dim_onehot_precommitted;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot;
-#[cfg(feature = "fp32-d128-onehot")]
-pub mod fp32_d128_onehot_precommitted;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot;
-#[cfg(feature = "fp32-d256-onehot")]
-pub mod fp32_d256_onehot_precommitted;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense;
-#[cfg(feature = "fp64-d128-dense")]
-pub mod fp64_d128_dense_precommitted;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot;
-#[cfg(feature = "fp64-d128-onehot")]
-pub mod fp64_d128_onehot_precommitted;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot;
-#[cfg(feature = "fp64-d256-onehot")]
-pub mod fp64_d256_onehot_precommitted;
-
-#[cfg(feature = "fp128-d128-dense")]
-pub fn fp128_d128_dense_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d128_dense::FP128_D128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_d128_dense_precommitted::FP128_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d128_dense::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d128-onehot")]
-pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d128_onehot::FP128_D128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_d128_onehot_precommitted::FP128_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d128_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d256-onehot")]
-pub fn fp128_d256_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d256_onehot::FP128_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_d256_onehot_precommitted::FP128_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d256_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-dense")]
-pub fn fp128_d64_dense_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_dense::FP128_D64_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp128_d64_dense_precommitted::FP128_D64_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_dense::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-dense-multi-chunk")]
-pub fn fp128_d64_dense_multi_chunk_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_dense_multi_chunk::FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_d64_dense_multi_chunk_precommitted::FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_dense_multi_chunk::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot")]
-pub fn fp128_d64_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot::FP128_D64_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp128_d64_onehot_precommitted::FP128_D64_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-multi-chunk")]
-pub fn fp128_d64_onehot_multi_chunk_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w2r2")]
-pub fn fp128_d64_onehot_multi_chunk_w2r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk_w2r2::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_w2r2_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk_w2r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-multi-chunk-w4r2")]
-pub fn fp128_d64_onehot_multi_chunk_w4r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_multi_chunk_w4r2::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_multi_chunk_w4r2_precommitted::FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_multi_chunk_w4r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-recursive")]
-pub fn fp128_d64_onehot_recursive_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_recursive::FP128_D64_ONEHOT_RECURSIVE_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_recursive_precommitted::FP128_D64_ONEHOT_RECURSIVE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_recursive::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
-pub fn fp128_d64_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_recursive_multi_chunk_w8r2::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_recursive_multi_chunk_w8r2_precommitted::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-d64-onehot-tensor")]
-pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
-        precommitted_profiles: fp128_d64_onehot_tensor_precommitted::FP128_D64_ONEHOT_TENSOR_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp128-mixed-dim-onehot")]
-pub fn fp128_mixed_dim_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp128_mixed_dim_onehot::FP128_MIXED_DIM_ONEHOT_SCHEDULES,
-        precommitted_profiles: fp128_mixed_dim_onehot_precommitted::FP128_MIXED_DIM_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp128_mixed_dim_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp32-d128-onehot")]
-pub fn fp32_d128_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp32_d128_onehot::FP32_D128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_d128_onehot_precommitted::FP32_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d128_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp32-d256-onehot")]
-pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp32_d256_onehot::FP32_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp32_d256_onehot_precommitted::FP32_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp32_d256_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d128-dense")]
-pub fn fp64_d128_dense_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d128_dense::FP64_D128_DENSE_SCHEDULES,
-        precommitted_profiles:
-            fp64_d128_dense_precommitted::FP64_D128_DENSE_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_dense::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d128-onehot")]
-pub fn fp64_d128_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d128_onehot::FP64_D128_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_d128_onehot_precommitted::FP64_D128_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d128_onehot::CATALOG_IDENTITY,
-    }
-}
-
-#[cfg(feature = "fp64-d256-onehot")]
-pub fn fp64_d256_onehot_table() -> GeneratedScheduleTable {
-    GeneratedScheduleTable {
-        entries: fp64_d256_onehot::FP64_D256_ONEHOT_SCHEDULES,
-        precommitted_profiles:
-            fp64_d256_onehot_precommitted::FP64_D256_ONEHOT_SCHEDULES_PRECOMMITTED_PROFILES,
-        identity: fp64_d256_onehot::CATALOG_IDENTITY,
-    }
-}
-// @generated schedule module wiring end

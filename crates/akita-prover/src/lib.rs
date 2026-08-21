@@ -13,44 +13,40 @@ pub mod types;
 mod validation;
 
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_types::RingVec;
+use jolt_field::solinas::parallel::*;
 use jolt_field::Field;
 
 pub use api::{
-    batched_commit, batched_commit_with_params, commit, commit_final_group, commit_group,
-    commit_setup_prefix, commit_with_params, prepare_batched_commit_inputs, prepare_commit_inputs,
-    AkitaProverSetup, CommitmentProver, CommitmentWithHint, CommittedGroupWithHint,
-    FinalCommittedGroupWithHint, PreparedGroupProveOps, PreparedProverGroup,
+    commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
+    GroupContext, PreparedGroupProveOps, PreparedProverGroup,
 };
 
-use akita_error::AkitaError;
 pub use backend::{
-    tensor_pack_recursive_witness, DensePoly, MultiChunkEntry, MultilinearPolynomial, OneHotIndex,
-    OneHotPoly, RecursiveFoldSource, RecursiveWitnessFlat, RootTensorProjectionPoly,
-    SingleChunkEntry, SparseRingBlockEntry, SparseRingPoly, SuffixWitnessBatchView,
+    tensor_pack_recursive_witness, DensePoly, MultilinearPolynomial, OneHotIndex, OneHotPoly,
+    RecursiveFoldSource, RecursiveWitnessFlat, SparseRingBlockEntry, SuffixWitnessBatchView,
     SuffixWitnessView,
 };
 pub use compute::{
     planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
-    CommitBackendFor, CommitCluster, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
-    CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, NttCacheOwnerId,
-    NttExecutionRequirements, NttOperationCluster, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
-    PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
-    ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
-    RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
-    RootProveBackend, RootProvePoly, RootTensorSource, RoutedNttRequirement,
-    RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor, RuntimeProveBackendFor,
-    RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor, SparseRingCommitRowsPlan,
+    CommitBackendFor, CommitCluster, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend, LevelProveStacks, NttCacheOwnerId,
+    NttExecutionRequirements, NttOperationCluster, OpeningCluster, OpeningProveBackendFor,
+    OperationCtx, PlannedNttCacheOwnerMetric, PreparedCrtNttProfile, PreparedNttCacheMetric,
+    ProveFlowBackendFor, ProveStackFor, ProverComputeStack, RecursiveProveBackend,
+    ReleaseRootNttAfterFold, RingSwitchCluster, RingSwitchProveBackend, RingSwitchRelationRows,
+    RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend,
+    RootProvePoly, RootTensorSource, RoutedNttRequirement, RuntimeCommitBackendFor,
+    RuntimeCommitSource, RuntimeOpeningProveBackendFor, RuntimeRecursiveWitnessProveBackend,
+    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
-    TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    TieredProveStacks, UniformProverStack,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
-pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};
+pub use protocol::sumcheck::{
+    DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,
+};
 pub use protocol::{
     batched_prove, build_relation_weight_events, commit_terminal_w, commit_w, prove, prove_suffix,
     ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
@@ -73,29 +69,72 @@ pub struct DecomposeFoldWitness<F: Field> {
     ///
     /// Hot paths borrow typed rows via [`Self::centered_coeffs_trusted`].
     centered_coeffs_flat: Vec<i32>,
-    /// Infinity norm of the flat centered coefficient storage above.
-    pub centered_inf_norm: u32,
+    /// Smallest signed centered coefficient.
+    centered_min: i32,
+    /// Largest signed centered coefficient.
+    centered_max: i32,
     /// Ring dimension (field coefficients per ring element), fixed at construction.
     ring_dim: usize,
 }
 
 impl<F: Field> DecomposeFoldWitness<F> {
+    /// Construct from owned coefficient rows at a kernel boundary.
+    pub fn from_coefficient_parts<const D: usize>(
+        z_folded_coeffs: Vec<[F; D]>,
+        centered_coeffs: Vec<[i32; D]>,
+    ) -> Self {
+        debug_assert_eq!(z_folded_coeffs.len(), centered_coeffs.len());
+        let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
+        Self {
+            z_folded_rings: RingVec::from_coefficient_rows(z_folded_coeffs),
+            centered_coeffs_flat: centered_coeffs.into_flattened(),
+            centered_min,
+            centered_max,
+            ring_dim: D,
+        }
+    }
+
     /// Construct from typed ring rows at a kernel boundary.
     pub fn from_parts<const D: usize>(
         z_folded_rings: Vec<CyclotomicRing<F, D>>,
         centered_coeffs: Vec<[i32; D]>,
-        centered_inf_norm: u32,
     ) -> Self {
         debug_assert_eq!(z_folded_rings.len(), centered_coeffs.len());
+        let (centered_min, centered_max) = centered_coefficient_bounds(&centered_coeffs);
         Self {
             z_folded_rings: RingVec::from_ring_elems(&z_folded_rings),
-            centered_coeffs_flat: centered_coeffs
-                .iter()
-                .flat_map(|row| row.iter().copied())
-                .collect(),
-            centered_inf_norm,
+            centered_coeffs_flat: centered_coeffs.into_flattened(),
+            centered_min,
+            centered_max,
             ring_dim: D,
         }
+    }
+
+    pub(crate) fn from_owned_flat_parts<const D: usize>(
+        z_folded_rings: RingVec<F>,
+        centered_coeffs_flat: Vec<i32>,
+    ) -> Result<Self, AkitaError> {
+        let (centered_rows, remainder) = centered_coeffs_flat.as_chunks::<D>();
+        if remainder.is_empty()
+            && z_folded_rings.ring_dim() == D
+            && z_folded_rings.count() == centered_rows.len()
+        {
+            let (centered_min, centered_max) = centered_coefficient_bounds(centered_rows);
+            return Ok(Self {
+                z_folded_rings,
+                centered_coeffs_flat,
+                centered_min,
+                centered_max,
+                ring_dim: D,
+            });
+        }
+        Err(AkitaError::InvalidInput(
+            "owned decompose fold buffers have inconsistent ring geometry".into(),
+        ))
+    }
+
+    pub(crate) fn into_owned_flat_parts(self) -> (RingVec<F>, Vec<i32>) {
+        (self.z_folded_rings, self.centered_coeffs_flat)
     }
 
     /// Stored ring dimension (coefficients per ring element).
@@ -144,14 +183,28 @@ impl<F: Field> DecomposeFoldWitness<F> {
     }
 
     /// Borrow folded ring rows after [`Self::ensure_ring_dim`].
-    pub fn z_folded_rings_trusted<const D: usize>(&self) -> &[CyclotomicRing<F, D>] {
-        debug_assert_eq!(self.ring_dim, D);
-        self.z_folded_rings.as_ring_slice_trusted::<D>()
+    pub fn z_folded_rings_trusted<const D: usize>(
+        &self,
+    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
+        self.ensure_ring_dim::<D>()?;
+        self.z_folded_rings.as_ring_slice::<D>()
     }
 
     /// Borrow the centered coefficients as row-major flat storage (D-free).
     pub fn centered_coeffs_flat(&self) -> &[i32] {
         &self.centered_coeffs_flat
+    }
+
+    /// Infinity norm derived from the centered coefficient buffer.
+    pub fn centered_inf_norm(&self) -> u32 {
+        self.centered_min
+            .unsigned_abs()
+            .max(self.centered_max.unsigned_abs())
+    }
+
+    /// Signed extrema derived from the centered coefficient buffer.
+    pub fn centered_signed_extrema(&self) -> (i32, i32) {
+        (self.centered_min, self.centered_max)
     }
 
     /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
@@ -166,6 +219,26 @@ impl<F: Field> DecomposeFoldWitness<F> {
     pub fn centered_coeffs_owned<const D: usize>(&self) -> Vec<[i32; D]> {
         self.centered_coeffs_trusted::<D>().to_vec()
     }
+}
+
+fn centered_coefficient_bounds<const D: usize>(rows: &[[i32; D]]) -> (i32, i32) {
+    if rows.is_empty() || D == 0 {
+        return (0, 0);
+    }
+    cfg_fold_reduce!(
+        rows,
+        || (i32::MAX, i32::MIN),
+        |(mut min, mut max), row| {
+            for &coefficient in row {
+                min = min.min(coefficient);
+                max = max.max(coefficient);
+            }
+            (min, max)
+        },
+        |(left_min, left_max), (right_min, right_max)| {
+            (left_min.min(right_min), left_max.max(right_max))
+        }
+    )
 }
 
 /// Prover-side output of the inner Ajtai commit step.
@@ -238,7 +311,7 @@ impl<F: Field> CommitInnerWitness<F> {
             .checked_add(rows_per_block)
             .ok_or_else(|| AkitaError::InvalidSetup("inner row end overflow".into()))?;
         self.inner_rows
-            .as_ring_slice_trusted::<D>()
+            .as_ring_slice::<D>()?
             .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput("inner row block is out of range".into()))
     }

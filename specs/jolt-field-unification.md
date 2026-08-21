@@ -5,7 +5,7 @@
 | Author(s)     | Alberto Centelles |
 | Created       | 2026-07-15     |
 | Status        | active         |
-| PR            | [Jolt PR A #1684](https://github.com/a16z/jolt/pull/1684); Akita PR B TBD; Jolt PR C TBD |
+| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); Akita PR B TBD; Jolt PR C #1745 |
 | Supersedes    | [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
@@ -138,7 +138,7 @@ both repositories importing the same Rust types and traits directly.
   feature builds. Enabling one backend does not silently select another.
 - [ ] NEON, AVX2, and AVX-512 scalar/packed parity tests pass on representative
   hardware or their established CI runners.
-- [ ] A package-identity check demonstrates that an integrated Jolt+Akita build
+- [x] A package-identity check demonstrates that an integrated Jolt+Akita build
   contains one resolved `jolt-field` package ID and no `akita-field` package.
 - [ ] PR C derives the headerless commitment decode coefficient count from the
   validated statement and canonical Akita schedule, without adding
@@ -372,10 +372,10 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 ### Package Identity and Release
 
 Akita consumes `jolt-field` from either a standalone registry release or an
-immutable full upstream Jolt Git revision. During stacked review it temporarily
-pins commit `09b2f7b6ddd9427c756b781c39530a6c005e332d` on the contributor fork,
-the head used by Jolt PR A #1684. That fork pin is replaced with the upstream
-merge revision or a released package identity once PR A lands.
+immutable full upstream Jolt Git revision. During stacked review it pins
+upstream commit `1ac7d402d33a162fdc133cd43bfc6c5124861629`, the refreshed head
+prepared for Jolt PR A #1792. That revision is replaced with the upstream merge
+revision or a released package identity once PR A lands.
 
 Jolt itself uses the local `crates/jolt-field` workspace member. When Jolt later
 consumes the migrated Akita revision, PR C must use a root Cargo source patch or
@@ -396,7 +396,7 @@ identity.
 The migration cannot be atomic across two repositories. It uses three code PRs
 with an immutable field-identity checkpoint between PR A and PR B.
 
-1. **Jolt foundation.** Jolt PR A #1684 adds the Solinas stack and reconciled
+1. **Jolt foundation.** Jolt PR A #1792 adds the Solinas stack and reconciled
    traits to `jolt-field`, with provenance, tests, feature matrix, and an
    intermediate package-identity gate. It retains the reverse Akita adapter and
    unpublished optional bootstrap dependencies so the existing `jolt-akita`
@@ -505,10 +505,8 @@ crate deletion, not deferred to cleanup.
 
 - [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) — former Akita
   field organization and trait inventory.
-- [`specs/cross-repo-field-microbench.md`](cross-repo-field-microbench.md) —
+- [`specs/cross-repo-field-microbench.md`](archive/2026-Q3/cross-repo-field-microbench.md) —
   existing arithmetic benchmark matrix and SIMD measurement guidance.
-- [`specs/akita-crate-followup-jolt-integration.md`](akita-crate-followup-jolt-integration.md)
-  — current `jolt-akita` integration boundary.
 - [`docs/verifier-contract.md`](../docs/verifier-contract.md) — Akita's
   verifier no-panic requirements.
 - [`docs/crate-graph.md`](../docs/crate-graph.md) — current Akita dependency

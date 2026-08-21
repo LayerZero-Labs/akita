@@ -1,10 +1,9 @@
 //! Shared commitment-scheme API contracts.
 
 use crate::{BasisMode, GroupBatchStatement};
+use akita_error::AkitaError;
 use akita_transcript::Transcript;
 use jolt_field::{CanonicalEncoding, ExtField, Field};
-
-use akita_error::AkitaError;
 use std::borrow::Cow;
 
 /// Opening-point coordinates used by batched verification inputs.

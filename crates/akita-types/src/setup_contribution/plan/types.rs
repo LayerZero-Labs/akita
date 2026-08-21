@@ -1,7 +1,7 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
-    SetupProjectionGeometry, WitnessLayout,
+    CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, LevelParamsLike,
+    OpeningClaimsLayout, SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_error::AkitaError;
@@ -84,7 +84,7 @@ fn validate_group_witness_layout(
     let units = layout.units_for_group(group_id)?;
     let mut next_fold = 0usize;
     for unit in units {
-        if unit.num_live_blocks() == 0 || unit.global_block_start() != next_fold {
+        if unit.global_block_start() != next_fold {
             return Err(AkitaError::InvalidSetup(
                 "setup witness units do not form a contiguous fold tiling".into(),
             ));
@@ -233,9 +233,8 @@ impl SetupContributionGroupInputs {
         level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
+        self.group_params_for(level_params, opening_batch)?
+            .logical_b_rows_len()
     }
 
     pub(crate) fn t_vector_width(
@@ -309,6 +308,8 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) d_weights: Arc<[E]>,
     pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
+    pub(crate) setup_relation_address: PreparedRelationAddress<E>,
+    pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
     pub(crate) direct_scan_alpha: Option<E>,
@@ -317,6 +318,13 @@ pub struct SetupContributionPlan<E: Field> {
 pub(crate) struct ProjectedEqPairTensor<E: Field> {
     pub(crate) ratio: usize,
     pub(crate) families: Vec<EqPairTensorFamily<E>>,
+    pub(crate) state: ProjectedEqPairTensorState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectedEqPairTensorState {
+    Native,
+    RelationFactored,
 }
 
 impl<E: Field> SetupContributionPlan<E> {
@@ -350,14 +358,104 @@ pub(crate) struct DirectScanWeights<E> {
     pub(crate) z: Vec<E>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct PhysicalBWeightTerm<E> {
+    pub(super) logical_start: usize,
+    pub(super) row_weight: E,
+}
+
+#[derive(Clone)]
+pub(crate) struct PhysicalBWeightSegment<E> {
+    pub(super) physical_start: usize,
+    pub(super) len: usize,
+    pub(super) terms: Arc<[PhysicalBWeightTerm<E>]>,
+}
+
+/// One canonical owner for the physical B matrix and its logical sliced image.
+pub(crate) struct PhysicalBSetupPlan<E: Field> {
+    pub(super) geometry: CommitmentSliceGeometry,
+    pub(super) physical_rows: usize,
+    pub(super) logical_row_weights: Arc<[E]>,
+    pub(super) weight_segments: Arc<[PhysicalBWeightSegment<E>]>,
+    pub(super) relation_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+impl<E: Field> PhysicalBSetupPlan<E> {
+    pub(crate) fn new(
+        geometry: CommitmentSliceGeometry,
+        physical_rows: usize,
+        logical_row_weights: Arc<[E]>,
+    ) -> Result<Self, AkitaError> {
+        let logical_rows = geometry.logical_output_rows(physical_rows)?;
+        if logical_row_weights.len() != logical_rows {
+            return Err(AkitaError::InvalidSetup(
+                "logical B row weights disagree with slice geometry".into(),
+            ));
+        }
+        let weight_segments = super::physical_b::build_physical_b_weight_segments(
+            &geometry,
+            physical_rows,
+            &logical_row_weights,
+        )?;
+        Ok(Self {
+            geometry,
+            physical_rows,
+            logical_row_weights,
+            weight_segments: weight_segments.into(),
+            relation_tensors: Vec::new(),
+            setup_tensors: Vec::new(),
+        })
+    }
+
+    pub(crate) fn logical_rows(&self) -> Result<usize, AkitaError> {
+        self.geometry.logical_output_rows(self.physical_rows)
+    }
+
+    pub(crate) const fn geometry(&self) -> &CommitmentSliceGeometry {
+        &self.geometry
+    }
+
+    pub(crate) const fn physical_rows(&self) -> usize {
+        self.physical_rows
+    }
+
+    pub(crate) fn logical_row_weights(&self) -> &[E] {
+        &self.logical_row_weights
+    }
+
+    pub(super) fn weight_segments(&self) -> &[PhysicalBWeightSegment<E>] {
+        &self.weight_segments
+    }
+
+    pub(crate) fn logical_input_width(&self) -> usize {
+        self.geometry.logical_input_width()
+    }
+
+    pub(crate) fn physical_input_width(&self) -> usize {
+        self.geometry.physical_input_width()
+    }
+
+    pub(crate) fn physical_footprint(&self) -> Result<usize, AkitaError> {
+        self.geometry
+            .physical_matrix_ring_elements(self.physical_rows)
+    }
+}
+
+#[cfg(test)]
 type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
 pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) group_id: usize,
+    pub(crate) opening_method: crate::OpeningMethod,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_ratio: usize,
     pub(crate) b_ratio: usize,
     pub(crate) d_ratio: usize,
+    pub(crate) a_relation_ratio: usize,
+    pub(crate) b_relation_ratio: usize,
+    pub(crate) d_relation_ratio: usize,
+    pub(crate) opening_subcolumns: usize,
     pub(crate) consistency_weight: E,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
@@ -369,19 +467,26 @@ pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) log_basis_outer: u32,
     pub(crate) log_basis_open: u32,
     pub(crate) d_col_range: Range<usize>,
-    pub(crate) t_cols: usize,
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
-    pub(crate) n_b: usize,
+    pub(crate) physical_b: PhysicalBSetupPlan<E>,
     pub(crate) required: usize,
     pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
-    pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
+    /// Exact non-empty block ranges used by the partitioned E and T roles.
+    pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
+    /// All physical units, including empty chunks that retain replicated Z.
+    pub(crate) num_physical_units: usize,
     pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
-    pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
     pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SetupUnitRange {
+    pub(crate) global_block_start: usize,
+    pub(crate) num_live_blocks: usize,
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
@@ -391,6 +496,7 @@ impl<E: Field> SetupContributionGroupPlan<E> {
             .map(|weights| (&weights.e[..], &weights.t[..], &weights.z[..]))
     }
 
+    #[cfg(test)]
     pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {
         self.column_eq_slices().ok_or_else(|| {
             AkitaError::InvalidSetup(
@@ -399,8 +505,12 @@ impl<E: Field> SetupContributionGroupPlan<E> {
         })
     }
 
-    pub(crate) fn set_projection_ratios(&mut self, base_ring_dim: usize) -> Result<(), AkitaError> {
-        let ratio = |name: &'static str, dimension: usize| {
+    pub(crate) fn set_projection_ratios(
+        &mut self,
+        setup_base_ring_dim: usize,
+        relation_base_ring_dim: usize,
+    ) -> Result<(), AkitaError> {
+        let ratio = |name: &'static str, dimension: usize, base_ring_dim: usize| {
             dimension
                 .checked_div(base_ring_dim)
                 .filter(|ratio| {
@@ -414,9 +524,12 @@ impl<E: Field> SetupContributionGroupPlan<E> {
                     ))
                 })
         };
-        self.a_ratio = ratio("A", self.role_dims.d_a())?;
-        self.b_ratio = ratio("B", self.role_dims.d_b())?;
-        self.d_ratio = ratio("D", self.role_dims.d_d())?;
+        self.a_ratio = ratio("A", self.role_dims.d_a(), setup_base_ring_dim)?;
+        self.b_ratio = ratio("B", self.role_dims.d_b(), setup_base_ring_dim)?;
+        self.d_ratio = ratio("D", self.role_dims.d_d(), setup_base_ring_dim)?;
+        self.a_relation_ratio = ratio("relation A", self.role_dims.d_a(), relation_base_ring_dim)?;
+        self.b_relation_ratio = ratio("relation B", self.role_dims.d_b(), relation_base_ring_dim)?;
+        self.d_relation_ratio = ratio("relation D", self.role_dims.d_d(), relation_base_ring_dim)?;
         Ok(())
     }
 }

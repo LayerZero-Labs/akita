@@ -17,86 +17,95 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [features]
-default = ["schedules-default"]
+default = ["schedules-default", "transcript-blake2b"]
+transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
+  "akita-schedules/transcript-blake2b",
+  "akita-transcript/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-challenges/transcript-keccak",
+  "akita-schedules/transcript-keccak",
+  "akita-transcript/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 test-support = []
 schedules-default = [
-  "schedules-fp128-d64-onehot",
-  "schedules-fp128-d64-dense",
-  "schedules-fp128-d128-onehot",
-  "schedules-fp128-d128-dense",
-  "schedules-fp128-d256-onehot",
-  "schedules-fp32-d128-onehot",
-  "schedules-fp32-d256-onehot",
-  "schedules-fp64-d128-dense",
-  "schedules-fp64-d128-onehot",
-  "schedules-fp64-d256-onehot",
+  "schedules-fp128-onehot",
+  "schedules-fp128-dense",
+  "schedules-fp32-dense",
+  "schedules-fp32-onehot",
+  "schedules-fp64-dense",
+  "schedules-fp64-onehot",
 ]
 all-schedules = [
   "schedules-default",
-  "schedules-fp128-mixed-dim-onehot",
-  "schedules-fp128-d64-onehot-recursive",
-  "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
-  "schedules-fp128-d64-onehot-tensor",
-  "schedules-fp128-d64-onehot-multi-chunk",
-  "schedules-fp128-d64-onehot-multi-chunk-w2r2",
-  "schedules-fp128-d64-onehot-multi-chunk-w4r2",
-  "schedules-fp128-d64-dense-multi-chunk",
+  "schedules-fp128-onehot-recursive",
+  "schedules-fp128-onehot-recursive-multi-chunk-w8r2",
+  "schedules-fp128-onehot-multi-chunk",
+  "schedules-fp128-onehot-multi-chunk-w2r2",
+  "schedules-fp128-onehot-multi-chunk-w4r2",
+  "schedules-fp128-dense-multi-chunk",
+  "schedules-fp128-dense-bounded",
 ]
-schedules-fp128-d64-onehot = ["akita-schedules/fp128-d64-onehot"]
-schedules-fp128-mixed-dim-onehot = ["akita-schedules/fp128-mixed-dim-onehot"]
-schedules-fp128-d64-onehot-recursive = [
-  "akita-schedules/fp128-d64-onehot-recursive",
+schedules-fp128-onehot = ["akita-schedules/fp128-onehot"]
+schedules-fp128-dense = ["akita-schedules/fp128-dense"]
+schedules-fp128-onehot-recursive = [
+  "schedules-fp128-onehot",
+  "akita-schedules/fp128-onehot-recursive",
 ]
-schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
-  "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
+schedules-fp128-onehot-recursive-multi-chunk-w8r2 = [
+  "schedules-fp128-onehot-multi-chunk",
+  "akita-schedules/fp128-onehot-recursive-multi-chunk-w8r2",
 ]
-schedules-fp128-d64-dense = ["akita-schedules/fp128-d64-dense"]
-schedules-fp128-d128-onehot = ["akita-schedules/fp128-d128-onehot"]
-schedules-fp128-d128-dense = ["akita-schedules/fp128-d128-dense"]
-schedules-fp128-d256-onehot = ["akita-schedules/fp128-d256-onehot"]
-schedules-fp128-d64-onehot-tensor = ["akita-schedules/fp128-d64-onehot-tensor"]
-schedules-fp128-d64-onehot-multi-chunk = [
-  "akita-schedules/fp128-d64-onehot-multi-chunk",
+schedules-fp128-onehot-multi-chunk = [
+  "akita-schedules/fp128-onehot-multi-chunk",
 ]
-schedules-fp128-d64-onehot-multi-chunk-w2r2 = [
-  "akita-schedules/fp128-d64-onehot-multi-chunk-w2r2",
+schedules-fp128-onehot-multi-chunk-w2r2 = [
+  "akita-schedules/fp128-onehot-multi-chunk-w2r2",
 ]
-schedules-fp128-d64-onehot-multi-chunk-w4r2 = [
-  "akita-schedules/fp128-d64-onehot-multi-chunk-w4r2",
+schedules-fp128-onehot-multi-chunk-w4r2 = [
+  "akita-schedules/fp128-onehot-multi-chunk-w4r2",
 ]
-schedules-fp128-d64-dense-multi-chunk = [
-  "akita-schedules/fp128-d64-dense-multi-chunk",
-]
+schedules-fp128-dense-multi-chunk = ["akita-schedules/fp128-dense-multi-chunk"]
+schedules-fp128-dense-bounded = ["akita-schedules/fp128-dense-bounded"]
 
-schedules-fp32-d128-onehot = ["akita-schedules/fp32-d128-onehot"]
-schedules-fp32-d256-onehot = ["akita-schedules/fp32-d256-onehot"]
-schedules-fp64-d128-dense = ["akita-schedules/fp64-d128-dense"]
-schedules-fp64-d128-onehot = ["akita-schedules/fp64-d128-onehot"]
-schedules-fp64-d256-onehot = ["akita-schedules/fp64-d256-onehot"]
+schedules-fp32-dense = ["akita-schedules/fp32-dense"]
+schedules-fp32-onehot = ["akita-schedules/fp32-onehot"]
+schedules-fp64-dense = ["akita-schedules/fp64-dense"]
+schedules-fp64-onehot = ["akita-schedules/fp64-onehot"]
 
 [dependencies]
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "1ac7d402d33a162fdc133cd43bfc6c5124861629", default-features = false, features = [
+  "solinas",
+] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
-akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 tracing = "0.1"
 
 [dev-dependencies]
-akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
+akita-planner = { version = "0.1.0", path = "../akita-planner", default-features = false, features = [
   "catalog-gen",
 ] }
 
 [[test]]
 name = "schedule_catalog_miswire"
 path = "tests/schedule_catalog_miswire.rs"
-required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-dense"]
+required-features = ["schedules-fp128-onehot", "schedules-fp128-dense"]
 
 [[test]]
 name = "generated_tables"
 path = "tests/generated_tables.rs"
+required-features = ["all-schedules"]
+
+[[test]]
+name = "dense_inner_basis"
+path = "tests/dense_inner_basis.rs"
 required-features = ["all-schedules"]
 
 [lints]

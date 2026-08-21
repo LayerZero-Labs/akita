@@ -1,13 +1,10 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_algebra::One;
-use akita_algebra::Ring;
-use akita_algebra::Zero;
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
-use jolt_field::{Field, Prime128Offset275};
+use jolt_field::{One, Prime128Offset275, Ring, Zero};
 use rand::SeedableRng;
 
 type F = Prime128Offset275;
@@ -19,7 +16,7 @@ fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
             z_coords: 1,
             e_field_elems: coeffs.len(),
             t_field_elems: 0,
-            z_admission_linf_cap: 1,
+            z_linf_cap: Some(1),
             z_payload_bytes: 1,
             z_rice_low_bits: 0,
         }],
@@ -34,6 +31,32 @@ fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
 }
 
 #[test]
+fn ring_vec_checked_views_reject_invalid_storage() {
+    let empty = RingVec::<F>::from_coeffs(Vec::new());
+    assert!(empty.as_single_ring::<64>().is_err());
+    assert!(empty
+        .as_ring_slice::<64>()
+        .expect("empty ring slice")
+        .is_empty());
+    assert!(empty.as_single_ring::<0>().is_err());
+    assert!(empty.as_ring_slice::<0>().is_err());
+
+    let undersized = RingVec::from_coeffs(vec![F::zero(); 63]);
+    assert!(undersized.as_single_ring::<64>().is_err());
+    assert!(undersized.as_ring_slice::<64>().is_err());
+
+    let mismatched =
+        RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 32).expect("stored ring");
+    assert!(mismatched.as_single_ring::<64>().is_err());
+    assert!(mismatched.as_ring_slice::<64>().is_err());
+
+    let valid =
+        RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("valid ring storage");
+    assert!(valid.as_single_ring::<64>().is_ok());
+    assert_eq!(valid.as_ring_slice::<64>().expect("valid slice").len(), 1);
+}
+
+#[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
     let err = TerminalResponseShape {
         layout: TailSegmentLayout {
@@ -42,7 +65,7 @@ fn direct_witness_shape_rejects_oversized_allocations() {
                 z_coords: 1,
                 e_field_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
                 t_field_elems: 0,
-                z_admission_linf_cap: 1,
+                z_linf_cap: Some(1),
                 z_payload_bytes: 1,
                 z_rice_low_bits: 0,
             }],
@@ -85,9 +108,11 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
             DEFAULT_MAX_SEQUENCE_LEN + 1,
             1,
+            1,
         )),
         opening_payload_coeffs: 1,
         stage1_stages: Vec::new(),
+        stage1_norm: None,
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
         next_witness_binding: NextWitnessBindingShape::OuterPayload { coeffs: 1 },
@@ -102,6 +127,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
     let wrong_degree = LevelProofShape {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape {
             partials: 1,
+            final_claims: 1,
             sumcheck: vec![EXTENSION_OPENING_REDUCTION_DEGREE + 1],
         }),
         ..oversized
@@ -128,10 +154,28 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     ));
 }
 
+#[test]
+fn l2_shape_deserialization_rejects_rounds_before_allocation() {
+    let mut bytes = Vec::new();
+    0usize.serialize_compressed(&mut bytes).unwrap(); // subclaims
+    1usize.serialize_compressed(&mut bytes).unwrap(); // virtual evaluations
+    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
+        .serialize_compressed(&mut bytes)
+        .unwrap(); // sumcheck round count
+
+    let err = PhysicalL2NormProofWireShape::deserialize_compressed(&bytes[..], &())
+        .expect_err("oversized L2 round vector must be rejected before allocation");
+    assert!(matches!(
+        err,
+        SerializationError::LengthLimitExceeded { .. }
+    ));
+}
+
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
         range_image_evaluation: F::zero(),
+        norm_proof: None,
     }
 }
 
@@ -155,6 +199,7 @@ fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
                 coeffs_except_linear_term: vec![F::zero(), F::one()],
             }],
         },
+        final_claims: vec![F::zero()],
     }
 }
 
@@ -329,6 +374,42 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         .expect("deserialize direct terminal proof");
     assert_eq!(decoded, proof);
 
+    const D: usize = 8;
+    let mut root = FoldLevelProof::new::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        tiny_stage1(),
+        tiny_stage2::<D>(),
+    );
+    root.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    let batched = AkitaBatchedProof {
+        root,
+        recursive_folds: Vec::new(),
+        terminal: proof.clone(),
+    };
+    let mut batched_bytes = Vec::new();
+    batched
+        .serialize_uncompressed(&mut batched_bytes)
+        .expect("serialize batched proof");
+    let shape = batched.shape();
+    let mut oversized_shape = shape.clone();
+    oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
+    assert!(matches!(
+        oversized_shape.validate_base_field_decode_budget(batched_bytes.len(), 16),
+        Err(SerializationError::LengthLimitExceeded { .. })
+    ));
+    assert_eq!(
+        AkitaBatchedProof::<F, F>::deserialize_uncompressed_exact(&batched_bytes, &shape)
+            .expect("exact batched proof decode"),
+        batched
+    );
+    for suffix in [0, 0xa5] {
+        let mut suffixed = batched_bytes.clone();
+        suffixed.push(suffix);
+        assert!(
+            AkitaBatchedProof::<F, F>::deserialize_uncompressed_exact(&suffixed, &shape).is_err()
+        );
+    }
+
     let mut shape_bytes = Vec::new();
     proof
         .shape()
@@ -371,7 +452,7 @@ fn typed_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: Field + CanonicalEncoding,
+    F: CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_serde(label, &TypedRingSliceSerializer(ring_elems));

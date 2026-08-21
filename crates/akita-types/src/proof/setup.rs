@@ -2,14 +2,13 @@
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
+use akita_error::AkitaError;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
-
-use akita_error::AkitaError;
 use rand_core::{CryptoRng, RngCore};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -176,7 +175,7 @@ impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
         num_ring_elements: usize,
         tail_num_ring_elements: usize,
         width: usize,
-        log_basis: u32,
+        rhs_abs_bound: u64,
     ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
         let key = crate::NttCacheKey {
             ring_d: D,
@@ -187,7 +186,10 @@ impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
             &self.expanded,
             key,
             tail_num_ring_elements,
-            crate::NttCacheMode::ExactNegacyclic { width, log_basis },
+            crate::NttCacheMode::ExactNegacyclic {
+                width,
+                rhs_abs_bound,
+            },
         )
     }
 }
@@ -671,7 +673,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::Zero;
+    use jolt_field::Zero;
     use jolt_field::{Fp32, Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     type F = Prime128Offset275;
@@ -711,6 +713,7 @@ mod tests {
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
+                outer_slice_count: crate::CommitmentSliceCount::ONE,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
                 inner_commit_matrix,
@@ -718,10 +721,12 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            log_basis_open: 1,
-            fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
-            num_digits_open: 1,
-            num_digits_fold: 1,
+            opening: crate::GroupOpeningPlan::evaluation_trace(
+                akita_challenges::SparseChallengeConfig::pm1_only(0),
+                1,
+                1,
+                1,
+            ),
         }
     }
 
@@ -751,9 +756,7 @@ mod tests {
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::setup_prefix_slot_id(d_setup - 1, commitment_params),
-            natural_len: d_setup - 1,
-            padded_len: d_setup,
+            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params).slot_id(),
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },
@@ -772,11 +775,31 @@ mod tests {
 
         let mut bytes = Vec::new();
         setup.serialize_compressed(&mut bytes).expect("serialize");
-        let decoded =
-            AkitaVerifierSetup::<F>::deserialize_compressed(&bytes[..], &()).expect("deserialize");
+        let decoded = AkitaVerifierSetup::<F>::deserialize_compressed_exact(&bytes, &())
+            .expect("deserialize");
 
         assert_eq!(decoded.prefix_slots.len(), 1);
         assert_eq!(decoded, setup);
+
+        for suffix in [0, 0xa5] {
+            let mut suffixed = bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaVerifierSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
+
+        let mut expanded_bytes = Vec::new();
+        setup
+            .expanded
+            .serialize_compressed(&mut expanded_bytes)
+            .expect("serialize expanded setup");
+        assert!(
+            AkitaExpandedSetup::<F>::deserialize_compressed_exact(&expanded_bytes, &()).is_ok()
+        );
+        for suffix in [0, 0xa5] {
+            let mut suffixed = expanded_bytes.clone();
+            suffixed.push(suffix);
+            assert!(AkitaExpandedSetup::<F>::deserialize_compressed_exact(&suffixed, &()).is_err());
+        }
     }
 
     #[test]
@@ -957,7 +980,11 @@ mod tests {
             let canonical = derived
                 .as_field_slice()
                 .iter()
-                .map(|value| value.to_u128_checked().expect("canonical base-field value"))
+                .map(|value| {
+                    value
+                        .to_u128_checked()
+                        .expect("Akita field element must fit in u128")
+                })
                 .collect::<Vec<_>>();
             [
                 canonical[0],

@@ -1,19 +1,35 @@
 use super::*;
 use crate::{
     CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    OpeningScheduleSelection, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
+    TerminalResponseShape, WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use jolt_field::Prime32Offset99;
 
+// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
+const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+
 fn sample_schedule() -> FoldSchedule {
     let sparse = SparseChallengeConfig::pm1_only(3);
-    let committed =
+    let mut committed =
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
+    let inner = committed.inner_commit_matrix;
+    committed.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        TEST_TERMINAL_A_BUCKET,
+        inner.ring_dimension(),
+    );
     let (terminal_witness, admission_cap) =
         TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
             .expect("terminal response bounds");
@@ -23,7 +39,6 @@ fn sample_schedule() -> FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: committed.clone(),
                 },
                 precommitted_groups: Vec::new(),
@@ -105,6 +120,89 @@ fn setup_section_rejects_mismatched_zk_protocol_feature() {
     ));
 }
 
+/// A deserialized descriptor cannot carry a committed-source bound the digit
+/// math is unable to represent.
+///
+/// `SetupSection::check` delegates to `DecompositionParams::validate`, which is
+/// the verifier-reachable enforcement of `1 <= log_commit_bound <= field_bits`
+/// and a usable `log_basis`. This is the descriptor-layer half of that contract:
+/// `validate` is unit-tested in isolation, but only this pins that a hostile
+/// wire value actually reaches it and comes back as `InvalidData` rather than a
+/// panic or a silently accepted schedule.
+#[test]
+fn setup_section_rejects_a_committed_source_bound_the_digits_cannot_represent() {
+    let valid = sample_descriptor();
+    valid.check().expect("the sample descriptor is well formed");
+    let field_bits = valid.setup.decomposition.field_bits();
+
+    let degenerate = [
+        // A zero bound denotes an empty coefficient range.
+        DecompositionParams {
+            log_commit_bound: 0,
+            ..valid.setup.decomposition
+        },
+        // A bound above the declared field width cannot be centered into it.
+        DecompositionParams {
+            log_commit_bound: field_bits + 1,
+            ..valid.setup.decomposition
+        },
+        // A zero basis has no digit alphabet at all.
+        DecompositionParams {
+            log_basis: 0,
+            ..valid.setup.decomposition
+        },
+        // A basis at or beyond the `u128` shift width would overflow the digit
+        // math rather than merely be useless.
+        DecompositionParams {
+            log_basis: 128,
+            ..valid.setup.decomposition
+        },
+        // An open bound below the commit bound collapses the field width under
+        // the source it is supposed to contain.
+        DecompositionParams {
+            log_open_bound: Some(1),
+            ..valid.setup.decomposition
+        },
+    ];
+
+    for decomposition in degenerate {
+        let mut descriptor = valid.clone();
+        descriptor.setup.decomposition = decomposition;
+        assert!(
+            matches!(descriptor.check(), Err(SerializationError::InvalidData(_))),
+            "descriptor must reject {decomposition:?}"
+        );
+
+        // The same rejection must happen on the deserialization path, not only
+        // for a descriptor assembled in memory.
+        let mut bytes = Vec::new();
+        descriptor
+            .setup
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize setup section");
+        assert!(
+            matches!(
+                SetupSection::deserialize_uncompressed(&bytes[..], &()),
+                Err(SerializationError::InvalidData(_))
+            ),
+            "deserialization must reject {decomposition:?}"
+        );
+    }
+
+    // A bounded source strictly inside the field width stays valid: the check
+    // rejects unrepresentable bounds, not bounded sources.
+    let base_decomposition = valid.setup.decomposition;
+    let mut bounded = valid;
+    bounded.setup.decomposition = DecompositionParams {
+        log_commit_bound: field_bits - 1,
+        log_open_bound: Some(field_bits),
+        ..base_decomposition
+    };
+    bounded
+        .check()
+        .expect("an interior committed-source bound is legal");
+}
+
 #[test]
 fn setup_section_rejects_unknown_compression_policy_tag() {
     let setup = sample_descriptor().setup;
@@ -125,9 +223,15 @@ fn setup_section_rejects_unknown_compression_policy_tag() {
 fn descriptor_roundtrip_preserves_typed_schedule_binding() {
     let descriptor = sample_descriptor();
     let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
-    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &())
+    let decoded = AkitaInstanceDescriptor::deserialize_uncompressed_exact(&bytes, &())
         .expect("deserialize descriptor");
     assert_eq!(decoded, descriptor);
+
+    for suffix in [0, 0xa5] {
+        let mut suffixed = bytes.clone();
+        suffixed.push(suffix);
+        assert!(AkitaInstanceDescriptor::deserialize_uncompressed_exact(&suffixed, &()).is_err());
+    }
 }
 
 #[test]
@@ -230,11 +334,14 @@ fn role_local_ring_dimension_changes_plan_binding() {
         .commitment
         .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
-        matrix.sis_table_key().table_digest,
+        matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
         matrix.sis_modulus_profile(),
         matrix.output_rank(),
         matrix.input_width(),
-        matrix.coeff_linf_bound(),
+        matrix.coeff_linf_bound().expect("L infinity test matrix"),
         matrix.ring_dimension() * 2,
     );
 

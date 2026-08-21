@@ -4,12 +4,13 @@
 
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, CommitmentRingDims,
-    CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, SisModulusProfileId,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalGroupParams, RootFoldParams,
+    RootFoldStep, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessPartition,
 };
-use jolt_field::{Prime128OffsetA7F7 as F, Zero};
+use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::Zero;
 
 #[test]
 fn role_dims_accept_either_b_d_order_below_a() {
@@ -67,7 +68,6 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
@@ -92,7 +92,7 @@ fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
                             z_coords: 64,
                             e_field_elems: 64,
                             t_field_elems: 64,
-                            z_admission_linf_cap: 1,
+                            z_linf_cap: Some(1),
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

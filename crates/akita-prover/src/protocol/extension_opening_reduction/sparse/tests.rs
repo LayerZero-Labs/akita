@@ -1,6 +1,6 @@
 use super::*;
-use jolt_field::{Field, FpExt4, Prime24Offset3};
-
+use jolt_field::Field;
+use jolt_field::{FpExt4, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 

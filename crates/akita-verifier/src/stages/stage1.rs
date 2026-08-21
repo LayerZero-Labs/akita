@@ -6,73 +6,66 @@
 //! prover/root path.
 
 use akita_algebra::split_eq::GruenSplitEq;
-use akita_challenges::{witness_fold_challenge_labels, Challenges, FoldDraw, LiveFoldDraw};
+use akita_challenges::LiveFoldDraw;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
-use akita_transcript::labels::{self, ABSORB_OPENING_PAYLOAD};
+use akita_transcript::labels;
 use akita_transcript::{sample_ext_challenge, Transcript};
-use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
-    DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
+    append_digit_range_child_claims, draw_group_fold_challenges, AkitaStage1Proof,
+    CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, GroupFoldChallenges,
+    OpeningClaimsLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
 
-/// Absorb the prover's `v` rows once, then sample one [`Challenges`] set per
+pub(crate) struct RangeLeafVerifierInput<E: Field> {
+    pub(crate) equality_point: Vec<E>,
+    pub(crate) input_claim: E,
+    pub(crate) polynomial_coefficients: Vec<E>,
+}
+
+/// Absorb the prover's `v` rows once, then sample one
+/// [`akita_challenges::Challenges`] set per
 /// commitment group in `OpeningClaims` order.
 ///
 /// This mirrors the prover's multi-group [`RingRelationProver`] live sampling: the
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
-/// each group's native fold-challenge config and local challenge shape,
-/// and the shared
+/// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
-/// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
+/// [`akita_challenges::Challenges`] set with
+/// `lp.num_live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
 /// Returns an error if the group layout is malformed or challenge sampling fails.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
+pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
-    opening_payload_coeffs: &[F],
-    v_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
-) -> Result<Vec<Challenges>, AkitaError>
+) -> Result<Vec<GroupFoldChallenges>, AkitaError>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
+    E: ExtField<F>,
     T: Transcript<F>,
 {
-    append_flat_coefficients(
-        ABSORB_OPENING_PAYLOAD,
-        opening_payload_coeffs,
-        v_ring_d,
-        transcript,
-    )?;
-    let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let group_lp = lp.group_params(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        group_challenges.push(
-            LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
-                group_dims.d_a(),
-                group_index,
-                group_lp.num_live_blocks(),
-                k_g,
-                &group_lp.fold_challenge_config(),
-                &group_lp.fold_challenge_shape(),
-                labels,
-                grind_nonce,
-            )?,
-        );
+        let drawn = draw_group_fold_challenges::<F, E, _>(
+            &mut LiveFoldDraw::<F, T>::new(transcript),
+            group_lp,
+            group_index,
+            k_g,
+            grind_nonce,
+        )?;
+        group_challenges.push(drawn);
     }
     Ok(group_challenges)
 }
@@ -180,6 +173,82 @@ impl<E: Field> AkitaStage1Verifier<E> {
 }
 
 impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
+    pub(crate) fn verify_product_prefix<F, T>(
+        &self,
+        product_stage_proofs: &[akita_types::AkitaStage1StageProof<E>],
+        transcript: &mut T,
+    ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
+        T: Transcript<F>,
+    {
+        let product_stage_arities = self.plan.product_stage_arities();
+        if product_stage_proofs.len() != product_stage_arities.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: product_stage_arities.len(),
+                actual: product_stage_proofs.len(),
+            });
+        }
+        let rounds = self.equality_point.coordinates().len();
+        for (stage_index, stage) in product_stage_proofs.iter().enumerate() {
+            let expected = self
+                .plan
+                .stage_shape(rounds, stage_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0
+                || stage.child_claims.len() != expected.child_claims
+                || stage
+                    .sumcheck_proof
+                    .round_polys
+                    .iter()
+                    .any(|round| round.coeffs_except_linear_term.len() != expected.sumcheck_proof.1)
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+
+        let leaf_coeffs = self.plan.leaf_coeffs::<E>();
+        let mut current_equality_point = self.equality_point.coordinates().to_vec();
+        let mut current_claim = E::zero();
+        let mut current_weights = vec![E::one()];
+        for (&arity, stage_proof) in product_stage_arities
+            .iter()
+            .zip(product_stage_proofs.iter())
+        {
+            let product_verifier = ProductSubcheckVerifier {
+                equality_point: current_equality_point,
+                input_claim: current_claim,
+                child_claims: &stage_proof.child_claims,
+                batch_weights: current_weights,
+                arity,
+            };
+            current_equality_point = product_verifier.verify::<F, T, _>(
+                &stage_proof.sumcheck_proof,
+                transcript,
+                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
+            )?;
+            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            let gamma = sample_ext_challenge::<F, E, T>(
+                transcript,
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            );
+            current_weights = self
+                .plan
+                .interstage_batch_weights(gamma, stage_proof.child_claims.len());
+            current_claim = self
+                .plan
+                .batch_claims(&current_weights, &stage_proof.child_claims)?;
+        }
+        Ok(RangeLeafVerifierInput {
+            equality_point: current_equality_point,
+            input_claim: current_claim,
+            polynomial_coefficients: self
+                .plan
+                .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?,
+        })
+    }
+
     /// Verify the full stage-1 tree proof and return the final `stage1_point`.
     ///
     /// # Errors
@@ -199,53 +268,17 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         self.plan
             .validate_proof_shape(proof, self.equality_point.coordinates().len())?;
 
-        let leaf_coeffs = self.plan.leaf_coeffs::<E>();
         let product_stage_arities = self.plan.product_stage_arities();
         let Some((leaf_stage_proof, product_stage_proofs)) = proof.stages.split_last() else {
             return Err(AkitaError::InvalidProof);
         };
-        let mut current_equality_point = self.equality_point.coordinates().to_vec();
-        let mut current_claim = E::zero();
-        let mut current_weights = vec![E::one()];
-
-        for (&arity, stage_proof) in product_stage_arities
-            .iter()
-            .zip(product_stage_proofs.iter())
-        {
-            let product_verifier = ProductSubcheckVerifier {
-                equality_point: current_equality_point,
-                input_claim: current_claim,
-                child_claims: &stage_proof.child_claims,
-                batch_weights: current_weights,
-                arity,
-            };
-            current_equality_point = product_verifier.verify::<F, T, _>(
-                &stage_proof.sumcheck_proof,
-                transcript,
-                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
-            )?;
-
-            append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-            let gamma = sample_ext_challenge::<F, E, T>(
-                transcript,
-                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-            );
-            current_weights = self
-                .plan
-                .interstage_batch_weights(gamma, stage_proof.child_claims.len());
-            current_claim = self
-                .plan
-                .batch_claims(&current_weights, &stage_proof.child_claims)?;
-        }
-
-        let batched_leaf_coeffs = self
-            .plan
-            .batch_leaf_polynomials(&current_weights, &leaf_coeffs)?;
+        debug_assert_eq!(product_stage_proofs.len(), product_stage_arities.len());
+        let leaf = self.verify_product_prefix::<F, T>(product_stage_proofs, transcript)?;
         let leaf_verifier = RangePolynomialLeafVerifier {
             plan: self.plan,
-            equality_point: current_equality_point,
-            input_claim: current_claim,
-            poly_coeffs: batched_leaf_coeffs,
+            equality_point: leaf.equality_point,
+            input_claim: leaf.input_claim,
+            poly_coeffs: leaf.polynomial_coefficients,
             range_image_evaluation: proof.range_image_evaluation,
         };
         leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {

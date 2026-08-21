@@ -66,12 +66,13 @@ where
                 "rectangular setup-product dimensions are invalid".into(),
             ));
         }
-        let required_source_len = required_rows
+        let source_len = index_factor
+            .len()
             .checked_mul(coefficient_factor.len())
             .ok_or_else(|| AkitaError::InvalidSetup("setup source length overflow".into()))?;
-        if setup.len() < required_source_len {
+        if setup.len() < source_len {
             return Err(AkitaError::InvalidSize {
-                expected: required_source_len,
+                expected: source_len,
                 actual: setup.len(),
             });
         }
@@ -197,13 +198,14 @@ where
             "stage3_setup_index_pass",
             kernel = "rectangular_base_field",
             source_pass = 2u64,
-            source_rows = self.required_rows as u64,
+            source_rows = self.row_capacity as u64,
+            active_weight_rows = self.required_rows as u64,
             coefficient_len = self.coefficient_len as u64,
             base_to_extension_lifts = 0u64,
             setup_table_state_elements = (self.row_capacity + self.coefficient_len) as u64,
         )
         .entered();
-        let mut index_table = cfg_into_iter!(0..self.required_rows)
+        let index_table = cfg_into_iter!(0..self.row_capacity)
             .map(|setup_index| {
                 let start = setup_index * self.coefficient_len;
                 eval_flat_ring_at_pows_fast(
@@ -212,7 +214,6 @@ where
                 )
             })
             .collect::<Vec<_>>();
-        index_table.resize(self.row_capacity, E::zero());
         self.index_table = Some(index_table);
     }
 
@@ -329,24 +330,24 @@ mod tests {
 
     fn dense_term(
         setup: &[F],
-        required_rows: usize,
+        _required_rows: usize,
         row_capacity: usize,
         coefficient_len: usize,
         index_factor: Vec<F>,
         coefficient_factor: Vec<F>,
     ) -> FactoredProductTerm<F> {
         let mut table = vec![F::zero(); row_capacity * coefficient_len];
-        table[..required_rows * coefficient_len]
-            .copy_from_slice(&setup[..required_rows * coefficient_len]);
+        table.copy_from_slice(&setup[..row_capacity * coefficient_len]);
         FactoredProductTerm::new_dense(table, index_factor, coefficient_factor)
             .expect("dense setup product")
     }
 
     fn assert_round_parity(required_rows: usize, row_capacity: usize, coefficient_len: usize) {
-        let setup = setup_source(required_rows, coefficient_len);
-        let index_factor = (0..row_capacity)
+        let setup = setup_source(row_capacity, coefficient_len);
+        let mut index_factor = (0..row_capacity)
             .map(|index| scalar((index * 13 + 3) as u64))
             .collect::<Vec<_>>();
+        index_factor[required_rows..].fill(F::zero());
         let coefficient_factor = scalar_powers(scalar(7), coefficient_len).to_vec();
         let mut dense = dense_term(
             &setup,

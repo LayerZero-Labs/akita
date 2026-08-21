@@ -10,12 +10,12 @@ use super::range_class_tables::{
 use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
-use jolt_field::solinas::parallel::*;
-use jolt_field::{Field, Fold, Ring, Unreduced};
-
 use akita_error::AkitaError;
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_types::DigitRangePlan;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,

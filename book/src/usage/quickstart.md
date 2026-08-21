@@ -2,7 +2,8 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-The smallest path to a working `batched_commit` → `batched_prove` →
+The smallest path to a working
+`commit(GroupContext::scheduler_without_precommitted_groups())` → `batched_prove` →
 `batched_verify`, then how to pick the `CommitmentConfig` preset that matches
 your field and proof-size goals.
 
@@ -13,9 +14,9 @@ a newcomer should reach for first.
 
 **Sources to fold in**
 
-- `crates/akita-pcs/tests/single_poly_e2e.rs` (smallest E2E template).
+- `crates/akita-pcs/tests/akita_fp128_e2e.rs` (smallest E2E template).
 - `AGENTS.md` (Essential Commands); `crates/akita-pcs/examples/profile/main.rs`
-  (`AKITA_MODE=onehot_fp128_d64`, `AKITA_NUM_VARS=32`).
+  (`AKITA_MODE=onehot_fp128`, `AKITA_NUM_VARS=32`).
 
 ## Choosing a configuration
 
@@ -23,30 +24,46 @@ How the `fp32` / `fp64` / `fp128` preset families differ, when to choose one-hot
 vs dense, and how ring dimension `D` trades proof size against prover time
 and setup memory.
 
-**Paper framing (§3.5 `sec:akita-params`).** Production uses **d=64** with the
-signed-sparse challenge family. **d=128** remains a comparison / legacy profile;
-**d=32** is not a valid A-role fold degree (`d_a ≥ 64`).
+**Paper framing (§3.5 `sec:akita-params`).** The uniform production profile uses
+**d=64** with the signed-sparse challenge family. The default direct fp128
+one-hot preset now chooses dimensions per fold from generated adaptive tables;
 
 **Proof-size / CI reality (committed-fold A-role SIS pricing).**
 
 | Field | Typical production choice | Notes |
 |-------|---------------------------|--------|
-| **fp128** | **D64 one-hot** (`onehot_fp128_d64`) | **Production default** (Paper §3.5 signed-sparse at d=64). Planner picks **D64 over D128** (~20% smaller proof); both fold securely. Shipped tables: D128 dense/onehot, D64 dense/onehot. Jolt recursion and profile defaults pin **`fp128::D64OneHot`**. |
-| **fp32 / fp64** | **D128 one-hot** | D32/D64 are **not securable** under the reprice and unsupported schedules fail fast. CI benches at **nv=28** (eq-table memory budget). Shipped: fp32 D128/D256 onehot; fp64 D128 dense/onehot and D256 onehot. |
+| **fp128** | **One-hot** (`fp128::OneHot`) | **Default direct one-hot preset.** Generated schedules choose dimensions for the first two fold levels and use the D64 suffix domain. Direct dense uses `fp128::Dense`; recursive and multi-chunk companions inherit the adaptive policy and have their own generated catalog keys. |
+| **fp32** | **Adaptive one-hot** (`fp32::OneHot`) | Searches A at D64 through D1024, B/D at D64 through D256, and the monotone D64/D128 suffix domain. CI benches at **nv=30**. |
+| **fp64** | **Adaptive one-hot** (`fp64::OneHot`) | Searches A at D64 through D512, B/D at D64 through D256, and the D64 suffix domain. CI benches at **nv=30**. |
 
-Use `akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_dense_schedule` to compare fp128 **D64 vs D128** for a lookup key. Every preset
-falls back to the verifier-reachable DP on table miss.
+Use `fp128::OneHot` for direct one-hot and `fp128::Dense` for direct dense.
 
-**Test harness vs profile defaults.** `crates/akita-pcs/tests/common/mod.rs` uses
-`fp128::D64OneHot` (one-hot) and `fp128::D64Dense` (dense tests); profile/CI
-canonical dense is **`fp128::D64Dense`** at D64.
+**Bounded dense.** If every coefficient of your dense polynomial is `u64`-valued,
+`fp128::DenseBounded` (behind `schedules-fp128-dense-bounded`) sizes the
+commitment for that range instead of the full 128-bit field. It roughly halves the
+A-role digit depth, and with it the shared setup matrix and the prover-side
+witness the recursion suffix inherits; proof size is roughly unchanged.
+
+The declared bound is `DenseBounded::LOG_COMMIT_BOUND = 65`, a **signed** bit
+width spanning `[-2^64, 2^64 - 1]`. It is 65 rather than 64 because the bound
+counts a sign bit, and `u64::MAX = 2^64 - 1` needs 64 magnitude bits on top of it;
+`DenseBounded::MAX_CENTERED_MAGNITUDE` states the accepted positive endpoint
+directly.
+
+The trade is that `commit` **rejects** a coefficient outside the declared range
+rather than committing a truncated value, so use `fp128::Dense` when the bound
+cannot be guaranteed. See
+[Bounded committed sources](../how/configuration.md#bounded-committed-sources).
+
+**Test harness vs profile defaults.** Direct protocol tests should use
+`fp128::OneHot` and `fp128::Dense`. Recursive and multi-chunk tests use their
+dedicated companion configs and generated catalogs.
 
 **Sources to fold in**
 
-- `crates/akita-config/src/proof_optimized/`, `crates/akita-config/src/generated_families.rs`.
-- `crates/akita-planner/src/resolve.rs` (`resolve_schedule`) and `crates/akita-schedules/src/generated/`.
+- `crates/akita-config/src/proof_optimized/` and `crates/akita-planner/src/generated_families.rs`.
+- `crates/akita-schedules/src/resolve.rs` and `crates/akita-schedules/src/generated/`.
 - Paper §3.5 `sec:akita-params`.
-- Paper §3.11 `sec:akita-planner` (tables + identical DP on miss).
-- `.github/workflows/profile-bench.yml` (`AKITA_BENCH_CASES`); `specs/profile-bench-coverage-matrix.md`.
+- Paper §3.11 `sec:akita-planner` (generated tables + offline DP parity guard).
+- `.github/workflows/profile-bench.yml` and [`profiling.md`](profiling.md).
 - `AGENTS.md` (Profiling).

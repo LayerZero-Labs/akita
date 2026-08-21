@@ -30,7 +30,7 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 | `proposed` | Not approved | `specs/` | Review or delete |
 | `approved` | `spec-approved`, not started | `specs/` | Implement |
 | `active` | Implementation in flight | `specs/` | Land PRs; check acceptance criteria |
-| `implemented` | Shipped; still useful as reference | `specs/` | Fold into book, then archive |
+| `implemented` | Shipped; retained in the root only when it remains load-bearing | `specs/` | Fold into book, then archive when safe |
 | `superseded` | Replaced (`Superseded-by:` set) | `specs/archive/` | Do not edit for current behavior |
 | `historical` | Retrospective only | `specs/archive/` | Do not edit |
 | `archived` | Folded into book | `specs/archive/` | Edit book chapter instead |
@@ -40,10 +40,13 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 - `implemented` **≠** `archived`. Shipped work stays in `specs/` until its
   durable content is folded into the book (or explicitly marked reference-only
   with no fold planned).
-- `active` and `approved` must not remain on merged work. Update the header in
-  the implementation PR.
+- `active` and `approved` must not describe merged work that has no unresolved
+  acceptance criteria. Keep `active` only when the record still owns current
+  behavior or has explicit follow-up work; put the reason in the summary.
 - `proposed` on a fully checked acceptance list is a **process violation** (CI
   blast-radius + reviewer duty).
+- Status values are exact. Progress notes, PR history, and implementation
+  details belong in the other header fields or the body, not in `Status:`.
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
@@ -70,13 +73,29 @@ Target steady state: **≤15** specs in `specs/` root with status
 
 Run `scripts/check-spec-references.sh --all` quarterly on the full non-archive tree.
 
-### Live specs excluded from CI symbol scan (known stale refs)
+### Live specifications
 
-These remain **live design** but still mention removed names; scrub before adding
-back to the CI live list in `check-spec-references.sh`:
+The root live set is deliberately small and is synchronized with
+`book/src/foundations/spec-index.md` and `scripts/check-spec-references.sh`:
 
-- `specs/akita-compute-backend-metal.md` (`akita-scheme`, `_with_policy`)
-- `specs/transcript-immediate-fixes.md` (`akita-scheme`)
+1. `akita-compute-backend-metal.md`
+2. `dyadic-chunk-partition.md`
+3. `flat-public-matrix-and-exact-ntt-cache.md`
+4. `fold-linf-rejection.md`
+5. `heterogeneous-group-source-contracts.md`
+6. `large-digit-ntt-infrastructure.md`
+7. `packed-sumcheck.md`
+8. `role-native-projected-digit-layout.md`
+9. `runtime-ring-cutover.md`
+10. `selective-l2-fold-security-sizing.md`
+11. `setup-offloading-planner.md`
+12. `sis-quantum128-scalar-n-table.md`
+13. `structured-e-term.md`
+14. `subring-coefficient-packing.md`
+
+All 14 live specifications must pass the default dead-symbol scan. A record
+that still contains a historical API name must either describe it explicitly as
+a historical snapshot or be repaired before it is added to the live set.
 
 ## Cadence
 
@@ -92,7 +111,7 @@ back to the CI live list in `check-spec-references.sh`:
 specs/archive/
   README.md          # index: filename | final status | book chapter | date
   2026-Q2/
-    fp16-small-field-support.md
+    planner-refactor.md
     ...
 ```
 
@@ -115,7 +134,7 @@ Use these targets (not the pre-consolidation folder paths):
 | PCS decomposition / crate map | `book/src/how/architecture.md` |
 | Optimized verifier | `book/src/how/verification.md` |
 | Extension opening batching | `book/src/how/proving/extension-opening-reduction.md` |
-| Tensor / sparse challenges | `book/src/how/proving/root-fold-ring-switch.md` |
+| Sparse challenges | `book/src/how/proving/root-fold-ring-switch.md` |
 | Terminal fold | `book/src/how/recursion.md` |
 | Weak binding / norm fix | `book/src/how/security.md` |
 | SIS consolidation | `book/src/how/security.md` |
@@ -130,62 +149,74 @@ Use these targets (not the pre-consolidation folder paths):
 | w-to-e notation | `book/src/foundations/glossary.md` |
 | Setup product sumcheck | `book/src/how/proving/sumcheck-stages.md` |
 
-## 2026-Q2 audit (archive pass — partial)
+## 2026-Q3 stale-spec removal (deleted, not archived)
 
-Classification from the initial book scaffold. Five specs moved to
-`specs/archive/2026-Q2/` on the book scaffold PR; the remaining rows below are
-for a stacked follow-up.
+The Q2 audit classified a large backlog for a stacked follow-up that never
+landed, so the specs kept accumulating dead references. This pass **deleted**
+21 specs outright rather than archiving them: each was either superseded by a
+spec that already owns the content, a retrospective of shipped work, or a
+shipped change whose header still read `proposed` / `draft` / `in review`. None
+carried durable content that the book or a surviving spec did not already own.
 
-### Fold into book, then archive
+Recovery is via git history (`git log --diff-filter=D -- specs/`), not the
+archive.
 
-| Spec | Book chapter |
-|------|--------------|
-| `akita-pcs-crate-decomposition.md` | `how/architecture.md` |
-| `extension-field-opening-batching.md` | `how/proving/extension-opening-reduction.md` |
-| `tensor-structured-folding-challenges.md`, `archive/bounded-l1-sparse-challenge.md` | `how/proving/root-fold-ring-switch.md` |
-| `terminal-fold-cutover.md` | `how/recursion.md` |
-| `weak-binding-norm-fix.md` (committed-fold section) | `how/security.md` |
-| `akita-sis-consolidation.md` | `how/security.md` |
-| `planner-refactor.md`, `planner-owns-schedule-expansion.md` | `how/configuration.md` |
-| `transcript-hardening.md` | `how/transcript.md` |
-| `security-hardening.md` | `how/verification.md` |
-| `remove-fp16.md` | `foundations/rings-and-fields.md` |
-| `crt-ntt-accumulation-safety.md` | `how/optimizations.md` |
-| `avx-simd-port.md`, `fp31-field-optimization-retrospective.md` | `how/optimizations.md` |
-| `akita-zk-commitment-hiding.md`, `akita-zk-v-hiding.md`, `akita-zk-sumcheck-hiding-plain.md` | `foundations/zero-knowledge.md` |
-| `profile-bench-coverage-matrix.md` (Active Matrix) | `usage/profiling.md` |
-| `ci-test-timing.md` | `usage/profiling.md` |
-| `w-to-e-notation.md` | `foundations/glossary.md` |
-| `setup-product-sumcheck.md` | `how/proving/sumcheck-stages.md` |
+### Superseded or abandoned (successor owns the content)
 
-### Archive directly (little or no fold)
+| Deleted spec | Content now owned by |
+|--------------|----------------------|
+| `distributed-verifier-row-eval.md` | `digit-innermost-layout.md` (PR #296 closed unlanded) |
+| `akita-sumcheck-unification.md` | `archive/2026-Q3/digit-range-pipeline-refactor.md` |
+| `schedule-catalog-ownership.md` | `heterogeneous-group-source-contracts.md` |
+| `transcript-immediate-fixes.md` | `book/src/how/transcript.md` |
+| `batched-stage3-setup-opening.md` | `archive/2026-Q3/group-local-opening-points.md` |
+| `extension-field-trace-cutover.md` | `extension-field-opening-batching.md` |
+| `fp16-small-field-support.md` | `remove-fp16.md` |
+| `crt-ntt-prime-profiles.md` | `book/src/foundations/ntt-crt.md` |
 
-| Spec | Reason |
-|------|--------|
-| `fp16-small-field-support.md` | superseded by `remove-fp16.md` |
-| `simd-ring-subfield-fp8.md` | consumer removed |
-| `planner-config-consolidation.md` | superseded; proposes non-existent crates |
-| `extension-field-trace-cutover.md` | superseded by opening batching spec |
-| `general-field-support.md` | historical |
-| `extension-claim-incidence-cutover.md` | landed (PR #69) |
-| `small-field-prover-opening-optimization.md` | retrospective |
-| `akita-crate-followup-jolt-integration.md` | retrospective |
-| `core-protocol-naming-cleanup.md` | superseded by `w-to-e-notation.md` |
-| `rust-file-line-cap.md` | policy in CI + CONTRIBUTING |
+### Retrospectives of shipped work (no forward value)
 
-### Keep as live specs
+`fp31-field-optimization-retrospective.md`,
+`small-field-prover-opening-optimization.md`,
+`akita-crate-followup-jolt-integration.md`,
+`core-protocol-naming-cleanup.md` (superseded by archived `w-to-e-notation.md`),
+`general-field-support.md`, `extension-claim-incidence-cutover.md`,
+`simd-ring-subfield-fp8.md`.
 
-`flat-public-matrix-and-exact-ntt-cache.md`,
-`role-native-projected-digit-layout.md`, `setup-layout-repack.md`,
-`setup-offloading-planner.md`,
-`eor-streamed-prover.md`, `packed-sumcheck.md`,
-`planner-incidence-generalization.md`,
-`akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
-`large-digit-ntt-infrastructure.md`,
-`transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
-`cross-repo-field-microbench.md`,
-`sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
-`SPEC_REVIEW.md`, and this file.
+### Status drift (PR merged; header still open)
+
+| Deleted spec | Header said | Shipped in |
+|--------------|-------------|------------|
+| `shared-opening-claims-api.md` | `proposed` | landed; `OpeningClaimsLayout` / `PolynomialGroupLayout` are the live types |
+| `transcript-hardening.md` | `DRAFT` | PR #90 |
+| `y-ring-trace-internalization.md` | `in review` | PR #154 |
+| `ring-dim-challenge-cutover.md` | `draft` | PR #268 |
+| `sis-infinity-estimator-crate.md` | `proposed` | `crates/akita-sis-estimator/` |
+| `single-point-opening-batch.md` | landed PR #186 | superseded by archived `group-local-opening-points.md` |
+
+### 2026-Q3 cleanup applied
+
+The shipped records whose durable content is now in the Book are archived and
+indexed in [`specs/archive/README.md`](archive/README.md). Superseded planner,
+layout, and setup records point to their current owners from the archive.
+
+The following four obsolete records were deleted after their current content was
+replaced by the Book or newer live specifications:
+
+- `distributed-planner.md`
+- `distributed-prover.md`
+- `mixed-ring-dimension-per-level.md`
+- `recursive-mixed-ring-dimension-performance.md`
+
+The historical CPU-heavy Metal cutover was archived separately from the active
+Metal-track spec. The root now contains the 14 live records listed above, plus
+policy and support files.
+
+### Root policy and support files
+
+`TEMPLATE.md`, `SPEC_REVIEW.md`, and this file are policy/support documents.
+They are not part of the 15-spec live set and are never archived with design
+records.
 
 ## Never commit / never fold
 

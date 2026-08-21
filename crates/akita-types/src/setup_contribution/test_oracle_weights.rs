@@ -1,11 +1,11 @@
 //! Legacy column-weight formulas retained only as independent test oracles.
 
 use akita_algebra::offset_eq::OffsetEqWindow;
+use akita_error::{checked, AkitaError};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Field};
 
 use crate::WitnessLayout;
-use akita_error::AkitaError;
 
 /// Per-role relation lane geometry for building canonical setup column weights.
 ///
@@ -80,19 +80,22 @@ pub(crate) fn setup_e_col_weights<E: Field>(
     eq_window: &OffsetEqWindow<E>,
     spec: &RoleLaneSpec<'_, E>,
 ) -> Result<Vec<E>, AkitaError> {
-    let e_cols = checked_mul4(
+    let e_cols = checked::product([
         num_claims,
         num_live_blocks,
         spec.role_subcolumns,
         depth_open,
-        "setup D columns overflow",
-    )?;
+    ])
+    .ok_or_else(|| AkitaError::InvalidSetup("setup D columns overflow".into()))?;
     let units = layout.units_for_group(group_id)?;
     if spec.is_uniform() {
         // Uniform-role fast path: contiguous `eq` fill (unchanged).
         let mut weights = vec![E::zero(); e_cols];
         for claim in 0..num_claims {
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let unit_width =
                     unit.num_live_blocks()
                         .checked_mul(depth_open)
@@ -175,7 +178,6 @@ pub(crate) fn setup_e_col_weights<E: Field>(
             let base_ring_dimension = source_ring_dimension / spec.a_ratio;
             let role_ring_dimension = base_ring_dimension * spec.role_lanes;
             let first_lane = unit.e_coefficient_index(
-                source_ring_dimension,
                 role_ring_dimension,
                 num_claims,
                 depth_open,
@@ -204,12 +206,8 @@ pub(crate) fn setup_t_col_weights<E: Field>(
     eq_window: &OffsetEqWindow<E>,
     spec: &RoleLaneSpec<'_, E>,
 ) -> Result<Vec<E>, AkitaError> {
-    let vector_width = checked_mul3(
-        num_live_blocks,
-        n_a,
-        depth_open,
-        "setup B columns per vector overflow",
-    )?;
+    let vector_width = checked::product([num_live_blocks, n_a, depth_open])
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B columns per vector overflow".into()))?;
     let expanded_vector_width = vector_width
         .checked_mul(spec.role_subcolumns)
         .ok_or_else(|| AkitaError::InvalidSetup("setup B subcolumn width overflow".into()))?;
@@ -221,6 +219,9 @@ pub(crate) fn setup_t_col_weights<E: Field>(
         let mut weights = vec![E::zero(); num_t_columns];
         for claim in 0..num_claims {
             for unit in units.clone() {
+                if unit.num_live_blocks() == 0 {
+                    continue;
+                }
                 let unit_width = unit
                     .num_live_blocks()
                     .checked_mul(n_a)
@@ -397,23 +398,4 @@ where
             *dst += weight;
             Ok(())
         })
-}
-
-fn checked_mul3(a: usize, b: usize, c: usize, context: &str) -> Result<usize, AkitaError> {
-    a.checked_mul(b)
-        .and_then(|n| n.checked_mul(c))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
-fn checked_mul4(
-    a: usize,
-    b: usize,
-    c: usize,
-    d: usize,
-    context: &str,
-) -> Result<usize, AkitaError> {
-    a.checked_mul(b)
-        .and_then(|n| n.checked_mul(c))
-        .and_then(|n| n.checked_mul(d))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }

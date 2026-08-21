@@ -1,5 +1,6 @@
 [package]
 name = "akita-planner"
+autobins = false
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
@@ -16,16 +17,29 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
-akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/Acentelles/jolt.git", rev = "eb93a031027ee735f0827edb4539e971ab5fcc0b", default-features = false, features = ["solinas"] }
 akita-error = { version = "0.1.0", path = "../akita-error" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
-akita-types = { version = "0.1.0", path = "../akita-types" }
+akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+libm = "0.2"
 
 [features]
-default = []
+default = ["transcript-blake2b"]
+transcript-blake2b = [
+  "akita-challenges/transcript-blake2b",
+  "akita-config?/transcript-blake2b",
+  "akita-schedules/transcript-blake2b",
+  "akita-types/transcript-blake2b",
+]
+transcript-keccak = [
+  "akita-challenges/transcript-keccak",
+  "akita-config?/transcript-keccak",
+  "akita-schedules/transcript-keccak",
+  "akita-types/transcript-keccak",
+]
 catalog-gen = ["dep:akita-config"]
+catalog-check = ["catalog-gen", "akita-config/all-schedules"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }

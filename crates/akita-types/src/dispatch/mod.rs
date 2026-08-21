@@ -1,18 +1,20 @@
 //! Runtime-to-const-generic dispatch shared by prover and verifier.
 //!
 //! Fold / ring-switch paths use **role × PCS field tier** tables (see
-//! `specs/ring-dim-challenge-cutover.md`). NTT cache build uses field tier only.
+//! `book/src/foundations/ntt-crt.md`). NTT cache build uses field tier only.
 //!
-//! Arm lists come from `protocol_dispatch_policy!`; validators and
-//! [`crate::dispatch_for_field!`] expand from that single block.
+//! Arm lists come from the policy block in `dispatch/policy.rs`; validators and
+//! [`crate::dispatch_for_field!`] expand from that single declaration.
 
 mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
+use crate::sis::SisModulusProfileId;
 use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_error::AkitaError;
 use jolt_field::{CanonicalEncoding, Field};
 
+pub(crate) use policy::role_ring_dimensions_for_tier;
 pub use policy::{
     compression_ring_dim_supported_for_tier, inner_ring_dim_supported_for_tier, ntt_max_ring_d,
     ntt_min_ring_d, opening_ring_dim_supported_for_tier, outer_opening_min_ring_d,
@@ -36,12 +38,27 @@ pub enum ProtocolRingDispatchTierId {
 pub enum ProtocolDispatchSlot {
     /// A/B/D matrix role (`RingRole`).
     Role(RingRole),
-    /// Configured uniform-policy algebra ring dimension.
-    UniformPolicy,
     /// CRT/NTT cache warm and build.
     Ntt,
     /// Compression-only F/H matrices under the modulus-profile ladder.
     Compression,
+}
+
+/// Dispatch tier selected by one exact SIS modulus profile.
+///
+/// Planner/runtime policies carry the modulus profile rather than a concrete
+/// field type, so policy validation uses this mapping to audit candidate ring
+/// dimensions against the same role tables used by prover/verifier dispatch.
+#[inline]
+#[must_use]
+pub const fn protocol_dispatch_tier_for_sis_profile(
+    profile: SisModulusProfileId,
+) -> ProtocolRingDispatchTierId {
+    match profile {
+        SisModulusProfileId::Q128OffsetA7F7 => ProtocolRingDispatchTierId::Fp128,
+        SisModulusProfileId::Q64Offset59 => ProtocolRingDispatchTierId::Fp64,
+        SisModulusProfileId::Q32Offset99 => ProtocolRingDispatchTierId::Fp32,
+    }
 }
 
 /// Canonical field modulus from the canonical representation of `-1`.
@@ -51,7 +68,7 @@ pub enum ProtocolDispatchSlot {
 pub fn field_modulus<F: Field + CanonicalEncoding>() -> u128 {
     (-F::one())
         .to_u128_checked()
-        .expect("canonical prime-field value fits in u128")
+        .expect("Akita field element must fit in u128")
         + 1
 }
 
@@ -200,6 +217,46 @@ mod tests {
     }
 
     #[test]
+    fn small_field_commitment_dispatch_reaches_profile_caps() {
+        for (d, expected) in [(512usize, 512), (1024, 1024), (2048, 2048)] {
+            assert_eq!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime32Offset99,
+                    d,
+                    |D| Ok(D)
+                )
+                .expect("supported fp32 inner dimension"),
+                expected
+            );
+        }
+        assert!(dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            Prime64Offset59,
+            512usize,
+            |D| Ok(D)
+        )
+        .is_err());
+        assert!(dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Outer),
+            Prime64Offset59,
+            1024usize,
+            |D| Ok(D)
+        )
+        .is_err());
+        assert_eq!(
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                Prime64Offset59,
+                1024usize,
+                |D| Ok(D)
+            )
+            .expect("supported fp64 inner dimension"),
+            1024
+        );
+    }
+
+    #[test]
     fn outer_dispatch_floor_is_d64_on_every_profile() {
         for d in [16usize, 32] {
             assert!(dispatch_for_field!(
@@ -321,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_role_dims_for_field_rejects_ladder_dims_without_inner_dispatch() {
+    fn validate_role_dims_for_field_rejects_nonproduction_role_dimensions() {
         let fp32_ok = CommitmentRingDims {
             inner: 64,
             outer: 64,
@@ -330,11 +387,25 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_ok).is_ok());
 
         let fp32_high_a = CommitmentRingDims {
-            inner: 512,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };
-        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_a).is_err());
+        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_a).is_ok());
+
+        let fp32_high_b = CommitmentRingDims {
+            inner: 2048,
+            outer: 512,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_b).is_err());
+
+        let fp64_high_a = CommitmentRingDims {
+            inner: 1024,
+            outer: 64,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime64Offset59>(fp64_high_a).is_ok());
 
         let fp128_high_b = CommitmentRingDims {
             inner: 64,
@@ -349,5 +420,12 @@ mod tests {
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
+
+        let fp128_too_high_a = CommitmentRingDims {
+            inner: 1024,
+            outer: 64,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_too_high_a).is_err());
     }
 }

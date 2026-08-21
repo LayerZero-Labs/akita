@@ -5,30 +5,24 @@
 //! hardware backends.
 
 use super::backend::{
-    CommitmentComputeBackend, CompressionComputeBackend, CompressionRowsProducts,
-    ComputeBackendSetup, CyclicRowsComputeBackend, DigitRowsComputeBackend,
-    RingSwitchComputeBackend,
+    CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
+    CyclicRowsComputeBackend, DigitRowsComputeBackend,
 };
 use super::cpu::CpuBackend;
 use super::kernels::{
-    OpeningBatchKernel, OpeningFoldKernel, RingSwitchQuotientKernel, RingSwitchRelationKernel,
-    RootCommitKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel, RootCommitKernel,
+    SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use super::operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
-    RingSwitchQuotientPlan, RingSwitchRelationPlan,
+    RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-use super::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    SparseRingCommitRowsPlan,
-};
+use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_types::{AkitaExpandedSetup, FpExtEncoding, NttCacheKey};
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring, Unreduced};
-
+use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 macro_rules! delegate_compute_backend_setup {
@@ -43,7 +37,7 @@ macro_rules! delegate_compute_backend_setup {
                 &self,
                 expanded: Arc<AkitaExpandedSetup<F>>,
             ) -> Result<Self::PreparedSetup, AkitaError> {
-                CpuBackend.prepare_expanded(expanded)
+                CpuBackend::DEFAULT.prepare_expanded(expanded)
             }
 
             fn ensure_ntt_slot(
@@ -51,7 +45,15 @@ macro_rules! delegate_compute_backend_setup {
                 prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
-                CpuBackend.ensure_ntt_slot(prepared, key)
+                CpuBackend::DEFAULT.ensure_ntt_slot(prepared, key)
+            }
+
+            fn ntt_requirement_is_cached(
+                &self,
+                prepared: &Self::PreparedSetup,
+                requirement: crate::compute::RoutedNttRequirement,
+            ) -> Result<bool, AkitaError> {
+                CpuBackend::DEFAULT.ntt_requirement_is_cached(prepared, requirement)
             }
 
             fn planned_ntt_cache_entry_bytes(
@@ -59,14 +61,21 @@ macro_rules! delegate_compute_backend_setup {
                 prepared: &Self::PreparedSetup,
                 key: NttCacheKey,
             ) -> Result<usize, AkitaError> {
-                CpuBackend.planned_ntt_cache_entry_bytes(prepared, key)
+                CpuBackend::DEFAULT.planned_ntt_cache_entry_bytes(prepared, key)
+            }
+
+            fn release_built_ntt_slots(
+                &self,
+                prepared: &Self::PreparedSetup,
+            ) -> Result<usize, AkitaError> {
+                CpuBackend::DEFAULT.release_built_ntt_slots(prepared)
             }
 
             fn prepared_expanded_setup<'a>(
                 &self,
                 prepared: &'a Self::PreparedSetup,
             ) -> &'a AkitaExpandedSetup<F> {
-                CpuBackend.prepared_expanded_setup(prepared)
+                CpuBackend::DEFAULT.prepared_expanded_setup(prepared)
             }
         }
     };
@@ -85,7 +94,7 @@ macro_rules! delegate_digit_rows {
                 digits: &[[i8; D]],
                 log_basis: u32,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+                CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
             }
         }
     };
@@ -98,7 +107,7 @@ macro_rules! delegate_compression {
             F: Field + CanonicalEncoding,
         {
             fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
-                CpuBackend.compression_cache_bytes(prepared)
+                CpuBackend::DEFAULT.compression_cache_bytes(prepared)
             }
 
             fn compression_rows_products<const D: usize>(
@@ -106,7 +115,7 @@ macro_rules! delegate_compression {
                 prepared: &Self::PreparedSetup,
                 digit_vectors: &[&[[i8; D]]],
             ) -> Result<Vec<CompressionRowsProducts<F, D>>, AkitaError> {
-                CpuBackend.compression_rows_products(prepared, digit_vectors)
+                CpuBackend::DEFAULT.compression_rows_products(prepared, digit_vectors)
             }
         }
     };
@@ -125,7 +134,7 @@ macro_rules! delegate_cyclic_rows {
                 digits: &[[i8; D]],
                 log_basis: u32,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend.cyclic_digit_rows(prepared, row_len, digits, log_basis)
+                CpuBackend::DEFAULT.cyclic_digit_rows(prepared, row_len, digits, log_basis)
             }
         }
     };
@@ -142,9 +151,9 @@ macro_rules! delegate_opening_kernels {
                 &self,
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
-                plan: OpeningFoldPlan<'_, F, D>,
+                plan: OpeningFoldPlan<'_, F>,
             ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-                CpuBackend.evaluate_and_fold(prepared, source, plan)
+                CpuBackend::DEFAULT.evaluate_and_fold(prepared, source, plan)
             }
 
             fn decompose_fold(
@@ -153,7 +162,7 @@ macro_rules! delegate_opening_kernels {
                 source: S,
                 plan: DecomposeFoldPlan<'_>,
             ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
-                CpuBackend.decompose_fold(prepared, source, plan)
+                CpuBackend::DEFAULT.decompose_fold(prepared, source, plan)
             }
         }
 
@@ -168,7 +177,7 @@ macro_rules! delegate_opening_kernels {
                 source: S,
                 plan: DecomposeFoldBatchPlan<'_>,
             ) -> Result<super::kernels::BatchDecomposeFoldOutcome<F, D>, AkitaError> {
-                CpuBackend.decompose_fold_batch(prepared, source, plan)
+                CpuBackend::DEFAULT.decompose_fold_batch(prepared, source, plan)
             }
         }
     };
@@ -191,7 +200,7 @@ macro_rules! delegate_tensor_kernels {
             where
                 E: jolt_field::MulBaseUnreduced<F>,
             {
-                CpuBackend.column_partials(prepared, source, logical_point)
+                CpuBackend::DEFAULT.column_partials(prepared, source, logical_point)
             }
 
             fn packed_witness(
@@ -199,19 +208,7 @@ macro_rules! delegate_tensor_kernels {
                 prepared: Option<&Self::PreparedSetup>,
                 source: S,
             ) -> Result<super::kernels::TensorPackedWitness<E>, AkitaError> {
-                CpuBackend.packed_witness(prepared, source)
-            }
-
-            fn root_projection(
-                &self,
-                prepared: Option<&Self::PreparedSetup>,
-                source: S,
-            ) -> Result<crate::backend::RootTensorProjectionPoly<F>, AkitaError>
-            where
-                F: Ring,
-                E: FpExtEncoding<F>,
-            {
-                CpuBackend.root_projection(prepared, source)
+                CpuBackend::DEFAULT.packed_witness(prepared, source)
             }
         }
 
@@ -230,7 +227,7 @@ macro_rules! delegate_tensor_kernels {
             where
                 E: jolt_field::MulBaseUnreduced<F>,
             {
-                CpuBackend.column_partials_batch(prepared, source, logical_point)
+                CpuBackend::DEFAULT.column_partials_batch(prepared, source, logical_point)
             }
 
             fn sparse_linear_combination(
@@ -244,7 +241,27 @@ macro_rules! delegate_tensor_kernels {
                 >,
                 AkitaError,
             > {
-                CpuBackend.sparse_linear_combination(prepared, source, coeffs)
+                CpuBackend::DEFAULT.sparse_linear_combination(prepared, source, coeffs)
+            }
+        }
+    };
+}
+
+macro_rules! delegate_coefficient_packing {
+    ($ty:ty) => {
+        impl<S, F, E, const D: usize> SubringCoefficientPackingBatchKernel<S, F, E, D> for $ty
+        where
+            F: Field + CanonicalEncoding,
+            E: ExtField<F>,
+            CpuBackend: SubringCoefficientPackingBatchKernel<S, F, E, D>,
+        {
+            fn coefficient_packing_partials_batch(
+                &self,
+                prepared: Option<&Self::PreparedSetup>,
+                source: S,
+                plan: SubringCoefficientPackingPlan<'_, E>,
+            ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+                CpuBackend::DEFAULT.coefficient_packing_partials_batch(prepared, source, plan)
             }
         }
     };
@@ -257,13 +274,13 @@ macro_rules! delegate_root_commit_kernel {
             F: Field + CanonicalEncoding,
             CpuBackend: RootCommitKernel<S, F, D>,
         {
-            fn commit_inner(
+            fn commit_inner_group(
                 &self,
                 prepared: &Self::PreparedSetup,
-                source: S,
+                sources: Vec<S>,
                 plan: CommitInnerPlan,
-            ) -> Result<CommitInnerWitness<F>, AkitaError> {
-                CpuBackend.commit_inner(prepared, source, plan)
+            ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError> {
+                CpuBackend::DEFAULT.commit_inner_group(prepared, sources, plan)
             }
         }
     };
@@ -285,25 +302,7 @@ macro_rules! delegate_ring_switch_kernels {
             where
                 F: Field,
             {
-                CpuBackend.relation_rows(prepared, source, plan)
-            }
-        }
-
-        impl<S, F, const D: usize> RingSwitchQuotientKernel<S, F, D> for $ty
-        where
-            F: Field + CanonicalEncoding,
-            CpuBackend: RingSwitchQuotientKernel<S, F, D>,
-        {
-            fn quotient_rows(
-                &self,
-                prepared: &Self::PreparedSetup,
-                source: S,
-                plan: RingSwitchQuotientPlan,
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-            where
-                F: Field,
-            {
-                CpuBackend.quotient_rows(prepared, source, plan)
+                CpuBackend::DEFAULT.relation_rows(prepared, source, plan)
             }
         }
     };
@@ -319,49 +318,6 @@ delegate_digit_rows!(CommitCluster);
 delegate_cyclic_rows!(CommitCluster);
 delegate_root_commit_kernel!(CommitCluster);
 
-impl<F> CommitmentComputeBackend<F> for CommitCluster
-where
-    F: Field + CanonicalEncoding,
-{
-    fn dense_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: DenseCommitRowsPlan<'_, F, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        CpuBackend.dense_commit_rows(prepared, plan)
-    }
-
-    fn onehot_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: OneHotCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: Unreduced,
-    {
-        CpuBackend.onehot_commit_rows(prepared, plan)
-    }
-
-    fn sparse_ring_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: SparseRingCommitRowsPlan<'_>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
-    where
-        F: Unreduced,
-    {
-        CpuBackend.sparse_ring_commit_rows(prepared, plan)
-    }
-
-    fn recursive_witness_commit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RecursiveWitnessCommitRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        CpuBackend.recursive_witness_commit_rows(prepared, plan)
-    }
-}
-
 /// Delegating opening-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpeningCluster;
@@ -370,6 +326,7 @@ delegate_compute_backend_setup!(OpeningCluster);
 delegate_compression!(OpeningCluster);
 delegate_digit_rows!(OpeningCluster);
 delegate_opening_kernels!(OpeningCluster);
+delegate_coefficient_packing!(OpeningCluster);
 
 /// Delegating tensor-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -377,6 +334,7 @@ pub struct TensorCluster;
 
 delegate_compute_backend_setup!(TensorCluster);
 delegate_tensor_kernels!(TensorCluster);
+delegate_coefficient_packing!(TensorCluster);
 
 /// Delegating ring-switch-cluster marker backend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -385,32 +343,4 @@ pub struct RingSwitchCluster;
 delegate_compute_backend_setup!(RingSwitchCluster);
 delegate_compression!(RingSwitchCluster);
 delegate_digit_rows!(RingSwitchCluster);
-delegate_cyclic_rows!(RingSwitchCluster);
 delegate_ring_switch_kernels!(RingSwitchCluster);
-
-impl<F> RingSwitchComputeBackend<F> for RingSwitchCluster
-where
-    F: Field + CanonicalEncoding,
-{
-    fn ring_switch_relation_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchRelationRowsPlan<'_, D>,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: Field,
-    {
-        CpuBackend.ring_switch_relation_rows(prepared, plan)
-    }
-
-    fn ring_switch_quotient_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        plan: RingSwitchQuotientRowsPlan<'_, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-    where
-        F: Field,
-    {
-        CpuBackend.ring_switch_quotient_rows(prepared, plan)
-    }
-}
