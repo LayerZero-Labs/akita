@@ -1,7 +1,7 @@
 //! Accessors for a fold's own new group.
 //!
-//! Step 7 made `groups` the only place a fold's groups are stored, so what were
-//! flat fields on [`CommittedGroupParams`] are now reads of the last entry.
+//! `groups` is the only place a fold's groups are stored, so the accessors read
+//! the last entry directly.
 //! They live in their own module because `params.rs` is at its line cap.
 
 use super::precommitted::GroupOpenPhaseParams;
@@ -16,17 +16,13 @@ impl CommittedGroupParams {
     #[inline]
     #[must_use]
     pub fn own_group(&self) -> &GroupOpenPhaseParams {
-        self.groups
-            .last()
-            .expect("a fold always owns its own new group")
+        self.groups.own()
     }
 
     /// Mutable view of this fold's own new group.
     #[inline]
     pub fn own_group_mut(&mut self) -> &mut GroupOpenPhaseParams {
-        self.groups
-            .last_mut()
-            .expect("a fold always owns its own new group")
+        self.groups.own_mut()
     }
 
     /// A/source role of this fold's own new group.

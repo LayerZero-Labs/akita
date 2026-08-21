@@ -5,8 +5,16 @@ fn borrowed_schedule_descriptor_matches_materialized_schedule() {
     let mut schedule = recursive_schedule(64, 64, true);
     let precommitted =
         precommitted_group_params(&schedule.root.params, PolynomialGroupLayout::singleton(6));
-    schedule.root.params.insert_precommitted_group(precommitted);
-    schedule.root.params.insert_precommitted_group(precommitted);
+    schedule
+        .root
+        .params
+        .insert_precommitted_group(precommitted)
+        .unwrap();
+    schedule
+        .root
+        .params
+        .insert_precommitted_group(precommitted)
+        .unwrap();
     append_recursive_fold(&mut schedule);
 
     let mut steps = Vec::with_capacity(schedule.recursive_folds.len() + 1);

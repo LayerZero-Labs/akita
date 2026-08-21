@@ -17,8 +17,9 @@ use akita_types::{
 };
 
 use crate::generated::{
-    generated_schedule_key_cmp, GeneratedFold, GeneratedFoldScheduleEntry, GeneratedFrozenGroup,
-    GeneratedGroup, GeneratedMatrix, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
+    generated_schedule_key_cmp, GeneratedFoldCore, GeneratedFoldScheduleEntry,
+    GeneratedFrozenGroup, GeneratedGroup, GeneratedMatrix, GeneratedRecursiveFold,
+    GeneratedRootFold, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
@@ -363,21 +364,30 @@ fn catalog_identity_mismatch_error(family_name: &str, field: &str) -> AkitaError
 fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
-        collect_group_ring_dimensions(entry.root.group, &mut dims);
+        collect_group_ring_dimensions(entry.root.core.group, &mut dims);
         push_unique(
             &mut dims,
-            entry.root.open_commit_matrix.ring_dimension as usize,
+            entry.root.core.open_commit_matrix.ring_dimension as usize,
         );
         for group in entry.root.precommitted_groups {
-            push_unique(&mut dims, group.profile.inner.matrix.ring_dimension());
-            push_unique(&mut dims, group.profile.outer.matrix.ring_dimension());
+            push_unique(&mut dims, group.group.profile.inner.matrix.ring_dimension());
+            push_unique(&mut dims, group.group.profile.outer.matrix.ring_dimension());
         }
         for fold in entry.recursive_folds {
-            collect_group_ring_dimensions(fold.group, &mut dims);
-            push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
+            collect_group_ring_dimensions(fold.core.group, &mut dims);
+            push_unique(
+                &mut dims,
+                fold.core.open_commit_matrix.ring_dimension as usize,
+            );
             if let Some(prefix) = fold.setup_prefix {
-                push_unique(&mut dims, prefix.profile.inner.matrix.ring_dimension());
-                push_unique(&mut dims, prefix.profile.outer.matrix.ring_dimension());
+                push_unique(
+                    &mut dims,
+                    prefix.group.profile.inner.matrix.ring_dimension(),
+                );
+                push_unique(
+                    &mut dims,
+                    prefix.group.profile.outer.matrix.ring_dimension(),
+                );
             }
         }
         push_unique(
@@ -410,13 +420,13 @@ fn validate_entry_dimensions(
     };
     for entry in entries {
         let root = dimensions(
-            entry.root.group,
-            entry.root.open_commit_matrix.ring_dimension,
+            entry.root.core.group,
+            entry.root.core.open_commit_matrix.ring_dimension,
         );
         validate_level_dimensions(mode, 0, root, None, entry.final_group)?;
         let mut previous = root;
         for (index, fold) in entry.recursive_folds.iter().enumerate() {
-            let current = dimensions(fold.group, fold.open_commit_matrix.ring_dimension);
+            let current = dimensions(fold.core.group, fold.core.open_commit_matrix.ring_dimension);
             validate_level_dimensions(mode, index + 1, current, Some(previous), entry.final_group)?;
             previous = current;
         }
@@ -553,16 +563,23 @@ fn entries_key_digest_with_setup_prefix_content_mode(
     let mut h = Fnv64::new();
     for entry in entries {
         write_generated_schedule_key(&mut h, entry.final_group);
-        write_generated_fold(&mut h, &entry.root, write_full_prefix_content_mode);
+        write_generated_root_fold(&mut h, &entry.root);
         h.write_u64(entry.recursive_folds.len() as u64);
         for fold in entry.recursive_folds {
-            write_generated_fold(&mut h, fold, write_full_prefix_content_mode);
+            write_generated_recursive_fold(&mut h, fold, write_full_prefix_content_mode);
         }
         write_generated_geometry(&mut h, entry.terminal.geometry);
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.ring_dimension));
         h.write_u64(u64::from(entry.terminal.inner_commit_matrix.log_basis));
+        h.write_u64(u64::from(entry.terminal.num_digits_inner));
         h.write_u64(u64::from(entry.terminal.fold_log_basis));
         h.write_u64(u64::from(entry.terminal.fold_digit_count));
+        h.write_u64(u64::from(entry.terminal.inner_output_rank));
+        h.write_u128(entry.terminal.inner_coeff_linf_bound);
+        write_optional_u128(&mut h, entry.terminal.response_l2_sq_cap);
+        write_optional_u128(&mut h, entry.terminal.z_linf_cap);
+        h.write_u64(u64::from(entry.terminal.z_rice_low_bits));
+        h.write_u64(entry.terminal.z_payload_bytes);
     }
     h.finish()
 }
@@ -580,8 +597,7 @@ fn write_opening_method(h: &mut Fnv64, method: akita_types::OpeningMethod) {
 }
 
 fn write_generated_geometry(h: &mut Fnv64, value: akita_types::BlockGeometry) {
-    // Same three numbers in the same order as the deleted generated mirror, so
-    // dropping that type does not by itself move `key_digest`.
+    // Geometry is hashed in declaration order so every executed count is bound.
     h.write_u64(value.live_ring_elements_per_claim as u64);
     h.write_u64(value.positions_per_block as u64);
     h.write_u64(value.live_blocks as u64);
@@ -594,10 +610,6 @@ fn write_generated_group(h: &mut Fnv64, value: GeneratedGroup) {
     h.write_u64(u64::from(value.outer_commit_matrix.ring_dimension));
     h.write_u64(u64::from(value.outer_commit_matrix.log_basis));
     h.write_u64(u64::from(value.outer_slice_count));
-    // Presence is hashed separately from the value so a pinned depth of zero
-    // can never collide with a derived one.
-    h.write_u64(u64::from(value.num_digits_inner.is_some()));
-    h.write_u64(u64::from(value.num_digits_inner.unwrap_or(0)));
     h.write_u64(u64::from(value.num_digits_fold));
     write_opening_method(h, value.opening_method);
 }
@@ -608,27 +620,47 @@ fn write_generated_frozen_group(h: &mut Fnv64, value: &GeneratedFrozenGroup) {
     // The opening plan is derived from the consuming fold, so the only
     // group-owned inputs are the method and the fold depth.
     write_opening_method(h, value.opening_method);
-    h.write_u64(u64::from(value.setup_natural_len.is_some()));
-    h.write_u64(value.setup_natural_len.unwrap_or(0));
 }
 
-/// Hash one fold level. Root and recursive folds share this, exactly as they
-/// share `GeneratedFold`.
-fn write_generated_fold(h: &mut Fnv64, fold: &GeneratedFold, full_prefix_content_mode: bool) {
+fn write_generated_fold_core(h: &mut Fnv64, fold: GeneratedFoldCore) {
     write_generated_group(h, fold.group);
-    h.write_u64(fold.precommitted_groups.len() as u64);
-    for group in fold.precommitted_groups {
-        write_generated_frozen_group(h, group);
-    }
     write_generated_open_matrix(h, fold.open_commit_matrix);
     write_generated_partition(h, fold.witness_chunks);
+}
+
+fn write_generated_root_fold(h: &mut Fnv64, fold: &GeneratedRootFold) {
+    write_generated_fold_core(h, fold.core);
+    h.write_u64(u64::from(fold.num_digits_inner));
+    h.write_u64(fold.precommitted_groups.len() as u64);
+    for group in fold.precommitted_groups {
+        write_generated_frozen_group(h, &group.group);
+    }
+}
+
+fn write_generated_recursive_fold(
+    h: &mut Fnv64,
+    fold: &GeneratedRecursiveFold,
+    full_prefix_content_mode: bool,
+) {
+    write_generated_fold_core(h, fold.core);
     h.write_u64(u64::from(fold.setup_prefix.is_some()));
     if let Some(prefix) = &fold.setup_prefix {
         if full_prefix_content_mode {
             write_setup_prefix_content_mode_full_prefix(h);
         }
-        write_generated_frozen_group(h, prefix);
+        write_generated_frozen_group(h, &prefix.group);
+        h.write_u64(prefix.natural_len);
     }
+    h.write_u64(match fold.payload_mode {
+        akita_types::CommitmentPayloadMode::Compressed => 0,
+        akita_types::CommitmentPayloadMode::Raw => 1,
+    });
+    write_optional_u128(h, fold.response_l2_sq_cap);
+}
+
+fn write_optional_u128(h: &mut Fnv64, value: Option<u128>) {
+    h.write_u64(u64::from(value.is_some()));
+    h.write_u128(value.unwrap_or(0));
 }
 
 fn write_generated_open_matrix(h: &mut Fnv64, value: GeneratedMatrix) {
@@ -743,6 +775,10 @@ impl Fnv64 {
     }
 
     fn write_u64(&mut self, v: u64) {
+        self.write_bytes(&v.to_le_bytes());
+    }
+
+    fn write_u128(&mut self, v: u128) {
         self.write_bytes(&v.to_le_bytes());
     }
 

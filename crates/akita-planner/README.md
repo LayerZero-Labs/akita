@@ -226,15 +226,16 @@ alone.
 
 ## Generated Tables
 
-The planner owns the generated schedule-table representation and expansion
+The planner owns the generated schedule table representation and expansion
 logic. Deterministic generated table data is tracked in the `akita-schedules`
 crate. Compact entries mirror the protocol topology:
 
-- `GeneratedRootFold` records the root-only challenge form, exact fold digits
-  and cap, ordered precommitted groups, final-group commitment, open matrix,
-  and witness partition.
-- `GeneratedRecursiveFold` records the recursive witness commitment, open
-  matrix, optional incoming setup prefix, and witness partition.
+- `GeneratedFoldCore` stores the new group, shared opening matrix, and witness
+  chunk count used by every nonterminal fold.
+- `GeneratedRootFold` adds the root inner digit depth and ordered frozen
+  precommitted groups.
+- `GeneratedRecursiveFold` adds the optional setup prefix, payload mode, and
+  optional L2 response cap.
 - `GeneratedTerminalFold` records only source geometry and the inner matrix
   choice; terminal B/D matrices and outer/open digit bases do not exist.
 

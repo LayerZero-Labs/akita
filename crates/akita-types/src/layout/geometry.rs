@@ -3,8 +3,7 @@
 //! These two types are the
 //! single home for arithmetic that is currently spelled out at each site that
 //! needs it. They own no policy and no matrix identity, so they are `Copy`,
-//! const-constructible, and safe to embed in a `static` — which step 4 does when
-//! it restructures the commit-phase profile around them.
+//! const-constructible, and safe to embed in static commit-phase profiles.
 //!
 //! Nothing here changes a byte. The block triple `(N, M, B)` is already
 //! contiguous in every descriptor encoder that writes it, so an atomic encoder
@@ -188,8 +187,7 @@ impl GadgetDigits {
     /// Atomic descriptor encoding, in declared field order.
     ///
     /// Byte-neutral only where `(log_basis, num_digits)` is already contiguous.
-    /// Two encoders interleave their role fields and must keep writing them
-    /// individually until step 4 restructures them.
+    /// Encoders that interleave role fields must write those fields individually.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_u32(bytes, self.log_basis);
         push_usize(bytes, self.num_digits);

@@ -32,7 +32,7 @@ impl FoldSchedule {
                 "a fold schedule descriptor requires a root fold".to_string(),
             )
         })?;
-        // Schedule descriptor epoch. Bumped with the step-5 byte break.
+        // Schedule descriptor epoch for the unified group ownership format.
         bytes.push(2);
         append_root_fold_descriptor_bytes(
             bytes,
@@ -67,7 +67,7 @@ impl FoldSchedule {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        // Schedule descriptor epoch. Bumped with the step-5 byte break.
+        // Schedule descriptor epoch for the unified group ownership format.
         bytes.push(2);
         append_root_fold_descriptor_bytes(
             bytes,

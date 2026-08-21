@@ -43,20 +43,18 @@ pub enum NextWitnessBindingPolicy {
 
 /// Parameters for one fold level: the root fold or one recursive fold.
 ///
-/// Replaces six types. `FoldParams`, `FoldParams`,
-/// `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `FoldParams`, and
-/// `FoldParams` held the same information in different shapes, with the
-/// overlap kept honest by eight equality audits. Every one of those audits
-/// compared a field with a copy of itself:
+/// Replaces `RootFoldParams` and `RecursiveFoldParams`. Their nested
+/// `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `WitnessPartition`,
+/// and `ScheduledSetupPrefix` types split one level across several owners.
+/// The overlap was kept honest by equality audits. Each audit compared a
+/// field with a copy of itself:
 ///
-/// - `FoldParams::open_commit_matrix` and `FoldParams::open_commit_matrix`
-///   duplicated `params.open.matrix`;
+/// - both fold types stored `open_commit_matrix` beside the same matrix in
+///   `params`;
 /// - `sparse_challenge_config` on both duplicated `params.fold_challenge_config`;
-/// - `FoldParams::precommitted_groups` duplicated
-///   `params.precommitted_groups`, and each entry's `descriptor` duplicated its
-///   own `commitment.profile`;
-/// - `FoldParams::incoming_setup_prefix` duplicated
-///   `params.setup_prefix`;
+/// - root precommitted entries duplicated the groups already held by `params`;
+/// - `RecursiveFoldParams::incoming_setup_prefix` duplicated the setup-prefix
+///   group already held by `params`;
 /// - `RootFinalGroupParams` was a one-field wrapper.
 ///
 /// Root and recursive folds share this type because after the merge they hold
@@ -344,6 +342,12 @@ impl FoldSchedule {
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
         let root_commitment = &self.root.params;
+        root_commitment.validate_group_topology()?;
+        if root_commitment.setup_prefix().is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "root fold cannot consume a setup prefix".into(),
+            ));
+        }
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
         for group in self.root.params.precommitted_groups() {
@@ -356,6 +360,12 @@ impl FoldSchedule {
         }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
+            step.params.validate_group_topology()?;
+            if !step.params.precommitted_groups().is_empty() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} cannot consume precommitted groups"
+                )));
+            }
             step.params.validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.setup_prefix().is_some();
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {

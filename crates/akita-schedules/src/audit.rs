@@ -494,17 +494,13 @@ pub(crate) fn audit_resolved_schedule(
             "root cannot use an L2 A security route",
         ));
     }
-    let expected_final_profile = akita_types::GroupCommitPhaseParams::try_from_params(
-        profiles.final_group.group,
-        final_params,
-    )?;
     // Four of the five comparisons that used to live here compared a field with
     // a copy of itself and are deleted with the merge: the shared D matrix, the
     // precommitted-group count (twice over), and each group's `descriptor`
     // against its own `commitment.profile`. What survives is the only one that
     // relates two independent sources: the ordered profiles from the lookup key
     // against the expanded row.
-    if profiles.final_group != expected_final_profile
+    if profiles.final_group != final_params.own_group().profile
         || profiles.precommitteds.len() != final_params.precommitted_groups().len()
     {
         return Err(invalid(

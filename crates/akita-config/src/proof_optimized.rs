@@ -193,7 +193,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
             // resident, so it is provisionable at its own polynomial count even
             // when the grouped root it later feeds is not.
             for group in entry.root.precommitted_groups {
-                let profile = group.profile;
+                let profile = group.group.profile;
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
@@ -210,7 +210,7 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.profile)
+                    .map(|group| group.group.profile)
                     .collect(),
             };
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {

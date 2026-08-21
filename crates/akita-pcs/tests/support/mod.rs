@@ -560,7 +560,7 @@ where
                 AkitaError::InvalidSetup("packing setup prefix has no balanced split".into())
             })?;
         let mut prefix_source_params = successor_witness.clone();
-        prefix_source_params.set_setup_prefix(None);
+        prefix_source_params.set_setup_prefix(None)?;
         prefix_source_params
             .own_group_mut()
             .profile
@@ -672,7 +672,7 @@ where
             )?;
         let incoming_setup_prefix =
             akita_types::scheduled_setup_prefix(root_setup_natural_len, prefix_params);
-        successor_witness.set_setup_prefix(Some(incoming_setup_prefix));
+        successor_witness.set_setup_prefix(Some(incoming_setup_prefix))?;
         let successor_d_width = successor_witness
             .open()
             .matrix
@@ -736,7 +736,7 @@ where
                     SparseChallengeConfig::production_for_ring_dim(d_a).ok_or_else(|| {
                         AkitaError::InvalidSetup("missing early-ET prefix challenge family".into())
                     })?;
-                step.params.set_setup_prefix(Some(prefix));
+                step.params.set_setup_prefix(Some(prefix))?;
             }
             &mut step.params
         } else {

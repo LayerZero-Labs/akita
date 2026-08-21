@@ -226,9 +226,8 @@ impl GroupOpenPhaseParams {
         bytes
     }
 
-    /// Validate and materialize one frozen group at the batch-shared opening
-    /// basis. This is the canonical admission path for planner generation and
-    /// generated-schedule replay.
+    /// Validate and materialize one ordinary frozen precommit at the
+    /// batch-shared opening basis.
     pub fn admit(
         layout: GroupCommitPhaseParams,
         num_digits_fold: usize,
@@ -237,7 +236,66 @@ impl GroupOpenPhaseParams {
         fold_challenge_config: SparseChallengeConfig,
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
-        layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        Self::admit_with_setup_natural_len(
+            layout,
+            None,
+            num_digits_fold,
+            policy,
+            opening_method,
+            fold_challenge_config,
+            log_basis_open,
+        )
+    }
+
+    /// Validate and materialize a recursive setup prefix at the batch-shared
+    /// opening basis.
+    pub fn admit_setup_prefix(
+        layout: GroupCommitPhaseParams,
+        natural_len: usize,
+        num_digits_fold: usize,
+        policy: PrecommittedGroupAdmissionPolicy,
+        opening_method: OpeningMethod,
+        fold_challenge_config: SparseChallengeConfig,
+        log_basis_open: u32,
+    ) -> Result<Self, AkitaError> {
+        Self::admit_with_setup_natural_len(
+            layout,
+            Some(natural_len),
+            num_digits_fold,
+            policy,
+            opening_method,
+            fold_challenge_config,
+            log_basis_open,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_with_setup_natural_len(
+        layout: GroupCommitPhaseParams,
+        setup_natural_len: Option<usize>,
+        num_digits_fold: usize,
+        policy: PrecommittedGroupAdmissionPolicy,
+        opening_method: OpeningMethod,
+        fold_challenge_config: SparseChallengeConfig,
+        log_basis_open: u32,
+    ) -> Result<Self, AkitaError> {
+        if let Some(natural_len) = setup_natural_len {
+            layout.validate(policy.decomposition.field_bits())?;
+            let d_a = layout.inner.matrix.ring_dimension();
+            let n_prefix = 1usize
+                .checked_shl(layout.group.num_vars() as u32)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
+            if natural_len == 0
+                || natural_len > n_prefix
+                || natural_len.div_ceil(d_a) != layout.blocks.live_ring_elements_per_claim
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "setup-prefix natural length disagrees with its frozen commitment".into(),
+                ));
+            }
+        } else {
+            layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        }
         if layout.inner.matrix.sis_modulus_profile() != policy.sis_modulus_profile
             || layout.outer.matrix.sis_modulus_profile() != policy.sis_modulus_profile
         {
@@ -313,7 +371,7 @@ impl GroupOpenPhaseParams {
 
         let params = Self {
             profile: layout,
-            setup_natural_len: None,
+            setup_natural_len,
             opening: GroupOpeningPlan {
                 opening_method,
                 fold_challenge_config,

@@ -4,17 +4,16 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, GroupOpenPhaseParams, PrecommittedGroupAdmissionPolicy};
 
-use crate::generated::GeneratedFrozenGroup;
+use crate::generated::GeneratedPrecommittedGroup;
 use crate::PlannerPolicy;
 
 pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     key: &AkitaScheduleLookupKey,
-    generated_groups: &[GeneratedFrozenGroup],
+    generated_groups: &[GeneratedPrecommittedGroup],
     policy: &PlannerPolicy,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     log_basis_open: u32,
-    open_ring_dimension: usize,
-) -> Result<(Vec<GroupOpenPhaseParams>, usize), AkitaError> {
+) -> Result<Vec<GroupOpenPhaseParams>, AkitaError> {
     if key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "multi-group root params require at least one precommitted group".to_string(),
@@ -36,6 +35,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
         .iter()
         .zip(generated_groups)
         .map(|(layout, generated)| {
+            let generated = generated.group;
             let challenge_dimension = match generated.opening_method {
                 akita_types::OpeningMethod::EvaluationTrace => layout.inner.matrix.ring_dimension(),
                 akita_types::OpeningMethod::SubringCoefficientPacking {
@@ -61,11 +61,5 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
             Ok(params)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut d_width = 0usize;
-    for group in &groups {
-        d_width = d_width
-            .checked_add(group.d_segment_width(policy.claim_ext_degree, open_ring_dimension)?)
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
-    }
-    Ok((groups, d_width))
+    Ok(groups)
 }

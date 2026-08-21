@@ -20,7 +20,7 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS floors; layout and proof-size helpers |
-| `akita-planner` | `Cfg`-free schedule engine: generated table types, catalog validation, compact→`LevelParams` expansion, offline DP |
+| `akita-planner` | `Cfg`-free schedule engine: generated table types, catalog validation, compact→`CommittedGroupParams` expansion, offline DP |
 | `akita-schedules` | Feature-gated shipped schedule table data (types from `akita-planner`) |
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, `policy_of::<Cfg>()`, schedule catalog wiring, transcript bind helper |
 | `akita-setup` | Config-backed setup construction and optional setup cache |
@@ -66,7 +66,7 @@ The cyclotomic ring dimension is **schedule-derived shape metadata, not a
 type parameter of the protocol**. Protocol data — commitments, hints, proofs,
 claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`, and
 their enum wrapper) — is flat field-element vectors (`RingVec<F>`). Per-level
-`CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
+`CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `CommittedGroupParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
 differ. Here, *role* is the historical protocol name for a commitment matrix's
 fixed job: A carries the relation witness, B commits the next witness, and D
@@ -97,7 +97,7 @@ kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
 proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/runtime-ring-cutover.md`) reduce to feeding different
-dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
+dimensions to different adapters. `CommitmentRingDims` on `CommittedGroupParams::role_dims`
 names the per-matrix ring dimensions; prove/verify hot paths dispatch on
 `d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.
 
@@ -116,7 +116,7 @@ Mixed-dimension malformed proof rejection is covered by
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
 | `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
-| `LevelParams` | Per-level recursion layout and config (ring/ext degrees, decomposition depth, `role_dims`) |
+| `CommittedGroupParams` | Per-level recursion layout and config (ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_schedule`; derive via `akita_config::policy_of::<Cfg>()` |
 | `DensePoly`, `OneHotPoly`, `Root*Source`, compute-backend traits | Polynomial sources and operation capabilities consumed by the scheme |
 | `WitnessLayout`, `WitnessUnitLayout` | Canonical digit-innermost group-and-chunk ranges ([opening layout](./proving/opening-points-layout.md)) |

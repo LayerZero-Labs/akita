@@ -114,10 +114,10 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
         for entry in catalog.entries {
             for group in entry.root.precommitted_groups {
                 assert!(
-                    produced.contains(&group.profile),
+                    produced.contains(&group.group.profile),
                     "family {} embeds a grouped precommitted descriptor without an exact generated S producer: {:?}",
                     family.module_name,
-                    group.profile.group
+                    group.group.profile.group
                 );
             }
         }
@@ -179,9 +179,6 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
     use std::collections::BTreeSet;
 
-    // The chunk count is the value now; `GeneratedWitnessPartition` spelled the
-    // `1` case as a separate variant and carried nothing else.
-    let chunks = |witness_chunks: u32| witness_chunks.max(1);
     let catalogs = [
         fp128::OneHot::schedule_catalog().expect("W1 catalog"),
         fp128::OneHotMultiChunkW2R2::schedule_catalog().expect("W2 catalog"),
@@ -193,11 +190,11 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
     for catalog in catalogs {
         for entry in catalog.entries {
             observed.insert((
-                entry.root.group.outer_slice_count,
-                chunks(entry.root.witness_chunks),
+                entry.root.core.group.outer_slice_count,
+                entry.root.core.witness_chunks,
             ));
             for fold in entry.recursive_folds.iter().take(2) {
-                observed.insert((fold.group.outer_slice_count, chunks(fold.witness_chunks)));
+                observed.insert((fold.core.group.outer_slice_count, fold.core.witness_chunks));
             }
         }
     }
@@ -208,6 +205,42 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
             "generated schedules must retain S/W={expected:?}; observed {observed:?}"
         );
     }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_expansion_rejects_zero_witness_chunks() {
+    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let policy = policy_of::<fp128::Dense>();
+    let original = *catalog
+        .entries
+        .iter()
+        .find(|entry| !entry.recursive_folds.is_empty())
+        .expect("recursive generated row");
+
+    let mut root_zero = original;
+    root_zero.root.core.witness_chunks = 0;
+    let error = schedule_from_entry(
+        &root_zero,
+        &root_zero.to_runtime_lookup_key(),
+        &policy,
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect_err("zero root chunk count must reject");
+    assert!(error.to_string().contains("chunk count must be nonzero"));
+
+    let mut recursive_zero = original;
+    let folds = Box::leak(recursive_zero.recursive_folds.to_vec().into_boxed_slice());
+    folds[0].core.witness_chunks = 0;
+    recursive_zero.recursive_folds = folds;
+    let error = schedule_from_entry(
+        &recursive_zero,
+        &recursive_zero.to_runtime_lookup_key(),
+        &policy,
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect_err("zero recursive chunk count must reject");
+    assert!(error.to_string().contains("chunk count must be nonzero"));
 }
 
 #[cfg(feature = "all-schedules")]
@@ -242,6 +275,60 @@ fn catalog_identity_rejects_planner_policy_changes() {
     mutated.identity.selective_l2_response_model =
         akita_schedules::SelectiveL2ResponseModelId::Disabled;
     assert_rejected("selective L2 response model", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_binds_every_role_specific_execution_field() {
+    let policy = policy_of::<fp128::Dense>();
+    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let original = *catalog
+        .entries
+        .iter()
+        .find(|entry| !entry.recursive_folds.is_empty())
+        .expect("recursive generated row");
+    let identity = akita_schedules::expected_catalog_identity(
+        catalog.identity.family_name,
+        &policy,
+        std::slice::from_ref(&original),
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect("single-row identity");
+    let assert_rejected = |entry, label| {
+        let mutated = akita_schedules::GeneratedScheduleTable {
+            entries: Box::leak(vec![entry].into_boxed_slice()),
+            identity,
+        };
+        let error =
+            validate_catalog_identity(&mutated, &policy, fp128::Dense::ring_challenge_config)
+                .expect_err("executed generated field mutation must invalidate catalog identity");
+        assert!(
+            error.to_string().contains("catalog identity mismatch"),
+            "{label} mutation returned the wrong error: {error}"
+        );
+    };
+
+    let mut root_digits = original;
+    root_digits.root.num_digits_inner += 1;
+    assert_rejected(root_digits, "root inner digits");
+
+    let mut recursive_payload = original;
+    let folds = Box::leak(
+        recursive_payload
+            .recursive_folds
+            .to_vec()
+            .into_boxed_slice(),
+    );
+    folds[0].payload_mode = match folds[0].payload_mode {
+        akita_types::CommitmentPayloadMode::Compressed => akita_types::CommitmentPayloadMode::Raw,
+        akita_types::CommitmentPayloadMode::Raw => akita_types::CommitmentPayloadMode::Compressed,
+    };
+    recursive_payload.recursive_folds = folds;
+    assert_rejected(recursive_payload, "recursive payload mode");
+
+    let mut terminal_payload = original;
+    terminal_payload.terminal.z_payload_bytes += 1;
+    assert_rejected(terminal_payload, "terminal payload bytes");
 }
 
 #[cfg(feature = "all-schedules")]
@@ -302,12 +389,12 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
     if !entry.recursive_folds.is_empty() {
         let mut folds = entry.recursive_folds.to_vec();
         let last = folds.last_mut().expect("copied recursive fold");
-        last.group.inner_commit_matrix.ring_dimension = 64;
-        last.group.outer_commit_matrix.ring_dimension = 64;
-        last.open_commit_matrix.ring_dimension = 64;
+        last.core.group.inner_commit_matrix.ring_dimension = 64;
+        last.core.group.outer_commit_matrix.ring_dimension = 64;
+        last.core.open_commit_matrix.ring_dimension = 64;
         entry.recursive_folds = Box::leak(folds.into_boxed_slice());
     } else {
-        entry.root.group.inner_commit_matrix.ring_dimension = 64;
+        entry.root.core.group.inner_commit_matrix.ring_dimension = 64;
     }
     entry.terminal.inner_commit_matrix.ring_dimension = 128;
 

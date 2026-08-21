@@ -501,11 +501,13 @@ mod tests {
         .expect("prefix compression")
         .max_setup_field_elements()
         .expect("prefix setup");
-        params.set_setup_prefix(Some(crate::scheduled_setup_prefix(64, prefix_params)));
+        params
+            .set_setup_prefix(Some(crate::scheduled_setup_prefix(64, prefix_params)))
+            .unwrap();
 
         let mut without_prefix = 1;
         let mut final_group_only = params.clone();
-        final_group_only.set_setup_prefix(None);
+        final_group_only.set_setup_prefix(None).unwrap();
         accumulate_compression_matrix_field_elements_for_level(
             &final_group_only,
             &mut without_prefix,

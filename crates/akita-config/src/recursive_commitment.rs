@@ -150,7 +150,7 @@ mod tests {
             .schedule()
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
             .all(|group| group.profile == expected));
     }
@@ -167,7 +167,7 @@ mod tests {
             .schedule()
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .is_empty());
         assert!(schedule
             .schedule()

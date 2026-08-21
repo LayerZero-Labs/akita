@@ -441,9 +441,46 @@ fn root_final_group_level_params_candidate(
         return Ok(None);
     };
 
-    let params = CommittedGroupParams {
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-        source_encoding: akita_types::CommittedSourceEncoding::for_producer(
+    let groups = precommitted_groups
+        .iter()
+        .copied()
+        .chain(std::iter::once(akita_types::GroupOpenPhaseParams {
+            profile: akita_types::GroupCommitPhaseParams {
+                version: akita_types::GroupCommitPhaseParams::VERSION,
+                group: akita_types::PolynomialGroupLayout::new(
+                    ctx.final_num_vars,
+                    ctx.main_num_polys,
+                ),
+                blocks: akita_types::BlockGeometry::new(
+                    num_live_ring_elements_per_claim,
+                    num_positions_per_block,
+                    num_live_blocks,
+                ),
+                outer_slice_count,
+                inner: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                    inner_commit_matrix,
+                ),
+                outer: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
+                    outer_commit_matrix,
+                ),
+            },
+            opening: akita_types::GroupOpeningPlan {
+                opening_method: ctx.opening.method(),
+                fold_challenge_config: ctx.opening.challenge_config(),
+                log_basis_open,
+                num_digits_open,
+                num_digits_fold,
+            },
+            setup_natural_len: None,
+        }))
+        .collect();
+    let params = CommittedGroupParams::try_new(
+        groups,
+        open_commit_matrix,
+        akita_types::CommitmentPayloadMode::Compressed,
+        akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,
             d_a,
@@ -452,44 +489,8 @@ fn root_final_group_level_params_candidate(
         ),
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.
-        witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-        open_matrix: open_commit_matrix,
-        groups: precommitted_groups
-            .iter()
-            .copied()
-            .chain(std::iter::once(akita_types::GroupOpenPhaseParams {
-                profile: akita_types::GroupCommitPhaseParams {
-                    version: akita_types::GroupCommitPhaseParams::VERSION,
-                    group: akita_types::PolynomialGroupLayout::new(
-                        ctx.final_num_vars,
-                        ctx.main_num_polys,
-                    ),
-                    blocks: akita_types::BlockGeometry::new(
-                        num_live_ring_elements_per_claim,
-                        num_positions_per_block,
-                        num_live_blocks,
-                    ),
-                    outer_slice_count,
-                    inner: akita_types::RoleParams::new(
-                        akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
-                        inner_commit_matrix,
-                    ),
-                    outer: akita_types::RoleParams::new(
-                        akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
-                        outer_commit_matrix,
-                    ),
-                },
-                opening: akita_types::GroupOpeningPlan {
-                    opening_method: ctx.opening.method(),
-                    fold_challenge_config: ctx.opening.challenge_config(),
-                    log_basis_open,
-                    num_digits_open,
-                    num_digits_fold,
-                },
-                setup_natural_len: None,
-            }))
-            .collect(),
-    };
+        akita_types::ChunkedWitnessCfg::default(),
+    )?;
 
     Ok(Some(params))
 }

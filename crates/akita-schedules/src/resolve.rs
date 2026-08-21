@@ -194,7 +194,7 @@ fn profiles_for_entry(
             .root
             .precommitted_groups
             .iter()
-            .map(|group| group.profile)
+            .map(|group| group.group.profile)
             .collect(),
     })
 }

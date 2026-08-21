@@ -124,9 +124,26 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         ),
     };
     let mut grouped = lp;
-    grouped.set_precommitted_groups(vec![precommit]);
+    grouped.set_precommitted_groups(vec![precommit]).unwrap();
     let batch = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
     (grouped, batch)
+}
+
+#[test]
+fn fold_groups_reject_empty_and_misordered_topologies_without_unwinding() {
+    let empty = std::panic::catch_unwind(|| FoldGroups::try_from_vec(Vec::new()));
+    assert!(matches!(empty, Ok(Err(AkitaError::InvalidSetup(_)))));
+
+    let ordinary = *sample_layout_lp().own_group();
+    let mut prefix = ordinary;
+    prefix.setup_natural_len = Some(64);
+
+    let sole_prefix = std::panic::catch_unwind(|| FoldGroups::try_from_vec(vec![prefix]));
+    assert!(matches!(sole_prefix, Ok(Err(AkitaError::InvalidSetup(_)))));
+
+    let late_prefix =
+        std::panic::catch_unwind(|| FoldGroups::try_from_vec(vec![ordinary, prefix, ordinary]));
+    assert!(matches!(late_prefix, Ok(Err(AkitaError::InvalidSetup(_)))));
 }
 
 #[test]
@@ -155,7 +172,13 @@ fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
 fn shared_d_digit_basis_uses_root_opening_basis() {
     let (mut grouped, _) = sample_multi_group_root_params();
     grouped.own_group_mut().opening.log_basis_open = 3;
-    grouped.groups_mut()[0].profile.outer.digits.log_basis = 6;
+    grouped
+        .preceding_group_mut_for_test(0)
+        .unwrap()
+        .profile
+        .outer
+        .digits
+        .log_basis = 6;
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);

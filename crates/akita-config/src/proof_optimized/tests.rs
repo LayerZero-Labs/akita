@@ -217,7 +217,7 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                 .into_schedule();
             schedule.recursive_folds.iter().any(|step| {
                 matches!(
-                    step.params.inner.matrix.security_route(),
+                    step.params.inner().matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             }) || matches!(
@@ -348,7 +348,7 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     let root = &schedule.root.params;
     assert_eq!(
         root.num_digits_fold(),
-        first.root.group.num_digits_fold as usize
+        first.root.core.group.num_digits_fold as usize
     );
 }
 

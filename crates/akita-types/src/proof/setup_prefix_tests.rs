@@ -389,10 +389,12 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
     let mut precommitted_params = sample_level_params();
     retarget_group_role_dims(&mut precommitted_params, 256, 128);
     let precommitted_layout = PolynomialGroupLayout::new(5, 1);
-    final_params.set_precommitted_groups(vec![precommitted_group(
-        &precommitted_params,
-        precommitted_layout,
-    )]);
+    final_params
+        .set_precommitted_groups(vec![precommitted_group(
+            &precommitted_params,
+            precommitted_layout,
+        )])
+        .unwrap();
     let opening_batch = OpeningClaimsLayout::from_root_groups(
         &[precommitted_layout],
         PolynomialGroupLayout::new(5, 3),
@@ -477,7 +479,7 @@ fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
     let commitment_params =
         setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
     let scheduled = scheduled_setup_prefix(natural_len, commitment_params);
-    level_params.set_setup_prefix(Some(scheduled));
+    level_params.set_setup_prefix(Some(scheduled)).unwrap();
     let id = scheduled.slot_id().expect("setup prefix group");
     let slot = verifier_slot_for_id(id.clone());
     let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
@@ -556,7 +558,7 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
     )
     .slot_id()
     .expect("setup prefix group");
-    level_params.set_setup_prefix(None);
+    level_params.set_setup_prefix(None).unwrap();
 
     let err = setup_prefix_coverage_eval_len(
         Some(2 * d_setup),

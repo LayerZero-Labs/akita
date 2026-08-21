@@ -540,7 +540,8 @@ mod tests {
                 pre.open().digits.num_digits,
                 pre.num_digits_fold(),
             ),
-        });
+        })
+        .unwrap();
         root
     }
 

@@ -135,7 +135,7 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
                     .root
                     .precommitted_groups
                     .iter()
-                    .map(|group| group.profile)
+                    .map(|group| group.group.profile)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {

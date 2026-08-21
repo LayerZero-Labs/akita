@@ -59,9 +59,11 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 }
 
 mod descriptor;
+mod groups;
 mod own_group;
 mod precommitted;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
+use groups::FoldGroups;
 pub use precommitted::{
     opening_d_segment_width, GroupOpenPhaseParams, GroupOpeningPlan, OpeningFamily, OpeningMethod,
     PrecommittedGroupAdmissionPolicy,
@@ -94,11 +96,11 @@ pub struct CommittedGroupParams {
     /// The single place a fold's groups live. Its own group used to be a dozen
     /// flat fields alongside this list, which is why `final_group` had to
     /// materialise one and why three callers each invented a layout for it.
-    pub groups: Vec<GroupOpenPhaseParams>,
+    groups: FoldGroups,
     /// Shared D matrix over every group's `w_hat` segment.
     ///
-    /// The matrix is fold-owned, as step 5b established -- one owner, not one
-    /// per group. The opening *digits* are not here: each group carries its own
+    /// The matrix is fold-owned, with one owner rather than one copy per group.
+    /// The opening *digits* are not here: each group carries its own
     /// in its `GroupOpeningPlan`, so putting them on the fold too would recreate
     /// exactly the mirror this spec exists to delete.
     pub open_matrix: OpenCommitMatrixParams,
@@ -111,6 +113,28 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Build fold parameters with checked, canonically ordered group storage.
+    pub fn try_new(
+        groups: Vec<GroupOpenPhaseParams>,
+        open_matrix: OpenCommitMatrixParams,
+        payload_mode: crate::CommitmentPayloadMode,
+        source_encoding: crate::CommittedSourceEncoding,
+        witness_chunk: crate::witness::ChunkedWitnessCfg,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            groups: FoldGroups::try_from_vec(groups)?,
+            open_matrix,
+            payload_mode,
+            source_encoding,
+            witness_chunk,
+        })
+    }
+
+    /// Validate the canonical group topology before reading group geometry.
+    pub fn validate_group_topology(&self) -> Result<(), AkitaError> {
+        self.groups.validate_topology()
+    }
+
     /// Canonical byte encoding used to order semantically distinct level candidates.
     ///
     /// This is an ordering descriptor, not a wire encoding or transcript commitment.
@@ -194,7 +218,7 @@ impl CommittedGroupParams {
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
-        shared_d_digit_log_basis(self.open().digits.log_basis, &self.groups)
+        shared_d_digit_log_basis(self.open().digits.log_basis, self.groups.as_slice())
     }
 
     /// Per-role ring dimensions derived from the three matrix objects.
@@ -243,7 +267,7 @@ impl CommittedGroupParams {
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             // A zeroed shell whose only group is its own; callers fill the
             // geometry through `with_decomp`, as they always did.
-            groups: vec![GroupOpenPhaseParams {
+            groups: FoldGroups::singleton(GroupOpenPhaseParams {
                 profile: crate::GroupCommitPhaseParams {
                     version: crate::GroupCommitPhaseParams::VERSION,
                     group: crate::PolynomialGroupLayout::singleton(0),
@@ -282,7 +306,7 @@ impl CommittedGroupParams {
                     num_digits_fold: 1,
                 },
                 setup_natural_len: None,
-            }],
+            }),
         }
     }
 
@@ -294,7 +318,7 @@ impl CommittedGroupParams {
 
     #[inline]
     pub fn precommitted_group_count(&self) -> usize {
-        self.groups.len().saturating_sub(1)
+        self.groups.preceding().len()
     }
 
     #[inline]
@@ -304,13 +328,11 @@ impl CommittedGroupParams {
         if group_index >= self.precommitted_group_count() {
             return None;
         }
-        self.groups.get(group_index)
+        self.groups.preceding_group(group_index)
     }
 
     pub fn setup_prefix(&self) -> Option<&GroupOpenPhaseParams> {
-        self.groups
-            .first()
-            .filter(|group| group.setup_natural_len.is_some())
+        self.groups.setup_prefix()
     }
 
     /// The frozen precommitted groups, without any incoming prefix.
@@ -320,50 +342,41 @@ impl CommittedGroupParams {
     /// or measured the old `Vec` keeps working.
     #[must_use]
     pub fn precommitted_groups(&self) -> &[GroupOpenPhaseParams] {
-        let tail = &self.groups[..self.groups.len().saturating_sub(1)];
-        if self.setup_prefix().is_some() {
-            &tail[1..]
-        } else {
-            tail
-        }
+        self.groups.precommitted()
     }
 
-    /// Mutable access to the whole group list.
-    ///
-    /// Appends land after any prefix, so the prefix-first invariant holds.
-    pub fn groups_mut(&mut self) -> &mut Vec<GroupOpenPhaseParams> {
-        &mut self.groups
+    #[cfg(test)]
+    pub(crate) fn preceding_group_mut_for_test(
+        &mut self,
+        group_index: usize,
+    ) -> Option<&mut GroupOpenPhaseParams> {
+        self.groups.preceding_group_mut(group_index)
     }
 
     /// Add one precommitted group, keeping the fold's own group last.
-    pub fn insert_precommitted_group(&mut self, group: GroupOpenPhaseParams) {
-        let at = self.groups.len().saturating_sub(1);
-        self.groups.insert(at, group);
+    pub fn insert_precommitted_group(
+        &mut self,
+        group: GroupOpenPhaseParams,
+    ) -> Result<(), AkitaError> {
+        self.groups.insert_precommitted(group)
     }
 
     /// Replace this fold's precommitted groups, keeping any incoming prefix.
-    pub fn set_precommitted_groups(&mut self, groups: Vec<GroupOpenPhaseParams>) {
-        let prefix = self.setup_prefix().copied();
-        let own = *self.own_group();
-        self.groups = prefix
-            .into_iter()
-            .chain(groups)
-            .chain(std::iter::once(own))
-            .collect();
+    pub fn set_precommitted_groups(
+        &mut self,
+        groups: Vec<GroupOpenPhaseParams>,
+    ) -> Result<(), AkitaError> {
+        self.groups.replace_precommitted(groups)
     }
 
     /// Replace this fold's incoming setup prefix.
     ///
     /// Keeps the prefix at index zero so canonical order survives the edit.
-    pub fn set_setup_prefix(&mut self, prefix: Option<GroupOpenPhaseParams>) {
-        // Only the leading entry can be a prefix; the own group is last and a
-        // precommitted group may legitimately carry no natural length.
-        if self.setup_prefix().is_some() {
-            self.groups.remove(0);
-        }
-        if let Some(prefix) = prefix {
-            self.groups.insert(0, prefix);
-        }
+    pub fn set_setup_prefix(
+        &mut self,
+        prefix: Option<GroupOpenPhaseParams>,
+    ) -> Result<(), AkitaError> {
+        self.groups.replace_setup_prefix(prefix)
     }
 
     pub fn precommitted_group_iter(&self) -> impl Iterator<Item = &GroupOpenPhaseParams> {
@@ -371,7 +384,7 @@ impl CommittedGroupParams {
         // this iterator has always yielded `[prefix?, precommitted...]`, and the
         // opening batch is built from it, so dropping the prefix here shrinks the
         // batch by one and makes it disagree with `group_count()`.
-        self.groups[..self.groups.len().saturating_sub(1)].iter()
+        self.groups.preceding().iter()
     }
 
     /// Reject multi-group-root params at scalar-only call sites.
@@ -470,9 +483,18 @@ impl CommittedGroupParams {
         fold_level: usize,
         num_polynomials: usize,
     ) -> Result<crate::CommitmentSliceGeometry, AkitaError> {
+        self.validate_group_topology()?;
+        let own_profile = &self.own_group().profile;
+        own_profile.validate(own_profile.inner.matrix.sis_modulus_profile().field_bits())?;
+        own_profile.validate_root_geometry()?;
         if num_polynomials == 0 {
             return Err(AkitaError::InvalidSetup(
                 "commitment request requires at least one polynomial".into(),
+            ));
+        }
+        if self.own_group().profile.group.num_polynomials() != num_polynomials {
+            return Err(AkitaError::InvalidSetup(
+                "stored own-group arity disagrees with the commitment request".into(),
             ));
         }
         self.source_encoding.validate(self.d_a())?;
@@ -736,6 +758,7 @@ impl CommittedGroupParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
+        self.validate_group_topology()?;
         opening_batch.check()?;
         if self.open().digits.log_basis < self.outer().digits.log_basis {
             return Err(AkitaError::InvalidSetup(
@@ -747,11 +770,10 @@ impl CommittedGroupParams {
                 "opening group count does not match level params".to_string(),
             ));
         }
-        // No equality check against `opening_batch` here. The batch's final-group
-        // entry is a placeholder in the catalog-validation path -- it arrives as
-        // `(num_vars: 0, num_polynomials: 1)` -- so it is not an authority on
-        // this fold's own group and comparing them rejects every shipped
-        // recursive row.
+        // The catalog-validation path may carry a placeholder final-group
+        // layout. The stored own profile remains authoritative and is validated
+        // above; exact layout equality is enforced wherever the batch has a
+        // concrete final layout.
         for group_index in 0..self.precommitted_group_count() {
             let group_params = self
                 .precommitted_group_params(group_index)
@@ -893,24 +915,12 @@ impl CommittedGroupParams {
 
     /// This fold's own new group.
     ///
-    /// Takes no layout: the fold stores its own. Step 5b passed one in to avoid
-    /// threading it through the `with_decomp` call sites, which meant each
-    /// caller supplied a layout and they did not always agree.
+    /// Takes no layout because the fold stores its own authoritative layout.
     ///
     /// Cheap: `GroupOpenPhaseParams` is `Copy` and all of its fields already
     /// were.
     pub fn final_group(&self) -> crate::GroupOpenPhaseParams {
-        crate::GroupOpenPhaseParams {
-            profile: crate::GroupCommitPhaseParams::from_params_fields_pub(self.group(), self),
-            opening: GroupOpeningPlan {
-                opening_method: self.opening_method(),
-                fold_challenge_config: self.fold_challenge_config(),
-                log_basis_open: self.open().digits.log_basis,
-                num_digits_open: self.open().digits.num_digits,
-                num_digits_fold: self.num_digits_fold(),
-            },
-            setup_natural_len: None,
-        }
+        *self.own_group()
     }
 
     /// This fold's final group, for a scalar (single-polynomial) fold.
@@ -957,11 +967,8 @@ impl CommittedGroupParams {
     /// An incoming setup prefix is group 0, earlier precommitted groups follow,
     /// and the fold's own final/new group is last. This is the one ordering the
     /// schedule commits to; see `validate_nonterminal_opening_execution`.
-    pub fn groups(&self) -> Vec<crate::GroupOpenPhaseParams> {
-        let mut groups: Vec<crate::GroupOpenPhaseParams> =
-            self.precommitted_group_iter().copied().collect();
-        groups.push(self.final_group());
-        groups
+    pub fn groups(&self) -> &[crate::GroupOpenPhaseParams] {
+        self.groups.as_slice()
     }
 
     /// One group of this fold's opening batch, as a concrete group.
@@ -976,11 +983,10 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
-        let final_group_index = self.validate_opening_batch(opening_batch)?;
-        if group_index == final_group_index {
-            return Ok(self.final_group());
-        }
-        self.precommitted_group_params(group_index)
+        self.validate_opening_batch(opening_batch)?;
+        self.groups
+            .as_slice()
+            .get(group_index)
             .copied()
             .ok_or(AkitaError::InvalidProof)
     }
@@ -997,11 +1003,10 @@ impl CommittedGroupParams {
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
     ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
-        let final_group_index = self.validate_opening_batch_geometry(opening_batch)?;
-        if group_index == final_group_index {
-            return Ok(self.final_group());
-        }
-        self.precommitted_group_params(group_index)
+        self.validate_opening_batch_geometry(opening_batch)?;
+        self.groups
+            .as_slice()
+            .get(group_index)
             .copied()
             .ok_or(AkitaError::InvalidProof)
     }
@@ -1353,9 +1358,7 @@ impl CommittedGroupParams {
             // Rebuild only this fold's own group; the earlier entries are frozen.
             groups: {
                 let mut groups = self.groups.clone();
-                let own = groups
-                    .last_mut()
-                    .expect("a fold always owns its own new group");
+                let own = groups.own_mut();
                 own.profile.blocks = crate::BlockGeometry::new(
                     num_live_ring_elements_per_claim,
                     num_positions_per_block,
@@ -1419,9 +1422,7 @@ impl CommittedGroupParams {
             // frozen groups and are carried across untouched.
             groups: {
                 let mut groups = self.groups.clone();
-                let own = groups
-                    .last_mut()
-                    .expect("a fold always owns its own new group");
+                let own = groups.own_mut();
                 own.profile.group = other.group();
                 own.profile.blocks = other.blocks();
                 own.profile.outer_slice_count = other.outer_slice_count();
@@ -1461,6 +1462,7 @@ impl CommittedGroupParams {
     }
 
     fn validate_exact_fold_plan(self) -> Result<Self, AkitaError> {
+        self.validate_group_topology()?;
         if self.num_digits_fold() == 0 {
             return Err(AkitaError::InvalidSetup(
                 "exact fold plan must have nonzero digit depth".into(),

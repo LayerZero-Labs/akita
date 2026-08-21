@@ -16,7 +16,7 @@ use akita_error::AkitaError;
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::generated::{
     GeneratedFoldScheduleEntry, GeneratedFrozenGroup, GeneratedGroup, GeneratedMatrix,
-    GeneratedTerminalFold,
+    GeneratedSetupPrefix, GeneratedTerminalFold,
 };
 use crate::PlannerPolicy;
 use akita_types::sis::{
@@ -78,14 +78,13 @@ pub(crate) enum GroupLengthSource {
     IncomingWitness {
         input_witness_len: usize,
         num_claims: usize,
-        setup_prefix: Option<GeneratedFrozenGroup>,
+        setup_prefix: Option<GeneratedSetupPrefix>,
     },
     /// A grouped root pins its live length in its own geometry, and its shared D
     /// matrix carries the frozen precommitted segments alongside its own.
     PinnedGrouped {
         num_claims: usize,
         precommitted_groups: Vec<GroupOpenPhaseParams>,
-        precommitted_d_width: usize,
     },
 }
 
@@ -100,34 +99,14 @@ impl GroupLengthSource {
 }
 
 impl GeneratedFrozenGroup {
-    fn expand_to_precommitted_group(
+    fn expand_to_group(
         self,
+        setup_natural_len: Option<usize>,
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
-        let natural_len = generated_count(
-            self.setup_natural_len.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "generated setup prefix must carry its natural length".into(),
-                )
-            })?,
-            "setup-prefix natural length",
-        )?;
         let d_a = self.profile.inner.matrix.ring_dimension();
-        let committed_len = self
-            .profile
-            .blocks
-            .live_ring_elements_per_claim
-            .checked_mul(d_a)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
-            })?;
-        if natural_len == 0 || natural_len.checked_next_power_of_two() != Some(committed_len) {
-            return Err(AkitaError::InvalidSetup(
-                "generated setup-prefix natural length disagrees with its frozen commitment".into(),
-            ));
-        }
         // The consuming fold supplies the shared opening basis and the challenge
         // family; a prefix cannot pin its own. This used to be a stored
         // `GroupOpeningPlan` re-derived here and rejected on disagreement, which
@@ -146,16 +125,64 @@ impl GeneratedFrozenGroup {
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
         };
-        let params = GroupOpenPhaseParams::admit(
-            self.profile,
-            generated_count(u64::from(self.num_digits_fold), "setup-prefix fold digits")?,
-            admission_policy,
-            self.opening_method,
-            fold_challenge_config,
-            log_basis_open,
+        let num_digits_fold = generated_count(
+            u64::from(self.num_digits_fold),
+            "generated group fold digits",
         )?;
+        let params = if let Some(natural_len) = setup_natural_len {
+            GroupOpenPhaseParams::admit_setup_prefix(
+                self.profile,
+                natural_len,
+                num_digits_fold,
+                admission_policy,
+                self.opening_method,
+                fold_challenge_config,
+                log_basis_open,
+            )?
+        } else {
+            GroupOpenPhaseParams::admit(
+                self.profile,
+                num_digits_fold,
+                admission_policy,
+                self.opening_method,
+                fold_challenge_config,
+                log_basis_open,
+            )?
+        };
         params.validate()?;
         Ok(params)
+    }
+}
+
+impl GeneratedSetupPrefix {
+    fn expand_to_group(
+        self,
+        policy: &PlannerPolicy,
+        ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+        log_basis_open: u32,
+    ) -> Result<GroupOpenPhaseParams, AkitaError> {
+        let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
+        let d_a = self.group.profile.inner.matrix.ring_dimension();
+        let committed_len = self
+            .group
+            .profile
+            .blocks
+            .live_ring_elements_per_claim
+            .checked_mul(d_a)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
+            })?;
+        if natural_len == 0 || natural_len.checked_next_power_of_two() != Some(committed_len) {
+            return Err(AkitaError::InvalidSetup(
+                "generated setup-prefix natural length disagrees with its frozen commitment".into(),
+            ));
+        }
+        self.group.expand_to_group(
+            Some(natural_len),
+            policy,
+            ring_challenge_config,
+            log_basis_open,
+        )
     }
 }
 
@@ -197,7 +224,7 @@ impl GeneratedGroup {
     /// Split out so the one expansion body can take its prefix from a fold or
     /// its precommitted segments from a grouped root without branching twice.
     fn expand_setup_prefix(
-        prefix: Option<GeneratedFrozenGroup>,
+        prefix: Option<GeneratedSetupPrefix>,
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
@@ -207,20 +234,13 @@ impl GeneratedGroup {
         };
 
         let commitment_params =
-            group.expand_to_precommitted_group(policy, &ring_challenge_config, log_basis_open)?;
+            group.expand_to_group(policy, &ring_challenge_config, log_basis_open)?;
         let n_prefix = 1usize
             .checked_shl(commitment_params.profile.group.num_vars() as u32)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
             })?;
-        let group_natural_len = generated_count(
-            group.setup_natural_len.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "generated setup prefix must carry its natural length".into(),
-                )
-            })?,
-            "setup-prefix natural length",
-        )?;
+        let group_natural_len = generated_count(group.natural_len, "setup-prefix natural length")?;
         if group_natural_len > n_prefix {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix natural length exceeds commitment domain".into(),
@@ -485,13 +505,24 @@ impl GeneratedGroup {
         let (precommitted_groups, precommitted_d_width, setup_prefix) = match source {
             GroupLengthSource::PinnedGrouped {
                 precommitted_groups,
-                precommitted_d_width,
                 ..
             } => {
                 if precommitted_groups.is_empty() {
                     return Err(AkitaError::InvalidSetup(
                         "generated multi-group root requires precommitted groups".to_string(),
                     ));
+                }
+                let mut precommitted_d_width = 0usize;
+                for group in &precommitted_groups {
+                    precommitted_d_width = precommitted_d_width
+                        .checked_add(
+                            group.d_segment_width(policy.claim_ext_degree, dimensions.d_d())?,
+                        )
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "generated multi-group D width overflow".to_string(),
+                            )
+                        })?;
                 }
                 (precommitted_groups, precommitted_d_width, None)
             }
@@ -541,70 +572,71 @@ impl GeneratedGroup {
         // Audit each generated rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
-        let params = CommittedGroupParams {
+        let source_encoding = CommittedSourceEncoding::for_producer(
+            opening_method,
+            policy.claim_ext_degree,
+            ring_d,
+            producer_num_vars,
+            is_root,
+        );
+        let open_matrix = OpenCommitMatrixParams::try_new(
+            sis_policy,
+            policy.sis_table_digest,
+            sis_modulus_profile,
+            n_d,
+            d_matrix_width,
+            d_bucket,
+            dimensions.d_d(),
+        )?;
+        let groups = setup_prefix
+            .into_iter()
+            .chain(precommitted_groups)
+            .chain(std::iter::once(GroupOpenPhaseParams {
+                profile: akita_types::GroupCommitPhaseParams {
+                    version: akita_types::GroupCommitPhaseParams::VERSION,
+                    group,
+                    blocks: akita_types::BlockGeometry::new(
+                        num_live_ring_elements_per_claim,
+                        num_positions_per_block,
+                        num_live_blocks,
+                    ),
+                    outer_slice_count,
+                    inner: akita_types::RoleParams::new(
+                        akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                        inner_commit_matrix,
+                    ),
+                    outer: akita_types::RoleParams::new(
+                        akita_types::GadgetDigits::new(log_basis_outer, num_digits_outer),
+                        OuterCommitMatrixParams::try_new(
+                            sis_policy,
+                            policy.sis_table_digest,
+                            sis_modulus_profile,
+                            n_b,
+                            outer_width,
+                            b_bucket,
+                            dimensions.d_b(),
+                        )?,
+                    ),
+                },
+                opening: akita_types::GroupOpeningPlan {
+                    opening_method,
+                    fold_challenge_config: ring_challenge_cfg,
+                    log_basis_open,
+                    num_digits_open,
+                    num_digits_fold,
+                },
+                setup_natural_len: None,
+            }))
+            .collect();
+        let params = CommittedGroupParams::try_new(
+            groups,
+            open_matrix,
             payload_mode,
-            source_encoding: CommittedSourceEncoding::for_producer(
-                opening_method,
-                policy.claim_ext_degree,
-                ring_d,
-                producer_num_vars,
-                is_root,
-            ),
+            source_encoding,
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
-            witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-            open_matrix: OpenCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_d,
-                d_matrix_width,
-                d_bucket,
-                dimensions.d_d(),
-            )?,
-            // Canonical order: an incoming prefix leads, then the frozen
-            // groups, then this fold's own new group last.
-            groups: setup_prefix
-                .into_iter()
-                .chain(precommitted_groups)
-                .chain(std::iter::once(GroupOpenPhaseParams {
-                    profile: akita_types::GroupCommitPhaseParams {
-                        version: akita_types::GroupCommitPhaseParams::VERSION,
-                        group,
-                        blocks: akita_types::BlockGeometry::new(
-                            num_live_ring_elements_per_claim,
-                            num_positions_per_block,
-                            num_live_blocks,
-                        ),
-                        outer_slice_count,
-                        inner: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
-                            inner_commit_matrix,
-                        ),
-                        outer: akita_types::RoleParams::new(
-                            akita_types::GadgetDigits::new(log_basis_outer, num_digits_outer),
-                            OuterCommitMatrixParams::try_new(
-                                sis_policy,
-                                policy.sis_table_digest,
-                                sis_modulus_profile,
-                                n_b,
-                                outer_width,
-                                b_bucket,
-                                dimensions.d_b(),
-                            )?,
-                        ),
-                    },
-                    opening: akita_types::GroupOpeningPlan {
-                        opening_method,
-                        fold_challenge_config: ring_challenge_cfg,
-                        log_basis_open,
-                        num_digits_open,
-                        num_digits_fold,
-                    },
-                    setup_natural_len: None,
-                }))
-                .collect(),
-        };
+            akita_types::ChunkedWitnessCfg::default(),
+        )?;
         Ok(params)
     }
 }
@@ -843,7 +875,7 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.setup_prefix().map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
         let ring_challenge_config = |d| {
@@ -854,28 +886,28 @@ mod tests {
         };
 
         let expanded = input
-            .expand_to_precommitted_group(
+            .expand_to_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                fold.open.matrix.log_basis,
+                fold.core.open_commit_matrix.log_basis,
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
         assert_eq!(
             &*requested_dimensions.borrow(),
-            &[input.commitment.inner.matrix.ring_dimension()]
+            &[input.group.profile.inner.matrix.ring_dimension()]
         );
-        assert_eq!(expanded.profile, input.commitment);
+        assert_eq!(expanded.profile, input.group.profile);
         // The plan is derived, so assert it carries the two inputs the row still
         // stores and the basis its consuming fold supplied.
-        assert_eq!(expanded.opening.opening_method, input.opening_method);
+        assert_eq!(expanded.opening.opening_method, input.group.opening_method);
         assert_eq!(
             expanded.opening.num_digits_fold,
-            input.num_digits_fold as usize
+            input.group.num_digits_fold as usize
         );
         assert_eq!(
-            expanded.opening.open.digits.log_basis,
-            fold.open.matrix.log_basis
+            expanded.opening.log_basis_open,
+            fold.core.open_commit_matrix.log_basis
         );
     }
 
@@ -885,9 +917,9 @@ mod tests {
             crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
                 .iter()
                 .flat_map(|entry| entry.recursive_folds)
-                .find_map(|fold| fold.setup_prefix().map(|prefix| (fold, prefix)))
+                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
-        input.commitment.blocks.live_blocks += 1;
+        input.group.profile.blocks.live_blocks += 1;
         let ring_challenge_config = |d| {
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
                 AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
@@ -895,11 +927,35 @@ mod tests {
         };
 
         input
-            .expand_to_precommitted_group(
+            .expand_to_group(
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
-                fold.open.matrix.log_basis,
+                fold.core.open_commit_matrix.log_basis,
             )
             .expect_err("frozen setup-prefix profile mutation must reject");
+    }
+
+    #[test]
+    fn setup_prefix_expansion_rejects_zero_natural_length() {
+        let (fold, mut input) =
+            crate::generated::fp128_onehot_recursive::FP128_ONEHOT_RECURSIVE_SCHEDULES
+                .iter()
+                .flat_map(|entry| entry.recursive_folds)
+                .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
+                .expect("generated recursive setup-prefix fixture");
+        input.natural_len = 0;
+        let ring_challenge_config = |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        };
+
+        input
+            .expand_to_group(
+                &recursive_fp128_policy(),
+                &ring_challenge_config,
+                fold.core.open_commit_matrix.log_basis,
+            )
+            .expect_err("zero setup-prefix natural length must reject");
     }
 }

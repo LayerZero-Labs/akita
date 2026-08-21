@@ -37,8 +37,8 @@ fn root_shape<Cfg: CommitmentConfig>(num_vars: usize) -> RootShape {
     .into_schedule();
     let root = &schedule.root.params;
     RootShape {
-        inner_basis: root.inner.digits.log_basis,
-        inner_digits: root.inner.digits.num_digits,
+        inner_basis: root.inner().digits.log_basis,
+        inner_digits: root.inner().digits.num_digits,
         next_witness: schedule.root.output_witness_len,
     }
 }
@@ -188,13 +188,13 @@ fn generated_root_digit_depth_matches_the_declared_bound() {
         for entry in catalog.entries {
             let expected = akita_types::sis::num_digits_inner_for_bound(
                 akita_types::DecompositionParams {
-                    log_basis: entry.root.final_group.commitment.inner.matrix.log_basis,
+                    log_basis: entry.root.core.group.inner_commit_matrix.log_basis,
                     ..family_decomposition
                 },
                 family_decomposition.log_commit_bound,
             );
             assert_eq!(
-                entry.root.group.inner.digits.num_digits as usize, expected,
+                entry.root.num_digits_inner as usize, expected,
                 "row {:?} stores a non-canonical root digit depth",
                 entry.final_group
             );

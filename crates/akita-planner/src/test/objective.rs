@@ -148,7 +148,7 @@ fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::S
             4_095,
             inner.ring_dimension(),
         );
-    params.open().digits.log_basis = 3;
+    assert_eq!(params.open().digits.log_basis, 3);
     let (terminal_params, linf_cap) =
         akita_types::TerminalFoldParams::try_from_expanded_group(params.clone())
             .expect("terminal parameters");

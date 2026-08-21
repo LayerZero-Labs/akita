@@ -121,16 +121,6 @@ impl GroupCommitPhaseParams {
         Ok(profile)
     }
 
-    /// Crate-visible so a fold can materialise its own final group without
-    /// re-running standalone-commit validation, which does not apply to a group
-    /// that is already part of a checked schedule.
-    pub(crate) fn from_params_fields_pub(
-        group: PolynomialGroupLayout,
-        params: &CommittedGroupParams,
-    ) -> Self {
-        Self::from_params_fields(group, params)
-    }
-
     fn from_params_fields(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
             version: Self::VERSION,
@@ -164,8 +154,8 @@ impl GroupCommitPhaseParams {
 
     /// This group's block triple.
     ///
-    /// Step 4 makes this a stored field; until then it is assembled on demand
-    /// from the three flat fields, which is free.
+    /// This value is stored as one block geometry rather than assembled from
+    /// separate fields.
     #[inline]
     #[must_use]
     pub fn blocks(&self) -> crate::BlockGeometry {
@@ -193,10 +183,9 @@ impl GroupCommitPhaseParams {
         bytes
     }
 
-    /// The block triple and both `(basis, depth)` pairs are already contiguous
-    /// here, so the atomic leaf encoders are byte-neutral. This encoder is
-    /// therefore already role-atomic: geometry, then `basis, depth, matrix`
-    /// twice, which is the shape step 4 makes structural.
+    /// The block triple and both `(basis, depth)` pairs are contiguous here.
+    /// The descriptor order is geometry, then `basis, depth, matrix` for each
+    /// role.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
@@ -291,7 +280,8 @@ impl GroupCommitPhaseParams {
         let expected_field_len = 1usize.checked_shl(num_vars).ok_or_else(|| {
             AkitaError::InvalidSetup("commitment group field length overflow".to_string())
         })?;
-        if source_field_len != expected_field_len
+        if source_field_len == 0
+            || source_field_len.checked_next_power_of_two() != Some(expected_field_len)
             || self.blocks.positions_per_block == 0
             || !self.blocks.positions_per_block.is_power_of_two()
             || self.blocks.live_blocks

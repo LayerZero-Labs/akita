@@ -97,7 +97,7 @@ fn retarget_precommitted_test_role_dims(
     inner_ring_dimension: usize,
     outer_ring_dimension: usize,
 ) {
-    let group = &mut params.groups_mut()[group_id];
+    let group = params.preceding_group_mut_for_test(group_id).unwrap();
     group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
@@ -274,7 +274,8 @@ fn test_inputs_for_group_sizes(
                     }
                 })
                 .collect(),
-        );
+        )
+        .unwrap();
     }
     let opening_batch =
         OpeningClaimsLayout::from_group_sizes(0, group_sizes).expect("test opening batch");

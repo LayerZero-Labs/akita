@@ -57,16 +57,18 @@ fn grouped_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 2, 2, 2, 2)
     .expect("precommitted params");
-    params.set_precommitted_groups(vec![GroupOpenPhaseParams {
-        setup_natural_len: None,
-        profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
-        opening: akita_types::GroupOpeningPlan::evaluation_trace(
-            precommitted.fold_challenge_config(),
-            precommitted.open().digits.log_basis,
-            precommitted.open().digits.num_digits,
-            precommitted.num_digits_fold(),
-        ),
-    }]);
+    params
+        .set_precommitted_groups(vec![GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: synthetic_profile(PolynomialGroupLayout::new(6, 1), &precommitted),
+            opening: akita_types::GroupOpeningPlan::evaluation_trace(
+                precommitted.fold_challenge_config(),
+                precommitted.open().digits.log_basis,
+                precommitted.open().digits.num_digits,
+                precommitted.num_digits_fold(),
+            ),
+        }])
+        .expect("valid precommitted group topology");
     params
 }
 
@@ -743,10 +745,12 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         .precommitted_groups()
         .last()
         .expect("synthetic prefix params");
-    params.set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
-        1 << 6,
-        prefix_params,
-    )));
+    params
+        .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
+            1 << 6,
+            prefix_params,
+        )))
+        .expect("valid setup-prefix topology");
     let witness_len = 1 << 4;
     let output_witness_len = 1 << 4;
     let final_group = PolynomialGroupLayout::singleton(4);

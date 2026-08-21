@@ -15,7 +15,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     );
     let mut params = base.params.clone();
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
-    frozen.set_precommitted_groups(Vec::new());
+    frozen.set_precommitted_groups(Vec::new()).unwrap();
     frozen.own_group_mut().profile.inner.digits.log_basis = 9;
     let inner = frozen.inner().matrix;
     frozen.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
@@ -38,19 +38,21 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         outer.ring_dimension(),
     );
     let pre_layout = PolynomialGroupLayout::new(11, 1);
-    params.set_precommitted_groups(vec![GroupOpenPhaseParams {
-        setup_natural_len: None,
-        profile: GroupCommitPhaseParams::from_params_unchecked_for_test(pre_layout, &frozen),
-        opening: GroupOpeningPlan {
-            opening_method: OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
+    params
+        .set_precommitted_groups(vec![GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: GroupCommitPhaseParams::from_params_unchecked_for_test(pre_layout, &frozen),
+            opening: GroupOpeningPlan {
+                opening_method: OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                },
+                fold_challenge_config: params.fold_challenge_config(),
+                log_basis_open: params.open().digits.log_basis,
+                num_digits_open: params.open().digits.num_digits,
+                num_digits_fold: params.num_digits_fold(),
             },
-            fold_challenge_config: params.fold_challenge_config(),
-            log_basis_open: params.open().digits.log_basis,
-            num_digits_open: params.open().digits.num_digits,
-            num_digits_fold: params.num_digits_fold(),
-        },
-    }]);
+        }])
+        .unwrap();
     let final_layout = PolynomialGroupLayout::new(11, 2);
     let opening_batch = OpeningClaimsLayout::from_root_groups(&[pre_layout], final_layout).unwrap();
     let relation_geometry = RelationWitnessGeometry::for_level(&params, &opening_batch, 2).unwrap();

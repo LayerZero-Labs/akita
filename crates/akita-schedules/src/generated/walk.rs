@@ -45,20 +45,17 @@ pub(crate) fn walk_generated_schedule_entry(
     // and carries the frozen precommitted D segments; a scalar root derives its
     // length from the witness it was planned for.
     let length_source = if is_multi_group {
-        let (precommitted_groups, precommitted_d_width) =
-            multi_group_root_precommitted_groups_for_open_basis(
-                key,
-                entry.root.precommitted_groups,
-                policy,
-                ring_challenge_config,
-                entry.root.open_commit_matrix.log_basis,
-                entry.root.open_commit_matrix.ring_dimension as usize,
-            )?;
+        let precommitted_groups = multi_group_root_precommitted_groups_for_open_basis(
+            key,
+            entry.root.precommitted_groups,
+            policy,
+            ring_challenge_config,
+            entry.root.core.open_commit_matrix.log_basis,
+        )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
         crate::generated::expand::GroupLengthSource::PinnedGrouped {
             num_claims: key.final_group.num_polynomials(),
             precommitted_groups,
-            precommitted_d_width,
         }
     } else {
         crate::generated::expand::GroupLengthSource::IncomingWitness {
@@ -67,25 +64,29 @@ pub(crate) fn walk_generated_schedule_entry(
             setup_prefix: None,
         }
     };
-    let mut root_params = entry.root.group.expand_group(
+    let mut root_params = entry.root.core.group.expand_group(
         policy,
         akita_types::CommitmentPayloadMode::Compressed,
-        entry.root.group.opening_method,
+        entry.root.core.group.opening_method,
         ring_challenge_config,
         0,
-        entry.root.group.num_digits_inner,
-        entry.root.group.num_digits_fold,
+        Some(entry.root.num_digits_inner),
+        entry.root.core.group.num_digits_fold,
         None,
-        entry.root.open_commit_matrix,
+        entry.root.core.open_commit_matrix,
         // The root's own group *is* the row's lookup key.
         key.final_group,
         length_source,
     )?;
     let distributed_levels = distributed_activation_depth(
-        entry.root.witness_chunks,
-        entry.recursive_folds.iter().map(|fold| fold.witness_chunks),
+        entry.root.core.witness_chunks,
+        entry
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.core.witness_chunks),
     );
-    root_params.witness_chunk = partition_to_chunk(entry.root.witness_chunks, distributed_levels)?;
+    root_params.witness_chunk =
+        partition_to_chunk(entry.root.core.witness_chunks, distributed_levels)?;
     let root_output_len = if is_multi_group {
         root_params.output_witness_len_for_field_bits(
             field_bits,
@@ -110,16 +111,16 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
-        let mut params = fold.group.expand_group(
+        let mut params = fold.core.group.expand_group(
             policy,
             fold.payload_mode,
-            fold.group.opening_method,
+            fold.core.group.opening_method,
             ring_challenge_config,
             index + 1,
             None,
-            fold.group.num_digits_fold,
+            fold.core.group.num_digits_fold,
             fold.response_l2_sq_cap,
-            fold.open_commit_matrix,
+            fold.core.open_commit_matrix,
             // A recursive fold commits one polynomial over the witness it
             // receives, so its layout follows from that length.
             akita_types::PolynomialGroupLayout::singleton(
@@ -131,7 +132,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 setup_prefix: fold.setup_prefix,
             },
         )?;
-        params.witness_chunk = partition_to_chunk(fold.witness_chunks, distributed_levels)?;
+        params.witness_chunk = partition_to_chunk(fold.core.witness_chunks, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(
             field_bits,
             policy.claim_ext_degree,
@@ -292,7 +293,12 @@ fn partition_to_chunk(
 ) -> Result<akita_types::ChunkedWitnessCfg, AkitaError> {
     // A chunk count of 1 is the non-chunked layout; the enum that used to spell
     // that distinction carried no other information.
-    if witness_chunks <= 1 {
+    if witness_chunks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "generated witness chunk count must be nonzero".to_string(),
+        ));
+    }
+    if witness_chunks == 1 {
         return Ok(akita_types::ChunkedWitnessCfg::default_non_chunked());
     }
     let cfg = akita_types::ChunkedWitnessCfg {

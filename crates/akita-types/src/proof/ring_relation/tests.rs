@@ -420,7 +420,9 @@ fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout
         ),
     };
     let mut multi_group_lp = lp;
-    multi_group_lp.set_precommitted_groups(vec![precommit]);
+    multi_group_lp
+        .set_precommitted_groups(vec![precommit])
+        .unwrap();
     let batch = OpeningClaimsLayout::from_root_groups(
         &[PolynomialGroupLayout::new(4, 1)],
         PolynomialGroupLayout::new(4, 1),
