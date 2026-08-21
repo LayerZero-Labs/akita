@@ -1,36 +1,37 @@
 //! Generate an Akita verifier-input blob to be consumed by the Jolt guest
 //! program in `profile/akita-recursion/guest`.
 //!
-//! Mirrors the fp128 adaptive one-hot profile from `crates/akita-pcs/examples/profile.rs`:
-//! single-poly OneHot polynomial commitment at the canonical
-//! `q=2^128-2^32+22537` prime, opened at one random point. After running the
-//! prover end-to-end we re-run the host verifier as a sanity check, then
-//! serialize all verifier-side state into one contiguous blob via
+//! Supports the exact scalar OneHot cases in the CI profile catalog, plus the
+//! older fp128 nv32 recursive multi-group example. After running the prover
+//! end to end, it reruns the host verifier as a sanity check and serializes
+//! the case identity and verifier-side state via
 //! [`akita_recursion_glue::AkitaJoltInputs`].
 //!
 //! Output paths are controlled via `AKITA_RECURSION_BLOB` (defaults to
-//! `target/akita_recursion_inputs.bin`). Set `AKITA_NUM_VARS` (default 20)
-//! to regenerate at a different polynomial arity. The Jolt monomorphization
-//! uses the adaptive preset's D256 root envelope; the selected catalog row must
-//! use that A dimension.
+//! `target/akita_recursion_inputs.bin`). `--case` or `AKITA_RECURSION_CASE`
+//! selects a catalog case. `AKITA_NUM_VARS` applies only to the legacy grouped
+//! row and is pinned to 32.
 
 #![allow(missing_docs)]
 
-use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, PseudoMersenneField};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_field::{
+    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, PseudoMersenneField,
+    RandomSampling,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource},
-    CommitOutput, ComputeBackendSetup, CpuBackend, GroupContext, OneHotIndex, OneHotPoly,
-    SelectedProverOpeningData,
+    commit_setup_prefix, AkitaProverSetup, CommitOutput, ComputeBackendSetup, CpuBackend,
+    GroupContext, OneHotPoly, SelectedProverOpeningData,
 };
-use akita_recursion_glue::AkitaJoltInputs;
+use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
+use akita_serialization::Valid;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    CommittedGroupParams, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims,
+    dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup,
+    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
@@ -47,16 +48,24 @@ use tracing_subscriber::EnvFilter;
     about = "Generate an Akita verifier-input blob for the Jolt recursion guest",
     long_about = None
 )]
-struct Args {}
+struct Args {
+    /// Exact CI case to materialize.
+    #[arg(long)]
+    case: Option<String>,
+}
 
 type F = fp128::Field;
-type Cfg = fp128::OneHot;
-/// Concrete ring view used by the recursion artifact's fixed input schema.
-/// The Akita schedule may select different A, B, and D dimensions internally.
-const SOURCE_VIEW_D: usize = 256;
+type BaseCfg = fp128::OneHot;
+type Cfg = RecursiveCommitmentConfig<BaseCfg>;
+/// Concrete root ring view used by the recursion artifact's fixed input schema.
+/// The Akita schedule may select different B and D dimensions internally.
+const SOURCE_VIEW_D: usize = 512;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
 const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
+const PRE_GROUPS: usize = 2;
+const PRE_NUM_VARS: usize = 16;
+const FINAL_POLYS: usize = 2;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot";
 
@@ -69,60 +78,156 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
     }
 }
 
-fn opening_from_poly<'a, I>(
-    poly: &'a OneHotPoly<F, I>,
-    point: &[F],
-    layout: &CommittedGroupParams,
-    basis: BasisMode,
-) -> Result<F, String>
+fn make_onehot_poly<FF>(num_vars: usize, seed: u64) -> Result<OneHotPoly<FF, u8>, String>
 where
-    I: OneHotIndex,
-    CpuBackend: OpeningFoldKernel<
-        <OneHotPoly<F, I> as RootOpeningSource<F, SOURCE_VIEW_D>>::OpeningView<'a>,
-        F,
-        SOURCE_VIEW_D,
-    >,
+    FF: CanonicalField + FromPrimitiveInt,
 {
-    let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
-    let target_num_vars = alpha_bits
-        .checked_add(layout.position_index_bits())
-        .and_then(|n| n.checked_add(layout.block_index_bits()))
-        .ok_or_else(|| "opening point target arity overflow".to_string())?;
-    if point.len() > target_num_vars {
+    let onehot_k = onehot_k_for_num_vars(num_vars);
+    let total_field = 1usize
+        .checked_shl(num_vars as u32)
+        .ok_or_else(|| format!("one-hot arity nv={num_vars} overflows usize"))?;
+    let total_chunks = total_field / onehot_k;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let indices = (0..total_chunks)
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
+        .collect();
+    OneHotPoly::<FF, u8>::new(onehot_k, indices)
+        .map_err(|err| format!("failed to build one-hot polynomial: {err}"))
+}
+
+fn onehot_opening<FF, E>(poly: &OneHotPoly<FF, u8>, point: &[E]) -> Result<E, String>
+where
+    FF: CanonicalField,
+    E: ExtField<FF>,
+{
+    if poly.indices().len() * poly.onehot_k() != (1usize << point.len()) {
         return Err(format!(
-            "opening point length {} exceeds target root arity {target_num_vars}",
+            "one-hot polynomial arity {} does not match opening point arity {}",
+            poly.indices().len().trailing_zeros() as usize
+                + poly.onehot_k().trailing_zeros() as usize,
             point.len()
         ));
     }
-    let mut padded_point = point.to_vec();
-    padded_point.resize(target_num_vars, F::zero());
+    let low_vars = poly.onehot_k().trailing_zeros() as usize;
+    let low_weights = lagrange_weights(&point[..low_vars])
+        .map_err(|err| format!("one-hot low opening weights: {err}"))?;
+    let high_point = &point[low_vars..];
+    let mut high_weight = high_point
+        .iter()
+        .copied()
+        .map(|r| E::one() - r)
+        .fold(E::one(), |acc, value| acc * value);
+    let transitions = high_point
+        .iter()
+        .copied()
+        .map(|r| {
+            let one_minus_r = E::one() - r;
+            let to_one = r * one_minus_r
+                .inverse()
+                .ok_or_else(|| "one-hot opening point contains a zero denominator".to_string())?;
+            let to_zero = one_minus_r
+                * r.inverse().ok_or_else(|| {
+                    "one-hot opening point contains a zero denominator".to_string()
+                })?;
+            Ok((to_one, to_zero))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut opening = E::zero();
+    let mut gray_index = 0usize;
+    for step in 0..poly.indices().len() {
+        if let Some(hot_idx) = poly.indices()[gray_index] {
+            opening += high_weight * low_weights[hot_idx as usize];
+        }
+        let next_step = step + 1;
+        if next_step == poly.indices().len() {
+            break;
+        }
+        let next_gray = next_step ^ (next_step >> 1);
+        let flipped_bit = (gray_index ^ next_gray).trailing_zeros() as usize;
+        high_weight *= if next_gray & (1usize << flipped_bit) == 0 {
+            transitions[flipped_bit].1
+        } else {
+            transitions[flipped_bit].0
+        };
+        gray_index = next_gray;
+    }
+    Ok(opening)
+}
 
-    let inner_point = &padded_point[..alpha_bits];
-    let reduced_point = &padded_point[alpha_bits..];
-    let ring_opening_point = ring_opening_point_from_field(
-        reduced_point,
-        layout.blocks().positions_per_block,
-        layout.blocks().live_blocks,
-        basis,
-    )
-    .map_err(|err| format!("opening point shape should match layout: {err}"))?;
+fn materialize_schedule_setup_prefix_slots<FF>(
+    setup: &mut AkitaProverSetup<FF>,
+    backend: &CpuBackend,
+    prepared: &<CpuBackend as ComputeBackendSetup<FF>>::PreparedSetup,
+    schedule: &akita_types::FoldSchedule,
+) -> Result<(), akita_error::AkitaError>
+where
+    FF: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid,
+    CpuBackend: ComputeBackendSetup<FF>,
+{
+    for setup_prefix in schedule
+        .recursive_folds
+        .iter()
+        .filter_map(|fold| fold.incoming_setup_prefix())
+    {
+        let slot_id = setup_prefix.slot_id().ok_or_else(|| {
+            akita_error::AkitaError::InvalidSetup("group is not a setup prefix".into())
+        })?;
+        if setup.prefix_slots.get(&slot_id).is_some() {
+            continue;
+        }
+        let n_prefix = slot_id.n_prefix()?;
+        let slot = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            FF,
+            slot_id.d_setup(),
+            |D_SETUP| {
+                commit_setup_prefix::<FF, D_SETUP, CpuBackend>(
+                    &setup.expanded,
+                    backend,
+                    prepared,
+                    &slot_id.commitment_profile,
+                    n_prefix,
+                    slot_id.natural_len,
+                )
+            }
+        )?;
+        setup.prefix_slots.insert(slot)?;
+    }
+    Ok(())
+}
 
-    let opening = OpeningFoldKernel::evaluate_and_fold(
-        &CpuBackend::DEFAULT,
-        None,
-        poly.opening_view()
-            .map_err(|err| format!("opening view: {err}"))?,
-        OpeningFoldPlan::Base {
-            live_block_weights: &ring_opening_point.live_block_weights,
-            position_weights: &ring_opening_point.position_weights,
-            num_positions_per_block: layout.blocks().positions_per_block,
-        },
-    )
-    .map_err(|err| format!("opening fold: {err}"))?;
-    let y_ring = opening.eval;
-    let v = reduce_inner_opening_to_ring_element::<F, SOURCE_VIEW_D>(inner_point, basis)
-        .map_err(|err| format!("inner opening point should match ring dimension: {err}"))?;
-    Ok((y_ring * v.sigma_m1()).coefficients()[0])
+fn build_statement<'a>(
+    selection: akita_types::OpeningScheduleSelection,
+    pre_points: &'a [Vec<F>],
+    pre_openings: &'a [Vec<F>],
+    pre_commitments: &'a [CommittedGroup<F>],
+    final_point: &'a [F],
+    final_openings: Vec<F>,
+    final_commitment: &'a CommittedGroup<F>,
+) -> Result<GroupBatchStatement<'a, Claim, F>, String> {
+    if pre_points.len() != PRE_GROUPS
+        || pre_openings.len() != PRE_GROUPS
+        || pre_commitments.len() != PRE_GROUPS
+    {
+        return Err("recursive artifact precommit group count mismatch".to_string());
+    }
+    let mut groups = Vec::with_capacity(PRE_GROUPS + 1);
+    for ((opening_point, openings), commitment) in
+        pre_points.iter().zip(pre_openings).zip(pre_commitments)
+    {
+        groups.push(
+            PolynomialGroupClaims::new(opening_point.as_slice(), openings.clone(), commitment)
+                .map_err(|err| format!("invalid precommit verifier group: {err}"))?,
+        );
+    }
+    groups.push(
+        PolynomialGroupClaims::new(final_point, final_openings, final_commitment)
+            .map_err(|err| format!("invalid final verifier group: {err}"))?,
+    );
+    let claims = OpeningClaims::from_groups(groups)
+        .map_err(|err| format!("invalid verifier opening claims: {err}"))?;
+    GroupBatchStatement::new(selection, claims)
+        .map_err(|err| format!("invalid verifier statement: {err}"))
 }
 
 fn fp128_prime_label() -> String {
@@ -206,8 +311,230 @@ fn verify_proof(
     .map_err(|err| format!("verifier rejected proof: {err}"))
 }
 
+fn random_claim_point<FF, E>(num_vars: usize, seed: u64) -> Vec<E>
+where
+    FF: CanonicalField,
+    E: ExtField<FF>,
+{
+    let mut rng = StdRng::seed_from_u64(seed);
+    (0..num_vars)
+        .map(|_| {
+            let limbs = (0..E::EXT_DEGREE)
+                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect::<Vec<_>>();
+            E::from_base_slice(&limbs)
+        })
+        .collect()
+}
+
+macro_rules! generate_scalar_case {
+    ($case:expr, $field:ty, $cfg:ty, $d:expr, $nv:expr, $recursive:expr, $output_path:expr) => {{
+        type ScalarField = $field;
+        type ScalarCfg = $cfg;
+        type ScalarExt = <ScalarCfg as CommitmentConfig>::ExtField;
+
+        let case = $case;
+        let num_vars = $nv;
+        let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
+            .map_err(|err| format!("{} opening layout: {err}", case))?;
+        let schedule = ScalarCfg::resolve_catalog_row_for_opening(&opening_layout)
+            .map_err(|err| format!("{} schedule: {err}", case))?;
+        let root_d = schedule.schedule().root.params.d_a();
+        if root_d != $d {
+            return Err(format!(
+                "{} root commitment uses D={root_d}, but its Jolt input monomorphization uses D={}",
+                case, $d
+            ));
+        }
+
+        tracing::info!(case = %case, num_vars, d = $d, "generating scalar OneHot recursion artifact");
+        let t0 = Instant::now();
+        let mut prover_setup = AkitaCommitmentScheme::<ScalarCfg>::setup_prover(num_vars, 1)
+            .map_err(|err| format!("{} prover setup: {err}", case))?;
+        let prepared = CpuBackend::DEFAULT
+            .prepare_setup(&prover_setup)
+            .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
+        if $recursive {
+            materialize_schedule_setup_prefix_slots(
+                &mut prover_setup,
+                &CpuBackend::DEFAULT,
+                &prepared,
+                schedule.schedule(),
+            )
+            .map_err(|err| format!("{} setup prefix materialization: {err}", case))?;
+        }
+        let stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend::DEFAULT,
+            &prepared,
+            prover_setup.expanded.as_ref(),
+        )
+        .map_err(|err| format!("{} prover stack: {err}", case))?;
+        tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prover setup complete");
+
+        let poly = make_onehot_poly::<ScalarField>(num_vars, 0x0bee_fcaf_2800_0000)?;
+        let opening_point =
+            random_claim_point::<ScalarField, ScalarExt>(num_vars, 0xfeed_face);
+        let openings = vec![onehot_opening::<ScalarField, ScalarExt>(
+            &poly,
+            &opening_point,
+        )?];
+        let t0 = Instant::now();
+        let CommitOutput {
+            committed_group: commitment,
+            hint,
+        } = AkitaCommitmentScheme::<ScalarCfg>::commit(
+            &prover_setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .map_err(|err| format!("{} commit: {err}", case))?;
+        tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
+
+        let prover_group = PolynomialGroupClaims::new(
+            opening_point.clone(),
+            openings.clone(),
+            commitment.clone(),
+        )
+        .map_err(|err| format!("{} prover claims: {err}", case))?;
+        let poly_ref = &poly;
+        let poly_group = [poly_ref];
+        let prove_input = SelectedProverOpeningData::from_committed_claims::<ScalarCfg>(
+            OpeningClaims::from_groups(vec![prover_group])
+                .map_err(|err| format!("{} opening claims: {err}", case))?,
+            vec![hint],
+            vec![poly_group.as_slice()],
+        )
+        .map_err(|err| format!("{} prover opening data: {err}", case))?;
+        let schedule_selection = prove_input.selection();
+        let mut prover_transcript = AkitaTranscript::<ScalarField>::new(TRANSCRIPT_DOMAIN);
+        let t0 = Instant::now();
+        let proof = AkitaCommitmentScheme::<ScalarCfg>::batched_prove(
+            &prover_setup,
+            prove_input,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("{} prove: {err}", case))?;
+        tracing::info!(case = %case, elapsed_s = t0.elapsed().as_secs_f64(), "prove complete");
+
+        let verifier_setup = AkitaCommitmentScheme::<ScalarCfg>::setup_verifier_for_schedule(
+            &prover_setup,
+            schedule.schedule(),
+            &opening_layout,
+        )
+        .map_err(|err| format!("{} verifier setup: {err}", case))?;
+        let verifier_group = PolynomialGroupClaims::new(
+            opening_point.as_slice(),
+            openings.clone(),
+            &commitment,
+        )
+        .map_err(|err| format!("{} verifier claims: {err}", case))?;
+        let statement = GroupBatchStatement::new(
+            schedule_selection,
+            OpeningClaims::from_groups(vec![verifier_group])
+                .map_err(|err| format!("{} verifier opening claims: {err}", case))?,
+        )
+        .map_err(|err| format!("{} verifier statement: {err}", case))?;
+        let mut verifier_transcript =
+            AkitaTranscript::<ScalarField>::unbound_verifier(TRANSCRIPT_DOMAIN);
+        batched_verify::<ScalarCfg, _>(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            statement,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
+
+        let inputs: AkitaJoltInputs<ScalarField, $d, ScalarExt> = AkitaJoltInputs {
+            case,
+            transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
+            num_vars: num_vars as u64,
+            opening_point,
+            openings,
+            precommitted_groups: Vec::new(),
+            schedule_selection,
+            commitment,
+            verifier_setup,
+            proof_shape: proof.shape(),
+            proof,
+        };
+        let blob = inputs
+            .write_to_bytes()
+            .map_err(|err| format!("{} encode blob: {err}", case))?;
+        let decoded = AkitaJoltInputs::<ScalarField, $d, ScalarExt>::read_from_bytes::<ScalarCfg>(
+            &blob,
+        )
+        .map_err(|err| format!("{} strict blob round-trip: {err}", case))?;
+        let mut transcript =
+            AkitaTranscript::<ScalarField>::unbound_verifier(&decoded.transcript_domain);
+        batched_verify::<ScalarCfg, _>(
+            &decoded.proof,
+            &decoded.verifier_setup,
+            &mut transcript,
+            decoded
+                .verifier_statement()
+                .map_err(|err| format!("{} decoded statement: {err}", case))?,
+            BasisMode::Lagrange,
+        )
+        .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
+        publish_blob($output_path, &blob)?;
+        eprintln!(
+            "wrote {} bytes ({:.2} MiB) for {} to {}",
+            blob.len(),
+            blob.len() as f64 / (1024.0 * 1024.0),
+            case,
+            $output_path.display()
+        );
+        Ok(())
+    }};
+}
+
+fn generate_scalar_artifact(
+    case: AkitaJoltCase,
+    output_path: &std::path::Path,
+) -> Result<(), String> {
+    match case {
+        AkitaJoltCase::OneHotFp32 => generate_scalar_case!(
+            case,
+            fp32::Field,
+            fp32::OneHot,
+            2048,
+            30,
+            false,
+            output_path
+        ),
+        AkitaJoltCase::OneHotFp64 => {
+            generate_scalar_case!(case, fp64::Field, fp64::OneHot, 512, 30, false, output_path)
+        }
+        AkitaJoltCase::OneHotFp128Direct => generate_scalar_case!(
+            case,
+            fp128::Field,
+            fp128::OneHot,
+            512,
+            36,
+            false,
+            output_path
+        ),
+        AkitaJoltCase::OneHotFp128Recursive => generate_scalar_case!(
+            case,
+            fp128::Field,
+            RecursiveCommitmentConfig<fp128::OneHot>,
+            512,
+            36,
+            true,
+            output_path
+        ),
+        AkitaJoltCase::OneHotFp128MultiGroupRecursive => Err(
+            "the grouped recursive case is generated by the legacy multi-group adapter".to_string(),
+        ),
+    }
+}
+
 fn run() -> Result<(), String> {
-    let _args = Args::parse();
+    let args = Args::parse();
 
     #[cfg(feature = "parallel")]
     rayon::ThreadPoolBuilder::new()
@@ -232,12 +559,29 @@ fn run() -> Result<(), String> {
         .with_target(false)
         .try_init();
 
-    let nv: usize = env_usize("AKITA_NUM_VARS", 20)?;
-    let onehot_k = onehot_k_for_num_vars(nv);
     let output_path = PathBuf::from(env_string(
         "AKITA_RECURSION_BLOB",
         "target/akita_recursion_inputs.bin",
     )?);
+    let case_name = match args.case {
+        Some(case) => case,
+        None => env_string(
+            "AKITA_RECURSION_CASE",
+            AkitaJoltCase::OneHotFp128MultiGroupRecursive.as_str(),
+        )?,
+    };
+    let case = case_name.parse::<AkitaJoltCase>()?;
+    if case != AkitaJoltCase::OneHotFp128MultiGroupRecursive {
+        return generate_scalar_artifact(case, &output_path);
+    }
+
+    let nv: usize = env_usize("AKITA_NUM_VARS", 32)?;
+    if nv != 32 {
+        return Err(format!(
+            "recursive OneHot benchmark is pinned to nv=32, got nv={nv}"
+        ));
+    }
+    let onehot_k = onehot_k_for_num_vars(nv);
 
     let prime = fp128_prime_label();
     tracing::info!(
@@ -245,15 +589,23 @@ fn run() -> Result<(), String> {
         d = SOURCE_VIEW_D,
         onehot_k,
         prime = %prime,
-        "generating Akita verifier-input artifact (single-poly adaptive OneHot)"
+        "generating Akita verifier-input artifact (recursive multi-group OneHot)"
     );
 
-    let opening_layout = OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch");
-    let layout: CommittedGroupParams =
-        <Cfg as CommitmentConfig>::resolve_catalog_row_for_opening(&opening_layout)
-            .map(|row| row.schedule().root.params.clone())
-            .expect("layout");
-    let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout).expect("proof schedule");
+    let pre_group = PolynomialGroupLayout::new(PRE_NUM_VARS, 1);
+    let pre_descriptor = BaseCfg::profile_without_precommitted_groups(pre_group)
+        .map_err(|err| format!("precommit profile: {err}"))?;
+    let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
+    let key = AkitaScheduleLookupKey {
+        final_group,
+        precommitteds: vec![pre_descriptor; PRE_GROUPS],
+    };
+    let opening_layout = key
+        .opening_layout()
+        .map_err(|err| format!("recursive opening layout: {err}"))?;
+    let schedule = Cfg::resolve_catalog_row_for_key(&key)
+        .map_err(|err| format!("recursive proof schedule: {err}"))?;
+    let layout = schedule.schedule().root.params.clone();
     let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
@@ -269,36 +621,32 @@ fn run() -> Result<(), String> {
         ));
     }
 
-    // The example reuses the deterministic seed from `examples/profile.rs`
-    // for reproducibility.
+    // The example reuses fixed deterministic seeds for reproducibility.
     let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_field = layout
-        .blocks().live_ring_elements_per_claim
-        .checked_mul(SOURCE_VIEW_D)
-        .ok_or_else(|| "total field size overflow".to_string())?;
-    let total_chunks = total_field / onehot_k;
-    if total_chunks * onehot_k != total_field {
-        return Err(format!(
-            "OneHot K={onehot_k} must divide total field size {total_field} for nv={nv}"
-        ));
-    }
-
-    let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
+    let pre_points: Vec<Vec<F>> = (0..PRE_GROUPS)
+        .map(|_| {
+            (0..PRE_NUM_VARS)
+                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .collect()
+        })
         .collect();
-    let onehot_poly = OneHotPoly::<F, u8>::new(onehot_k, indices)
-        .map_err(|err| format!("failed to build onehot polynomial: {err}"))?;
-    let opening_point: Vec<F> = (0..nv)
+    let final_point: Vec<F> = (0..nv)
         .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
         .collect();
-    let opening = opening_from_poly(&onehot_poly, &opening_point, &layout, BasisMode::Lagrange)?;
 
     let t0 = Instant::now();
-    let prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+    let mut prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
         .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;
+    materialize_schedule_setup_prefix_slots(
+        &mut prover_setup,
+        &CpuBackend::DEFAULT,
+        &prepared,
+        schedule.schedule(),
+    )
+    .map_err(|err| format!("materialize recursive setup-prefix slots: {err}"))?;
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
         &prepared,
@@ -310,31 +658,87 @@ fn run() -> Result<(), String> {
         "prover setup complete"
     );
 
+    let mut pre_polys_by_group = Vec::with_capacity(PRE_GROUPS);
+    let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
+    let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
+    let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
     let t0 = Instant::now();
+    for (group_idx, pre_point) in pre_points.iter().enumerate() {
+        let polys = vec![make_onehot_poly(
+            PRE_NUM_VARS,
+            0x0bee_fcaf_2100_0000 + group_idx as u64,
+        )?];
+        let openings = vec![onehot_opening(&polys[0], pre_point)?];
+        let CommitOutput {
+            committed_group,
+            hint,
+        } = AkitaCommitmentScheme::<BaseCfg>::commit(
+            &prover_setup,
+            &polys,
+            &stack,
+            GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .map_err(|err| format!("precommit {group_idx} failed: {err}"))?;
+        pre_polys_by_group.push(polys);
+        pre_openings.push(openings);
+        pre_commitments.push(committed_group);
+        pre_hints.push(hint);
+    }
+
+    let final_polys = (0..FINAL_POLYS)
+        .map(|poly_idx| make_onehot_poly(nv, 0x0bee_fcaf_2800_0000 + poly_idx as u64))
+        .collect::<Result<Vec<_>, _>>()?;
+    let final_openings = final_polys
+        .iter()
+        .map(|poly| onehot_opening(poly, &final_point))
+        .collect::<Result<Vec<_>, _>>()?;
+    let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
+        .map_err(|err| format!("precommitted profile list: {err}"))?;
     let CommitOutput {
-        committed_group: commitment,
-        hint,
+        committed_group: final_commitment,
+        hint: final_hint,
     } = AkitaCommitmentScheme::<Cfg>::commit(
         &prover_setup,
-        std::slice::from_ref(&onehot_poly),
+        &final_polys,
         &stack,
-        GroupContext::scheduler_without_precommitted_groups(),
+        GroupContext::scheduler_with_precommitted_groups(&precommitteds),
     )
-    .map_err(|err| format!("commit failed: {err}"))?;
+    .map_err(|err| format!("final multi-group commit failed: {err}"))?;
     tracing::info!(elapsed_s = t0.elapsed().as_secs_f64(), "commit complete");
 
-    let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
-    let openings = [opening];
-    let t0 = Instant::now();
+    let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
+        .iter()
+        .map(|polys| polys.iter().collect())
+        .collect();
+    let final_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
+    let mut poly_groups: Vec<&[&OneHotPoly<F, u8>]> =
+        pre_refs_by_group.iter().map(Vec::as_slice).collect();
+    poly_groups.push(final_refs.as_slice());
+    let mut prover_groups = Vec::with_capacity(PRE_GROUPS + 1);
+    for ((opening_point, openings), commitment) in
+        pre_points.iter().zip(&pre_openings).zip(&pre_commitments)
+    {
+        prover_groups.push(
+            PolynomialGroupClaims::new(opening_point.clone(), openings.clone(), commitment.clone())
+                .map_err(|err| format!("invalid precommit prover group: {err}"))?,
+        );
+    }
+    prover_groups.push(
+        PolynomialGroupClaims::new(
+            final_point.clone(),
+            final_openings.clone(),
+            final_commitment.clone(),
+        )
+        .map_err(|err| format!("invalid final prover group: {err}"))?,
+    );
+    let mut prover_hints = pre_hints;
+    prover_hints.push(final_hint);
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let prove_group =
-        PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
-            .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = SelectedProverOpeningData::from_committed_claims::<Cfg>(
-        OpeningClaims::from_groups(vec![prove_group])
+        OpeningClaims::from_groups(prover_groups)
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
-        vec![hint],
-        vec![&poly_refs[..]],
+        prover_hints,
+        poly_groups,
     )
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let schedule_selection = prove_input.selection();
@@ -362,17 +766,15 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        GroupBatchStatement::new(
+        build_statement(
             schedule_selection,
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                opening_point.clone(),
-                openings.to_vec(),
-                &commitment,
-            )
-            .map_err(|err| format!("invalid verifier opening group: {err}"))?])
-            .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
-        )
-        .map_err(|err| format!("invalid verifier statement: {err}"))?,
+            &pre_points,
+            &pre_openings,
+            &pre_commitments,
+            &final_point,
+            final_openings.clone(),
+            &final_commitment,
+        )?,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
     tracing::info!(
@@ -382,12 +784,25 @@ fn run() -> Result<(), String> {
 
     let proof_shape = proof.shape();
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
+        case: AkitaJoltCase::OneHotFp128MultiGroupRecursive,
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
         num_vars: nv as u64,
-        opening_point,
-        opening,
+        opening_point: final_point,
+        openings: final_openings,
+        precommitted_groups: pre_points
+            .into_iter()
+            .zip(pre_openings)
+            .zip(pre_commitments.clone())
+            .map(|((opening_point, openings), commitment)| {
+                akita_recursion_glue::AkitaJoltOpeningGroup {
+                    opening_point,
+                    openings,
+                    commitment,
+                }
+            })
+            .collect(),
         schedule_selection,
-        commitment,
+        commitment: final_commitment,
         verifier_setup,
         proof_shape,
         proof,
@@ -402,13 +817,12 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    let openings_rt = [decoded.opening];
     verify_proof(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
         decoded
-            .verifier_statement(&openings_rt)
+            .verifier_statement()
             .map_err(|err| format!("decoded verifier statement failed: {err}"))?,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;

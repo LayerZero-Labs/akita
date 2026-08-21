@@ -23,10 +23,12 @@
 //! [`RingSwitchReplay`], and [`AkitaStage1Verifier`]. They are not part of the
 //! verifier's intended downstream API.
 
+mod prepared_cache;
 mod protocol;
 mod stages;
 
 pub use akita_types::CommitmentVerifier;
+pub use prepared_cache::build_riscv64_terminal_ntt_cache;
 pub use protocol::{
     batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };

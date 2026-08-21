@@ -17,7 +17,8 @@ ignored = ["akita-field"]
 # etc., and rolling them all into `alloc::*` would be a sweeping refactor).
 # `stdout` routes the guest's stdout/stderr to a host-readable VFS device so
 # panic messages (and `jolt::println!`) make it back to us.
-guest = ["jolt/guest-std", "jolt/stdout"]
+guest = ["jolt/guest-std", "jolt/stdout", "jolt/random"]
+field-inline = ["jolt/field-inline"]
 # This profile is a benchmark harness: artifact generation does strict setup
 # round-trip validation, while the host/Jolt benchmark path explicitly opts
 # into trusted cached-matrix setup decode to avoid rehashing the full expanded
@@ -34,12 +35,16 @@ trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "c4207de4b9c7011ae5481a20229314036c250bbd", default-features = false }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp32-onehot",
+  "schedules-fp64-onehot",
   "schedules-fp128-onehot",
+  "schedules-fp128-onehot-recursive",
 ] }
 akita-field = { path = "../../../crates/akita-field", default-features = false }
+akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }
 akita-verifier = { path = "../../../crates/akita-verifier", default-features = false }

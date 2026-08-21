@@ -1,135 +1,45 @@
-//! Jolt guest program that deserializes a serialized Akita verifier input
-//! bundle (from [`akita_recursion_glue::AkitaJoltInputs`]) and runs the
-//! Akita batched verifier inside the Jolt RISC-V emulator.
+//! Declarative Jolt entrypoints for the Akita recursion benchmark.
 //!
-//! Three cycle-tracking markers wrap the per-phase work so the host driver
-//! can attribute total cycles to:
-//!
-//! - `deserialize_input`: blob -> typed `AkitaJoltInputs<F, D>`.
-//! - `transcript_init`:   construct the `AkitaTranscript`.
-//! - `akita_verify`:      `akita_verifier::batched_verify` (the kernel
-//!   that `akita-pcs::AkitaCommitmentScheme::batched_verify` wraps; we call it directly to
-//!   avoid `std::time::Instant::now()`, which traps on the Jolt RISC-V
-//!   emulator).
-//!
-//! Return code:
-//!
-//! - `0` — verification succeeded.
-//! - `1` — decode failure.
-//! - `2` — verifier rejected the proof.
+//! [`integration`] owns artifact decoding, the trusted benchmark boundary,
+//! prepared cache installation, statement and transcript construction,
+//! verifier execution, cycle phases, and status mapping. Each declaration here
+//! remains a distinct Jolt program identity because its config and field are
+//! monomorphized into a separate guest function.
 
-use akita_config::proof_optimized::fp128;
-use akita_error::AkitaError;
-use akita_recursion_glue::AkitaJoltInputs;
-use akita_transcript::AkitaTranscript;
-use akita_types::BasisMode;
-use akita_verifier::batched_verify;
+mod integration;
 
-use jolt::{end_cycle_tracking, start_cycle_tracking};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::RecursiveCommitmentConfig;
+use akita_recursion_glue::AkitaJoltCase;
+use integration::declare_akita_guest;
 
-type F = fp128::Field;
-type Cfg = fp128::OneHot;
-/// Concrete ring view used by the recursion artifact's fixed input schema.
-const SOURCE_VIEW_D: usize = 256;
-
-fn verification_status(result: Result<(), AkitaError>) -> u32 {
-    match result {
-        Ok(()) => 0,
-        Err(_) => 2,
-    }
-}
-
-// Memory limits sized for the adaptive fp128 OneHot verifier. Blob size
-// scales with `nv` (≈2.6 MiB at nv=20; tens-to-hundreds of MiB at nv=32).
-// We give:
-//   - `max_input_size` = 768 MiB so large nv blobs fit with headroom.
-//                        Keep this literal equal to
-//                        `akita_recursion_glue::MAX_JOLT_BLOB_BYTES`.
-//   - `heap_size`      = 1 GiB so the decoded verifier setup + transient
-//                        verifier-internal allocations fit alongside the
-//                        raw input.
-//   - `stack_size`     = 16 MiB for sumcheck recursion + extension-field
-//                        arithmetic frames.
-//
-// `backtrace = "off"` strips DWARF symbols + `.eh_frame` and skips
-// `-Cforce-frame-pointers=yes`. Removes ~3-8 % of cycles in the verifier
-// path (no frame-pointer save/restore around every Rust function call).
-// Re-enable `backtrace = "dwarf"` temporarily to symbolicate a guest
-// panic; the `host` driver already plumbs `JOLT_BACKTRACE=full`.
-#[jolt::provable(
-    backtrace = "off",
-    stack_size = 16777216,
-    heap_size = 1610612736,
-    max_input_size = 805306368,
-    max_output_size = 1024,
-    max_trace_length = 4294967296
-)]
-fn akita_verify(input: &[u8]) -> u32 {
-    // `&[u8]` (rather than `Vec<u8>`) so the postcard-decoded input is a
-    // zero-copy borrow into the guest's input region: no megabyte-scale copy
-    // before verifier replay.
-    start_cycle_tracking("deserialize_input");
-    #[cfg(any(
-        feature = "trusted-benchmark-artifact",
-        akita_trusted_benchmark_artifact
-    ))]
-    let decoded_result =
-        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_trusted_host_artifact_bytes::<Cfg>(input);
-    #[cfg(not(any(
-        feature = "trusted-benchmark-artifact",
-        akita_trusted_benchmark_artifact
-    )))]
-    let decoded_result = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(input);
-
-    let decoded = match decoded_result {
-        Ok(decoded) => decoded,
-        Err(_) => {
-            end_cycle_tracking("deserialize_input");
-            return 1;
-        }
-    };
-    end_cycle_tracking("deserialize_input");
-
-    start_cycle_tracking("transcript_init");
-    let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
-    end_cycle_tracking("transcript_init");
-
-    let openings = [decoded.opening];
-
-    // We call `batched_verify` directly (rather than the public
-    // `AkitaCommitmentScheme::<Cfg>::batched_verify` wrapper) to skip
-    // its `Instant::now()` + final `tracing::info!` wall-clock log. The
-    // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
-    // `clock_gettime` support), so the scheme entry point would abort
-    // before any real verifier work runs. The new `batched_verify`
-    // surface is `<Cfg>`-generic and routes every policy through `Cfg`
-    // internally — no closures to thread through.
-    start_cycle_tracking("akita_verify");
-    let statement = match decoded.verifier_statement(&openings) {
-        Ok(statement) => statement,
-        Err(_) => {
-            end_cycle_tracking("akita_verify");
-            return 1;
-        }
-    };
-    let result = batched_verify::<Cfg, _>(
-        &decoded.proof,
-        &decoded.verifier_setup,
-        &mut transcript,
-        statement,
-        BasisMode::Lagrange,
-    );
-    end_cycle_tracking("akita_verify");
-
-    verification_status(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn verifier_rejection_returns_documented_status() {
-        assert_eq!(verification_status(Err(AkitaError::InvalidProof)), 2);
-    }
-}
+declare_akita_guest!(
+    akita_verify_fp32,
+    AkitaJoltCase::OneHotFp32,
+    fp32::OneHot,
+    2048
+);
+declare_akita_guest!(
+    akita_verify_fp64,
+    AkitaJoltCase::OneHotFp64,
+    fp64::OneHot,
+    512
+);
+declare_akita_guest!(
+    akita_verify_fp128_direct,
+    AkitaJoltCase::OneHotFp128Direct,
+    fp128::OneHot,
+    512
+);
+declare_akita_guest!(
+    akita_verify_fp128_recursive,
+    AkitaJoltCase::OneHotFp128Recursive,
+    RecursiveCommitmentConfig<fp128::OneHot>,
+    512
+);
+declare_akita_guest!(
+    akita_verify,
+    AkitaJoltCase::OneHotFp128MultiGroupRecursive,
+    RecursiveCommitmentConfig<fp128::OneHot>,
+    512
+);
