@@ -7,6 +7,8 @@ Groth = "Groth"
 evn = "evn"
 thm = "thm"
 Thm = "Thm"
+# HOL Light tactic names use this spelling.
+ASSUM = "ASSUM"
 
 [files]
 extend-exclude = ["book/mermaid.min.js"]

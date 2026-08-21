@@ -8,6 +8,9 @@ mod compat;
 mod ext;
 /// Smooth-domain FFT helpers.
 pub mod fft;
+#[cfg(all(feature = "fp128-asm-experiment", target_arch = "aarch64"))]
+#[doc(hidden)]
+pub mod fp128_asm_experiment;
 /// SIMD packing surface.
 pub mod packed;
 /// Conditional parallelism utilities.

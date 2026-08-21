@@ -90,6 +90,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "allocative",
+ "criterion",
  "jolt-field",
  "jolt-transcript",
  "num-traits",

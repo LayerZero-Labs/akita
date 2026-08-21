@@ -30,6 +30,7 @@ serde = "1"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 jolt-transcript = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false }
 rand = "0.8"
+criterion = "0.5"
 
 [features]
 default = []
@@ -39,6 +40,13 @@ default = []
 # bridges Akita field types into Jolt's `jolt_field` trait bounds.
 jolt-compat = ["dep:allocative", "dep:jolt-field"]
 parallel = ["dep:rayon"]
+# Experimental proof linkage for the AArch64 scalar Fp128 kernels.
+fp128-asm-experiment = []
+
+[[bench]]
+name = "fp128_asm_linkage"
+harness = false
+required-features = ["fp128-asm-experiment"]
 
 [lints]
 workspace = true
