@@ -312,9 +312,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
-            }
+            lut.fill_limb(k, digits, params, limb);
             forward_ntt(limb, params.primes[k], tw, params.kernel_plan);
         }
         Self { limbs }
@@ -329,9 +327,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
-            }
+            lut.fill_limb(k, digits, params, limb);
             forward_ntt_cyclic(limb, params.primes[k], tw, params.kernel_plan);
         }
         Self { limbs }

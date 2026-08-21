@@ -1,6 +1,10 @@
 use std::array::from_fn;
 use std::marker::PhantomData;
+#[cfg(target_arch = "aarch64")]
+use std::mem::size_of;
 
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
 
 use super::CrtNttParamSet;
@@ -143,6 +147,45 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             "digit LUT lookup outside active balanced range"
         );
         self.vals[k][idx & (self.len - 1)]
+    }
+
+    /// Fill one CRT limb with Montgomery representations of signed digits.
+    #[inline]
+    pub(super) fn fill_limb<const D: usize>(
+        &self,
+        k: usize,
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        dst: &mut [MontCoeff<W>; D],
+    ) {
+        debug_assert!(
+            digits.iter().all(|&digit| {
+                let idx = i16::from(digit) + self.offset;
+                idx >= 0 && (idx as usize) < self.len
+            }),
+            "digit LUT conversion outside active balanced range"
+        );
+        #[cfg(target_arch = "aarch64")]
+        if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
+            let prime = params.primes[k];
+            // SAFETY: the width check proves the transparent i32
+            // representation, and both arrays contain D elements.
+            unsafe {
+                neon::centered_i8_to_mont_i32(
+                    dst.as_mut_ptr().cast::<i32>(),
+                    digits.as_ptr(),
+                    D,
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                    prime.montsq.to_i64() as i32,
+                );
+            }
+            return;
+        }
+
+        for (dst, &digit) in dst.iter_mut().zip(digits) {
+            *dst = self.get(k, digit);
+        }
     }
 }
 

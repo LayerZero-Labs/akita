@@ -190,6 +190,30 @@ fn neon_pointwise_mul_acc_i32_handles_scalar_tail() {
 }
 
 #[test]
+fn neon_centered_i8_to_mont_i32_matches_scalar() {
+    let prime = NttPrime::compute(TEST_PRIME_I32);
+    let mut coefficients: Vec<i8> = (i8::MIN..=i8::MAX).collect();
+    coefficients.extend_from_slice(&[i8::MIN, 0, i8::MAX]);
+    let mut actual = vec![0i32; coefficients.len()];
+    // SAFETY: both buffers contain 259 non-overlapping elements.
+    unsafe {
+        centered_i8_to_mont_i32(
+            actual.as_mut_ptr(),
+            coefficients.as_ptr(),
+            coefficients.len(),
+            prime.p,
+            prime.pinv,
+            prime.montsq,
+        );
+    }
+    let expected: Vec<i32> = coefficients
+        .iter()
+        .map(|&coefficient| prime.from_canonical(i32::from(coefficient)).raw())
+        .collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn neon_centered_i16_to_mont_i32_matches_scalar() {
     let prime = NttPrime::compute(TEST_PRIME_I32);
     let coefficients = [

@@ -273,10 +273,9 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
-                forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
+                let prime = params.primes[k];
+                lut.fill_limb(k, digits, params, scratch_limb);
+                forward_ntt(scratch_limb, prime, tw, params.kernel_plan);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
@@ -361,9 +360,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (k, (scratch_limb, tw)) in
                 scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
             {
-                for (dst, &digit) in scratch_limb.iter_mut().zip(digits.iter()) {
-                    *dst = lut.get(k, digit);
-                }
+                lut.fill_limb(k, digits, params, scratch_limb);
                 forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
             }
 

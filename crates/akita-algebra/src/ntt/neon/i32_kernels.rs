@@ -468,6 +468,52 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
     }
 }
 
+/// Convert signed i8 coefficients directly into an i32 Montgomery limb.
+///
+/// # Safety
+///
+/// `dst` and `src` must be valid for `d` elements and must not overlap. The
+/// modulus must be larger than the complete signed i8 range.
+pub(crate) unsafe fn centered_i8_to_mont_i32(
+    dst: *mut i32,
+    src: *const i8,
+    d: usize,
+    p: i32,
+    pinv: i32,
+    montsq: i32,
+) {
+    let p_q = vdupq_n_s32(p);
+    let pinv_q = vdupq_n_s32(pinv);
+    let montsq_q = vdupq_n_s32(montsq);
+    let mut i = 0usize;
+    while i + 16 <= d {
+        let coefficients = vld1q_s8(src.add(i));
+        let low_i16 = vmovl_s8(vget_low_s8(coefficients));
+        let high_i16 = vmovl_high_s8(coefficients);
+        let values = [
+            vmovl_s16(vget_low_s16(low_i16)),
+            vmovl_high_s16(low_i16),
+            vmovl_s16(vget_low_s16(high_i16)),
+            vmovl_high_s16(high_i16),
+        ];
+        for (chunk, values) in values.into_iter().enumerate() {
+            vst1q_s32(
+                dst.add(i + chunk * 4),
+                mont_mul_4x_i32(values, montsq_q, p_q, pinv_q),
+            );
+        }
+        i += 16;
+    }
+
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            *dst.add(i) = prime.from_canonical(i32::from(*src.add(i))).raw();
+            i += 1;
+        }
+    }
+}
+
 /// Convert signed i16 coefficients directly into an i32 Montgomery limb.
 ///
 /// The protocol's i32 CRT primes are all larger than the complete i16 range,
