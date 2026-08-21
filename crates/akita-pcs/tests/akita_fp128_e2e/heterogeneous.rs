@@ -1,6 +1,6 @@
 use super::*;
 
-use jolt_field::{One, Ring};
+use jolt_field::{One, Ring, Zero};
 
 // ============================================================================
 // GROUP E — Heterogeneous configurations (fp128)
