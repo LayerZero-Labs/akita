@@ -14,6 +14,22 @@ field-valued evaluation trace. This page derives the algebraic chunk layout;
 the canonical pages for exact chunk addresses, their physical order, and mixed
 ring dimensions are linked in [Related layouts](#related-layouts).
 
+## Contents
+
+- [Multiple commitment groups](#multiple-commitment-groups)
+  - [Why multiple commitment groups](#why-multiple-commitment-groups)
+  - [Group-local folded responses and relations](#group-local-folded-responses-and-relations)
+  - [The shared opening-commitment relation](#the-shared-opening-commitment-relation)
+  - [Semantic relations and witness layout](#semantic-relations-and-witness-layout)
+  - [Return to the single-group recursion](#return-to-the-single-group-recursion)
+- [Multiple witness chunks](#multiple-witness-chunks)
+  - [Why multiple witness chunks](#why-multiple-witness-chunks)
+  - [Chunk ranges and commitment-side data](#chunk-ranges-and-commitment-side-data)
+  - [Chunk-local partial evaluations and opening commitment](#chunk-local-partial-evaluations-and-opening-commitment)
+  - [Chunk-local folded responses and witness relations](#chunk-local-folded-responses-and-witness-relations)
+  - [Chunk-major relation matrix and physical realization](#chunk-major-relation-matrix-and-physical-realization)
+- [Related layouts](#related-layouts)
+
 ## Multiple commitment groups
 
 ### Why multiple commitment groups
@@ -293,8 +309,20 @@ $$
 \big\Vert_{b\in\mathcal I_j}\hat{\mathbf t}_b.
 $$
 
-Let $\mathbf B^{(j)}$ denote the columns of $\mathbf B$ belonging to that
-segment. The chunk-local outer image
+The complete outer-digit vector and the corresponding column partition of
+$\mathbf B$ are
+
+$$
+\hat{\mathbf t}
+=
+\hat{\mathbf t}^{(0)}\Vert\cdots\Vert\hat{\mathbf t}^{(C-1)},
+\qquad
+\mathbf B
+=
+[\mathbf B^{(0)}\mid\cdots\mid\mathbf B^{(C-1)}].
+$$
+
+The chunk-local outer image
 
 $$
 \mathbf u^{(j)}
@@ -312,14 +340,17 @@ $$
 \sum_{j=0}^{C-1}\mathbf u^{(j)}
 =
 \sum_{j=0}^{C-1}
-\mathbf B^{(j)}\hat{\mathbf t}^{(j)}.
+\mathbf B^{(j)}\hat{\mathbf t}^{(j)}
+=
+\mathbf B\hat{\mathbf t}.
 }
 \tag{1}
 $$
 
-In compressed mode, this aggregate $\mathbf u$ is the hidden source of one
-$\mathbf F$ chain. Multi-chunking does not create one compression payload per
-chunk.
+Raw mode exposes the aggregate $\mathbf u$. In compressed mode, the
+chunk-local images are first reduced to this single $\mathbf u$; only then is
+$\mathbf u$ used as the hidden source of one shared $\mathbf F$ chain.
+Multi-chunking does not create one compression payload per chunk.
 
 ### Chunk-local partial evaluations and opening commitment
 
@@ -378,7 +409,9 @@ $$
 \sum_{j=0}^{C-1}\mathbf v_D^{(j)}
 =
 \sum_{j=0}^{C-1}
-\mathbf D^{(j)}\hat{\mathbf e}^{(j)}.
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)}
+=
+\mathbf D\hat{\mathbf e}.
 }
 \tag{2}
 $$
@@ -388,9 +421,10 @@ evaluations or their digit segments. Each worker first applies its local
 columns of $\mathbf D$, and the workers aggregate only the resulting
 opening-commitment images. Like $\mathbf u^{(j)}$, the partial image
 $\mathbf v_D^{(j)}$ is not a public payload. Raw mode exposes the aggregate
-$\mathbf v_D$; compressed mode uses that same aggregate as the hidden source
-of one $\mathbf H$ chain. Multi-chunking does not create one compression chain
-per chunk.
+$\mathbf v_D$. In compressed mode, the workers likewise first reduce their
+partial images to the single $\mathbf v_D$; only then is $\mathbf v_D$ used as
+the hidden source of one shared $\mathbf H$ chain. Multi-chunking does not
+create one compression chain per chunk.
 
 ### Chunk-local folded responses and witness relations
 
@@ -432,8 +466,9 @@ $$
  \mid\hat{\mathbf t}^{(j)}].
 $$
 
-Within the ordinary witness prefix, the three segments of each unit are
-contiguous, and the units themselves are concatenated in chunk order:
+Within the logical witness for the four ordinary semantic relation families,
+the three segments of each unit are contiguous, and the units themselves are
+concatenated in chunk order:
 
 $$
 \mathbf w
@@ -441,10 +476,10 @@ $$
 \big\Vert_{j=0}^{C-1}\mathbf w^{(j)}.
 $$
 
-The chunk units form a contiguous prefix of the outgoing witness; the shared
-quotient and compression data follow that prefix. The next level then reblocks
-the complete flat witness according to its own block geometry, so a current
-chunk unit should not be identified with a single next-level block.
+Thus $\mathbf w$ is the complete chunk-major logical witness for those four
+families, not one separately proved witness per chunk. The raw and compressed
+physical realizations append their shared quotient and compression data to
+this logical witness as described below.
 
 The local responses still define the same global folded response
 algebraically:
@@ -464,39 +499,28 @@ through a full-width reduction before constructing the outgoing witness. If a
 production chunk range is empty, its E and T segments are empty and the honest
 prover puts zero in its full-width Z segment.
 
-For an honestly constructed chunk, linearity gives the same fold-evaluation
-identity as in the basic case, now restricted to the local block range and
-written directly in terms of the local witness digits:
+Because the ranges $\mathcal I_j$ partition the live blocks, this derived
+$\mathbf z$ still satisfies the two recomposed identities from the basic
+setting:
 
 $$
-\begin{aligned}
+\begin{gathered}
+\sum_{j=0}^{C-1}
 \sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
-&=
-\sum_{b\in\mathcal I_j}
-c_b\mathbf Q\mathbf G_{\mathrm{in}}\mathbf s_b
-\\
-&=
-\mathbf Q\mathbf G_{\mathrm{in}}
-\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}.
-\end{aligned}
-$$
-
-Likewise, applying $\mathbf A$ before or after the local fold gives the second
-local witness identity:
-
-$$
-\sum_{b\in\mathcal I_j}
-c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
+c_bE_b
 =
-\mathbf A\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}.
+\mathbf Q\mathbf G_{\mathrm{in}}\mathbf z,
+\\
+\sum_{j=0}^{C-1}
+\sum_{b\in\mathcal I_j}
+c_b\mathbf t_b
+=
+\mathbf A\mathbf z.
+\end{gathered}
 $$
 
-These local identities explain how an honest distributed prover constructs
-each witness unit. The protocol does not add a separate consistency row or set
-of $\mathbf A$ rows for every chunk. Instead, it proves their aggregate in the
-same rows as the basic relation. Summing the first local identity over chunks
-gives the aggregate fold-evaluation consistency relation
+Substituting the digit decompositions of $E_b$, $\mathbf t_b$, and the derived
+$\mathbf z$ gives the aggregate fold-evaluation consistency relation
 
 $$
 \boxed{
@@ -511,7 +535,7 @@ c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
 \tag{4}
 $$
 
-and summing the second gives aggregate inner-commitment consistency:
+The same substitution gives aggregate inner-commitment consistency:
 
 $$
 \boxed{
@@ -531,59 +555,33 @@ relations already defined by Equations (1) and (2).
 
 Thus the multi-chunk construction preserves one consistency row, the original
 $\mathbf A$, $\mathbf B$, and $\mathbf D$ row families, and the original
-semantic target. It does not claim that each chunk-local identity is proved
-independently; chunks are column ranges inside one prover's aggregate relation.
+semantic target. It does not add a separately proved row family for each
+chunk; chunks are column ranges inside one aggregate relation.
 
-### Logical witness and physical realization
+### Chunk-major relation matrix and physical realization
 
-The chunk-major prefix defined above is the chunk-local core of the outgoing
-witness. After the shared quotient and, in compressed mode, compression
-segments described below are appended, the next fold views the complete flat
-outgoing witness as a new polynomial and partitions it into new block vectors
-$\mathbf s'_0,\ldots,\mathbf s'_{N'-1}$, where $N'$ is the next level's number
-of live blocks. A next-level chunk owns a range $\mathcal I'_j$ of those
-blocks; one current unit $\mathbf w^{(j)}$ need not be exactly one next-level
-block.
+Compared with the basic logical layout
+$[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$, the opening and
+outer-digit coordinates are only partitioned and reordered into their
+chunk-local segments, so their total lengths do not change. The folded-response
+layout is different: every chunk contributes its own full-width
+$\hat{\mathbf z}^{(j)}$ segment. This accounts for the
+$(C-1)|\hat{\mathbf z}|$ additional coordinates identified above.
 
-If chunked execution continues, each worker can commit its assigned next-level
-blocks by the same path that produced the current commitment-side data:
-
-$$
-\mathbf t'_b
-=
-\mathbf A'\mathbf s'_b,
-\qquad
-\mathbf t'_b
-=
-\mathbf G'_{\mathrm{out}}\hat{\mathbf t}'_b,
-\qquad b\in\mathcal I'_j.
-$$
-
-Collecting the local outer digits into $\hat{\mathbf t}'^{(j)}$, the worker
-forms a partial outer image and the workers reduce only those smaller images:
-
-$$
-\mathbf u'^{(j)}
-=
-\mathbf B'^{(j)}\hat{\mathbf t}'^{(j)},
-\qquad
-\mathbf u'
-=
-\sum_{j=0}^{C-1}\mathbf u'^{(j)}.
-$$
-
-Thus the current chunk witness becomes distributed source data for the next
-level without first reducing the full-width $\hat{\mathbf z}^{(j)}$ segments.
-Only the smaller commitment images are combined. The primes distinguish the
-next level's blocks, matrices, digits, and commitment from the current level's
-objects.
+The recomposed global $\mathbf z$ can be recovered algebraically from the
+local responses, but the basic $\hat{\mathbf z}$ is not a concatenation or
+reordering of the $\hat{\mathbf z}^{(j)}$. Recovering that digit vector would
+require materializing the global $\mathbf z$ and decomposing it again. The
+multi-chunk relation avoids that full-width reduction by acting on the local
+digit vectors directly.
 
 Let $\mathbf M^{(j)}$ be the full-height relation column block acting on
 $\mathbf w^{(j)}$. The $\hat{\mathbf e}^{(j)}$ and
 $\hat{\mathbf t}^{(j)}$ columns restrict the original block-indexed
 coefficients to $\mathcal I_j$, while the same folded-response operators act
-on every full-width $\hat{\mathbf z}^{(j)}$ segment. The complete matrix is the
-horizontal concatenation
+on every full-width $\hat{\mathbf z}^{(j)}$ segment. Thus the row families are
+not replicated: only their witness columns are redesigned as the horizontal
+concatenation
 
 $$
 \mathbf M_{\mathrm{chunk}}
@@ -604,7 +602,8 @@ $$
 \tag{6}
 $$
 
-with the same raw target as the basic relation:
+with the same semantic target as the basic relation, which is also the
+physical right-hand side in raw mode:
 
 $$
 \mathbf y
