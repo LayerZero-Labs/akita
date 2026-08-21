@@ -468,7 +468,7 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
 
     let mut rng = StdRng::seed_from_u64(0xF64A);
     for _ in 0..256 {
-        // TwoNr (IS_NEG_ONE = false): c0 = p00 + 2*p11.
+        // TwoNr: c0 = p00 + 2*p11.
         let a = Ext2::<Prime64Offset59>::random(&mut rng);
         let b = Ext2::<Prime64Offset59>::random(&mut rng);
         assert_eq!(
@@ -477,7 +477,7 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
             "TwoNr accum mismatch a={a:?} b={b:?}"
         );
 
-        // NegOneNr (IS_NEG_ONE = true): c0 = p00 + p^2 - p11.
+        // NegOneNr: c0 = p00 + p^2 - p11.
         let c = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
         let d = FpExt2::<Prime64Offset59, NegOneNr>::random(&mut rng);
         assert_eq!(
@@ -486,6 +486,35 @@ fn fp_ext2_fp64_product_accum_matches_direct_mul_large_operands() {
             "NegOneNr accum mismatch c={c:?} d={d:?}"
         );
     }
+}
+
+#[test]
+fn fp_ext2_fp64_product_accum_arbitrary_non_residue_fallback() {
+    use num_traits::Zero;
+
+    type F = Fp64<{ (1u64 << 62) - 143 }>;
+    struct ThreeNr;
+    impl FpExt2Config<F> for ThreeNr {
+        fn non_residue() -> F {
+            F::from_u64(3)
+        }
+    }
+    type E = FpExt2<F, ThreeNr>;
+
+    let mut rng = StdRng::seed_from_u64(0xF62A);
+    let pairs: Vec<(E, E)> = (0..256)
+        .map(|_| (E::random(&mut rng), E::random(&mut rng)))
+        .collect();
+    let direct = pairs
+        .iter()
+        .map(|(a, b)| *a * *b)
+        .fold(E::zero(), |sum, product| sum + product);
+    let delayed = pairs.iter().fold(
+        <E as HasUnreducedOps>::ProductAccum::zero(),
+        |sum, (a, b)| sum + a.mul_to_product_accum(*b),
+    );
+
+    assert_eq!(direct, E::reduce_product_accum(delayed));
 }
 
 #[test]

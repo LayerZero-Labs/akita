@@ -250,12 +250,12 @@ impl<const P: u32> PackedFp32Avx2<P> {
     where
         C: FpExt2Config<Fp32<P>>,
     {
-        if C::IS_NEG_ONE {
-            Self::sub_vec(_mm256_setzero_si256(), x)
-        } else if C::non_residue().0 == 2 {
-            Self::add_vec(x, x)
-        } else {
-            C::mul_non_residue(Self::from_vec(x), Self::broadcast).to_vec()
+        match C::NON_RESIDUE_KIND {
+            FpExt2NonResidueKind::NegOne => Self::sub_vec(_mm256_setzero_si256(), x),
+            FpExt2NonResidueKind::Two => Self::add_vec(x, x),
+            FpExt2NonResidueKind::Generic => {
+                C::mul_non_residue(Self::from_vec(x), Self::broadcast).to_vec()
+            }
         }
     }
 
