@@ -31,6 +31,19 @@ jobs:
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
 
+  avx2-field:
+    name: AVX2 field kernels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Require AVX2
+        run: grep -Eq '(^|[[:space:]])avx2([[:space:]]|$)' /proc/cpuinfo
+      - name: Run AVX2 field kernel tests
+        env:
+          RUSTFLAGS: -D warnings -C target-feature=+avx2
+        run: cargo test --release -p akita-field --lib
+
   aarch64-neon:
     name: Native AArch64 NEON exact NTT
     runs-on: ubuntu-24.04-arm
@@ -41,6 +54,10 @@ jobs:
         run: |
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
+      - name: Run AArch64 field kernel tests
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        run: cargo test --release -p akita-field --lib
       - name: Run architecture-specific exact NTT tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
@@ -66,6 +83,7 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
         run: |
+          RUSTFLAGS="-D warnings -C target-feature=+avx512f,+avx512dq" cargo test --release --target x86_64-unknown-linux-gnu -p akita-field --lib
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-algebra --lib ifma52 -- --include-ignored
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-types --lib ifma -- --include-ignored
           cargo test --release --target x86_64-unknown-linux-gnu -p akita-verifier --lib terminal_ntt
