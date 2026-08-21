@@ -585,11 +585,12 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
     use akita_field::Prime32Offset99 as F;
 
+    let natural_len = 64;
     let mut level_params = sample_level_params();
     retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
-        setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
-    let id = scheduled_setup_prefix(1, commitment_params)
+        setup_prefix_precommitted_params(&level_params, natural_len).expect("prefix params");
+    let id = scheduled_setup_prefix(natural_len, commitment_params)
         .slot_id()
         .expect("setup prefix group");
     let slot = || {
@@ -661,11 +662,12 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
     use akita_field::Prime32Offset99 as F;
 
+    let natural_len = 64;
     let mut level_params = sample_level_params();
     retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
     let commitment_params =
-        setup_prefix_precommitted_params(&level_params, 64).expect("prefix params");
-    let id = scheduled_setup_prefix(1, commitment_params)
+        setup_prefix_precommitted_params(&level_params, natural_len).expect("prefix params");
+    let id = scheduled_setup_prefix(natural_len, commitment_params)
         .slot_id()
         .expect("setup prefix group");
     let slot = || verifier_slot_for_id(id.clone());

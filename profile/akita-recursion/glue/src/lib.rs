@@ -686,7 +686,7 @@ mod tests {
         )
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
-        let id = scheduled_setup_prefix(1, commitment_params)
+        let id = scheduled_setup_prefix(PREFIX_D, commitment_params)
             .slot_id()
             .expect("setup prefix group");
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());

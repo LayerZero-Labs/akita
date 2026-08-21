@@ -840,7 +840,7 @@ mod tests {
                         1,
                     ),
                 };
-                let id = scheduled_setup_prefix(1, commitment_params)
+                let id = scheduled_setup_prefix(TEST_D, commitment_params)
                     .slot_id()
                     .expect("setup prefix group");
                 let compression_plan = CompressionChainPlan::for_complete_source(
