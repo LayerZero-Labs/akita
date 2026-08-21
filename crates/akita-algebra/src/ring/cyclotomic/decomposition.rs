@@ -211,7 +211,120 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
             }
         }
     }
+    if try_balanced_decompose_coefficients_pow2_i8_u64_into(
+        coefficients,
+        out,
+        params.levels,
+        params.log_basis,
+        params.q,
+        params.threshold,
+    ) {
+        return;
+    }
     balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
+}
+
+/// Try to decompose canonically stored `u64` field coefficients with
+/// native-width carries.
+///
+/// The output is digit-major. The function returns `false` without modifying
+/// `out` when the field does not expose canonical `u64` storage or the centered
+/// modulus interval does not fit in `i64`. Callers can then use the general
+/// `u128`/`i128` decomposition path.
+///
+/// # Panics
+///
+/// Panics if `out.len() != coefficients.len() * levels`, or if `log_basis` is
+/// outside `1..=8`.
+#[inline]
+pub fn try_balanced_decompose_coefficients_pow2_i8_u64_into<F: CanonicalField>(
+    coefficients: &[F],
+    out: &mut [i8],
+    levels: usize,
+    log_basis: u32,
+    q: u128,
+    threshold: u128,
+) -> bool {
+    let expected_len = coefficients
+        .len()
+        .checked_mul(levels)
+        .expect("flat digit output length overflow");
+    assert_eq!(
+        out.len(),
+        expected_len,
+        "flat digit output length must match coefficients * levels",
+    );
+    assert!(
+        (1..=8).contains(&log_basis),
+        "log_basis must be in 1..=8 for i8 output"
+    );
+    if coefficients.is_empty() || levels == 0 {
+        return true;
+    }
+
+    let Some(coefficients) = F::canonical_u64_slice(coefficients) else {
+        return false;
+    };
+
+    let Ok(q) = u64::try_from(q) else {
+        return false;
+    };
+    let Ok(threshold) = u64::try_from(threshold) else {
+        return false;
+    };
+    if threshold > i64::MAX as u64 || q.saturating_sub(threshold) > i64::MAX as u64 {
+        return false;
+    }
+
+    let half_b = 1i64 << (log_basis - 1);
+    let b = half_b << 1;
+    let mask = b - 1;
+    let width = coefficients.len();
+    let bulk_end = width - (width % 4);
+
+    #[inline(always)]
+    fn center(canonical: u64, q: u64, threshold: u64) -> i64 {
+        if canonical > threshold {
+            -((q - canonical) as i64)
+        } else {
+            canonical as i64
+        }
+    }
+
+    #[inline(always)]
+    fn extract(carry: &mut i64, mask: i64, half_b: i64, b: i64, log_basis: u32) -> i8 {
+        let raw = *carry & mask;
+        if raw >= half_b {
+            *carry = (*carry >> log_basis) + 1;
+            (raw - b) as i8
+        } else {
+            *carry >>= log_basis;
+            raw as i8
+        }
+    }
+
+    for base in (0..bulk_end).step_by(4) {
+        let mut carries = [
+            center(coefficients[base], q, threshold),
+            center(coefficients[base + 1], q, threshold),
+            center(coefficients[base + 2], q, threshold),
+            center(coefficients[base + 3], q, threshold),
+        ];
+        for plane in out.chunks_exact_mut(width) {
+            plane[base] = extract(&mut carries[0], mask, half_b, b, log_basis);
+            plane[base + 1] = extract(&mut carries[1], mask, half_b, b, log_basis);
+            plane[base + 2] = extract(&mut carries[2], mask, half_b, b, log_basis);
+            plane[base + 3] = extract(&mut carries[3], mask, half_b, b, log_basis);
+        }
+    }
+
+    for coefficient in bulk_end..width {
+        let mut carry = center(coefficients[coefficient], q, threshold);
+        for plane in out.chunks_exact_mut(width) {
+            plane[coefficient] = extract(&mut carry, mask, half_b, b, log_basis);
+        }
+    }
+    true
 }
 
 #[inline]

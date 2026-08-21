@@ -24,6 +24,7 @@ use super::util::{is_pow2_u64, log2_pow2_u64, mul64_wide, sample_uniform_below};
 /// replaced by shift+add/sub.
 #[cfg_attr(feature = "jolt-compat", derive(allocative::Allocative))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(transparent)]
 pub struct Fp64<const P: u64>(pub(crate) u64);
 
 impl<const P: u64> Fp64<P> {
@@ -581,6 +582,13 @@ impl<const P: u64> CanonicalField for Fp64<P> {
 
     fn from_canonical_u128_reduced(val: u128) -> Self {
         Self(Self::reduce_u128(val))
+    }
+
+    #[inline]
+    fn canonical_u64_slice(values: &[Self]) -> Option<&[u64]> {
+        // SAFETY: `Fp64` is transparent over one `u64`, and every constructor
+        // and arithmetic operation maintains a canonical representative.
+        Some(unsafe { std::slice::from_raw_parts(values.as_ptr().cast(), values.len()) })
     }
 }
 
