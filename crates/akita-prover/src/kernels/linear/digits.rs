@@ -99,18 +99,30 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
         params,
         |accs, start, end| {
             if pointwise_dot_batch_size > 1 {
-                let mut transformed = Vec::with_capacity(pointwise_dot_batch_size);
-                for (block_idx, block) in blocks.iter().enumerate() {
-                    if start >= block.len() {
-                        continue;
-                    }
-                    let block_tile_end = end.min(block.len());
-                    for batch_start in (start..block_tile_end).step_by(pointwise_dot_batch_size) {
-                        let batch_end =
-                            (batch_start + pointwise_dot_batch_size).min(block_tile_end);
-                        let digits = &block[batch_start..batch_end];
-                        if CHECK_ZERO && digits.iter().any(is_zero_plane) {
-                            for (offset, digit) in digits.iter().enumerate() {
+                let mut transformed = (0..num_live_blocks)
+                    .map(|_| Vec::with_capacity(pointwise_dot_batch_size))
+                    .collect::<Vec<_>>();
+                for batch_start in (start..end).step_by(pointwise_dot_batch_size) {
+                    let batch_end = (batch_start + pointwise_dot_batch_size).min(end);
+                    // Keep one matrix sub-tile hot while applying it to every
+                    // right-hand side. Fall back to the sparse order below if
+                    // any input can skip an all-zero plane.
+                    let has_zero_plane = CHECK_ZERO
+                        && blocks.iter().any(|block| {
+                            batch_start < block.len()
+                                && block[batch_start..batch_end.min(block.len())]
+                                    .iter()
+                                    .any(is_zero_plane)
+                        });
+                    if has_zero_plane {
+                        for (block_idx, block) in blocks.iter().enumerate() {
+                            let block_batch_end = batch_end.min(block.len());
+                            if batch_start >= block_batch_end {
+                                continue;
+                            }
+                            for (offset, digit) in
+                                block[batch_start..block_batch_end].iter().enumerate()
+                            {
                                 if is_zero_plane(digit) {
                                     continue;
                                 }
@@ -126,19 +138,27 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
                                     );
                                 }
                             }
-                            continue;
                         }
+                        continue;
+                    }
 
-                        transformed.clear();
-                        transformed.extend(
-                            digits.iter().map(|digit| {
-                                CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut)
-                            }),
-                        );
-                        for (acc, mat_row) in accs[block_idx].iter_mut().zip(ntt_mat.iter()) {
-                            acc.add_assign_pointwise_dot(
-                                &mat_row[batch_start..batch_end],
-                                &transformed,
+                    for (digits_ntt, block) in transformed.iter_mut().zip(blocks) {
+                        digits_ntt.clear();
+                        let block_batch_end = batch_end.min(block.len());
+                        if batch_start < block_batch_end {
+                            digits_ntt.extend(block[batch_start..block_batch_end].iter().map(
+                                |digit| CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut),
+                            ));
+                        }
+                    }
+                    for (row_idx, mat_row) in ntt_mat.iter().enumerate() {
+                        for (block_idx, digits_ntt) in transformed.iter().enumerate() {
+                            if digits_ntt.is_empty() {
+                                continue;
+                            }
+                            accs[block_idx][row_idx].add_assign_pointwise_dot(
+                                &mat_row[batch_start..batch_start + digits_ntt.len()],
+                                digits_ntt,
                                 params,
                             );
                         }
