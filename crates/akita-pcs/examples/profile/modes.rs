@@ -25,7 +25,7 @@ use akita_types::{
 type F = fp128::Field;
 
 const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
-const MULTI_GROUP_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 34;
 const MULTI_GROUP_PRE_GROUPS: usize = 2;
 const MULTI_GROUP_FINAL_POLYS: usize = 2;
 const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;

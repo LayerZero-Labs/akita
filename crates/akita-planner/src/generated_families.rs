@@ -179,10 +179,18 @@ const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
-    onehot_keys![(14, 1), (16, 1), (16, 2), (20, 1), (28, 1), (30, 1)];
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
+    (14, 1),
+    (16, 1),
+    (16, 2),
+    (20, 1),
+    (28, 1),
+    (30, 1),
+    (34, 1)
+];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
@@ -192,9 +200,10 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1)];
 
 /// One generated schedule-table family.
 ///
@@ -451,13 +460,16 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
-    Ok(vec![GroupedGenerationRequest::new(
-        PolynomialGroupLayout::new(32, 2),
-        vec![
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-        ],
-    )])
+    let producers = vec![
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+    ];
+    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
+    // (34, 2) as the larger profile-bench fixture.
+    Ok(vec![
+        GroupedGenerationRequest::new(PolynomialGroupLayout::new(32, 2), producers.clone()),
+        GroupedGenerationRequest::new(PolynomialGroupLayout::new(34, 2), producers),
+    ])
 }
 
 fn heterogeneous_onehot_catalog_key(
