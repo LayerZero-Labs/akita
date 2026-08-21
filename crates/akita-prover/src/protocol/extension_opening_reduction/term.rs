@@ -1,6 +1,6 @@
 use super::*;
 
-/// One dense suffix term in an extension-opening reduction sumcheck.
+/// One dense term in an extension-opening reduction sumcheck.
 #[derive(Debug, Clone)]
 pub struct ExtensionOpeningReductionTerm<E: FieldCore> {
     pub(in crate::protocol::extension_opening_reduction) tables: ExtensionOpeningTables<E>,

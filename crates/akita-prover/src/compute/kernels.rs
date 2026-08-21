@@ -114,7 +114,7 @@ where
     where
         E: MulBaseUnreduced<F>;
 
-    /// Tensor-packed recursive suffix witness.
+    /// Tensor-packed EOR witness.
     fn packed_witness(
         &self,
         prepared: Option<&Self::PreparedSetup>,

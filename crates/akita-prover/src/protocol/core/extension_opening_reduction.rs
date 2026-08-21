@@ -342,9 +342,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
-    B: ComputeBackendSetup<F>
-        + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
-        + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
+    B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_reduction_terms", num_terms = polys.len()).entered();

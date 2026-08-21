@@ -526,12 +526,12 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 // ---------------------------------------------------------------------------
 // Regression: EOR round messages must honor `DELAYED_PRODUCT_SUM_IS_EXACT`.
 //
-// `accumulate_dense_round`, `fused_fold_and_accumulate`, and the sparse
-// `accumulate_entries_with_factor` sum `mul_to_product_accum` products and
-// reduce once. That is only sound when the field's accumulator is exact w.r.t.
-// per-term `Mul`. For a field that leaves `DELAYED_PRODUCT_SUM_IS_EXACT` at its
-// conservative `false` default, the prover must reduce every product first, or
-// the round coefficients silently drift and the prover's claim diverges.
+// `accumulate_dense_round` and `fused_fold_and_accumulate` sum
+// `mul_to_product_accum` products and reduce once. That is only sound when the
+// field's accumulator is exact w.r.t. per-term `Mul`. For a field that leaves
+// `DELAYED_PRODUCT_SUM_IS_EXACT` at its conservative `false` default, the
+// prover must reduce every product first, or the round coefficients silently
+// drift and the prover's claim diverges.
 //
 // The existing byte-identical tests only cover fields whose flag is `true`
 // (exact) or whose accumulator is trivially exact, so they cannot catch a

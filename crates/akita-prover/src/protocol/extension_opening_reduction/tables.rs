@@ -47,7 +47,7 @@ fn fold_evals_shared<E: FieldCore + HasOptimizedFold>(src: &[E], r: E) -> Vec<E>
         .collect()
 }
 
-/// Dense suffix EOR tables, optionally extended over zero-fixed high variables.
+/// Dense EOR tables, optionally extended over zero-fixed high variables.
 #[derive(Debug, Clone)]
 pub(in crate::protocol::extension_opening_reduction) enum ExtensionOpeningTables<E: FieldCore> {
     Dense {
