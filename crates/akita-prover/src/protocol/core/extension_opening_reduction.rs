@@ -354,25 +354,16 @@ where
             actual: claim_coefficients.len(),
         });
     }
-    let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-    let mut shared_factor = Some(factor_evals);
+    let shared_factor = std::sync::Arc::new(tensor_equality_factor_evals::<F, E>(tail_point, eta)?);
     let mut terms = Vec::with_capacity(polys.len());
-    for (index, (poly, &coefficient)) in polys.iter().zip(claim_coefficients).enumerate() {
+    for (poly, &coefficient) in polys.iter().zip(claim_coefficients) {
         let witness = {
             let _span = tracing::info_span!("eor_packed_witness").entered();
             TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
         };
-        let factor_evals = if index + 1 == polys.len() {
-            shared_factor.take().ok_or(AkitaError::InvalidProof)?
-        } else {
-            shared_factor
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?
-                .clone()
-        };
-        terms.push(ExtensionOpeningReductionTerm::new(
+        terms.push(ExtensionOpeningReductionTerm::new_with_shared_factor(
             witness,
-            factor_evals,
+            std::sync::Arc::clone(&shared_factor),
             coefficient,
         )?);
     }

@@ -20,7 +20,27 @@ impl<E: FieldCore> ExtensionOpeningReductionTerm<E> {
         Ok(Self {
             tables: ExtensionOpeningTables::Dense {
                 witness: witness_evals,
-                factor: factor_evals,
+                factor: DenseEorFactor::Owned(factor_evals),
+            },
+            coeff,
+            cached_accumulate: None,
+        })
+    }
+
+    /// Construct one term with the full transparent factor shared by its group.
+    ///
+    /// The first fold replaces the shared table with an owned half-size table,
+    /// so later rounds retain the existing in-place representation.
+    pub fn new_with_shared_factor(
+        witness_evals: Vec<E>,
+        factor_evals: std::sync::Arc<Vec<E>>,
+        coeff: E,
+    ) -> Result<Self, AkitaError> {
+        validate_reduction_tables(&witness_evals, &factor_evals)?;
+        Ok(Self {
+            tables: ExtensionOpeningTables::Dense {
+                witness: witness_evals,
+                factor: DenseEorFactor::Shared(factor_evals),
             },
             coeff,
             cached_accumulate: None,

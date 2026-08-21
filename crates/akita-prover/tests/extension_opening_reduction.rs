@@ -320,6 +320,49 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
 }
 
 #[test]
+fn shared_dense_factor_preserves_batched_proof() {
+    let witness_a = (0..32)
+        .map(|index| F::from_u64((3 * index + 5) as u64))
+        .collect::<Vec<_>>();
+    let witness_b = (0..32)
+        .map(|index| F::from_u64((11 * index + 7) as u64))
+        .collect::<Vec<_>>();
+    let factor = (0..32)
+        .map(|index| F::from_u64((17 * index + 13) as u64))
+        .collect::<Vec<_>>();
+    let coeff_a = F::from_u64(19);
+    let coeff_b = F::from_u64(23);
+    let input_claim = coeff_a * extension_opening_reduction_claim(&witness_a, &factor).unwrap()
+        + coeff_b * extension_opening_reduction_claim(&witness_b, &factor).unwrap();
+
+    let owned_terms = vec![
+        ExtensionOpeningReductionTerm::new(witness_a.clone(), factor.clone(), coeff_a).unwrap(),
+        ExtensionOpeningReductionTerm::new(witness_b.clone(), factor.clone(), coeff_b).unwrap(),
+    ];
+    let shared_factor = std::sync::Arc::new(factor);
+    let shared_terms = vec![
+        ExtensionOpeningReductionTerm::new_with_shared_factor(
+            witness_a,
+            std::sync::Arc::clone(&shared_factor),
+            coeff_a,
+        )
+        .unwrap(),
+        ExtensionOpeningReductionTerm::new_with_shared_factor(witness_b, shared_factor, coeff_b)
+            .unwrap(),
+    ];
+
+    let prove = |terms| {
+        let mut prover = ExtensionOpeningReductionProver::new(terms, input_claim).unwrap();
+        let mut transcript = new_transcript();
+        let result = prover
+            .prove::<F, _, _>(&mut transcript, sample_round)
+            .unwrap();
+        (result, prover.final_terms().unwrap())
+    };
+    assert_eq!(prove(shared_terms), prove(owned_terms));
+}
+
+#[test]
 fn extension_opening_reduction_proves_transparent_factor_claim() {
     let witness_evals: Vec<F> = (0..16).map(|i| F::from_u64((3 * i + 5) as u64)).collect();
     let factor = ExtensionOpeningReductionFactor::from_terms(vec![

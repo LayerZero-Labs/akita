@@ -133,7 +133,6 @@ mod term;
 pub use prover::ExtensionOpeningReductionProver;
 pub use term::ExtensionOpeningReductionTerm;
 
-pub(crate) use dense::{
-    accumulate_dense_round, fold_dense_reduction_tables_in_place, fused_fold_and_accumulate,
-};
-use tables::ExtensionOpeningTables;
+pub(crate) use dense::accumulate_dense_round;
+pub(in crate::protocol::extension_opening_reduction) use dense::fused_fold_and_accumulate;
+use tables::{DenseEorFactor, ExtensionOpeningTables};
