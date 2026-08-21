@@ -146,8 +146,6 @@ pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Terminal compressed opening payload `p_H`.
     pub opening_payload: RingVec<F>,
-    /// Accepted fold-l∞ grind nonce (`0` when the first probe succeeds).
-    pub fold_grind_nonce: u32,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<E>,
     /// Stage-2 fused payload.
@@ -167,16 +165,10 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         Self {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_ring_elems(&opening_payload).into_compact(),
-            fold_grind_nonce: 0,
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
         }
-    }
-
-    /// Accepted fold grind nonce (`0` when the first probe succeeds).
-    pub fn fold_grind_nonce(&self) -> u32 {
-        self.fold_grind_nonce
     }
 
     /// Borrow the optional extension-opening reduction payload.
@@ -295,8 +287,6 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     /// Optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-    /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection.
-    pub fold_grind_nonce: u32,
     /// Quotient-free terminal response checked directly by the verifier.
     pub terminal_response: TerminalResponse<F>,
 }
@@ -309,11 +299,9 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
     pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
         terminal_response: TerminalResponse<F>,
-        fold_grind_nonce: u32,
     ) -> Self {
         Self {
             extension_opening_reduction,
-            fold_grind_nonce,
             terminal_response,
         }
     }
@@ -343,6 +331,8 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
 /// Akita PCS proof for fused batched openings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaBatchedProof<F: FieldCore, E: FieldCore> {
+    /// Plan-shaped packed transcript-grinding and fold-response values.
+    pub nonce_stream: crate::TranscriptNonceStream,
     /// Root fold over all original-polynomial claims.
     pub root: FoldLevelProof<F, E>,
     /// Non-terminal recursive folds between the root and terminal fold.
@@ -370,10 +360,7 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
     /// Derive the [`AkitaBatchedProofShape`] for this proof.
     pub fn shape(&self) -> AkitaBatchedProofShape {
         AkitaBatchedProofShape {
-            // Slice 2 changes only the public shape descriptor. The proof body
-            // gains its stream in Slice 3, so a payload-derived test shape has
-            // no stream bits yet.
-            nonce_stream_bits: 0,
+            nonce_stream_bits: self.nonce_stream.bit_len(),
             root: self.root.shape(),
             recursive_folds: self
                 .recursive_folds
@@ -382,16 +369,6 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
                 .collect(),
             terminal: self.terminal.shape(),
         }
-    }
-
-    /// Derive the public shape descriptor with its exact plan-owned stream width.
-    pub fn shape_for_grinding_plan(
-        &self,
-        grinding_plan: &crate::GrindingPlan,
-    ) -> AkitaBatchedProofShape {
-        let mut shape = self.shape();
-        shape.nonce_stream_bits = grinding_plan.total_nonce_bits();
-        shape
     }
 }
 

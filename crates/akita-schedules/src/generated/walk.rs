@@ -219,17 +219,13 @@ pub(crate) fn walk_generated_schedule_entry(
             estimated_stage3_payload_bytes: stage3_bytes,
         });
     }
-    let terminal_direct_bytes = akita_types::FOLD_GRIND_NONCE_BYTES
-        .checked_add(extension_opening_reduction_level_bytes(
-            challenge_field_bits,
-            policy.claim_ext_degree,
-            PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-                input_witness_len,
-            )?),
-        )?)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal direct byte count overflow".to_string())
-        })?;
+    let terminal_direct_bytes = extension_opening_reduction_level_bytes(
+        challenge_field_bits,
+        policy.claim_ext_degree,
+        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
+            input_witness_len,
+        )?),
+    )?;
     let terminal_bytes = akita_types::terminal_response_planner_bytes(
         field_bits,
         &witness_shape,
@@ -261,7 +257,7 @@ pub(crate) fn walk_generated_schedule_entry(
         total_bytes,
         setup_field_elements,
         None,
-        policy.selection_policy,
+        policy,
         &key.opening_layout()?,
         folds,
         CandidateTerminalResponse {

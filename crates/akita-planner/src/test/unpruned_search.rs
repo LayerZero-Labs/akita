@@ -139,13 +139,7 @@ fn enumerate_suffixes(
                                 source_moment,
                             )?
                         {
-                            let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-                                .checked_add(terminal_eor_bytes)
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned traversal terminal proof size overflow".into(),
-                                    )
-                                })?;
+                            let direct_bytes = terminal_eor_bytes;
                             terminal.estimated_direct_payload_bytes = direct_bytes;
                             schedules.push(ScheduleCandidate {
                                 first_direct_setup_field_len: std::num::NonZeroUsize::new(
@@ -427,7 +421,7 @@ pub(super) fn find_schedule(
         selected.total_bytes,
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
-        policy.selection_policy,
+        policy,
         &schedule_key.opening_layout()?,
         selected.folds.to_vec(),
         selected.terminal.as_ref().clone(),

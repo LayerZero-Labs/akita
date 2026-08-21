@@ -696,7 +696,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             BasisMode::Lagrange,
         )
         .expect("canonical grinding plan");
-        let shape = proof.shape_for_grinding_plan(&grinding_plan);
+        let shape = proof.shape();
+        shape
+            .validate_grinding_plan(&grinding_plan)
+            .expect("proof stream matches canonical grinding plan");
         assert_eq!(
             shape,
             canonical_proof_shape(&schedule, &opening_layout, 1, &grinding_plan)

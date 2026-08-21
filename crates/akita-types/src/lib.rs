@@ -36,6 +36,7 @@ pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
 mod transcript_grinding;
+mod transcript_grinding_plan;
 pub mod witness;
 
 pub use commitment_slicing::{
@@ -155,7 +156,7 @@ pub use proof::{
     append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
     DigitRangePlan, FlatBooleanDomain,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::level_proof_bytes;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
@@ -202,11 +203,13 @@ pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
     GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol,
+    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
     FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
     GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
     GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
     TRANSCRIPT_SECURITY_BITS,
 };
+pub use transcript_grinding_plan::derive_transcript_grinding_plan_from_public_shape;
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,

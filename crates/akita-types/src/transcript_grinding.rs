@@ -3,6 +3,7 @@
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
+use akita_serialization::SerializationError;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
 pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
@@ -424,6 +425,262 @@ pub struct GrindingPlan {
     expanded_query_count: u64,
 }
 
+#[derive(Clone, Copy)]
+struct GrindingPlanEntry {
+    site: GrindingSite,
+    kind: GrindingQueryKind,
+    nonce_bits: u8,
+}
+
+struct GrindingPlanCursor<'a> {
+    plan: &'a GrindingPlan,
+    run_index: usize,
+    run_offset: u64,
+}
+
+impl<'a> GrindingPlanCursor<'a> {
+    const fn new(plan: &'a GrindingPlan) -> Self {
+        Self {
+            plan,
+            run_index: 0,
+            run_offset: 0,
+        }
+    }
+
+    fn next(&mut self) -> Option<GrindingPlanEntry> {
+        let run = *self.plan.runs.get(self.run_index)?;
+        let entry = GrindingPlanEntry {
+            site: run.site,
+            kind: run.kind,
+            nonce_bits: run.nonce_bits,
+        };
+        self.run_offset += 1;
+        if self.run_offset == run.multiplicity {
+            self.run_index += 1;
+            self.run_offset = 0;
+        }
+        Some(entry)
+    }
+}
+
+/// Headerless, low-bit-first packed values for the public grinding plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranscriptNonceStream {
+    bytes: Vec<u8>,
+    bit_len: usize,
+}
+
+impl TranscriptNonceStream {
+    /// Construct a stream from its exact raw bytes and public bit width.
+    pub fn from_bytes(bytes: Vec<u8>, bit_len: usize) -> Result<Self, SerializationError> {
+        let expected_bytes = nonce_byte_len(bit_len)?;
+        if bytes.len() != expected_bytes {
+            return Err(SerializationError::InvalidData(
+                "nonce stream byte length does not match its bit width".into(),
+            ));
+        }
+        if let (Some(&last), Some(used_bits)) = (bytes.last(), bit_len.checked_rem(8)) {
+            if used_bits != 0 && last >> used_bits != 0 {
+                return Err(SerializationError::InvalidData(
+                    "nonce stream has nonzero high padding bits".into(),
+                ));
+            }
+        }
+        Ok(Self { bytes, bit_len })
+    }
+
+    /// Exact number of meaningful packed bits.
+    #[must_use]
+    pub const fn bit_len(&self) -> usize {
+        self.bit_len
+    }
+
+    /// Exact raw proof bytes, without a length prefix.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Start checked sequential replay against `plan`.
+    pub fn reader<'a>(
+        &'a self,
+        plan: &'a GrindingPlan,
+    ) -> Result<TranscriptNonceReader<'a>, AkitaError> {
+        if self.bit_len != plan.total_nonce_bits {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(TranscriptNonceReader {
+            stream: self,
+            plan: GrindingPlanCursor::new(plan),
+            bit_offset: 0,
+        })
+    }
+}
+
+/// Checked sequential writer for one public grinding plan.
+pub struct TranscriptNonceWriter<'a> {
+    bytes: Vec<u8>,
+    plan: GrindingPlanCursor<'a>,
+    bit_offset: usize,
+}
+
+impl<'a> TranscriptNonceWriter<'a> {
+    /// Allocate the exact packed byte count prescribed by `plan`.
+    pub fn new(plan: &'a GrindingPlan) -> Result<Self, AkitaError> {
+        let byte_len = nonce_byte_len(plan.total_nonce_bits)
+            .map_err(|_| AkitaError::InvalidSetup("nonce stream byte width overflow".into()))?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(byte_len)
+            .map_err(|_| AkitaError::InvalidSetup("nonce stream allocation failed".into()))?;
+        bytes.resize(byte_len, 0);
+        Ok(Self {
+            bytes,
+            plan: GrindingPlanCursor::new(plan),
+            bit_offset: 0,
+        })
+    }
+
+    /// Write the next expected logical entry and reject a site, kind, or width mismatch.
+    pub fn write(
+        &mut self,
+        site: GrindingSite,
+        kind: GrindingQueryKind,
+        value: u32,
+    ) -> Result<(), AkitaError> {
+        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
+        if entry.site != site || entry.kind != kind || !value_fits(value, entry.nonce_bits) {
+            return Err(AkitaError::InvalidProof);
+        }
+        write_bits(&mut self.bytes, self.bit_offset, entry.nonce_bits, value);
+        self.bit_offset = self
+            .bit_offset
+            .checked_add(usize::from(entry.nonce_bits))
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(())
+    }
+
+    /// Reserve inactive entries as zero, then write the next fold-response nonce.
+    pub fn write_next_fold_response(
+        &mut self,
+        site: GrindingSite,
+        value: u32,
+    ) -> Result<(), AkitaError> {
+        loop {
+            let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
+            if entry.kind == GrindingQueryKind::FoldResponse {
+                if entry.site != site || !value_fits(value, entry.nonce_bits) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                write_bits(&mut self.bytes, self.bit_offset, entry.nonce_bits, value);
+                self.bit_offset += usize::from(entry.nonce_bits);
+                return Ok(());
+            }
+            self.bit_offset += usize::from(entry.nonce_bits);
+        }
+    }
+
+    /// Finish the stream, requiring that no fold-response entry was omitted.
+    pub fn finish(mut self) -> Result<TranscriptNonceStream, AkitaError> {
+        while let Some(entry) = self.plan.next() {
+            if entry.kind == GrindingQueryKind::FoldResponse {
+                return Err(AkitaError::InvalidProof);
+            }
+            self.bit_offset += usize::from(entry.nonce_bits);
+        }
+        if self.bit_offset != self.plan.plan.total_nonce_bits {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(TranscriptNonceStream {
+            bytes: self.bytes,
+            bit_len: self.bit_offset,
+        })
+    }
+}
+
+/// Checked sequential reader for one public grinding plan.
+pub struct TranscriptNonceReader<'a> {
+    stream: &'a TranscriptNonceStream,
+    plan: GrindingPlanCursor<'a>,
+    bit_offset: usize,
+}
+
+impl TranscriptNonceReader<'_> {
+    /// Read the next expected logical entry and reject a site or kind mismatch.
+    pub fn read(&mut self, site: GrindingSite, kind: GrindingQueryKind) -> Result<u32, AkitaError> {
+        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
+        if entry.site != site || entry.kind != kind {
+            return Err(AkitaError::InvalidProof);
+        }
+        let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
+        self.bit_offset = self
+            .bit_offset
+            .checked_add(usize::from(entry.nonce_bits))
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(value)
+    }
+
+    /// Require inactive entries to be zero, then read the next fold-response nonce.
+    pub fn read_next_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
+        loop {
+            let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
+            let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
+            self.bit_offset += usize::from(entry.nonce_bits);
+            if entry.kind == GrindingQueryKind::FoldResponse {
+                if entry.site != site {
+                    return Err(AkitaError::InvalidProof);
+                }
+                return Ok(value);
+            }
+            if value != 0 {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+    }
+
+    /// Finish replay, requiring zero reserved entries and no omitted fold response.
+    pub fn finish(mut self) -> Result<(), AkitaError> {
+        while let Some(entry) = self.plan.next() {
+            let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
+            self.bit_offset += usize::from(entry.nonce_bits);
+            if entry.kind == GrindingQueryKind::FoldResponse || value != 0 {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        if self.bit_offset != self.stream.bit_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+}
+
+fn nonce_byte_len(bit_len: usize) -> Result<usize, SerializationError> {
+    akita_error::checked::div_ceil(bit_len, 8)
+        .ok_or_else(|| SerializationError::InvalidData("invalid nonce stream byte width".into()))
+}
+
+fn value_fits(value: u32, width: u8) -> bool {
+    width == u32::BITS as u8 || value < (1u32 << width)
+}
+
+fn write_bits(bytes: &mut [u8], offset: usize, width: u8, value: u32) {
+    for bit in 0..usize::from(width) {
+        if (value >> bit) & 1 == 1 {
+            let stream_bit = offset + bit;
+            bytes[stream_bit / 8] |= 1 << (stream_bit % 8);
+        }
+    }
+}
+
+fn read_bits(bytes: &[u8], offset: usize, width: u8) -> u32 {
+    let mut value = 0u32;
+    for bit in 0..usize::from(width) {
+        let stream_bit = offset + bit;
+        value |= u32::from((bytes[stream_bit / 8] >> (stream_bit % 8)) & 1) << bit;
+    }
+    value
+}
+
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.
     pub fn new(runs: Vec<GrindingRun>, nominal_capacity_bits: u32) -> Result<Self, AkitaError> {
@@ -606,6 +863,150 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stream_test_plan() -> GrindingPlan {
+        GrindingPlan::new(
+            vec![
+                GrindingRun::proof_of_work(GrindingSite::RingSwitchAlpha { level: 0 }, 2, 128)
+                    .unwrap(),
+                GrindingRun::fold_response(0),
+                GrindingRun::proof_of_work(GrindingSite::Tau0Point { level: 0 }, 4, 128).unwrap(),
+                GrindingRun::fold_response(1),
+            ],
+            128,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn nonce_stream_is_little_endian_and_crosses_byte_boundaries() {
+        let plan = stream_test_plan();
+        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+        writer
+            .write(
+                GrindingSite::RingSwitchAlpha { level: 0 },
+                GrindingQueryKind::ProofOfWork,
+                0xa5,
+            )
+            .unwrap();
+        writer
+            .write(
+                GrindingSite::FoldResponse { level: 0 },
+                GrindingQueryKind::FoldResponse,
+                0xabc,
+            )
+            .unwrap();
+        writer
+            .write(
+                GrindingSite::Tau0Point { level: 0 },
+                GrindingQueryKind::ProofOfWork,
+                0x101,
+            )
+            .unwrap();
+        writer
+            .write(
+                GrindingSite::FoldResponse { level: 1 },
+                GrindingQueryKind::FoldResponse,
+                0x123,
+            )
+            .unwrap();
+        let stream = writer.finish().unwrap();
+        assert_eq!(stream.bit_len(), 41);
+        assert_eq!(stream.as_bytes(), &[0xa5, 0xbc, 0x1a, 0x70, 0x24, 0x00]);
+
+        let mut reader = stream.reader(&plan).unwrap();
+        assert_eq!(
+            reader
+                .read(
+                    GrindingSite::RingSwitchAlpha { level: 0 },
+                    GrindingQueryKind::ProofOfWork,
+                )
+                .unwrap(),
+            0xa5
+        );
+        assert_eq!(
+            reader
+                .read(
+                    GrindingSite::FoldResponse { level: 0 },
+                    GrindingQueryKind::FoldResponse,
+                )
+                .unwrap(),
+            0xabc
+        );
+        assert_eq!(
+            reader
+                .read(
+                    GrindingSite::Tau0Point { level: 0 },
+                    GrindingQueryKind::ProofOfWork,
+                )
+                .unwrap(),
+            0x101
+        );
+        assert_eq!(
+            reader
+                .read(
+                    GrindingSite::FoldResponse { level: 1 },
+                    GrindingQueryKind::FoldResponse,
+                )
+                .unwrap(),
+            0x123
+        );
+        reader.finish().unwrap();
+    }
+
+    #[test]
+    fn inactive_entries_are_canonical_zero_and_fold_width_is_checked() {
+        let plan = stream_test_plan();
+        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+        writer
+            .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+            .unwrap();
+        assert!(writer
+            .write_next_fold_response(
+                GrindingSite::FoldResponse { level: 1 },
+                FOLD_RESPONSE_ATTEMPTS,
+            )
+            .is_err());
+
+        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+        writer
+            .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+            .unwrap();
+        writer
+            .write_next_fold_response(GrindingSite::FoldResponse { level: 1 }, 23)
+            .unwrap();
+        let stream = writer.finish().unwrap();
+        let mut reader = stream.reader(&plan).unwrap();
+        assert_eq!(
+            reader
+                .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
+                .unwrap(),
+            17
+        );
+        assert_eq!(
+            reader
+                .read_next_fold_response(GrindingSite::FoldResponse { level: 1 })
+                .unwrap(),
+            23
+        );
+        reader.finish().unwrap();
+
+        let mut malleable = stream.as_bytes().to_vec();
+        malleable[0] |= 1;
+        let malleable = TranscriptNonceStream::from_bytes(malleable, stream.bit_len()).unwrap();
+        assert!(malleable
+            .reader(&plan)
+            .unwrap()
+            .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
+            .is_err());
+    }
+
+    #[test]
+    fn nonce_stream_rejects_wrong_length_and_nonzero_padding() {
+        assert!(TranscriptNonceStream::from_bytes(vec![0], 9).is_err());
+        assert!(TranscriptNonceStream::from_bytes(vec![0, 0x80], 9).is_err());
+        assert!(TranscriptNonceStream::from_bytes(vec![0, 1], 9).is_ok());
+    }
 
     #[test]
     fn current_capacity_prices_exact_nominal_loss_bits() {

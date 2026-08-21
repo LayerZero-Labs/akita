@@ -6,15 +6,14 @@
 //! prover/verifier replay path. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
+//! The proof-level packed nonce stream is priced once from the canonical
+//! grinding plan and is not attributed to individual levels.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
 use crate::{
     CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
 };
 use akita_error::AkitaError;
-
-/// Fixed wire size of `fold_grind_nonce` on every fold level proof.
-pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
     degree * elem_bytes
@@ -120,12 +119,7 @@ pub fn level_proof_bytes(
         challenge_elem_bytes,
         lp.inner().matrix.security_route(),
     )?;
-    Ok(v_bytes
-        + FOLD_GRIND_NONCE_BYTES
-        + stage1_bytes
-        + sumcheck
-        + next_commit_bytes
-        + next_eval_bytes)
+    Ok(v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes)
 }
 
 fn payload_bytes(
@@ -347,7 +341,6 @@ mod tests {
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_coeffs(vec![B::zero(); current_coeffs]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof::<E>(rounds, b, lp.inner().matrix.security_route()),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck::<E>(rounds, 3),
@@ -882,17 +875,14 @@ mod tests {
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
                 terminal_response,
-                0,
             );
 
             let serialized_without_witness =
                 terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
-            // A direct terminal level carries only the `fold_grind_nonce`
-            // (plus any extension-opening reduction, absent from this
-            // fixture); this mirrors the planner's terminal-direct accounting.
+            // The proof-level packed nonce stream is accounted separately.
             assert_eq!(
-                FOLD_GRIND_NONCE_BYTES, serialized_without_witness,
+                0, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
             );

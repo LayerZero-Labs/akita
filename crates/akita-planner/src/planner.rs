@@ -627,7 +627,7 @@ pub fn find_schedule(
         best.total_bytes,
         best.setup_field_elements,
         first_direct_setup_field_len,
-        active_policy.selection_policy,
+        active_policy,
         &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),

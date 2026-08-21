@@ -96,7 +96,7 @@ where
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
-    let _grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+    let grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
         selection,
@@ -113,6 +113,7 @@ where
         claims,
         schedule,
         basis,
+        &grinding_plan,
     )
     .map(|(proof, _total_levels)| proof)
 }
@@ -146,6 +147,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &FoldSchedule,
     basis: BasisMode,
+    grinding_plan: &akita_types::GrindingPlan,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -254,6 +256,7 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
+    let root_nonce = root.fold_response_nonce;
     let root = root.level_proof;
 
     // Prepared NTT state belongs to the supplied stack selector. Shared owners
@@ -270,8 +273,21 @@ where
         schedule,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
+    let mut nonce_writer = akita_types::TranscriptNonceWriter::new(grinding_plan)?;
+    nonce_writer.write_next_fold_response(
+        akita_types::GrindingSite::FoldResponse { level: 0 },
+        root_nonce,
+    )?;
+    for (offset, &nonce) in suffix.fold_response_nonces.iter().enumerate() {
+        let level = u32::try_from(offset + 1)
+            .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+        nonce_writer
+            .write_next_fold_response(akita_types::GrindingSite::FoldResponse { level }, nonce)?;
+    }
+    let nonce_stream = nonce_writer.finish()?;
     Ok((
         AkitaBatchedProof {
+            nonce_stream,
             root,
             recursive_folds: suffix.recursive_folds,
             terminal: suffix.terminal,

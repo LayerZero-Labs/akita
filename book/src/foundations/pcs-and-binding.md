@@ -61,11 +61,13 @@ Fiat-Shamir knowledge error <= (Q + 1) * kappa,
 where `Q` is the adversary's total random-oracle query budget. This query factor
 is the correct way to account for repeated challenge trials.
 
-Each Akita fold carries a bounded nonce. The nonce is absorbed before the fold
-challenge is sampled. Trying another nonce is therefore another random-oracle
-query. It does not create a separate fixed loss of `log2(max_nonce_count)` bits
-at every fold. For a fixed transcript prefix and a bad-challenge set of measure
-`epsilon`, `q` trials have success probability
+Each Akita fold carries a bounded nonce in one proof-level packed stream. Each
+fold-response entry uses 12 bits rather than a separate 32-bit field. The
+nonce is absorbed before the fold challenge is sampled. Trying another nonce
+is therefore another random-oracle query. It does not create a separate fixed
+loss of `log2(max_nonce_count)` bits at every fold. For a fixed transcript
+prefix and a bad-challenge set of measure `epsilon`, `q` trials have success
+probability
 
 ```text
 1 - (1 - epsilon)^q <= q * epsilon.

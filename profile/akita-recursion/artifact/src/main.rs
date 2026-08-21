@@ -15,9 +15,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::{
     CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, PseudoMersenneField,
     RandomSampling,
@@ -456,6 +454,10 @@ macro_rules! generate_scalar_case {
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("{} derive grinding plan: {err}", case))?;
+        let proof_shape = proof.shape();
+        proof_shape
+            .validate_grinding_plan(&grinding_plan)
+            .map_err(|err| format!("{} validate proof grinding shape: {err}", case))?;
 
         let inputs: AkitaJoltInputs<ScalarField, $d, ScalarExt> = AkitaJoltInputs {
             case,
@@ -467,7 +469,7 @@ macro_rules! generate_scalar_case {
             schedule_selection,
             commitment,
             verifier_setup,
-            proof_shape: proof.shape_for_grinding_plan(&grinding_plan),
+            proof_shape,
             proof,
         };
         let blob = inputs
@@ -797,7 +799,10 @@ fn run() -> Result<(), String> {
         BasisMode::Lagrange,
     )
     .map_err(|err| format!("derive grinding plan failed: {err}"))?;
-    let proof_shape = proof.shape_for_grinding_plan(&grinding_plan);
+    let proof_shape = proof.shape();
+    proof_shape
+        .validate_grinding_plan(&grinding_plan)
+        .map_err(|err| format!("validate proof grinding shape failed: {err}"))?;
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         case: AkitaJoltCase::OneHotFp128MultiGroupRecursive,
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),

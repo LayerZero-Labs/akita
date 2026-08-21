@@ -141,6 +141,7 @@ pub(crate) fn verify<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     schedule: &FoldSchedule,
+    nonce_reader: &mut akita_types::TranscriptNonceReader<'_>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -164,8 +165,11 @@ where
     } else {
         None
     };
+    let root_nonce = nonce_reader
+        .read_next_fold_response(akita_types::GrindingSite::FoldResponse { level: 0 })?;
     let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
         &proof.root,
+        root_nonce,
         setup,
         transcript,
         &claims,
@@ -192,6 +196,7 @@ where
         setup,
         transcript,
         schedule,
+        nonce_reader,
         SuffixVerifierState {
             opening_point: root_challenges,
             opening: proof.root.next_w_eval(),
@@ -336,17 +341,18 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    {
+    let grinding_plan = {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        let _grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
             &setup.expanded,
             &opening_batch,
             selection,
             schedule,
             basis,
             transcript,
-        )?;
-    }
+        )?
+    };
+    let mut nonce_reader = proof.nonce_stream.reader(&grinding_plan)?;
 
     let raw_groups = claims
         .groups()
@@ -370,7 +376,9 @@ where
         &opening_batch,
         basis,
         schedule,
+        &mut nonce_reader,
     )
+    .and_then(|()| nonce_reader.finish())
     .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 

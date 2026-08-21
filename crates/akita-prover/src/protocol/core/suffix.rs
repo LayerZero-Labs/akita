@@ -120,6 +120,7 @@ where
         ));
     }
     let mut intermediate_levels = Vec::new();
+    let mut fold_response_nonces = Vec::new();
     let mut current_state = starting_state;
     let mut level = 1usize;
 
@@ -184,6 +185,7 @@ where
             ))
         })?;
         intermediate_levels.push(out.level_proof);
+        fold_response_nonces.push(out.fold_response_nonce);
         current_state = out.next_state;
         level += 1;
     }
@@ -195,16 +197,19 @@ where
             current_witness_len,
         )));
     }
-    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
-        stacks.prove_stack_at_level(level),
-        transcript,
-        current_state,
-        &schedule.terminal,
-    )?;
+    let (terminal, terminal_nonce) =
+        prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
+            stacks.prove_stack_at_level(level),
+            transcript,
+            current_state,
+            &schedule.terminal,
+        )?;
+    fold_response_nonces.push(terminal_nonce);
 
     Ok(RecursiveSuffixOutcome {
         recursive_folds: intermediate_levels,
         terminal,
+        fold_response_nonces,
         num_levels: planned_num_levels,
     })
 }
@@ -215,7 +220,7 @@ fn prove_terminal_suffix<F, E, T, C, O, TS, R>(
     transcript: &mut T,
     current_state: SuffixProverState<F, E>,
     scheduled: &TerminalFoldParams,
-) -> Result<TerminalLevelProof<F, E>, AkitaError>
+) -> Result<(TerminalLevelProof<F, E>, u32), AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -387,11 +392,13 @@ where
     )?;
     let transcript_parts = terminal_response.terminal_transcript_parts()?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &transcript_parts.response);
-    Ok(TerminalLevelProof {
-        extension_opening_reduction,
-        fold_grind_nonce: fold_output.nonce,
-        terminal_response,
-    })
+    Ok((
+        TerminalLevelProof {
+            extension_opening_reduction,
+            terminal_response,
+        },
+        fold_output.nonce,
+    ))
 }
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.

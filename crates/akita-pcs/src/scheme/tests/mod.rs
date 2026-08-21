@@ -236,11 +236,11 @@ fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
 }
 
 /// Derive the structural proof shape from the schedule. The terminal carries
-/// only optional EOR, its grind nonce, and the clear terminal response.
+/// only optional EOR and the clear terminal response; nonces are proof-level.
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
-    _proof: &AkitaBatchedProof<OneHotF, OneHotF>,
+    proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
@@ -332,7 +332,7 @@ fn expected_same_point_batched_shape(
         terminal_response: schedule.terminal.response_shape.clone(),
     };
     AkitaBatchedProofShape {
-        nonce_stream_bits: 0,
+        nonce_stream_bits: proof.nonce_stream.bit_len(),
         root: root_shape,
         recursive_folds,
         terminal,
