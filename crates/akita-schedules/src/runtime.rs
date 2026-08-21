@@ -603,10 +603,18 @@ pub fn expanded_schedule_proof_payload_bytes(
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
     );
+    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        &key.opening_layout()?,
+        field_bits,
+        policy.claim_ext_degree,
+    )?;
+    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     total
-        .checked_add(akita_types::FOLD_GRIND_NONCE_BYTES)
-        .and_then(|value| value.checked_add(terminal_eor))
+        .checked_add(terminal_eor)
         .and_then(|value| value.checked_add(terminal_response))
+        .and_then(|value| value.checked_add(nonce_stream_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
 }
 
@@ -617,7 +625,7 @@ pub fn materialize_candidate_schedule(
     cached_total: usize,
     cached_num_setup_field_elements: usize,
     cached_first_direct_setup_field_len: Option<usize>,
-    selection_policy: SelectionPolicyId,
+    policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
@@ -629,6 +637,7 @@ pub fn materialize_candidate_schedule(
     }
     let root = folds.remove(0);
     let mut estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: folds
@@ -679,7 +688,16 @@ pub fn materialize_candidate_schedule(
             ..terminal_response.params
         },
     };
-    let first_direct_setup_field_len = match selection_policy {
+    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        &schedule,
+        root_layout,
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )?;
+    estimate.nonce_stream_bytes =
+        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    let first_direct_setup_field_len = match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayload => None,
         SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,

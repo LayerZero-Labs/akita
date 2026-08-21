@@ -911,6 +911,7 @@ def extract_summary(
             summary["proof_size_bytes"] = int(kvs["proof_size_bytes"])
             summary["accounted_bytes"] = int(kvs["accounted_bytes"])
             summary["akita_fold_bytes"] = int(kvs["akita_fold_bytes"])
+            summary["nonce_stream_bytes"] = int(kvs.get("nonce_stream_bytes", 0))
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])

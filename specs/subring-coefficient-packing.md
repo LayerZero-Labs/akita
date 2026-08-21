@@ -929,8 +929,9 @@ L1 bytes = 32 * ceil(log2(W1)).
 
 These formulas are the canonical
 `extension_opening_reduction_level_bytes` calculation, which is tested against
-the serialized EOR payload. Removing EOR does not remove the fold grind nonce;
-the numbers below count only bytes that actually disappear with the EOR proof.
+the serialized EOR payload. Removing EOR does not remove the fold-response
+entry in the proof-level packed nonce stream; the numbers below count only
+bytes that actually disappear with the EOR proof.
 
 ### Complete current catalog census
 

@@ -85,6 +85,8 @@ pub use suffix::{prove_suffix, SuffixProverState};
 pub struct ProveLevelOutput<F: Field, E: Field> {
     /// Fold proof produced at this level.
     pub level_proof: FoldLevelProof<F, E>,
+    /// Accepted fold-response search nonce for proof-level stream assembly.
+    pub fold_response_nonce: u32,
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E>,
 }
@@ -95,6 +97,8 @@ pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     pub recursive_folds: Vec<FoldLevelProof<F, E>>,
     /// Required terminal fold.
     pub terminal: TerminalLevelProof<F, E>,
+    /// Fold-response nonces for recursive levels followed by the terminal level.
+    pub fold_response_nonces: Vec<u32>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
     pub num_levels: usize,

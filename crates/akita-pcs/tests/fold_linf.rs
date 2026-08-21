@@ -7,7 +7,10 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::{AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup, FOLD_RESPONSE_ATTEMPTS};
+use akita_types::{
+    AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup, GrindingPlan, GrindingSite,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
+};
 use common::*;
 
 type Scheme = AkitaCommitmentScheme<OneHotCfg>;
@@ -23,17 +26,20 @@ struct FoldLinfGrindFixture {
     commitment: CommittedGroup<F>,
     point: Vec<F>,
     opening: F,
+    grinding_plan: GrindingPlan,
 }
 
 fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfGrindFixture {
-    let layout = OneHotCfg::resolve_catalog_row_for_opening(
-        &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
+    let opening_layout =
+        akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
+    let row = OneHotCfg::resolve_catalog_row_for_opening(&opening_layout).expect("layout");
+    let grinding_plan = akita_config::derive_transcript_grinding_plan::<OneHotCfg>(
+        row.schedule(),
+        &opening_layout,
+        BasisMode::Lagrange,
     )
-    .expect("layout")
-    .schedule()
-    .root
-    .params
-    .clone();
+    .expect("grinding plan");
+    let layout = row.schedule().root.params.clone();
     let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
     let opening = opening_from_poly_for_layout(
@@ -91,6 +97,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         commitment,
         point,
         opening,
+        grinding_plan,
     }
 }
 
@@ -99,18 +106,29 @@ fn fold_linf_grind_onehot_e2e_prove_verify() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_01);
-        for step in fixture.proof.nonterminal_folds() {
-            assert!(
-                step.fold_grind_nonce < FOLD_RESPONSE_ATTEMPTS,
-                "grind nonce must stay within cap"
-            );
+        assert!(
+            fixture.proof.nonce_stream.bit_len()
+                >= fixture.proof.num_fold_levels() * FOLD_RESPONSE_NONCE_BITS as usize
+        );
+        let mut reader = fixture
+            .proof
+            .nonce_stream
+            .reader(&fixture.grinding_plan)
+            .expect("plan-shaped stream");
+        for level in 0..fixture.proof.num_fold_levels() {
+            let nonce = reader
+                .read_next_fold_response(GrindingSite::FoldResponse {
+                    level: u32::try_from(level).unwrap(),
+                })
+                .expect("fold-response entry");
+            assert!(nonce < FOLD_RESPONSE_ATTEMPTS);
         }
-        assert!(fixture.proof.terminal.fold_grind_nonce < FOLD_RESPONSE_ATTEMPTS);
+        reader.finish().expect("exact stream completion");
     });
 }
 
 #[test]
-fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
+fn packed_nonce_stream_roundtrips_and_tampering_rejects() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let fixture = prove_fold_linf_grind_onehot_fixture(FOLD_LINF_E2E_NV, 0x51_51_00_02);
@@ -133,8 +151,13 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
         )
         .expect("deserialized proof must verify");
 
-        roundtrip.root.fold_grind_nonce = FOLD_RESPONSE_ATTEMPTS;
-        roundtrip.terminal.fold_grind_nonce = FOLD_RESPONSE_ATTEMPTS;
+        let mut nonce_bytes = roundtrip.nonce_stream.as_bytes().to_vec();
+        nonce_bytes[0] ^= 1;
+        roundtrip.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
+            nonce_bytes,
+            roundtrip.nonce_stream.bit_len(),
+        )
+        .expect("used-bit mutation preserves canonical padding");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let err = Scheme::batched_verify(
@@ -144,7 +167,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
         )
-        .expect_err("oversized grind nonce must be rejected");
+        .expect_err("mutated packed nonce stream must be rejected");
         assert!(
             matches!(err, AkitaError::InvalidProof)
                 || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),

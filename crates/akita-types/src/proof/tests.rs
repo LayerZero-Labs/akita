@@ -244,7 +244,6 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     let with_reduction = FoldLevelProof {
         extension_opening_reduction: Some(tiny_reduction()),
         opening_payload: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        fold_grind_nonce: 0,
         stage1: tiny_stage1(),
         stage2: AkitaStage2Proof {
             sumcheck_proof: SumcheckProof {
@@ -323,17 +322,13 @@ fn terminal_level_proof_serde_round_trip() {
     let terminal_response =
         test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
 
-    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
-        None,
-        terminal_response.clone(),
-        7,
-    );
+    let without_reduction =
+        TerminalLevelProof::new_with_extension_opening_reduction(None, terminal_response.clone());
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
         .extension_opening_reduction
         .is_none());
-    assert_eq!(without_reduction.fold_grind_nonce, 7);
 
     let mut bytes = Vec::new();
     without_reduction
@@ -349,7 +344,6 @@ fn terminal_level_proof_serde_round_trip() {
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
         terminal_response,
-        0,
     );
     let mut bytes_with_reduction = Vec::new();
     with_reduction
@@ -373,7 +367,6 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let terminal_response = test_terminal_witness(vec![F::one(), -F::one()]);
     let proof = TerminalLevelProof {
         extension_opening_reduction: None,
-        fold_grind_nonce: 3,
         terminal_response,
     };
 
@@ -393,7 +386,25 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         tiny_stage2::<D>(),
     );
     root.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    let grinding_plan = crate::GrindingPlan::new(
+        vec![
+            crate::GrindingRun::proof_of_work(crate::GrindingSite::EvaluationBatch, 3, 128)
+                .expect("grinding run"),
+            crate::GrindingRun::fold_response(0),
+            crate::GrindingRun::fold_response(1),
+        ],
+        128,
+    )
+    .expect("grinding plan");
+    let mut nonce_writer = crate::TranscriptNonceWriter::new(&grinding_plan).unwrap();
+    nonce_writer
+        .write_next_fold_response(crate::GrindingSite::FoldResponse { level: 0 }, 3)
+        .unwrap();
+    nonce_writer
+        .write_next_fold_response(crate::GrindingSite::FoldResponse { level: 1 }, 7)
+        .unwrap();
     let batched = AkitaBatchedProof {
+        nonce_stream: nonce_writer.finish().unwrap(),
         root,
         recursive_folds: Vec::new(),
         terminal: proof.clone(),
@@ -410,16 +421,7 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         )))
     );
     let shape = batched.shape();
-    let grinding_plan = crate::GrindingPlan::new(
-        vec![
-            crate::GrindingRun::proof_of_work(crate::GrindingSite::EvaluationBatch, 3, 128)
-                .expect("grinding run"),
-            crate::GrindingRun::fold_response(0),
-        ],
-        128,
-    )
-    .expect("grinding plan");
-    let public_shape = batched.shape_for_grinding_plan(&grinding_plan);
+    let public_shape = batched.shape();
     public_shape
         .validate_grinding_plan(&grinding_plan)
         .expect("plan-owned stream width");

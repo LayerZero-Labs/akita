@@ -805,7 +805,7 @@ impl Valid for AkitaBatchedProofShape {
                 "proof-shape nonce stream width does not fit u64".to_string(),
             )
         })?;
-        self.nonce_stream_bytes()?;
+        checked_shape_len(self.nonce_stream_bytes()?)?;
         self.root.check()?;
         checked_shape_sequence_len(self.recursive_folds.len())?;
         self.recursive_folds.check()?;
@@ -817,9 +817,9 @@ impl Valid for AkitaBatchedProofShape {
 impl AkitaBatchedProofShape {
     /// Return the exact byte count for the packed nonce stream.
     pub fn nonce_stream_bytes(&self) -> Result<usize, SerializationError> {
-        Ok(self.nonce_stream_bits.checked_add(7).ok_or_else(|| {
-            SerializationError::InvalidData("proof-shape nonce stream byte width overflow".into())
-        })? / 8)
+        akita_error::checked::div_ceil(self.nonce_stream_bits, 8).ok_or_else(|| {
+            SerializationError::InvalidData("invalid proof-shape nonce stream byte width".into())
+        })
     }
 
     /// Require this shape to carry the exact public plan-derived stream width.
@@ -1005,8 +1005,8 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
                 "proof-shape nonce stream width does not fit usize".to_string(),
             )
         })?;
-        nonce_stream_bits.checked_add(7).ok_or_else(|| {
-            SerializationError::InvalidData("proof-shape nonce stream byte width overflow".into())
+        akita_error::checked::div_ceil(nonce_stream_bits, 8).ok_or_else(|| {
+            SerializationError::InvalidData("invalid proof-shape nonce stream byte width".into())
         })?;
         let out = Self {
             nonce_stream_bits,

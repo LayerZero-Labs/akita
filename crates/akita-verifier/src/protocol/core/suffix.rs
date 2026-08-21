@@ -107,6 +107,7 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &FoldSchedule,
+    nonce_reader: &mut akita_types::TranscriptNonceReader<'_>,
     mut current_state: SuffixVerifierState<'a, F, E>,
 ) -> Result<(), AkitaError>
 where
@@ -171,7 +172,11 @@ where
         let prepared = prepare_fold_replay::<F, E, T>(
             FoldReplayPayload {
                 extension_opening_reduction: fold.extension_opening_reduction(),
-                fold_grind_nonce: fold.fold_grind_nonce,
+                fold_grind_nonce: nonce_reader.read_next_fold_response(
+                    akita_types::GrindingSite::FoldResponse {
+                        level: u32::try_from(level_index).map_err(|_| AkitaError::InvalidProof)?,
+                    },
+                )?,
                 kind: FoldReplayKind::Recursive {
                     v: &fold.opening_payload,
                     stage1: &fold.stage1,
@@ -224,6 +229,9 @@ where
     }
     verify_terminal_suffix::<F, E, T>(
         terminal,
+        nonce_reader.read_next_fold_response(akita_types::GrindingSite::FoldResponse {
+            level: u32::try_from(terminal_level).map_err(|_| AkitaError::InvalidProof)?,
+        })?,
         setup,
         transcript,
         &current_state,
@@ -238,6 +246,7 @@ where
 
 fn verify_terminal_suffix<F, E, T>(
     proof: &TerminalLevelProof<F, E>,
+    fold_response_nonce: u32,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &SuffixVerifierState<'_, F, E>,
@@ -271,7 +280,7 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    TranscriptGrindingBinding::validate_fold_response_nonce(proof.fold_grind_nonce)?;
+    TranscriptGrindingBinding::validate_fold_response_nonce(fold_response_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {
@@ -336,7 +345,7 @@ where
         params.blocks.live_blocks,
         1,
         &scheduled.fold_challenge_config,
-        proof.fold_grind_nonce,
+        fold_response_nonce,
         operator_rejection,
     )?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);

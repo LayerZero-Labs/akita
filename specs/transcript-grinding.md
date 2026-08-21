@@ -98,8 +98,8 @@ choices unnecessary:
    block.
 3. `AkitaTranscript` already has a prover-only preview path that clones the
    sponge state for fold-response search.
-4. The proof already carries one fixed `u32` fold nonce in every nonterminal
-   and terminal fold object.
+4. Before this cutover, the proof carried one fixed `u32` fold nonce in every
+   nonterminal and terminal fold object.
 
 This specification uses those current boundaries.
 
@@ -558,11 +558,12 @@ assigned grind bits would be zero.
 ### Public policy and plan
 
 `akita-types` owns the validated plan, fixed-width site identifiers, descriptor
-section, nonce stream, and proof shape. `akita-config` owns the one canonical
-plan constructor because it already combines `CommitmentConfig`, the effective
-`FoldSchedule`, and the normalized `OpeningClaimsLayout` for both prover and
-verifier. The planner calls that constructor directly. No protocol crate
-rebuilds loss factors or query order.
+section, nonce stream, proof shape, and the one canonical constructor from
+field metadata, the effective `FoldSchedule`, and the normalized
+`OpeningClaimsLayout`. `akita-config` supplies the concrete field metadata
+from `CommitmentConfig` through its typed adapter. Schedule sizing calls the
+same lower-level constructor. No protocol or planner crate rebuilds loss
+factors or query order.
 
 The semantic model is:
 
@@ -1362,7 +1363,7 @@ The expected primary surfaces are:
 | transcript diagnostics | `crates/akita-transcript/src/labels.rs`, `logging.rs` | grind labels and events |
 | proof objects and shapes | `crates/akita-types/src/proof/levels.rs`, `shapes.rs` | top-level stream and exact bit shape |
 | plan and policy types | new focused module under `crates/akita-types/src/` | validated runs, canonical bytes, stream length |
-| plan derivation | `crates/akita-config/src/transcript_binding.rs`, new focused sibling module | single schedule and call-data constructor |
+| plan derivation | `crates/akita-types/src/transcript_grinding_plan.rs`, typed adapter in `crates/akita-config/src/transcript_grinding_plan.rs` | single schedule and call-data constructor shared with exact sizing |
 | descriptor | `crates/akita-types/src/instance_descriptor/` | dedicated policy and plan digest binding |
 | fold response search | `crates/akita-prover/src/protocol/fold_grind.rs` | 12-bit stream writer |
 | sparse fold draw | `crates/akita-challenges/src/fold_draw.rs` | one root per group and indexed coordinates |

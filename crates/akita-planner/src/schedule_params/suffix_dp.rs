@@ -439,9 +439,7 @@ fn price_terminal_candidate(
     else {
         return Ok(());
     };
-    let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-        .checked_add(opening_reduction_bytes)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".into()))?;
+    let level_proof_size = opening_reduction_bytes;
     let total = level_proof_size
         .checked_add(suffix_cost)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".to_string()))?;

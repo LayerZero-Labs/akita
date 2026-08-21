@@ -1045,14 +1045,6 @@ where
     root_bytes + step_bytes
 }
 
-fn fold_grind_nonce_wire_bytes() -> usize {
-    0u32.serialized_size(Compress::No)
-}
-
-fn fold_grind_attempts(accepted_nonce: u32) -> u64 {
-    u64::from(accepted_nonce) + 1
-}
-
 fn print_akita_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
@@ -1113,10 +1105,6 @@ where
     let next_w_eval_size = stage2_intermediate
         .next_w_eval()
         .serialized_size(Compress::No);
-    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
-    let grind_nonce = level.fold_grind_nonce;
-    let grind_attempts = fold_grind_attempts(grind_nonce);
-
     tracing::info!(
         label,
         level = level_idx,
@@ -1126,9 +1114,6 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         opening_payload_bytes = opening_payload_size,
-        fold_grind_nonce_bytes = fold_grind_nonce_size,
-        grind_nonce,
-        grind_attempts,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
@@ -1145,7 +1130,6 @@ where
     eprintln!(
         "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
     );
-    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!(
@@ -1165,7 +1149,6 @@ where
             + extension_opening_sumcheck_size
             + extension_opening_final_claims_size
             + opening_payload_size
-            + fold_grind_nonce_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size
@@ -1195,9 +1178,6 @@ where
         extension_opening_final_claims_size,
     ) = extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
     let terminal_response_size = level.terminal_response().serialized_size(Compress::No);
-    let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
-    let grind_nonce = level.fold_grind_nonce;
-    let grind_attempts = fold_grind_attempts(grind_nonce);
     let response_l2_sq = level
         .terminal_response()
         .layout
@@ -1231,9 +1211,6 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         extension_opening_final_claims_bytes = extension_opening_final_claims_size,
-        fold_grind_nonce_bytes = fold_grind_nonce_size,
-        grind_nonce,
-        grind_attempts,
         response_l2_sq = ?response_l2_sq,
         terminal_response_bytes = terminal_response_size,
         root_variant = root_variant,
@@ -1253,7 +1230,6 @@ where
     eprintln!(
         "[{label}]     extension_opening_final_claims={extension_opening_final_claims_size} bytes"
     );
-    eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
     eprintln!(
         "[{label}]     terminal_response={terminal_response_size} bytes (absorbed via transcript)"
     );
@@ -1262,7 +1238,6 @@ where
         extension_opening_partials_size
             + extension_opening_sumcheck_size
             + extension_opening_final_claims_size
-            + fold_grind_nonce_size
             + terminal_response_size
     );
     total
@@ -1284,11 +1259,12 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         .sum::<usize>()
         + proof.terminal.serialized_size(Compress::No);
     let tail_total = proof.terminal_response().serialized_size(Compress::No);
+    let nonce_stream_total = proof.nonce_stream.as_bytes().len();
     // The terminal step's serialized size includes `terminal_response`, which is
     // already accounted for in `tail_total`. Subtract it so the Akita-fold
     // line item only counts the per-level non-witness bytes.
     let akita_levels_total = root_total + recursive_steps_total - tail_total;
-    let accounted_total = akita_levels_total + tail_total;
+    let accounted_total = nonce_stream_total + akita_levels_total + tail_total;
     let fold_levels = proof.num_fold_levels();
 
     tracing::info!(
@@ -1297,12 +1273,14 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         proof_size_bytes = proof.size(),
         accounted_bytes = accounted_total,
         akita_fold_bytes = akita_levels_total,
+        nonce_stream_bytes = nonce_stream_total,
         tail_bytes = tail_total,
         "proof summary"
     );
     eprintln!(
-        "[{label}] proof: total={} bytes, akita_fold={} bytes, tail={} bytes, levels={}",
+        "[{label}] proof: total={} bytes, nonce_stream={} bytes, akita_fold={} bytes, tail={} bytes, levels={}",
         proof.size(),
+        nonce_stream_total,
         akita_levels_total,
         tail_total,
         fold_levels,

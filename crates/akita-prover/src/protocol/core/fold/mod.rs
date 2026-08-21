@@ -715,7 +715,6 @@ where
     let level_proof = FoldLevelProof {
         extension_opening_reduction: prepared_fold.extension_opening_reduction,
         opening_payload: prepared_fold.opening_payload.into_compact(),
-        fold_grind_nonce,
         stage1: stage1_proof,
         stage2: AkitaStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,
@@ -732,6 +731,7 @@ where
 
     Ok(ProveLevelOutput {
         level_proof,
+        fold_response_nonce: fold_grind_nonce,
         next_state: SuffixProverState {
             w: committed_witness,
             logical_w,
