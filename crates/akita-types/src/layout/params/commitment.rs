@@ -46,7 +46,7 @@ impl CommittedGroupParams {
         fold_grind_nonce: u32,
     ) -> Result<(), AkitaError> {
         self.validate_opening_batch(opening_batch)?;
-        crate::FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(fold_grind_nonce)
+        crate::TranscriptGrindingBinding::validate_fold_response_nonce(fold_grind_nonce)
     }
 
     /// Exact scheduled gadget decomposition depth for the folded witness.

@@ -690,10 +690,15 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             "recursive proof must carry stage-3 setup sumcheck evidence"
         );
 
-        let shape = proof.shape();
+        let grinding_plan = akita_config::derive_transcript_grinding_plan::<
+            RecursiveCommitmentConfig<BaseCfg>,
+        >(&schedule, &opening_layout, BasisMode::Lagrange)
+        .expect("canonical grinding plan");
+        let shape = proof.shape_for_grinding_plan(&grinding_plan);
         assert_eq!(
             shape,
-            canonical_base_field_proof_shape(&schedule).expect("canonical schedule proof shape"),
+            canonical_base_field_proof_shape(&schedule, &grinding_plan)
+                .expect("canonical schedule proof shape"),
             "a produced proof must have the verifier's canonical schedule-derived shape"
         );
         let mut bytes = Vec::new();

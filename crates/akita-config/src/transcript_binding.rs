@@ -7,14 +7,14 @@
 //! it without crossing through `akita-pcs`, and so the descriptor
 //! construction is sourced from a single `Cfg`-driven implementation.
 
-use crate::CommitmentConfig;
+use crate::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    FoldSchedule, FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection, PlanSection,
-    SetupSection,
+    FoldSchedule, FpExtEncoding, GrindingPlan, OpeningClaimsLayout, OpeningScheduleSelection,
+    PlanSection, SetupSection, TranscriptGrindingBinding,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -41,13 +41,14 @@ pub fn bind_transcript_instance_descriptor<F, T, Cfg>(
     schedule: &FoldSchedule,
     basis: BasisMode,
     transcript: &mut T,
-) -> Result<(), AkitaError>
+) -> Result<GrindingPlan, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch, basis)?;
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
@@ -57,11 +58,12 @@ where
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),
+        TranscriptGrindingBinding::for_plan(&grinding_plan)?,
         CallSection::from_layout(opening_batch, basis)?,
     );
     let descriptor_bytes = descriptor
         .canonical_bytes()
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
     transcript.bind_instance_bytes(&descriptor_bytes);
-    Ok(())
+    Ok(grinding_plan)
 }

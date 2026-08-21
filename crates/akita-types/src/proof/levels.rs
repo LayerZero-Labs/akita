@@ -370,6 +370,10 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
     /// Derive the [`AkitaBatchedProofShape`] for this proof.
     pub fn shape(&self) -> AkitaBatchedProofShape {
         AkitaBatchedProofShape {
+            // Slice 2 changes only the public shape descriptor. The proof body
+            // gains its stream in Slice 3, so a payload-derived test shape has
+            // no stream bits yet.
+            nonce_stream_bits: 0,
             root: self.root.shape(),
             recursive_folds: self
                 .recursive_folds
@@ -378,6 +382,16 @@ impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
                 .collect(),
             terminal: self.terminal.shape(),
         }
+    }
+
+    /// Derive the public shape descriptor with its exact plan-owned stream width.
+    pub fn shape_for_grinding_plan(
+        &self,
+        grinding_plan: &crate::GrindingPlan,
+    ) -> AkitaBatchedProofShape {
+        let mut shape = self.shape();
+        shape.nonce_stream_bits = grinding_plan.total_nonce_bits();
+        shape
     }
 }
 

@@ -17,7 +17,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_field::{CanonicalField, PseudoMersenneField};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -380,7 +380,13 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
-    let proof_shape = proof.shape();
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+        schedule.schedule(),
+        &opening_layout,
+        BasisMode::Lagrange,
+    )
+    .map_err(|err| format!("derive grinding plan failed: {err}"))?;
+    let proof_shape = proof.shape_for_grinding_plan(&grinding_plan);
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
         num_vars: nv as u64,

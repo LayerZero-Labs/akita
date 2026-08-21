@@ -13,17 +13,10 @@ fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing, true
-    ));
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing,
-        <E as ExtField<F>>::EXT_DEGREE > 1,
-    ));
-    assert!(super::fold::extension_opening_reduction_enabled(
-        akita_types::OpeningMethod::EvaluationTrace,
-        true,
-    ));
+    assert!(!packing.requires_extension_opening_reduction(2));
+    assert!(!packing.requires_extension_opening_reduction(<E as ExtField<F>>::EXT_DEGREE));
+    assert!(akita_types::OpeningMethod::EvaluationTrace
+        .requires_extension_opening_reduction(<E as ExtField<F>>::EXT_DEGREE));
 }
 
 #[test]

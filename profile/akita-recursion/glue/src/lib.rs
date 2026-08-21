@@ -10,7 +10,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
@@ -438,7 +438,18 @@ where
         )?;
         let resolved = Cfg::resolve_schedule_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let expected_shape = canonical_base_field_proof_shape(resolved.schedule())
+        let opening_layout = resolved
+            .profiles()
+            .opening_layout()
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+            resolved.schedule(),
+            &opening_layout,
+            akita_types::BasisMode::Lagrange,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        proof_shape.validate_grinding_plan(&grinding_plan)?;
+        let expected_shape = canonical_base_field_proof_shape(resolved.schedule(), &grinding_plan)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if *proof_shape != expected_shape {
             return Err(SerializationError::InvalidData(
@@ -733,7 +744,15 @@ mod tests {
             &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
         )
         .expect("generated singleton row");
-        let canonical = canonical_base_field_proof_shape(row.schedule()).expect("canonical shape");
+        let opening_layout = row.profiles().opening_layout().expect("opening layout");
+        let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
+            row.schedule(),
+            &opening_layout,
+            akita_types::BasisMode::Lagrange,
+        )
+        .expect("grinding plan");
+        let canonical = canonical_base_field_proof_shape(row.schedule(), &grinding_plan)
+            .expect("canonical shape");
 
         let mut huge = canonical.clone();
         huge.root.opening_payload_coeffs = usize::MAX;

@@ -137,6 +137,8 @@ pub struct PhysicalL2NormProofWireShape {
 /// headers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaBatchedProofShape {
+    /// Exact packed nonce-stream width derived from the public grinding plan.
+    pub nonce_stream_bits: usize,
     /// Root fold shape.
     pub root: LevelProofShape,
     /// Non-terminal recursive fold shapes in execution order.
@@ -152,6 +154,7 @@ pub struct AkitaBatchedProofShape {
 /// and must use their configuration-specific derivation.
 pub fn canonical_base_field_proof_shape(
     schedule: &FoldSchedule,
+    grinding_plan: &crate::GrindingPlan,
 ) -> Result<AkitaBatchedProofShape, AkitaError> {
     fn stage3_shape(
         successor: Option<&CommittedGroupParams>,
@@ -227,6 +230,7 @@ pub fn canonical_base_field_proof_shape(
         )?);
     }
     Ok(AkitaBatchedProofShape {
+        nonce_stream_bits: grinding_plan.total_nonce_bits(),
         root,
         recursive_folds,
         terminal: TerminalLevelProofShape {
@@ -715,6 +719,12 @@ impl AkitaDeserialize for TerminalLevelProofShape {
 
 impl Valid for AkitaBatchedProofShape {
     fn check(&self) -> Result<(), SerializationError> {
+        u64::try_from(self.nonce_stream_bits).map_err(|_| {
+            SerializationError::InvalidData(
+                "proof-shape nonce stream width does not fit u64".to_string(),
+            )
+        })?;
+        self.nonce_stream_bytes()?;
         self.root.check()?;
         checked_shape_sequence_len(self.recursive_folds.len())?;
         self.recursive_folds.check()?;
@@ -724,6 +734,26 @@ impl Valid for AkitaBatchedProofShape {
 }
 
 impl AkitaBatchedProofShape {
+    /// Return the exact byte count for the packed nonce stream.
+    pub fn nonce_stream_bytes(&self) -> Result<usize, SerializationError> {
+        Ok(self.nonce_stream_bits.checked_add(7).ok_or_else(|| {
+            SerializationError::InvalidData("proof-shape nonce stream byte width overflow".into())
+        })? / 8)
+    }
+
+    /// Require this shape to carry the exact public plan-derived stream width.
+    pub fn validate_grinding_plan(
+        &self,
+        grinding_plan: &crate::GrindingPlan,
+    ) -> Result<(), SerializationError> {
+        if self.nonce_stream_bits != grinding_plan.total_nonce_bits() {
+            return Err(SerializationError::InvalidData(
+                "proof-shape nonce stream width does not match grinding plan".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Reject a base-field proof shape whose aggregate declared payload cannot
     /// fit in the bytes available to the proof decoder.
     pub fn validate_base_field_decode_budget(
@@ -735,6 +765,13 @@ impl AkitaBatchedProofShape {
             return Err(SerializationError::InvalidData(
                 "base field wire size must be nonzero".to_string(),
             ));
+        }
+        let nonce_stream_bytes = self.nonce_stream_bytes()?;
+        if nonce_stream_bytes > available_bytes {
+            return Err(SerializationError::LengthLimitExceeded {
+                len: u64::try_from(nonce_stream_bytes).unwrap_or(u64::MAX),
+                max: available_bytes,
+            });
         }
         fn add(total: &mut usize, value: usize) -> Result<(), SerializationError> {
             *total = total.checked_add(value).ok_or_else(|| {
@@ -826,6 +863,12 @@ impl AkitaSerialize for AkitaBatchedProofShape {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        let nonce_stream_bits = u64::try_from(self.nonce_stream_bits).map_err(|_| {
+            SerializationError::InvalidData(
+                "proof-shape nonce stream width does not fit u64".to_string(),
+            )
+        })?;
+        nonce_stream_bits.serialize_with_mode(&mut writer, compress)?;
         self.root.serialize_with_mode(&mut writer, compress)?;
         self.recursive_folds
             .serialize_with_mode(&mut writer, compress)?;
@@ -834,7 +877,8 @@ impl AkitaSerialize for AkitaBatchedProofShape {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.root.serialized_size(compress)
+        0u64.serialized_size(compress)
+            + self.root.serialized_size(compress)
             + self.recursive_folds.serialized_size(compress)
             + self.terminal.serialized_size(compress)
     }
@@ -848,7 +892,17 @@ impl AkitaDeserialize for AkitaBatchedProofShape {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let nonce_stream_bits = u64::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let nonce_stream_bits = usize::try_from(nonce_stream_bits).map_err(|_| {
+            SerializationError::InvalidData(
+                "proof-shape nonce stream width does not fit usize".to_string(),
+            )
+        })?;
+        nonce_stream_bits.checked_add(7).ok_or_else(|| {
+            SerializationError::InvalidData("proof-shape nonce stream byte width overflow".into())
+        })?;
         let out = Self {
+            nonce_stream_bits,
             root: LevelProofShape::deserialize_with_mode(&mut reader, compress, validate, &())?,
             recursive_folds: deserialize_shape_vec(&mut reader, compress, validate)?,
             terminal: TerminalLevelProofShape::deserialize_with_mode(

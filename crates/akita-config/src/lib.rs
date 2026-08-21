@@ -93,6 +93,7 @@ pub mod setup_prefix_slots;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
 pub use proof_optimized::{
@@ -103,6 +104,7 @@ pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use transcript_binding::bind_transcript_instance_descriptor;
+pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
 /// Derive the runtime schedule policy from a preset.
 ///

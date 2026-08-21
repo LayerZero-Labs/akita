@@ -332,6 +332,7 @@ fn expected_same_point_batched_shape(
         terminal_response: schedule.terminal.response_shape.clone(),
     };
     AkitaBatchedProofShape {
+        nonce_stream_bits: 0,
         root: root_shape,
         recursive_folds,
         terminal,

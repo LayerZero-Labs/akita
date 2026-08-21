@@ -513,9 +513,9 @@ where
         (Commitment::new(witness_commitment), suffix_hint),
     )?;
     let opening_batch = block_claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(level_params, &opening_batch)?;
+    let opening_method = level_params.uniform_opening_method(&opening_batch)?;
     let needs_extension_reduction =
-        super::fold::extension_opening_reduction_enabled(opening_method, E::EXT_DEGREE > 1);
+        opening_method.requires_extension_opening_reduction(E::EXT_DEGREE);
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()

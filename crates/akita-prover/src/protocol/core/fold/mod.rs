@@ -40,44 +40,6 @@ pub(in crate::protocol::core) use extension_claim::{
 };
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
-pub(super) fn uniform_opening_method(
-    level_params: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-) -> Result<akita_types::OpeningMethod, AkitaError> {
-    let method = level_params
-        .group_params_geometry(opening_batch, 0)?
-        .opening_method();
-    for group_index in 1..opening_batch.num_groups() {
-        let group_method = level_params
-            .group_params_geometry(opening_batch, group_index)?
-            .opening_method();
-        let same_family = matches!(
-            (method, group_method),
-            (
-                akita_types::OpeningMethod::EvaluationTrace,
-                akita_types::OpeningMethod::EvaluationTrace
-            ) | (
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. },
-                akita_types::OpeningMethod::SubringCoefficientPacking { .. }
-            )
-        );
-        if !same_family {
-            return Err(AkitaError::InvalidSetup(
-                "one fold cannot mix EvaluationTrace and coefficient-packing groups".into(),
-            ));
-        }
-    }
-    Ok(method)
-}
-
-pub(super) const fn extension_opening_reduction_enabled(
-    opening_method: akita_types::OpeningMethod,
-    geometry_requires_reduction: bool,
-) -> bool {
-    matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace)
-        && geometry_requires_reduction
-}
-
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
@@ -181,7 +143,7 @@ where
     // leaving the typed dispatch arm. Typed fold outputs cross the boundary
     // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
     let opening_batch = trace_opening_batch.clone();
-    let opening_method = uniform_opening_method(level_params, &opening_batch)?;
+    let opening_method = level_params.uniform_opening_method(&opening_batch)?;
     if !matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace) && reduction.is_some()
     {
         return Err(AkitaError::InvalidSetup(

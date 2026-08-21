@@ -338,7 +338,7 @@ where
 
     {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+        let _grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
             &setup.expanded,
             &opening_batch,
             selection,

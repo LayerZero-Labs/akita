@@ -35,6 +35,7 @@ pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
+mod transcript_grinding;
 pub mod witness;
 
 pub use commitment_slicing::{
@@ -72,9 +73,9 @@ pub use golomb_rice::{
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_level_params, digest_serializable, setup_seed_digest,
-    AkitaInstanceDescriptor, AlgebraSection, CallSection, FoldLinfProtocolBinding, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    digest_descriptor_bytes, digest_effective_schedule, digest_level_params, digest_serializable,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
+    ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
@@ -194,6 +195,15 @@ pub use trace_weight::{
     TraceTermBatch, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
+pub use transcript_grinding::{
+    grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
+    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
+    GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol,
+    FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
+    GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,
+    GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
+    TRANSCRIPT_SECURITY_BITS,
+};
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,

@@ -391,6 +391,37 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         .serialize_uncompressed(&mut batched_bytes)
         .expect("serialize batched proof");
     let shape = batched.shape();
+    let grinding_plan = crate::GrindingPlan::new(
+        vec![
+            crate::GrindingRun::proof_of_work(crate::GrindingSite::EvaluationBatch, 3, 128)
+                .expect("grinding run"),
+            crate::GrindingRun::fold_response(0),
+        ],
+        128,
+    )
+    .expect("grinding plan");
+    let public_shape = batched.shape_for_grinding_plan(&grinding_plan);
+    public_shape
+        .validate_grinding_plan(&grinding_plan)
+        .expect("plan-owned stream width");
+    let mut public_shape_bytes = Vec::new();
+    public_shape
+        .serialize_uncompressed(&mut public_shape_bytes)
+        .expect("serialize public proof shape");
+    assert_eq!(
+        &public_shape_bytes[..8],
+        &(public_shape.nonce_stream_bits as u64).to_le_bytes()
+    );
+    assert_eq!(
+        AkitaBatchedProofShape::deserialize_uncompressed_exact(&public_shape_bytes, &())
+            .expect("public proof-shape roundtrip"),
+        public_shape
+    );
+    let mut wrong_plan_shape = public_shape.clone();
+    wrong_plan_shape.nonce_stream_bits += 1;
+    assert!(wrong_plan_shape
+        .validate_grinding_plan(&grinding_plan)
+        .is_err());
     let mut oversized_shape = shape.clone();
     oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
     assert!(matches!(
