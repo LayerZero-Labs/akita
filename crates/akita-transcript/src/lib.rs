@@ -1,5 +1,6 @@
 //! Protocol transcript contracts and implementations.
 
+mod grinding;
 mod label;
 pub mod labels;
 #[cfg(feature = "logging-transcript")]
@@ -19,6 +20,11 @@ compile_error!("enable exactly one transcript backend: transcript-blake2b or tra
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
 
+pub use grinding::{
+    grinding_payload, grinding_predicate_accepts, preview_grinding_predicate,
+    search_grinding_nonce, TranscriptChallengePreview, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
+    GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES, GRINDING_PREDICATE_LEN, MAX_GRINDING_BITS,
+};
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
@@ -86,16 +92,33 @@ where
 
     /// Squeeze `len` challenge bytes under the provided label.
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
+
+    /// Apply one public transcript proof-of-work transition.
+    ///
+    /// A zero-bit target is an explicit no-op and returns `None`. A nonzero
+    /// target absorbs the canonical payload and consumes one 32-byte predicate
+    /// block. The site label is diagnostic and is not part of the production
+    /// sponge input.
+    fn grinding_predicate(
+        &mut self,
+        _site_label: &[u8],
+        grind_bits: u8,
+        nonce_bits: u8,
+        nonce: u32,
+    ) -> Option<[u8; GRINDING_PREDICATE_LEN]> {
+        let grind_bits = std::num::NonZeroU8::new(grind_bits)?;
+        let payload = grinding_payload(grind_bits, nonce_bits, nonce);
+        self.append_bytes(labels::ABSORB_TRANSCRIPT_GRINDING, &payload);
+        self.challenge_bytes(labels::CHALLENGE_GRINDING_PREDICATE, GRINDING_PREDICATE_LEN)
+            .try_into()
+            .ok()
+    }
 }
 
+/// Byte length of one native transcript squeeze block.
+pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
-pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
-
-/// Preview-only seed derivation for prover-side fold Fiat–Shamir grinding.
-pub trait FoldChallengeSeedPreview {
-    /// Derive the final seed after a hypothetical sequence of fold draws.
-    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8>;
-}
+pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;
 
 /// Append an extension-field element by absorbing its base-field coordinates.
 pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
