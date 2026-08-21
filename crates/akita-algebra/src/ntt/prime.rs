@@ -15,7 +15,7 @@ use std::fmt;
 
 /// Largest raw i32 Montgomery dot batch whose signed reduction is safe for
 /// every supported prime below `2^30`.
-pub(crate) const I32_LAZY_DOT_BATCH: usize = 6;
+pub const I32_LAZY_DOT_BATCH: usize = 6;
 
 mod sealed {
     pub trait Sealed {}

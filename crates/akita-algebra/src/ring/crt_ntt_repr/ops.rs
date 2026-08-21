@@ -181,6 +181,38 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(target_arch = "aarch64")]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    lhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    rhs.get(index).map_or(std::ptr::null(), |entry| {
+                        entry.limbs[k].as_ptr().cast::<i32>()
+                    })
+                });
+                let prime = params.primes[k];
+                // SAFETY: the stored plan proves NEON support. Pointer arrays
+                // contain `lhs.len()` valid D-element limbs, and the dispatch
+                // predicate also proves `W == i32`.
+                unsafe {
+                    neon::pointwise_dot_acc_i32(
+                        self.limbs[k].as_mut_ptr().cast::<i32>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        lhs.len(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    )
+                }
+            }
+            return;
+        }
+
         for (lhs, rhs) in lhs.iter().zip(rhs) {
             self.add_assign_pointwise_mul(lhs, rhs, params);
         }
@@ -327,6 +359,77 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                 continue;
             }
             Self::add_assign_pointwise_mul_limb(acc_limb, lhs_limb, scratch_limb, prime);
+        }
+    }
+
+    /// Transform a short run of signed-i8 columns and accumulate their
+    /// pointwise dot product into every output row.
+    ///
+    /// The backend processes one CRT limb at a time, so six-product lazy
+    /// reduction needs `6 * D` scratch coefficients instead of `6 * K * D`.
+    /// The caller must select a backend whose [`CrtNttParamSet::pointwise_dot_batch_size`]
+    /// is greater than one and pass no more than that many columns.
+    #[inline]
+    pub fn add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
+        accs: &mut [Self],
+        ntt_mat: &[&[Self]],
+        column_start: usize,
+        digits: &[[i8; D]],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &DigitMontLut<W, K>,
+        scratch: &mut [[MontCoeff<W>; D]; I32_LAZY_DOT_BATCH],
+    ) {
+        debug_assert_eq!(accs.len(), ntt_mat.len());
+        debug_assert!(params.uses_lazy_i32_dot());
+        debug_assert!(!digits.is_empty());
+        debug_assert!(digits.len() <= I32_LAZY_DOT_BATCH);
+
+        for k in 0..K {
+            for (dst, digit) in scratch.iter_mut().zip(digits) {
+                lut.fill_negacyclic_limb(k, digit, params, dst);
+            }
+            let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                digits
+                    .get(index)
+                    .map_or(std::ptr::null(), |_| scratch[index].as_ptr().cast::<i32>())
+            });
+            let prime = params.primes[k];
+
+            for (acc, matrix_row) in accs.iter_mut().zip(ntt_mat) {
+                let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+                    digits.get(index).map_or(std::ptr::null(), |_| {
+                        matrix_row[column_start + index].limbs[k]
+                            .as_ptr()
+                            .cast::<i32>()
+                    })
+                });
+
+                #[cfg(target_arch = "aarch64")]
+                unsafe {
+                    neon::pointwise_dot_acc_i32(
+                        acc.limbs[k].as_mut_ptr().cast::<i32>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        digits.len(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
+                }
+
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                unsafe {
+                    avx::pointwise_dot_acc_i32(
+                        acc.limbs[k].as_mut_ptr().cast::<i32>(),
+                        lhs_pointers.as_ptr(),
+                        rhs_pointers.as_ptr(),
+                        digits.len(),
+                        D,
+                        prime.p.to_i64() as i32,
+                        prime.pinv.to_i64() as i32,
+                    );
+                }
+            }
         }
     }
 

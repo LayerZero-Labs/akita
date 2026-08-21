@@ -2,7 +2,7 @@ use std::arch::aarch64::*;
 
 use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
-use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
 
 /// True 4-wide signed Montgomery multiply for i32 primes.
 ///
@@ -522,6 +522,72 @@ pub(crate) unsafe fn pointwise_mul_acc_i32(
         let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
         *acc.add(i) = prime.reduce_range(sum).raw();
         i += 1;
+    }
+}
+
+/// NEON pointwise dot-product accumulation for up to six i32 CRT entries.
+///
+/// Raw signed products are accumulated in i64 lanes and Montgomery-reduced
+/// once per batch. For `B <= 6` and `p < 2^30`, the reduction numerator is
+/// bounded by `B*2^60 + 2^61 < 2^63`.
+///
+/// # Safety
+///
+/// `acc` must be valid for `d` writable i32 elements. Each of the first
+/// `count` pointers in `lhs` and `rhs` must be valid for `d` readable i32
+/// elements. The pointed-to ranges must obey Rust's aliasing rules with `acc`.
+pub(crate) unsafe fn pointwise_dot_acc_i32(
+    acc: *mut i32,
+    lhs: *const *const i32,
+    rhs: *const *const i32,
+    count: usize,
+    d: usize,
+    p: i32,
+    pinv: i32,
+) {
+    debug_assert!(count <= I32_LAZY_DOT_BATCH);
+    let p_q = vdupq_n_s32(p);
+    let p_d = vdup_n_s32(p);
+    let pinv_d = vdup_n_s32(pinv);
+    let mut i = 0usize;
+    while i + 4 <= d {
+        let mut low_sum = vdupq_n_s64(0);
+        let mut high_sum = vdupq_n_s64(0);
+        for product in 0..count {
+            let l = vld1q_s32((*lhs.add(product)).add(i));
+            let r = vld1q_s32((*rhs.add(product)).add(i));
+            low_sum = vaddq_s64(low_sum, vmull_s32(vget_low_s32(l), vget_low_s32(r)));
+            high_sum = vaddq_s64(high_sum, vmull_high_s32(l, r));
+        }
+
+        let low_correction = vmull_s32(vmul_s32(vmovn_s64(low_sum), pinv_d), p_d);
+        let high_correction = vmull_s32(vmul_s32(vmovn_s64(high_sum), pinv_d), p_d);
+        let low = vshrn_n_s64::<32>(vsubq_s64(low_sum, low_correction));
+        let high = vshrn_n_s64::<32>(vsubq_s64(high_sum, high_correction));
+        let batch = reduce_range_4x_i32(vcombine_s32(low, high), p_q);
+        let accumulator = vld1q_s32(acc.add(i));
+        vst1q_s32(
+            acc.add(i),
+            reduce_range_4x_i32(vaddq_s32(accumulator, batch), p_q),
+        );
+        i += 4;
+    }
+
+    if i < d {
+        let prime = NttPrime::compute(p);
+        while i < d {
+            let mut raw_sum = 0_i64;
+            for product in 0..count {
+                raw_sum +=
+                    i64::from(*(*lhs.add(product)).add(i)) * i64::from(*(*rhs.add(product)).add(i));
+            }
+            let correction = (raw_sum as i32).wrapping_mul(pinv);
+            let reduced = ((raw_sum - i64::from(correction) * i64::from(p)) >> 32) as i32;
+            let reduced = prime.reduce_range(MontCoeff::from_raw(reduced));
+            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(reduced.raw()));
+            *acc.add(i) = prime.reduce_range(sum).raw();
+            i += 1;
+        }
     }
 }
 

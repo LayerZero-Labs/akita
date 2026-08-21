@@ -3,7 +3,8 @@ use super::super::butterfly::{
     inverse_ntt as scalar_inverse_ntt, inverse_ntt_cyclic as scalar_inverse_ntt_cyclic,
     NttTwiddles,
 };
-use super::super::prime::{MontCoeff, NttPrime};
+use super::super::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
+use super::super::tables::Q128_RAW_PRIMES;
 use super::super::NttKernelPlan;
 use super::*;
 
@@ -15,6 +16,21 @@ fn random_mont_array_i32<const D: usize>(prime: NttPrime<i32>, seed: u64) -> [Mo
             .wrapping_add(1442695040888963407);
         let val = ((state >> 33) as i64 % prime.p as i64) as i32;
         prime.from_canonical(val)
+    })
+}
+
+fn random_raw_mont_array_i32<const D: usize>(
+    prime: NttPrime<i32>,
+    seed: u64,
+) -> [MontCoeff<i32>; D] {
+    let mut state = seed;
+    let width = i64::from(prime.p) * 2 - 1;
+    std::array::from_fn(|_| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let raw = (state as i64).rem_euclid(width) - (i64::from(prime.p) - 1);
+        MontCoeff::from_raw(raw as i32)
     })
 }
 
@@ -215,6 +231,68 @@ fn neon_pointwise_mul_acc_i32_handles_scalar_tail() {
     }
 
     assert_eq!(neon_acc, scalar_acc);
+}
+
+#[test]
+fn neon_pointwise_dot_acc_i32_matches_scalar() {
+    const D: usize = 19;
+    for raw_prime in Q128_RAW_PRIMES {
+        let prime = NttPrime::compute(raw_prime);
+        let edge_values = [
+            0,
+            1,
+            -1,
+            prime.p - 1,
+            1 - prime.p,
+            prime.p / 2,
+            -(prime.p / 2),
+            0x4000_1234_i32,
+            -0x3fff_4321_i32,
+        ];
+        let lhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index == 0 {
+                std::array::from_fn(|i| MontCoeff::from_raw(edge_values[i % edge_values.len()]))
+            } else {
+                random_raw_mont_array_i32(prime, 0x1000 + index as u64)
+            }
+        });
+        let rhs: [[MontCoeff<i32>; D]; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
+            if index + 1 == I32_LAZY_DOT_BATCH {
+                std::array::from_fn(|i| MontCoeff::from_raw(edge_values[i % edge_values.len()]))
+            } else {
+                random_raw_mont_array_i32(prime, 0x2000 + index as u64)
+            }
+        });
+        let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| lhs[index].as_ptr().cast::<i32>());
+        let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] =
+            std::array::from_fn(|index| rhs[index].as_ptr().cast::<i32>());
+
+        for count in 1..=I32_LAZY_DOT_BATCH {
+            let initial = random_mont_array_i32::<D>(prime, 0x3000 + count as u64);
+            let mut actual = initial;
+            unsafe {
+                pointwise_dot_acc_i32(
+                    actual.as_mut_ptr().cast::<i32>(),
+                    lhs_pointers.as_ptr(),
+                    rhs_pointers.as_ptr(),
+                    count,
+                    D,
+                    prime.p,
+                    prime.pinv,
+                );
+            }
+            let mut expected = initial;
+            for product in 0..count {
+                for i in 0..D {
+                    let value = prime.mul(lhs[product][i], rhs[product][i]);
+                    let sum = MontCoeff::from_raw(expected[i].raw().wrapping_add(value.raw()));
+                    expected[i] = prime.reduce_range(sum);
+                }
+            }
+            assert_eq!(actual, expected, "prime={raw_prime}, count={count}");
+        }
+    }
 }
 
 #[test]
