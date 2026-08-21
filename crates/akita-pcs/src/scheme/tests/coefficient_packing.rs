@@ -3,9 +3,7 @@ use super::*;
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
 use akita_field::LiftBase;
-use akita_types::{
-    basis_weights, AkitaScheduleLookupKey, LevelParamsLike, OpeningMethod, PolynomialGroupLayout,
-};
+use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
 type PackingField = <PackingCfg as CommitmentConfig>::Field;
@@ -26,11 +24,11 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     assert_eq!(first.schedule(), second.schedule());
 
     let schedule = first.schedule();
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.root.params;
     assert_eq!(PackingCfg::EXT_DEGREE, 4);
     let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
-    } = root.opening_method
+    } = root.opening_method()
     else {
         panic!("synthetic root must use coefficient packing");
     };
@@ -66,26 +64,25 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
         successor.input_witness_len
     );
     assert!(matches!(
-        successor.params.witness.opening_method,
+        successor.params.opening_method(),
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64
         }
     ));
     assert_eq!(
-        successor.params.witness.source_encoding,
+        successor.params.source_encoding,
         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     let prefix = successor
         .params
-        .incoming_setup_prefix
-        .as_ref()
+        .setup_prefix()
         .expect("synthetic successor must consume the root setup prefix");
     assert_eq!(
-        prefix.commitment_params.source_encoding(),
+        prefix.source_encoding(),
         akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
     );
     assert!(matches!(
-        prefix.commitment_params.opening.opening_method,
+        prefix.opening.opening_method,
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64
         }
@@ -138,10 +135,10 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             )
             .expect("packing schedule catalog");
             let scheme = PackingScheme::new(schedules).expect("packing scheme");
-            let root = &row.schedule().root.params.final_group.commitment;
+            let root = &row.schedule().root.params;
             let OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
-            } = root.opening_method
+            } = root.opening_method()
             else {
                 panic!("test catalog did not select coefficient packing");
             };
@@ -157,12 +154,12 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             assert_eq!(row.schedule().recursive_folds.len(), 1);
             assert!(row.schedule().recursive_folds[0]
                 .params
-                .incoming_setup_prefix
+                .setup_prefix()
                 .is_some());
             assert!(
-                root.open_commit_matrix.input_width()
-                    < root.num_digits_open
-                        * root.num_live_blocks
+                root.open().matrix.input_width()
+                    < root.open().digits.num_digits
+                        * root.blocks().live_blocks
                         * root.d_a().div_ceil(root.role_dims().d_d()),
                 "the fixed row must shrink the shared D input"
             );
@@ -179,15 +176,17 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let mut setup = scheme.setup_prover(num_vars, 1).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
                 .params
-                .incoming_setup_prefix
+                .setup_prefix()
                 .as_ref()
                 .unwrap()
-                .slot_id();
+                .slot_id()
+                .expect("setup prefix group");
             assert_eq!(
                 setup_prefix.d_setup(),
                 setup_prefix
                     .commitment_profile
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .ring_dimension(),
                 "the prefix dispatcher must use its frozen A-ring dimension"
             );
@@ -238,28 +237,28 @@ fn fixed_root_packing_round_trips_in_both_bases() {
                         .expanded
                         .shared_matrix()
                         .ring_view::<D_A>(
-                            root.inner_commit_matrix.output_rank(),
-                            root.inner_commit_matrix.input_width(),
+                            root.inner().matrix.output_rank(),
+                            root.inner().matrix.input_width(),
                         )
                         .unwrap();
                     let mut source_digits = Vec::new();
                     for coefficients in evaluations
                         .chunks_exact(D_A)
-                        .take(root.num_positions_per_block)
+                        .take(root.blocks().positions_per_block)
                     {
                         source_digits.extend(
                             CyclotomicRing::<PackingField, D_A>::from_coefficients(
                                 coefficients.try_into().unwrap(),
                             )
                             .balanced_decompose_pow2_i8(
-                                root.num_digits_inner,
-                                root.log_basis_inner,
+                                root.inner().digits.num_digits,
+                                root.inner().digits.log_basis,
                             ),
                         );
                     }
                     let hint_rows = hint.inner_rows()[0].as_ring_slice::<D_A>().unwrap();
-                    let output_rank = root.inner_commit_matrix.output_rank();
-                    assert_eq!(hint_rows.len(), output_rank * root.num_live_blocks);
+                    let output_rank = root.inner().matrix.output_rank();
+                    assert_eq!(hint_rows.len(), output_rank * root.blocks().live_blocks);
                     for (row, actual) in hint_rows.iter().take(output_rank).enumerate() {
                         let expected = a_matrix.row(row).unwrap().iter().zip(&source_digits).fold(
                             CyclotomicRing::zero(),

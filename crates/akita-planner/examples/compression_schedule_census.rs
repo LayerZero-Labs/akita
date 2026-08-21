@@ -139,15 +139,15 @@ fn record_schedule(
         .map_err(|_| "field bit width conversion overflow".to_string())?
         .div_ceil(8);
     let root = &schedule.root.params;
-    for (index, group) in root.precommitted_groups.iter().enumerate() {
+    for (index, group) in root.precommitted_groups().iter().enumerate() {
         record_outer(
             stats,
             &format!("B-root-precommitted-{index}"),
             key,
             profile,
             field_bytes,
-            &group.commitment.layout.outer_commit_matrix,
-            group.commitment.layout.outer_slice_count,
+            &group.profile.outer.matrix,
+            group.profile.outer_slice_count,
         )?;
     }
     record_outer(
@@ -156,8 +156,8 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.final_group.commitment.outer_commit_matrix,
-        root.final_group.commitment.outer_slice_count,
+        &root.outer().matrix,
+        root.outer_slice_count(),
     )?;
     record_open(
         stats,
@@ -165,18 +165,18 @@ fn record_schedule(
         key,
         profile,
         field_bytes,
-        &root.open_commit_matrix,
+        &root.open().matrix,
     )?;
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        for (group_index, group) in fold.params.witness.precommitted_group_iter().enumerate() {
+        for (group_index, group) in fold.params.preceding_group_iter().enumerate() {
             record_outer(
                 stats,
                 &format!("B-recursive-{index}-precommitted-{group_index}"),
                 key,
                 profile,
                 field_bytes,
-                &group.layout.outer_commit_matrix,
-                group.layout.outer_slice_count,
+                &group.profile.outer.matrix,
+                group.profile.outer_slice_count,
             )?;
         }
         record_outer(
@@ -185,8 +185,8 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.witness.outer_commit_matrix,
-            fold.params.witness.outer_slice_count,
+            &fold.params.outer().matrix,
+            fold.params.outer_slice_count(),
         )?;
         record_open(
             stats,
@@ -194,7 +194,7 @@ fn record_schedule(
             key,
             profile,
             field_bytes,
-            &fold.params.open_commit_matrix,
+            &fold.params.open().matrix,
         )?;
     }
     Ok(())
@@ -204,7 +204,7 @@ fn compression_instances(schedule: &FoldSchedule) -> Result<(usize, usize), Stri
     let mut chains = schedule
         .root
         .params
-        .precommitted_groups
+        .precommitted_groups()
         .len()
         .checked_add(2)
         .ok_or_else(|| "root compression chain count overflow".to_string())?;
@@ -212,8 +212,7 @@ fn compression_instances(schedule: &FoldSchedule) -> Result<(usize, usize), Stri
         chains = chains
             .checked_add(
                 fold.params
-                    .witness
-                    .precommitted_group_count()
+                    .preceding_group_count()
                     .checked_add(2)
                     .ok_or_else(|| "recursive compression chain count overflow".to_string())?,
             )

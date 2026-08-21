@@ -8,7 +8,7 @@ use akita_config::{
 
 fn root_contracts(schedule: &PlannedFoldSchedule, field_bits: u32) -> bool {
     let root = &schedule.schedule.root;
-    root.output_witness_len * (root.params.final_group.commitment.log_basis_open as usize)
+    root.output_witness_len * (root.params.open().digits.log_basis as usize)
         < root.input_witness_len * field_bits as usize
 }
 
@@ -43,8 +43,9 @@ fn root_candidate_classes<Cfg: CommitmentConfig>(
                         inner_basis,
                         opening_basis,
                     )? {
-                        let contracts =
-                            output_witness_len * (params.log_basis_open as usize) < input_bits;
+                        let contracts = output_witness_len
+                            * (params.open().digits.log_basis as usize)
+                            < input_bits;
                         has_contractive |= contracts;
                         has_noncontractive |= !contracts;
                     }
@@ -139,8 +140,7 @@ fn valid_small_scalar_root_has_a_schedule() {
             assert_eq!(root_candidate_classes::<Dense>(8).unwrap(), (false, true));
             let root = &schedule.schedule.root;
             assert!(
-                root.output_witness_len
-                    * root.params.final_group.commitment.log_basis_open as usize
+                root.output_witness_len * root.params.open().digits.log_basis as usize
                     >= root.input_witness_len * policy.decomposition.field_bits() as usize,
                 "the regression must exercise the previously rejected noncontractive root"
             );
@@ -197,7 +197,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     .expect("scalar producer candidate")
     .0;
     let precommitted_profile =
-        CommittedGroupProfile::try_from_params(precommitted_group, &producer)
+        GroupCommitPhaseParams::try_from_params(precommitted_group, &producer)
             .expect("scalar producer profile");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(8),
@@ -212,7 +212,7 @@ fn valid_small_grouped_root_has_a_schedule() {
     )
     .expect("a valid grouped D64-root request must have a schedule");
 
-    assert_eq!(schedule.schedule.root.params.precommitted_groups.len(), 1);
+    assert_eq!(schedule.schedule.root.params.precommitted_groups().len(), 1);
     assert!(
         !schedule.schedule.recursive_folds.is_empty(),
         "a grouped root must retain its required child fold"

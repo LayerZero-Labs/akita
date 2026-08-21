@@ -342,11 +342,11 @@ mod tests {
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
         params.payload_mode = CommitmentPayloadMode::Raw;
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: s,
         };
-        let opening = params.open_commit_matrix;
-        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        let opening = params.open().matrix;
+        params.open_matrix = OpenCommitMatrixParams::new_unchecked(
             opening.security_policy(),
             opening.sis_table_key().table_digest,
             opening.sis_modulus_profile(),
@@ -363,7 +363,7 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            r_decomp_levels::<F>(params.log_basis_open),
+            r_decomp_levels::<F>(params.open().digits.log_basis),
         )
         .unwrap();
         let relation_address_geometry = RelationAddressGeometry::for_relation(
@@ -469,7 +469,7 @@ mod tests {
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
             groups: Vec::new(),
-            log_basis: params.log_basis_open,
+            log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
             flat_context: Some(FlatRelationContext {
                 level_params: params.clone(),

@@ -226,12 +226,7 @@ fn fp128_dense_mc() {
         .expect("dense multi-chunk schedule")
         .into_schedule();
         assert_eq!(
-            schedule
-                .root
-                .params
-                .final_group
-                .commitment
-                .outer_slice_count,
+            schedule.root.params.outer_slice_count(),
             akita_types::CommitmentSliceCount::EIGHT,
             "multi-chunk regression profile must pin the exact S=8 root geometry"
         );
@@ -240,13 +235,12 @@ fn fp128_dense_mc() {
             .first()
             .expect("dense multi-chunk schedule must have a recursive fold");
         assert_eq!(
-            first_fold.params.witness.outer_slice_count,
+            first_fold.params.outer_slice_count(),
             akita_types::CommitmentSliceCount::ONE,
             "multi-chunk regression profile must pin the selected S=1 level-one geometry"
         );
         assert_eq!(
-            first_fold.params.witness_partition,
-            akita_types::WitnessPartition::Distributed { num_chunks: 8 },
+            first_fold.params.witness_chunk.num_chunks, 8,
             "W8R2 regression profile must retain eight witness chunks"
         );
         prove_verify_dense_roundtrip::<fp128::DenseMultiChunk>(
@@ -522,12 +516,11 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             .expect("layout")
             .into_schedule()
             .root
-            .params
-            .final_group
-            .commitment;
+            .params;
 
         let root_d = layout.d_a();
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * root_d;
+        let total_field =
+            layout.blocks().live_blocks * layout.blocks().positions_per_block * root_d;
         let onehot_k = root_d;
         let num_chunks = total_field / onehot_k;
         let make_mixed_onehot = |seed: u64| {
@@ -596,11 +589,9 @@ fn fp128_onehot_oversized_setup() {
             .expect("layout")
             .into_schedule()
             .root
-            .params
-            .final_group
-            .commitment;
+            .params;
         let d = layout.d_a();
-        let total_field = layout.num_live_blocks * layout.num_positions_per_block * d;
+        let total_field = layout.blocks().live_blocks * layout.blocks().positions_per_block * d;
         let total_chunks = total_field / ONEHOT_K;
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef_0000 + poly_nv as u64);

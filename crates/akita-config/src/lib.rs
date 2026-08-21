@@ -447,7 +447,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// `group`.
     fn profile_without_precommitted_groups(
         group: akita_types::PolynomialGroupLayout,
-    ) -> Result<akita_types::CommittedGroupProfile, AkitaError> {
+    ) -> Result<akita_types::GroupCommitPhaseParams, AkitaError> {
         let layout = OpeningClaimsLayout::from_groups(vec![group])?;
         Ok(Self::resolve_catalog_row_for_opening(&layout)?
             .profiles()
@@ -651,19 +651,14 @@ mod sis_schedule_width_audit {
         schedule: &akita_types::FoldSchedule,
         num_vars: usize,
     ) {
-        for (level_idx, lp) in std::iter::once(&schedule.root.params.final_group.commitment)
-            .chain(
-                schedule
-                    .recursive_folds
-                    .iter()
-                    .map(|step| &step.params.witness),
-            )
+        for (level_idx, lp) in std::iter::once(&schedule.root.params)
+            .chain(schedule.recursive_folds.iter().map(|step| &step.params))
             .enumerate()
         {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
             let width = u64::try_from(lp.inner_width()).expect("inner width should fit in u64");
-            let a_rank = match lp.inner_commit_matrix.security_route() {
+            let a_rank = match lp.inner().matrix.security_route() {
                 InnerCommitSecurityRoute::Linf(key) => min_secure_rank(key, width),
                 InnerCommitSecurityRoute::L2 { table_key, .. } => {
                     min_secure_l2_rank(table_key, width)
@@ -672,54 +667,54 @@ mod sis_schedule_width_audit {
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis_inner,
+                    lp.inner().digits.log_basis,
                     lp.inner_width()
                 )
             });
             assert!(
-                a_rank <= lp.inner_commit_matrix.output_rank(),
+                a_rank <= lp.inner().matrix.output_rank(),
                 "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                lp.log_basis_inner,
+                lp.inner().digits.log_basis,
                 lp.inner_width(),
-                lp.inner_commit_matrix.output_rank(),
+                lp.inner().matrix.output_rank(),
             );
 
             let b_rank = min_secure_rank(
-                lp.outer_commit_matrix.sis_table_key(),
+                lp.outer().matrix.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited B-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis_outer,
+                    lp.outer().digits.log_basis,
                     lp.outer_width()
                 )
             });
             assert!(
-                b_rank <= lp.outer_commit_matrix.output_rank(),
+                b_rank <= lp.outer().matrix.output_rank(),
                 "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
-                lp.log_basis_outer,
+                lp.outer().digits.log_basis,
                 lp.outer_width(),
-                lp.outer_commit_matrix.output_rank(),
+                lp.outer().matrix.output_rank(),
             );
 
             let d_rank = min_secure_rank(
-                lp.open_commit_matrix.sis_table_key(),
+                lp.open().matrix.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
                 panic!(
                     "missing audited D-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
-                    lp.log_basis_open,
+                    lp.open().digits.log_basis,
                     lp.d_matrix_width()
                 )
             });
             assert!(
-                d_rank <= lp.open_commit_matrix.output_rank(),
+                d_rank <= lp.open().matrix.output_rank(),
                 "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
-                lp.log_basis_open,
+                lp.open().digits.log_basis,
                 lp.d_matrix_width(),
-                lp.open_commit_matrix.output_rank(),
+                lp.open().matrix.output_rank(),
             );
         }
     }
@@ -880,13 +875,7 @@ mod fp128_policy_tests {
         });
         assert!(!root_input_error.to_string().is_empty());
         let transition_error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
-            let alignment = schedule
-                .root
-                .params
-                .final_group
-                .commitment
-                .d_a()
-                .max(schedule.terminal.params.witness.d_a());
+            let alignment = schedule.root.params.d_a().max(schedule.terminal.d_a());
             schedule.root.output_witness_len -= alignment;
             if let Some(next) = schedule.recursive_folds.first_mut() {
                 next.input_witness_len -= alignment;
@@ -911,11 +900,11 @@ mod fp128_policy_tests {
             })
             .expect("recursive generated row");
         let error = mutated_row_admission_error::<fp128::OneHot>(&row, |schedule| {
-            let alignment = schedule.recursive_folds[0].params.witness.d_a().max(
+            let alignment = schedule.recursive_folds[0].params.d_a().max(
                 if schedule.recursive_folds.len() > 1 {
-                    schedule.recursive_folds[1].params.witness.d_a()
+                    schedule.recursive_folds[1].params.d_a()
                 } else {
-                    schedule.terminal.params.witness.d_a()
+                    schedule.terminal.d_a()
                 },
             );
             schedule.recursive_folds[0].output_witness_len -= alignment;
@@ -928,6 +917,43 @@ mod fp128_policy_tests {
         assert!(
             error.to_string().contains("canonical"),
             "unexpected recursive transition error: {error}"
+        );
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn row_admission_rejects_overpadded_setup_prefix() {
+        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+
+        let row = (14..=50)
+            .find_map(|num_vars| {
+                let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
+                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                row.schedule()
+                    .recursive_folds
+                    .iter()
+                    .any(|fold| fold.params.setup_prefix().is_some())
+                    .then_some(row)
+            })
+            .expect("generated row with a setup prefix");
+        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+            let step = schedule
+                .recursive_folds
+                .iter_mut()
+                .find(|fold| fold.params.setup_prefix().is_some())
+                .expect("recursive setup-prefix fold");
+            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+            prefix.profile.group = PolynomialGroupLayout::new(
+                prefix.profile.group.num_vars() + 1,
+                prefix.profile.group.num_polynomials(),
+            );
+            step.params
+                .set_setup_prefix(Some(prefix))
+                .expect("valid prefix topology");
+        });
+        assert!(
+            error.to_string().contains("setup-prefix geometry"),
+            "unexpected setup-prefix error: {error}"
         );
     }
 }
@@ -947,9 +973,9 @@ mod independent_commitment_tests {
             fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
                 .expect("generated scalar row");
         assert_eq!(profile, scalar_row.profiles().final_group);
-        assert_eq!(profile.inner_commit_matrix.ring_dimension(), 256);
-        assert_eq!(profile.outer_commit_matrix.ring_dimension(), 64);
-        assert_eq!(profile.log_basis_inner, 3);
-        assert_eq!(profile.log_basis_outer, 3);
+        assert_eq!(profile.inner.matrix.ring_dimension(), 256);
+        assert_eq!(profile.outer.matrix.ring_dimension(), 64);
+        assert_eq!(profile.inner.digits.log_basis, 3);
+        assert_eq!(profile.outer.digits.log_basis, 3);
     }
 }

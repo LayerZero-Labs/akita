@@ -114,7 +114,7 @@ where
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
         .expect("schedule")
@@ -123,7 +123,12 @@ where
     let poly = DensePoly::<F>::from_field_evals(poly_nv, &evals).expect("dense poly");
 
     let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
-    let expected_opening = opening_from_poly_for_layout(&poly, &pt, &layout, BasisMode::Lagrange);
+    let expected_opening = opening_from_poly_for_layout(
+        &poly,
+        &pt,
+        &layout.final_group_scalar().expect("scalar final group"),
+        BasisMode::Lagrange,
+    );
 
     let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
         .expect("embedded schedule catalog")
@@ -238,14 +243,14 @@ where
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
     let layout = Cfg::resolve_catalog_row_for_opening(&opening_layout)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_layout)
         .expect("schedule")
         .into_schedule();
     let root_d = layout.d_a();
     let k = 256;
-    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
+    let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(
         total_ring * root_d,
         1usize << poly_nv,
@@ -418,7 +423,14 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let pt = random_point(poly_nv, 0xbabe_0000 + poly_nv as u64);
     let openings: Vec<F> = polys
         .iter()
-        .map(|poly| opening_from_poly_for_layout(poly, &pt, &layout, BasisMode::Lagrange))
+        .map(|poly| {
+            opening_from_poly_for_layout(
+                poly,
+                &pt,
+                &layout.final_group_scalar().expect("scalar final group"),
+                BasisMode::Lagrange,
+            )
+        })
         .collect();
 
     let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
@@ -507,7 +519,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
             .expect("batched layout");
     let root_d = layout.d_a();
     let k = 256;
-    let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
+    let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(total_ring * root_d, 1usize << poly_nv);
     let total_chunks = total_ring * root_d / k;
 

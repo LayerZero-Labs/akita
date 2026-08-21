@@ -52,6 +52,6 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     );
     assert_eq!(
         commitment.rows().count(),
-        commitment.profile.outer_commit_matrix.output_rank()
+        commitment.profile.outer.matrix.output_rank()
     );
 }

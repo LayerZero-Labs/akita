@@ -244,12 +244,12 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     schedule.validate_structure().expect("valid W8R2 schedule");
 
     assert_eq!(
-        schedule.root.params.final_group.commitment.opening_method,
+        schedule.root.params.group.opening_method,
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         },
     );
-    assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
+    assert_eq!(schedule.root.params.precommitted_groups().len(), 2);
     let shared_opening_dimension = schedule
         .root
         .params
@@ -258,14 +258,20 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
         .role_dims()
         .d_d();
     let mut expected_precommit_signatures = Vec::new();
-    for (index, group) in schedule.root.params.precommitted_groups.iter().enumerate() {
+    for (index, group) in schedule
+        .root
+        .params
+        .precommitted_groups()
+        .iter()
+        .enumerate()
+    {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
         } = group.commitment.opening.opening_method
         else {
             panic!("packing root must use packing for every precommitted group");
         };
-        let d_a = group.commitment.layout.inner_commit_matrix.ring_dimension();
+        let d_a = group.commitment.layout.inner.matrix.ring_dimension();
         let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
             spec.policy.claim_ext_degree,
             d_a,
@@ -293,7 +299,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
         .first()
         .expect("W8R2 row has a recursive packing fold");
     assert_eq!(
-        first_recursive.params.witness.opening_method,
+        first_recursive.params.group.opening_method,
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         },
@@ -301,10 +307,9 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     assert_eq!(
         first_recursive
             .params
-            .incoming_setup_prefix
+            .setup_prefix
             .as_ref()
             .expect("first recursive fold consumes the setup prefix")
-            .commitment_params
             .opening
             .opening_method,
         OpeningMethod::SubringCoefficientPacking {
@@ -313,7 +318,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     );
     assert!(schedule.recursive_folds[1..]
         .iter()
-        .all(|fold| fold.params.witness.opening_method == OpeningMethod::EvaluationTrace));
+        .all(|fold| fold.params.group.opening_method == OpeningMethod::EvaluationTrace));
 
     let policy_signature =
         catalog_policy_signature(&spec, &schedule).expect("W8R2 policy signature");

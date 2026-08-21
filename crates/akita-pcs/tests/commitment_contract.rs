@@ -203,7 +203,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     assert_eq!(
         params.source_encoding,
@@ -251,7 +251,12 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 
     let mut malformed_params = params.clone();
-    malformed_params.num_digits_inner += 1;
+    malformed_params
+        .own_group_mut()
+        .profile
+        .inner
+        .digits
+        .num_digits += 1;
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,

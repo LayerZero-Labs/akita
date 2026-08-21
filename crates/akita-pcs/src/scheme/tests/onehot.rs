@@ -7,7 +7,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
-    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
+    let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -42,30 +42,30 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
-        frozen_layout.num_positions_per_block,
-        profile.num_positions_per_block
+        frozen_layout.blocks.positions_per_block,
+        profile.blocks.positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
+    assert_eq!(frozen_layout.blocks.live_blocks, profile.blocks.live_blocks);
     assert_eq!(
-        frozen_layout.log_basis_outer,
+        frozen_layout.outer.digits.log_basis,
         OneHotCfg::opening_basis_range().0
     );
     assert_eq!(
-        frozen_layout.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.output_rank()
+        frozen_layout.inner.matrix.output_rank(),
+        profile.inner.matrix.output_rank()
     );
     assert_eq!(
-        frozen_layout.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank(),
+        profile.outer.matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
-        frozen_layout.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank()
     );
 }
 
 fn multi_group_root_params(schedule: &akita_types::FoldSchedule) -> &CommittedGroupParams {
-    &schedule.root.params.final_group.commitment
+    &schedule.root.params
 }
 
 fn with_precommit_stack<R>(
@@ -145,11 +145,11 @@ fn profile_native_commit_group_allows_independent_groups() {
         assert_eq!(pre_b_frozen.group, pre_b_key);
         assert_eq!(
             pre_a_commitment.rows().count(),
-            pre_a_frozen.outer_commit_matrix.output_rank()
+            pre_a_frozen.outer.matrix.output_rank()
         );
         assert_eq!(
             pre_b_commitment.rows().count(),
-            pre_b_frozen.outer_commit_matrix.output_rank()
+            pre_b_frozen.outer.matrix.output_rank()
         );
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
         assert_eq!(pre_a_frozen, pre_a_profile);
@@ -184,7 +184,7 @@ fn group_batch_schedule_preserves_precommitted_order() {
         .expect("multi-group runtime schedule")
         .into_schedule();
     let root = multi_group_root_params(&schedule);
-    let main_params = schedule.root.params.final_group.commitment.clone();
+    let main_params = schedule.root.params.clone();
 
     assert_eq!(multi_group_key.num_commitment_groups(), 4);
     assert_eq!(
@@ -194,17 +194,17 @@ fn group_batch_schedule_preserves_precommitted_order() {
         PRE_A_SIZE + PRE_B_SIZE + PRE_C_SIZE + MAIN_SIZE
     );
     assert_eq!(main_params, *root);
-    assert_eq!(schedule.root.params.precommitted_groups.len(), 3);
+    assert_eq!(schedule.root.params.precommitted_groups().len(), 3);
     assert_eq!(
-        schedule.root.params.precommitted_groups[0].descriptor,
+        schedule.root.params.precommitted_groups()[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[1].descriptor,
+        schedule.root.params.precommitted_groups()[1].profile,
         pre_b_frozen
     );
     assert_eq!(
-        schedule.root.params.precommitted_groups[2].descriptor,
+        schedule.root.params.precommitted_groups()[2].profile,
         pre_c_frozen
     );
 }
@@ -341,15 +341,15 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
 
     assert_eq!(
         pre_a_commitment.rows().count(),
-        pre_a_frozen.outer_commit_matrix.output_rank()
+        pre_a_frozen.outer.matrix.output_rank()
     );
     assert_eq!(
         pre_b_commitment.rows().count(),
-        pre_b_frozen.outer_commit_matrix.output_rank()
+        pre_b_frozen.outer.matrix.output_rank()
     );
     assert_eq!(
         final_commitment.rows().count(),
-        main_params.outer_commit_matrix.output_rank()
+        main_params.outer().matrix.output_rank()
     );
     assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
     assert_eq!(
@@ -358,15 +358,15 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         "final one-hot group should retain its native variable domain"
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups.len(),
+        multi_group_schedule.root.params.precommitted_groups().len(),
         2
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[0].descriptor,
+        multi_group_schedule.root.params.precommitted_groups()[0].profile,
         pre_a_frozen
     );
     assert_eq!(
-        multi_group_schedule.root.params.precommitted_groups[1].descriptor,
+        multi_group_schedule.root.params.precommitted_groups()[1].profile,
         pre_b_frozen
     );
 }
@@ -378,7 +378,7 @@ fn commit_group_returns_frozen_exact_layout() {
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
-    let total_field = (profile.num_live_blocks * profile.num_positions_per_block)
+    let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
@@ -413,22 +413,25 @@ fn commit_group_returns_frozen_exact_layout() {
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
-        frozen_layout.num_positions_per_block,
-        profile.num_positions_per_block
+        frozen_layout.blocks.positions_per_block,
+        profile.blocks.positions_per_block
     );
-    assert_eq!(frozen_layout.num_live_blocks, profile.num_live_blocks);
-    assert_eq!(frozen_layout.log_basis_outer, profile.log_basis_outer);
+    assert_eq!(frozen_layout.blocks.live_blocks, profile.blocks.live_blocks);
     assert_eq!(
-        frozen_layout.inner_commit_matrix.output_rank(),
-        profile.inner_commit_matrix.output_rank()
+        frozen_layout.outer.digits.log_basis,
+        profile.outer.digits.log_basis
     );
     assert_eq!(
-        frozen_layout.outer_commit_matrix.output_rank(),
-        profile.outer_commit_matrix.output_rank()
+        frozen_layout.inner.matrix.output_rank(),
+        profile.inner.matrix.output_rank()
+    );
+    assert_eq!(
+        frozen_layout.outer.matrix.output_rank(),
+        profile.outer.matrix.output_rank()
     );
     assert_eq!(
         commitment.rows().count(),
-        frozen_layout.outer_commit_matrix.output_rank()
+        frozen_layout.outer.matrix.output_rank()
     );
 }
 
@@ -522,7 +525,7 @@ where
             .map(|poly_idx| {
                 debug_make_onehot_poly(
                     pre_num_vars,
-                    profile.inner_commit_matrix.ring_dimension(),
+                    profile.inner.matrix.ring_dimension(),
                     0x0bee_fcaf_1a00_0000 + ((group_idx as u64) << 8) + poly_idx as u64,
                 )
             })
@@ -552,19 +555,19 @@ where
         multi_group_schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.profile)
             .collect::<Vec<_>>(),
         pre_layouts,
         "precommitted groups must retain their native descriptors"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
-        let root_commitment = &root.params.final_group.commitment;
-        assert!(!root.params.precommitted_groups.is_empty());
+        let root_commitment = &root.params;
+        assert!(!root.params.precommitted_groups().is_empty());
         assert_eq!(
-            root.params.witness_partition.num_chunks(),
+            root_commitment.witness_chunk.num_chunks,
             TestCfg::chunked_witness_cfg().num_chunks,
             "root fold must retain the configured chunk count"
         );
@@ -578,13 +581,13 @@ where
             root_commitment,
             &opening_layout,
             &relation_geometry,
-            root.params.witness_partition.num_chunks(),
-            akita_types::r_decomp_levels::<OneHotF>(root_commitment.log_basis_open),
+            root_commitment.witness_chunk.num_chunks,
+            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(
             witness_layout.units().len(),
-            opening_layout.num_groups() * root.params.witness_partition.num_chunks(),
+            opening_layout.num_groups() * root_commitment.witness_chunk.num_chunks,
         );
     }
     let final_polys: Vec<OneHotPoly<OneHotF, u8>> = (0..final_size)
@@ -624,9 +627,9 @@ where
                     opening_from_poly(
                         poly,
                         &pre_point,
-                        layout.inner_commit_matrix.ring_dimension(),
-                        layout.num_positions_per_block,
-                        layout.num_live_blocks,
+                        layout.inner.matrix.ring_dimension(),
+                        layout.blocks.positions_per_block,
+                        layout.blocks.live_blocks,
                     )
                 })
                 .collect()
@@ -639,8 +642,8 @@ where
                 poly,
                 &final_point,
                 main_params.d_a(),
-                main_params.num_positions_per_block,
-                main_params.num_live_blocks,
+                main_params.blocks().positions_per_block,
+                main_params.blocks().live_blocks,
             )
         })
         .collect();
@@ -702,7 +705,7 @@ where
     let planned_stage3 = multi_group_schedule
         .recursive_folds
         .iter()
-        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .filter(|fold| fold.params.setup_prefix().is_some())
         .count();
     let proved_stage3 = proof
         .nonterminal_folds()
@@ -873,7 +876,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const BATCH_SIZE: usize = 2;
 
     let layout = akita_batched_root_layout::<OneHotCfg>(NV, BATCH_SIZE).expect("layout");
-    let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
+    let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     let total_chunks = total_field / BENCH_ONEHOT_K;
@@ -893,8 +896,8 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
                 poly,
                 &point,
                 layout.d_a(),
-                layout.num_positions_per_block,
-                layout.num_live_blocks,
+                layout.blocks().positions_per_block,
+                layout.blocks().live_blocks,
             )
         })
         .collect();

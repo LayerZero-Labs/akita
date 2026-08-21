@@ -45,8 +45,6 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone();
     let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
         .expect("embedded schedule catalog")
@@ -63,19 +61,19 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     )
     .unwrap();
     let rings = poly.ring_coeffs::<D>().expect("dense ring view");
-    let num_live_blocks = rings.len().div_ceil(layout.num_positions_per_block);
+    let num_live_blocks = rings.len().div_ceil(layout.blocks().positions_per_block);
     let block_slices: Vec<&[akita_algebra::CyclotomicRing<F, D>]> = (0..num_live_blocks)
         .map(|i| {
-            let start = i * layout.num_positions_per_block;
+            let start = i * layout.blocks().positions_per_block;
             if start >= rings.len() {
                 &[] as &[akita_algebra::CyclotomicRing<F, D>]
             } else {
-                &rings[start..(start + layout.num_positions_per_block).min(rings.len())]
+                &rings[start..(start + layout.blocks().positions_per_block).min(rings.len())]
             }
         })
         .collect();
 
-    let n_a = layout.inner_commit_matrix.output_rank();
+    let n_a = layout.inner().matrix.output_rank();
     let inner_width = layout.inner_width();
 
     let mut group = c.benchmark_group("root_kernels");
@@ -86,8 +84,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&block_slices),
-                layout.num_digits_inner,
-                layout.log_basis_inner,
+                layout.inner().digits.num_digits,
+                layout.inner().digits.log_basis,
             ))
             .unwrap()
         })
@@ -100,8 +98,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                     &ntt_shared,
                     inner_width,
                     black_box(&block_slices),
-                    layout.num_digits_inner,
-                    layout.log_basis_inner,
+                    layout.inner().digits.num_digits,
+                    layout.inner().digits.log_basis,
                 ))
                 .unwrap()
             })
@@ -109,7 +107,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     );
     let mut digit_blocks: Vec<Vec<[i8; D]>> = block_slices
         .iter()
-        .map(|block| vec![[0i8; D]; block.len() * layout.num_digits_inner])
+        .map(|block| vec![[0i8; D]; block.len() * layout.inner().digits.num_digits])
         .collect();
     group.bench_function("dense_root_predecomp_digit_matvec_full_nv24_d256", |b| {
         b.iter(|| {
@@ -117,8 +115,8 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 decompose_rows_i8_into(
                     block,
                     digit_block,
-                    layout.num_digits_inner,
-                    layout.log_basis_inner,
+                    layout.inner().digits.num_digits,
+                    layout.inner().digits.log_basis,
                 );
             }
             let digit_block_slices: Vec<&[[i8; D]]> =
@@ -128,7 +126,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
                 n_a,
                 inner_width,
                 black_box(&digit_block_slices),
-                layout.log_basis_inner,
+                layout.inner().digits.log_basis,
             ))
             .unwrap()
         })

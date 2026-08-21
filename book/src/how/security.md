@@ -67,7 +67,6 @@ implementation acceptance criteria live in
 
 - `crates/akita-types/src/sis/mod.rs`, `ajtai_key.rs`, `l2_table.rs`,
   `physical_l2.rs`, `generated_sis_table/`, and `norm_bound.rs`.
-- Paper §2.2 `def:msis`, §3.12 `sec:batched-soundness` ("MSIS targets", "Two norm models").
 - `docs/security-posture.md`, `specs/sis-quantum128-scalar-n-table.md`.
 - `crates/akita-types/src/sis/generated_sis_table/policy_audit.csv` (canonical
   production table certificate).
@@ -214,7 +213,6 @@ not improve it. The protocol therefore keeps the existing challenge sampler.
   formulas. `crates/akita-types/src/proof/relation_range_image.rs` owns the
   physical response map. `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs`
   and `crates/akita-verifier/src/stages/physical_l2_norm.rs` own proof and replay.
-- Paper §3.12 `sec:batched-soundness` (`def:batched-weak-opening`, `lem:batched-weak-binding`, `prop:committed-fold-price`).
 - `specs/archive/2026-Q3/weak-binding-norm-fix.md` records the earlier fold reprice.
 - `specs/fold-linf-rejection.md` (fold digit-count tightening).
 - `specs/selective-l2-fold-security-sizing.md` (implemented physical norm correction

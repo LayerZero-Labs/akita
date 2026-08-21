@@ -1,9 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
-    TerminalResponseShape, WitnessPartition,
+    CommittedGroupParams, FoldParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -17,8 +15,8 @@ fn sample_schedule() -> FoldSchedule {
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
-    let inner = committed.inner_commit_matrix;
-    committed.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = committed.inner().matrix;
+    committed.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
             .sis_table_key()
@@ -31,32 +29,22 @@ fn sample_schedule() -> FoldSchedule {
         inner.ring_dimension(),
     );
     let (terminal_witness, admission_cap) =
-        TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
+        TerminalFoldParams::try_from_expanded_group(committed.clone())
             .expect("terminal response bounds");
     let response_shape =
         TerminalResponseShape::derive(&terminal_witness, admission_cap).expect("terminal shape");
     FoldSchedule {
-        root: RootFoldStep {
-            params: RootFoldParams {
-                final_group: RootFinalGroupParams {
-                    commitment: committed.clone(),
-                },
-                precommitted_groups: Vec::new(),
-                open_commit_matrix: committed.open_commit_matrix,
-                sparse_challenge_config: sparse,
-                witness_partition: WitnessPartition::Single,
-            },
+        root: FoldParams {
+            params: committed.clone(),
             input_witness_len: 256,
             output_witness_len: 256,
         },
         recursive_folds: Vec::new(),
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: terminal_witness,
-                sparse_challenge_config: sparse,
-                response_shape,
-            },
+        terminal: TerminalFoldParams {
+            fold_challenge_config: sparse,
+            response_shape,
             input_witness_len: 256,
+            ..terminal_witness
         },
     }
 }
@@ -310,7 +298,7 @@ fn terminal_topology_changes_plan_binding() {
 fn terminal_sparse_sampler_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
+    second.terminal.fold_challenge_config = SparseChallengeConfig::pm1_only(4);
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
         PlanSection::from_schedule(sample_selection(), &second)
@@ -321,29 +309,20 @@ fn terminal_sparse_sampler_changes_plan_binding() {
 fn role_local_ring_dimension_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
-    let matrix = &second
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix;
-    second
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
-        matrix.security_policy(),
-        matrix
-            .sis_table_key()
-            .expect("L infinity test matrix")
-            .table_digest,
-        matrix.sis_modulus_profile(),
-        matrix.output_rank(),
-        matrix.input_width(),
-        matrix.coeff_linf_bound().expect("L infinity test matrix"),
-        matrix.ring_dimension() * 2,
-    );
+    let matrix = &second.root.params.inner().matrix;
+    second.root.params.own_group_mut().profile.inner.matrix =
+        InnerCommitMatrixParams::new_unchecked(
+            matrix.security_policy(),
+            matrix
+                .sis_table_key()
+                .expect("L infinity test matrix")
+                .table_digest,
+            matrix.sis_modulus_profile(),
+            matrix.output_rank(),
+            matrix.input_width(),
+            matrix.coeff_linf_bound().expect("L infinity test matrix"),
+            matrix.ring_dimension() * 2,
+        );
 
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),

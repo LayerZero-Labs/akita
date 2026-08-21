@@ -29,7 +29,7 @@ impl WitnessLayout {
                 "scalar witness sizing requires exactly one opening group".into(),
             ));
         }
-        if lp.has_precommitted_groups() {
+        if lp.has_preceding_groups() {
             return Err(AkitaError::InvalidSetup(
                 "scalar witness sizing does not accept precommitted groups".into(),
             ));
@@ -81,7 +81,7 @@ impl WitnessLayout {
         let mut cursor = 0usize;
         for block_range in dyadic_block_ranges(params.num_live_blocks(), num_chunks)? {
             let (z_len, e_len, t_len) = witness_unit_lengths(
-                params,
+                &params,
                 role_dims,
                 opening_geometry,
                 num_claims,
@@ -124,21 +124,22 @@ impl WitnessLayout {
                 AkitaError::InvalidSetup("relation B compression shape overflow".into())
             })?;
         let Some(b_plan) = CompressionChainPlan::try_for_complete_source(
-            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer().matrix.sis_modulus_profile(),
             b_source_coefficients,
         )?
         else {
             return Ok(None);
         };
         let d_source_coefficients = lp
-            .open_commit_matrix
+            .open()
+            .matrix
             .output_rank()
             .checked_mul(role_dims.d_d())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation D compression shape overflow".into())
             })?;
         let Some(d_plan) = CompressionChainPlan::try_for_complete_source(
-            lp.open_commit_matrix.sis_modulus_profile(),
+            lp.open().matrix.sis_modulus_profile(),
             d_source_coefficients,
         )?
         else {
@@ -212,18 +213,19 @@ mod tests {
         .with_decomp(4, 32, 2, 2, 2)
         .expect("scalar test params");
         if mixed_dimensions {
-            let outer = params.outer_commit_matrix;
-            params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-                outer.security_policy(),
-                outer.sis_table_key().table_digest,
-                outer.sis_modulus_profile(),
-                outer.output_rank(),
-                outer.input_width() * 2,
-                outer.coeff_linf_bound(),
-                32,
-            );
-            let open = params.open_commit_matrix;
-            params.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            let outer = params.outer().matrix;
+            params.own_group_mut().profile.outer.matrix =
+                crate::OuterCommitMatrixParams::new_unchecked(
+                    outer.security_policy(),
+                    outer.sis_table_key().table_digest,
+                    outer.sis_modulus_profile(),
+                    outer.output_rank(),
+                    outer.input_width() * 2,
+                    outer.coeff_linf_bound(),
+                    32,
+                );
+            let open = params.open().matrix;
+            params.open_matrix = crate::OpenCommitMatrixParams::new_unchecked(
                 open.security_policy(),
                 open.sis_table_key().table_digest,
                 open.sis_modulus_profile(),
@@ -296,11 +298,11 @@ mod tests {
         .with_decomp(4, 8, 2, 2, 2)
         .expect("packing test params");
         params.payload_mode = payload_mode;
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-        let opening = params.open_commit_matrix;
-        params.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+        let opening = params.open().matrix;
+        params.open_matrix = crate::OpenCommitMatrixParams::new_unchecked(
             opening.security_policy(),
             opening.sis_table_key().table_digest,
             opening.sis_modulus_profile(),
@@ -345,9 +347,9 @@ mod tests {
             let rhs = relation_geometry.rhs_layout();
             assert_eq!(
                 crate::relation_rhs_row_count(rhs),
-                1 + params.inner_commit_matrix.output_rank()
-                    + params.outer_commit_matrix.output_rank()
-                    + params.open_commit_matrix.output_rank()
+                1 + params.inner().matrix.output_rank()
+                    + params.outer().matrix.output_rank()
+                    + params.open().matrix.output_rank()
                     + if payload_mode.is_compressed() {
                         crate::COMPRESSION_MAP_COUNT * 2
                     } else {
@@ -372,11 +374,11 @@ mod tests {
             );
             let v = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
                 Default::default();
-                params.open_commit_matrix.output_rank() * 128
+                params.open().matrix.output_rank() * 128
             ]);
             let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
                 Default::default();
-                params.outer_commit_matrix.output_rank() * 256
+                params.outer().matrix.output_rank() * 256
             ]);
             let assembled =
                 crate::assemble_relation_rhs(rhs, &v, &u).expect("packing relation RHS assembly");
@@ -392,20 +394,20 @@ mod tests {
                 for unit in layout.units() {
                     assert_eq!(
                         unit.e_range().len(),
-                        2 * unit.num_live_blocks() * params.num_digits_open * 128
+                        2 * unit.num_live_blocks() * params.open().digits.num_digits * 128
                     );
                     assert_eq!(
                         unit.z_range().len(),
-                        params.num_positions_per_block
-                            * params.num_digits_inner
-                            * params.num_digits_fold
+                        params.blocks().positions_per_block
+                            * params.inner().digits.num_digits
+                            * params.num_digits_fold()
                             * 256
                     );
                     assert_eq!(
                         unit.t_range().len(),
                         2 * unit.num_live_blocks()
-                            * params.inner_commit_matrix.output_rank()
-                            * params.num_digits_outer
+                            * params.inner().matrix.output_rank()
+                            * params.outer().digits.num_digits
                             * 256
                     );
                 }
@@ -422,8 +424,10 @@ mod tests {
                 .expect("supported compression source");
                 assert_eq!(scalar, layout.live_coeff_len());
                 if num_chunks == params.witness_chunk.num_chunks {
-                    let field_quotient_depth =
-                        crate::sis::compute_num_digits_field_width(128, params.log_basis_open);
+                    let field_quotient_depth = crate::sis::compute_num_digits_field_width(
+                        128,
+                        params.open().digits.log_basis,
+                    );
                     let field_layout = WitnessLayout::new(
                         &params,
                         &opening_batch,
@@ -464,9 +468,9 @@ mod tests {
                 crate::CommitmentPayloadMode::Compressed,
             ] {
                 let mut params = coefficient_packing_params(payload_mode);
-                params.opening_method = opening_method;
+                params.own_group_mut().opening.opening_method = opening_method;
                 if matches!(opening_method, OpeningMethod::EvaluationTrace) {
-                    params.fold_challenge_config =
+                    params.own_group_mut().opening.fold_challenge_config =
                         akita_challenges::SparseChallengeConfig::production_for_ring_dim(256)
                             .expect("A-ring challenge");
                 }
@@ -491,7 +495,8 @@ mod tests {
                         .sum::<usize>();
                     assert_eq!(
                         crate::grouped_witness_body_coefficients(
-                            &params,
+                            &params.final_group_scalar().expect("scalar final group"),
+                            params.source_encoding,
                             params.role_dims(),
                             2,
                             opening_batch.num_total_polynomials(),
@@ -506,29 +511,42 @@ mod tests {
 
         let params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
         assert!(crate::grouped_witness_body_coefficients(
-            &params,
+            &params.final_group_scalar().expect("scalar final group"),
+            params.source_encoding,
             params.role_dims(),
             2,
             usize::MAX,
             1,
         )
         .is_err());
-        assert!(
-            crate::grouped_witness_body_coefficients(&params, params.role_dims(), 2, 1, 0,)
-                .is_err()
-        );
+        assert!(crate::grouped_witness_body_coefficients(
+            &params.final_group_scalar().expect("scalar final group"),
+            params.source_encoding,
+            params.role_dims(),
+            2,
+            1,
+            0,
+        )
+        .is_err());
 
         for mutate in [
-            |params: &mut CommittedGroupParams| params.num_positions_per_block = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_inner = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_outer = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_open = 0,
-            |params: &mut CommittedGroupParams| params.num_digits_fold = 0,
+            |params: &mut CommittedGroupParams| {
+                params.own_group_mut().profile.blocks.positions_per_block = 0
+            },
+            |params: &mut CommittedGroupParams| {
+                params.own_group_mut().profile.inner.digits.num_digits = 0
+            },
+            |params: &mut CommittedGroupParams| {
+                params.own_group_mut().profile.outer.digits.num_digits = 0
+            },
+            |params: &mut CommittedGroupParams| params.own_group_mut().opening.num_digits_open = 0,
+            |params: &mut CommittedGroupParams| params.own_group_mut().opening.num_digits_fold = 0,
         ] {
             let mut malformed = params.clone();
             mutate(&mut malformed);
             assert!(crate::grouped_witness_body_coefficients(
-                &malformed,
+                &malformed.final_group_scalar().expect("scalar final group"),
+                malformed.source_encoding,
                 malformed.role_dims(),
                 2,
                 1,
@@ -538,18 +556,22 @@ mod tests {
         }
 
         let mut zero_a_rows = params.clone();
-        let inner = zero_a_rows.inner_commit_matrix;
-        zero_a_rows.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
-            inner.security_policy(),
-            inner.sis_table_key().expect("inner SIS key").table_digest,
-            inner.sis_modulus_profile(),
-            0,
-            inner.input_width(),
-            inner.coeff_linf_bound().expect("inner L-infinity bound"),
-            inner.ring_dimension(),
-        );
+        let inner = zero_a_rows.inner().matrix;
+        zero_a_rows.own_group_mut().profile.inner.matrix =
+            crate::InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner.sis_table_key().expect("inner SIS key").table_digest,
+                inner.sis_modulus_profile(),
+                0,
+                inner.input_width(),
+                inner.coeff_linf_bound().expect("inner L-infinity bound"),
+                inner.ring_dimension(),
+            );
         assert!(crate::grouped_witness_body_coefficients(
-            &zero_a_rows,
+            &zero_a_rows
+                .final_group_scalar()
+                .expect("scalar final group"),
+            zero_a_rows.source_encoding,
             zero_a_rows.role_dims(),
             2,
             1,
@@ -562,7 +584,10 @@ mod tests {
             extension_degree: 2,
         };
         assert!(crate::grouped_witness_body_coefficients(
-            &wrong_source,
+            &wrong_source
+                .final_group_scalar()
+                .expect("scalar final group"),
+            wrong_source.source_encoding,
             wrong_source.role_dims(),
             2,
             1,
@@ -577,26 +602,30 @@ mod tests {
         let chunks = 4usize;
         for extension_degree in [1, 2, 4] {
             let mut params = coefficient_packing_params(crate::CommitmentPayloadMode::Raw);
-            params.opening_method = OpeningMethod::SubringCoefficientPacking {
-                challenge_subring_dimension: 64,
-            };
+            params.own_group_mut().opening.opening_method =
+                OpeningMethod::SubringCoefficientPacking {
+                    challenge_subring_dimension: 64,
+                };
             let dimensions = params.role_dims();
             let opening_width = extension_degree * 64;
             let expected_z = chunks
-                * params.num_positions_per_block
-                * params.num_digits_inner
-                * params.num_digits_fold
+                * params.blocks().positions_per_block
+                * params.inner().digits.num_digits
+                * params.num_digits_fold()
                 * dimensions.d_a();
-            let expected_e =
-                claims * params.num_live_blocks * params.num_digits_open * opening_width;
+            let expected_e = claims
+                * params.blocks().live_blocks
+                * params.open().digits.num_digits
+                * opening_width;
             let expected_t = claims
-                * params.num_live_blocks
-                * params.inner_commit_matrix.output_rank()
-                * params.num_digits_outer
+                * params.blocks().live_blocks
+                * params.inner().matrix.output_rank()
+                * params.outer().digits.num_digits
                 * dimensions.d_a();
             assert_eq!(
                 crate::grouped_witness_body_coefficients(
-                    &params,
+                    &params.final_group_scalar().expect("scalar final group"),
+                    params.source_encoding,
                     dimensions,
                     extension_degree,
                     claims,
@@ -624,7 +653,7 @@ mod tests {
         .with_decomp(4, 8, 2, 2, 2)
         .expect("equal-width params");
         packing.payload_mode = crate::CommitmentPayloadMode::Raw;
-        packing.opening_method = OpeningMethod::SubringCoefficientPacking {
+        packing.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
         let packing_geometry = RelationWitnessGeometry::for_level(&packing, &opening_batch, 2)
@@ -633,7 +662,7 @@ mod tests {
             .unwrap();
 
         let mut evaluation_trace = packing;
-        evaluation_trace.opening_method = OpeningMethod::EvaluationTrace;
+        evaluation_trace.own_group_mut().opening.opening_method = OpeningMethod::EvaluationTrace;
         let trace_geometry =
             RelationWitnessGeometry::for_level(&evaluation_trace, &opening_batch, 2)
                 .expect("trace geometry")
@@ -658,7 +687,7 @@ mod tests {
         .with_decomp(4, 8, 2, 2, 2)
         .expect("overlap params");
         overlap.payload_mode = crate::CommitmentPayloadMode::Raw;
-        overlap.opening_method = OpeningMethod::SubringCoefficientPacking {
+        overlap.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 128,
         };
         let overlap_geometry = RelationWitnessGeometry::for_level(&overlap, &opening_batch, 1)
@@ -667,7 +696,7 @@ mod tests {
             .unwrap();
         assert_eq!(overlap_geometry, RelationRowGeometry::native(128).unwrap());
         assert!(matches!(
-            overlap.opening_method,
+            overlap.opening_method(),
             OpeningMethod::SubringCoefficientPacking { .. }
         ));
         let overlap_relation = RelationWitnessGeometry::for_level(&overlap, &opening_batch, 1)
@@ -681,11 +710,11 @@ mod tests {
         ));
         let v = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
             Default::default();
-            overlap.open_commit_matrix.output_rank() * 128
+            overlap.open().matrix.output_rank() * 128
         ]);
         let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
             Default::default();
-            overlap.outer_commit_matrix.output_rank() * 128
+            overlap.outer().matrix.output_rank() * 128
         ]);
         assert!(crate::assemble_relation_rhs(overlap_relation.rhs_layout(), &v, &u).is_ok());
     }
@@ -698,7 +727,7 @@ mod tests {
         assert!(RelationWitnessGeometry::for_level(&params, &opening_batch, 3).is_err());
 
         let mut invalid = params;
-        invalid.opening_method = OpeningMethod::SubringCoefficientPacking {
+        invalid.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 32,
         };
         assert!(RelationWitnessGeometry::for_level(&invalid, &opening_batch, 2).is_err());

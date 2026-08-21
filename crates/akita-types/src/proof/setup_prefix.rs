@@ -9,8 +9,8 @@ use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFI
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     AkitaSetupSeed, CommitmentSliceCount, CommitmentSliceGeometry, CommittedGroupParams,
-    CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedLevelParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 use akita_error::AkitaError;
 use akita_field::FieldCore;
@@ -39,47 +39,19 @@ pub struct SetupPrefixSlotId {
     /// Active setup-weight support in flat field coefficients.
     pub natural_len: usize,
     /// Frozen commitment profile used to build the setup-prefix object.
-    pub commitment_profile: CommittedGroupProfile,
+    pub commitment_profile: GroupCommitPhaseParams,
 }
 
-/// Setup-prefix commitment identity plus the consuming fold's opening policy.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ScheduledSetupPrefix {
-    /// Active setup-weight support in flat field coefficients.
-    pub natural_len: usize,
-    /// Frozen commitment profile and schedule-owned opening plan.
-    pub commitment_params: PrecommittedLevelParams,
-}
-
-impl ScheduledSetupPrefix {
-    /// Commitment-only registry key for this scheduled setup prefix.
-    #[must_use]
-    pub fn slot_id(&self) -> SetupPrefixSlotId {
-        SetupPrefixSlotId {
-            natural_len: self.natural_len,
-            commitment_profile: self.commitment_params.layout,
+impl GroupOpenPhaseParams {
+    /// Descriptor bytes for this group in its role as a fold's setup prefix.
+    ///
+    /// Byte-identical to the encoder on the deleted `GroupOpenPhaseParams`:
+    /// slot id, then the consuming fold's opening plan.
+    pub(crate) fn append_setup_prefix_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        if let Some(slot) = self.slot_id() {
+            slot.append_descriptor_bytes(bytes);
         }
-    }
-
-    /// Full power-of-two flat coefficient length committed for this prefix.
-    pub fn n_prefix(&self) -> Result<usize, AkitaError> {
-        self.slot_id().n_prefix()
-    }
-
-    /// Ring dimension used for the frozen setup-prefix commitment.
-    #[must_use]
-    pub fn d_setup(&self) -> usize {
-        self.commitment_params
-            .layout
-            .inner_commit_matrix
-            .ring_dimension()
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.slot_id().append_descriptor_bytes(bytes);
-        self.commitment_params
-            .opening
-            .append_descriptor_bytes(bytes);
+        self.opening.append_descriptor_bytes(bytes);
     }
 }
 
@@ -95,7 +67,7 @@ impl SetupPrefixSlotId {
     /// Ring dimension used to commit the setup-prefix coefficient vector.
     #[must_use]
     pub fn d_setup(&self) -> usize {
-        self.commitment_profile.inner_commit_matrix.ring_dimension()
+        self.commitment_profile.inner.matrix.ring_dimension()
     }
 
     /// Full power-of-two flat coefficient length committed for this slot.
@@ -112,14 +84,14 @@ impl SetupPrefixSlotId {
     }
 }
 
-fn committed_group_profile_descriptor_bytes(params: &CommittedGroupProfile) -> Vec<u8> {
+fn committed_group_profile_descriptor_bytes(params: &GroupCommitPhaseParams) -> Vec<u8> {
     let mut bytes = Vec::new();
     params.append_descriptor_bytes(&mut bytes);
     bytes
 }
 
 fn n_prefix_from_commitment_profile(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
 ) -> Result<usize, SerializationError> {
     1usize
         .checked_shl(params.group.num_vars() as u32)
@@ -128,6 +100,20 @@ fn n_prefix_from_commitment_profile(
                 "setup prefix slot commitment domain overflows usize".to_string(),
             )
         })
+}
+
+/// Validate that a setup prefix uses the smallest power-of-two commitment
+/// domain covering its active support.
+pub fn validate_setup_prefix_domain(natural_len: usize, n_prefix: usize) -> Result<(), AkitaError> {
+    let expected = natural_len.checked_next_power_of_two().ok_or_else(|| {
+        AkitaError::InvalidSetup("setup-prefix natural length overflows its padded domain".into())
+    })?;
+    if natural_len == 0 || n_prefix != expected {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix commitment domain is not the canonical padded natural length".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl Ord for SetupPrefixSlotId {
@@ -162,11 +148,8 @@ impl Valid for SetupPrefixSlotId {
             ));
         }
         let n_prefix = n_prefix_from_commitment_profile(&self.commitment_profile)?;
-        if self.natural_len == 0 || self.natural_len > n_prefix {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot natural_len must be in 1..=n_prefix".to_string(),
-            ));
-        }
+        validate_setup_prefix_domain(self.natural_len, n_prefix)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if n_prefix == 0 || !n_prefix.is_power_of_two() {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot n_prefix must be a non-zero power of two".to_string(),
@@ -180,7 +163,8 @@ impl Valid for SetupPrefixSlotId {
         self.commitment_profile
             .validate(
                 self.commitment_profile
-                    .inner_commit_matrix
+                    .inner
+                    .matrix
                     .sis_modulus_profile()
                     .field_bits(),
             )
@@ -284,7 +268,7 @@ use commit_matrix::{
 };
 
 fn serialize_committed_group_profile<W: Write>(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
@@ -298,30 +282,41 @@ fn serialize_committed_group_profile<W: Write>(
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_live_ring_elements_per_claim
+        .blocks
+        .live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_positions_per_block
+        .blocks
+        .positions_per_block
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .serialize_with_mode(&mut writer, compress)?;
     let outer_slice_count = params.outer_slice_count.get();
     outer_slice_count.serialize_with_mode(&mut writer, compress)?;
     params
-        .log_basis_inner
+        .inner
+        .digits
+        .log_basis
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_inner
+        .inner
+        .digits
+        .num_digits
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.inner.matrix, &mut writer, compress)?;
     params
-        .log_basis_outer
+        .outer
+        .digits
+        .log_basis
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_outer
+        .outer
+        .digits
+        .num_digits
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.outer.matrix, &mut writer, compress)?;
     Ok(())
 }
 
@@ -329,9 +324,9 @@ fn deserialize_committed_group_profile<R: Read>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<CommittedGroupProfile, SerializationError> {
+) -> Result<GroupCommitPhaseParams, SerializationError> {
     let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    if version != CommittedGroupProfile::VERSION {
+    if version != GroupCommitPhaseParams::VERSION {
         return Err(SerializationError::InvalidData(format!(
             "unknown committed-group profile version {version}"
         )));
@@ -355,24 +350,30 @@ fn deserialize_committed_group_profile<R: Read>(
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let outer_commit_matrix: OuterCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
-    Ok(CommittedGroupProfile {
+    Ok(GroupCommitPhaseParams {
         version,
         group,
-        num_live_ring_elements_per_claim,
-        num_positions_per_block,
-        num_live_blocks,
+
+        blocks: crate::BlockGeometry::new(
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+        ),
+
         outer_slice_count,
-        log_basis_inner,
-        num_digits_inner,
-        inner_commit_matrix,
-        log_basis_outer,
-        num_digits_outer,
-        outer_commit_matrix,
+        inner: crate::RoleParams::new(
+            crate::GadgetDigits::new(log_basis_inner, num_digits_inner),
+            inner_commit_matrix,
+        ),
+        outer: crate::RoleParams::new(
+            crate::GadgetDigits::new(log_basis_outer, num_digits_outer),
+            outer_commit_matrix,
+        ),
     })
 }
 
 fn committed_group_profile_serialized_size(
-    params: &CommittedGroupProfile,
+    params: &GroupCommitPhaseParams,
     compress: Compress,
 ) -> usize {
     let outer_slice_count = params.outer_slice_count.get();
@@ -380,17 +381,18 @@ fn committed_group_profile_serialized_size(
         + params.group.num_vars().serialized_size(compress)
         + params.group.num_polynomials().serialized_size(compress)
         + params
-            .num_live_ring_elements_per_claim
+            .blocks
+            .live_ring_elements_per_claim
             .serialized_size(compress)
-        + params.num_positions_per_block.serialized_size(compress)
-        + params.num_live_blocks.serialized_size(compress)
+        + params.blocks.positions_per_block.serialized_size(compress)
+        + params.blocks.live_blocks.serialized_size(compress)
         + outer_slice_count.serialized_size(compress)
-        + params.log_basis_inner.serialized_size(compress)
-        + params.num_digits_inner.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
-        + params.log_basis_outer.serialized_size(compress)
-        + params.num_digits_outer.serialized_size(compress)
-        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
+        + params.inner.digits.log_basis.serialized_size(compress)
+        + params.inner.digits.num_digits.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.inner.matrix, compress)
+        + params.outer.digits.log_basis.serialized_size(compress)
+        + params.outer.digits.num_digits.serialized_size(compress)
+        + commit_matrix_serialized_size(&params.outer.matrix, compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -1059,7 +1061,7 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let d_physical_cols = level_params.open_commit_matrix.input_width();
+    let d_physical_cols = level_params.open().matrix.input_width();
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_params = level_params.group_params(opening_batch, group_index)?;
@@ -1081,7 +1083,7 @@ fn active_setup_projection_geometry(
     }
     crate::SetupProjectionGeometry::from_groups(
         level_params.role_dims(),
-        level_params.open_commit_matrix.output_rank(),
+        level_params.open().matrix.output_rank(),
         d_physical_cols,
         &groups,
     )
@@ -1106,9 +1108,9 @@ pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
 pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
-) -> Result<PrecommittedLevelParams, AkitaError> {
-    let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
-    let d_outer = prefix_params.outer_commit_matrix.ring_dimension();
+) -> Result<GroupOpenPhaseParams, AkitaError> {
+    let d_setup = prefix_params.inner().matrix.ring_dimension();
+    let d_outer = prefix_params.outer().matrix.ring_dimension();
     if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix A dimension must be a multiple of its B dimension".to_string(),
@@ -1121,74 +1123,86 @@ pub fn setup_prefix_precommitted_params(
     }
     let setup_num_digits = crate::sis::compute_num_digits_field_width(
         prefix_params
-            .inner_commit_matrix
+            .inner()
+            .matrix
             .sis_modulus_profile()
             .field_bits(),
-        prefix_params.log_basis_inner,
+        prefix_params.inner().digits.log_basis,
     );
     let ring_slots = n_prefix / d_setup;
     let mut num_positions_per_block = 1usize;
     while num_positions_per_block <= ring_slots.max(1) {
         let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
-        if prefix_params.outer_slice_count.get() > num_live_blocks {
+        if prefix_params.outer_slice_count().get() > num_live_blocks {
             break;
         }
         let inner_width = num_positions_per_block
             .checked_mul(setup_num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
         let outer_width = CommitmentSliceGeometry::try_new(
-            prefix_params.outer_slice_count,
+            prefix_params.outer_slice_count(),
             num_live_blocks,
             1,
-            prefix_params.inner_commit_matrix.output_rank(),
-            prefix_params.num_digits_outer,
+            prefix_params.inner().matrix.output_rank(),
+            prefix_params.outer().digits.num_digits,
             d_setup,
             d_outer,
         )?
         .physical_input_width();
-        if inner_width <= prefix_params.inner_commit_matrix.input_width()
-            && outer_width <= prefix_params.outer_commit_matrix.input_width()
+        if inner_width <= prefix_params.inner().matrix.input_width()
+            && outer_width <= prefix_params.outer().matrix.input_width()
         {
-            if prefix_params.inner_commit_matrix.sis_table_key().is_none() {
+            if prefix_params.inner().matrix.sis_table_key().is_none() {
                 return Err(AkitaError::InvalidSetup(
                     "setup prefix cannot be derived from an L2 A security route".into(),
                 ));
             }
             let inner_commit_matrix = prefix_params
-                .inner_commit_matrix
+                .inner()
+                .matrix
                 .try_with_input_width(inner_width)?;
             let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-                prefix_params.outer_commit_matrix.security_policy(),
-                prefix_params
-                    .outer_commit_matrix
-                    .sis_table_key()
-                    .table_digest,
-                prefix_params.outer_commit_matrix.sis_modulus_profile(),
-                prefix_params.outer_commit_matrix.output_rank(),
+                prefix_params.outer().matrix.security_policy(),
+                prefix_params.outer().matrix.sis_table_key().table_digest,
+                prefix_params.outer().matrix.sis_modulus_profile(),
+                prefix_params.outer().matrix.output_rank(),
                 outer_width,
-                prefix_params.outer_commit_matrix.coeff_linf_bound(),
-                prefix_params.outer_commit_matrix.ring_dimension(),
+                prefix_params.outer().matrix.coeff_linf_bound(),
+                prefix_params.outer().matrix.ring_dimension(),
             );
-            return Ok(PrecommittedLevelParams {
-                layout: CommittedGroupProfile {
-                    version: CommittedGroupProfile::VERSION,
+            return Ok(GroupOpenPhaseParams {
+                setup_natural_len: None,
+                profile: GroupCommitPhaseParams {
+                    version: GroupCommitPhaseParams::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                    num_live_ring_elements_per_claim: ring_slots,
-                    num_positions_per_block,
-                    num_live_blocks,
-                    outer_slice_count: prefix_params.outer_slice_count,
-                    log_basis_inner: prefix_params.log_basis_inner,
-                    num_digits_inner: setup_num_digits,
-                    inner_commit_matrix,
-                    log_basis_outer: prefix_params.log_basis_outer,
-                    num_digits_outer: prefix_params.num_digits_outer,
-                    outer_commit_matrix,
+
+                    blocks: crate::BlockGeometry::new(
+                        ring_slots,
+                        num_positions_per_block,
+                        num_live_blocks,
+                    ),
+
+                    outer_slice_count: prefix_params.outer_slice_count(),
+                    inner: crate::RoleParams::new(
+                        crate::GadgetDigits::new(
+                            prefix_params.inner().digits.log_basis,
+                            setup_num_digits,
+                        ),
+                        inner_commit_matrix,
+                    ),
+                    outer: crate::RoleParams::new(
+                        crate::GadgetDigits::new(
+                            prefix_params.outer().digits.log_basis,
+                            prefix_params.outer().digits.num_digits,
+                        ),
+                        outer_commit_matrix,
+                    ),
                 },
                 opening: crate::GroupOpeningPlan::evaluation_trace(
-                    prefix_params.fold_challenge_config,
-                    prefix_params.log_basis_open,
-                    prefix_params.num_digits_open,
-                    prefix_params.num_digits_fold,
+                    prefix_params.fold_challenge_config(),
+                    prefix_params.open().digits.log_basis,
+                    prefix_params.open().digits.num_digits,
+                    prefix_params.num_digits_fold(),
                 ),
             });
         }
@@ -1201,14 +1215,19 @@ pub fn setup_prefix_precommitted_params(
     ))
 }
 
-/// Attach a consuming opening plan to one setup-prefix commitment.
+/// Mark one committed group as a fold's incoming setup prefix.
+///
+/// Presence of `setup_natural_len` is the sole record that this group is a
+/// prefix and the sole record of its active support length, so there is no
+/// second field for a mirror audit to compare against.
+#[must_use]
 pub fn scheduled_setup_prefix(
     natural_len: usize,
-    commitment_params: PrecommittedLevelParams,
-) -> ScheduledSetupPrefix {
-    ScheduledSetupPrefix {
-        natural_len,
-        commitment_params,
+    commitment_params: GroupOpenPhaseParams,
+) -> GroupOpenPhaseParams {
+    GroupOpenPhaseParams {
+        setup_natural_len: Some(natural_len),
+        ..commitment_params
     }
 }
 
@@ -1231,12 +1250,17 @@ pub fn setup_prefix_coverage_eval_len(
     source_ring_dimension: usize,
     coverage_error: &'static str,
 ) -> Result<usize, AkitaError> {
-    let Some(template) = &level_params.setup_prefix else {
+    let Some(template) = &level_params.setup_prefix() else {
         return Err(AkitaError::InvalidSetup(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
-    if selected_slot_id != &template.slot_id() {
+    let template_slot_id = template.slot_id().ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{coverage_error}: planned setup-prefix template is not a prefix group"
+        ))
+    })?;
+    if selected_slot_id != &template_slot_id {
         return Err(AkitaError::InvalidSetup(format!(
             "{coverage_error}: selected setup-prefix slot id does not match planned slot"
         )));
@@ -1250,11 +1274,11 @@ pub fn setup_prefix_coverage_eval_len(
         }
     }
     let template_n_prefix = template.n_prefix()?;
-    if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
+    if template_slot_id.natural_len != natural_field_len || template_n_prefix != n_prefix {
         return Err(AkitaError::InvalidSetup(format!(
             "{coverage_error}: planned natural/full-prefix lengths are {}/{template_n_prefix}, \
              active lengths are {natural_field_len}/{n_prefix}",
-            template.natural_len,
+            template_slot_id.natural_len,
         )));
     }
 

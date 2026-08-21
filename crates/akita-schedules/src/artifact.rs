@@ -370,12 +370,12 @@ fn profiles_key_cmp(
         .then_with(|| {
             left.precommitteds
                 .iter()
-                .map(akita_types::CommittedGroupProfile::canonical_descriptor_bytes)
+                .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes)
                 .cmp(
                     right
                         .precommitteds
                         .iter()
-                        .map(akita_types::CommittedGroupProfile::canonical_descriptor_bytes),
+                        .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes),
                 )
         })
 }
@@ -399,11 +399,11 @@ fn profiles_key_cmp_runtime(
             profiles
                 .precommitteds
                 .iter()
-                .map(akita_types::CommittedGroupProfile::canonical_descriptor_bytes)
+                .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes)
                 .cmp(
                     key.precommitteds
                         .iter()
-                        .map(akita_types::CommittedGroupProfile::canonical_descriptor_bytes),
+                        .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes),
                 )
         })
 }
@@ -463,24 +463,23 @@ fn validate_schedule_challenge_hooks(
     };
 
     let root = &schedule.root.params;
-    let root_commitment = &root.final_group.commitment;
     validate(
-        root.sparse_challenge_config,
-        root_commitment.opening_method,
-        root_commitment.d_a(),
+        root.fold_challenge_config(),
+        root.opening_method(),
+        root.d_a(),
         matches!(
-            root_commitment.inner_commit_matrix.security_route(),
+            root.inner().matrix.security_route(),
             akita_types::InnerCommitSecurityRoute::L2 { .. }
         ),
         "root fold",
     )?;
-    for (index, group) in root.precommitted_groups.iter().enumerate() {
+    for (index, group) in root.precommitted_groups().iter().enumerate() {
         validate(
-            group.commitment.opening.fold_challenge_config,
-            group.commitment.opening.opening_method,
-            group.descriptor.inner_commit_matrix.ring_dimension(),
+            group.fold_challenge_config(),
+            group.opening_method(),
+            group.inner_commit_matrix_params().ring_dimension(),
             matches!(
-                group.descriptor.inner_commit_matrix.security_route(),
+                group.inner_commit_matrix_params().security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             ),
             &format!("root precommitted group {index}"),
@@ -488,27 +487,22 @@ fn validate_schedule_challenge_hooks(
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         validate(
-            step.params.sparse_challenge_config,
-            step.params.witness.opening_method,
-            step.params.witness.d_a(),
+            step.params.fold_challenge_config(),
+            step.params.opening_method(),
+            step.params.d_a(),
             matches!(
-                step.params.witness.inner_commit_matrix.security_route(),
+                step.params.inner().matrix.security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             ),
             &format!("recursive fold {index}"),
         )?;
     }
     validate(
-        schedule.terminal.params.sparse_challenge_config,
+        schedule.terminal.fold_challenge_config,
         akita_types::OpeningMethod::EvaluationTrace,
-        schedule.terminal.params.witness.d_a(),
+        schedule.terminal.d_a(),
         matches!(
-            schedule
-                .terminal
-                .params
-                .witness
-                .inner_commit_matrix
-                .security_route(),
+            schedule.terminal.inner.matrix.security_route(),
             akita_types::InnerCommitSecurityRoute::L2 { .. }
         ),
         "terminal fold",
