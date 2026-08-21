@@ -2,8 +2,8 @@
 //!
 //! Techniques adapted from plonky2 (Goldilocks) and plonky3 (Mersenne-31).
 
-use super::{PackedField, PackedValue};
-use crate::ext::FpExt2Config;
+use super::{fp64_ext2_two_avx_fusion_safe, PackedField, PackedValue};
+use crate::ext::{FpExt2Config, FpExt2NonResidueKind};
 use crate::Invertible;
 use crate::{Fp128, Fp32, Fp64};
 use core::arch::x86_64::*;

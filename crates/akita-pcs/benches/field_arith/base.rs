@@ -53,6 +53,13 @@ pub(crate) fn bench_base_field_matrix(c: &mut Criterion) {
         0xba5e_0056,
         params,
     );
+    bench_arithmetic_case::<Prime63Offset259, P63O259>(
+        c,
+        "base",
+        PRIME63_OFFSET259,
+        0xba5e_0063,
+        params,
+    );
     bench_arithmetic_case::<Prime64Offset59, P64O59>(
         c,
         "base",
