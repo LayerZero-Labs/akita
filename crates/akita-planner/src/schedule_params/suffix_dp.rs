@@ -69,6 +69,9 @@ fn offloaded_witness_contracts(
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
+    opening_layout: &'a OpeningClaimsLayout,
+    level: u32,
+    include_evaluation_batch: bool,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
@@ -87,7 +90,9 @@ struct ChildEdgePrice {
 
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
-    total_bytes: usize,
+    payload_bytes: usize,
+    nonce_bits: usize,
+    proof_bytes: usize,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -193,7 +198,9 @@ impl PendingScheduleCandidate {
                 .map_or(super::SetupPrefixCapacity::MAX, |natural_len| {
                     super::SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            proof_bytes: self.total_bytes,
+            payload_bytes: self.payload_bytes,
+            nonce_bits: self.nonce_bits,
+            proof_bytes: self.proof_bytes,
             setup_field_elements: self.setup_field_elements,
         }
     }
@@ -201,7 +208,9 @@ impl PendingScheduleCandidate {
     fn into_candidate(self) -> ScheduleCandidate {
         ScheduleCandidate {
             first_direct_setup_field_len: self.first_direct_setup_field_len,
-            total_bytes: self.total_bytes,
+            payload_bytes: self.payload_bytes,
+            nonce_bits: self.nonce_bits,
+            proof_bytes: self.proof_bytes,
             setup_field_elements: self.setup_field_elements,
             folds: self.suffix_folds.prepend(self.first_fold),
             terminal: self.terminal,
@@ -235,6 +244,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
+    edge_nonce_bits: usize,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -248,7 +258,7 @@ fn child_choice(
     let total_bytes = edge_price
         .direct_payload_bytes
         .checked_add(edge_price.stage3_payload_bytes)
-        .and_then(|value| value.checked_add(suffix.total_bytes))
+        .and_then(|value| value.checked_add(suffix.payload_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
     let setup_field_elements = edge
         .level_setup_field_elements
@@ -275,14 +285,49 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
+    let nonce_bits = edge_nonce_bits
+        .checked_add(suffix.nonce_bits)
+        .ok_or_else(|| AkitaError::InvalidSetup("candidate nonce bit length overflow".into()))?;
+    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits, 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    let proof_bytes = total_bytes
+        .checked_add(nonce_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
-        total_bytes,
+        payload_bytes: total_bytes,
+        nonce_bits,
+        proof_bytes,
         setup_field_elements,
         first_fold,
         suffix_folds: suffix.folds.clone(),
         terminal: suffix.terminal.clone(),
     }))
+}
+
+fn edge_grinding_nonce_bits(
+    edge: &ChildEdge<'_>,
+    suffix: &ScheduleCandidate,
+) -> Result<usize, AkitaError> {
+    let fold = CandidateFoldStep {
+        params: Arc::clone(&edge.candidate_params),
+        input_witness_len: edge.current_witness_len,
+        output_witness_len: edge.next_witness_len,
+        estimated_direct_payload_bytes: 0,
+        estimated_stage3_payload_bytes: 0,
+    };
+    let recursive_successor = suffix.folds.first();
+    akita_schedules::planner_support::candidate_edge_grinding_nonce_bits(
+        edge.policy,
+        edge.opening_layout,
+        &fold,
+        recursive_successor,
+        recursive_successor
+            .is_none()
+            .then_some(suffix.terminal.as_ref()),
+        edge.level,
+        edge.include_evaluation_batch,
+    )
 }
 
 fn direct_edge_lower_bound(
@@ -448,7 +493,9 @@ fn price_terminal_candidate(
         first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(|| {
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
-        total_bytes: total,
+        payload_bytes: total,
+        nonce_bits: 0,
+        proof_bytes: total,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
@@ -465,6 +512,7 @@ fn price_terminal_candidate(
 fn price_level_candidate_with_children(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
+    opening_layout: &OpeningClaimsLayout,
     candidate: LevelCandidateEdge<'_>,
     children: CandidateChildren<'_>,
     frontiers: &mut StateFrontiers,
@@ -491,6 +539,10 @@ fn price_level_candidate_with_children(
     let direct_edge = ChildEdge {
         policy,
         diagnostics: ctx.diagnostics,
+        opening_layout,
+        level: u32::try_from(state.level)
+            .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
+        include_evaluation_batch: ctx.level_zero_is_root && state.level == 0,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,
@@ -834,6 +886,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             price_level_candidate_with_children(
                 ctx,
                 state,
+                current_opening_layout,
                 LevelCandidateEdge {
                     params: &candidate_params,
                     next_witness_len,

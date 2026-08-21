@@ -471,6 +471,80 @@ pub struct CandidateTerminalResponse {
     pub estimated_payload_bytes: usize,
 }
 
+fn fold_schedule_from_candidate_parts(
+    folds: &[CandidateFoldStep],
+    terminal_response: &CandidateTerminalResponse,
+) -> Result<FoldSchedule, AkitaError> {
+    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(
+            "a fold schedule requires root and terminal folds".to_string(),
+        )
+    })?;
+    Ok(FoldSchedule {
+        root: FoldParams {
+            params: (*root.params).clone(),
+            input_witness_len: root.input_witness_len,
+            output_witness_len: root.output_witness_len,
+        },
+        recursive_folds: recursive_folds
+            .iter()
+            .map(|fold| FoldParams {
+                params: (*fold.params).clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: TerminalFoldParams {
+            fold_challenge_config: terminal_response.sparse_challenge_config,
+            response_shape: terminal_response.response_shape.clone(),
+            input_witness_len: terminal_response.input_witness_len,
+            ..terminal_response.params.clone()
+        },
+    })
+}
+
+/// Price the canonical grinding plan for one complete schedule candidate.
+#[doc(hidden)]
+pub fn candidate_grinding_nonce_bits(
+    policy: &PlannerPolicy,
+    root_layout: &OpeningClaimsLayout,
+    folds: &[CandidateFoldStep],
+    terminal_response: &CandidateTerminalResponse,
+) -> Result<usize, AkitaError> {
+    let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
+    akita_types::transcript_grinding_nonce_bits_for_planner_candidate(
+        &schedule,
+        root_layout,
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )
+}
+
+/// Price one planner edge without rebuilding its complete suffix plan.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn candidate_edge_grinding_nonce_bits(
+    policy: &PlannerPolicy,
+    layout: &OpeningClaimsLayout,
+    fold: &CandidateFoldStep,
+    recursive_successor: Option<&CandidateFoldStep>,
+    terminal_successor: Option<&CandidateTerminalResponse>,
+    level: u32,
+    include_evaluation_batch: bool,
+) -> Result<usize, AkitaError> {
+    akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+        fold.params.as_ref(),
+        fold.output_witness_len,
+        layout,
+        recursive_successor.map(|successor| successor.params.as_ref()),
+        terminal_successor.map(|terminal| &terminal.params),
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+        level,
+        include_evaluation_batch,
+    )
+}
+
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
 pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
@@ -627,24 +701,24 @@ pub fn materialize_candidate_schedule(
     cached_first_direct_setup_field_len: Option<usize>,
     policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
-    mut folds: Vec<CandidateFoldStep>,
+    folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    if folds.is_empty() {
-        return Err(AkitaError::UnsupportedSchedule(
+    let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
+    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
-        ));
-    }
-    let root = folds.remove(0);
+        )
+    })?;
     let mut estimate = FoldScheduleEstimate {
         nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
-        estimated_recursive_direct_payload_bytes: folds
+        estimated_recursive_direct_payload_bytes: recursive_folds
             .iter()
             .map(|fold| fold.estimated_direct_payload_bytes)
             .collect(),
-        estimated_recursive_stage3_payload_bytes: folds
+        estimated_recursive_stage3_payload_bytes: recursive_folds
             .iter()
             .map(|fold| fold.estimated_stage3_payload_bytes)
             .collect(),
@@ -657,37 +731,6 @@ pub fn materialize_candidate_schedule(
         first_direct_setup_field_len: None,
         selected_offload_edges: 0,
     };
-    let recomputed = estimate.estimated_proof_payload_bytes()?;
-    if recomputed != cached_total {
-        return Err(AkitaError::InvalidSetup(format!(
-            "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
-        )));
-    }
-    let root_params = Arc::unwrap_or_clone(root.params);
-    let schedule = FoldSchedule {
-        root: FoldParams {
-            params: root_params.clone(),
-            input_witness_len: root.input_witness_len,
-            output_witness_len: root.output_witness_len,
-        },
-        recursive_folds: folds
-            .into_iter()
-            .map(|fold| {
-                let params = Arc::unwrap_or_clone(fold.params);
-                FoldParams {
-                    params,
-                    input_witness_len: fold.input_witness_len,
-                    output_witness_len: fold.output_witness_len,
-                }
-            })
-            .collect(),
-        terminal: TerminalFoldParams {
-            fold_challenge_config: terminal_response.sparse_challenge_config,
-            response_shape: terminal_response.response_shape,
-            input_witness_len: terminal_response.input_witness_len,
-            ..terminal_response.params
-        },
-    };
     let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
         &schedule,
         root_layout,
@@ -697,6 +740,12 @@ pub fn materialize_candidate_schedule(
     estimate.nonce_stream_bytes =
         akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
             .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    let recomputed = estimate.estimated_proof_payload_bytes()?;
+    if recomputed != cached_total {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
+        )));
+    }
     let first_direct_setup_field_len = match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayload => None,
         SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(

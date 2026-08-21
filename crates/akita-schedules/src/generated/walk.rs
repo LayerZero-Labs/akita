@@ -253,6 +253,36 @@ pub(crate) fn walk_generated_schedule_entry(
         &terminal_params,
         &mut setup_field_elements,
     )?;
+    let terminal_response = CandidateTerminalResponse {
+        params: terminal_params,
+        sparse_challenge_config: if entry.terminal.response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(
+                entry.terminal.inner_commit_matrix.ring_dimension as usize,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no certified operator-norm challenge".into(),
+                )
+            })?
+        } else {
+            ring_challenge_config(entry.terminal.inner_commit_matrix.ring_dimension as usize)?
+        },
+        input_witness_len,
+        estimated_direct_payload_bytes: terminal_direct_bytes,
+        response_shape: witness_shape,
+        estimated_payload_bytes: terminal_bytes,
+    };
+    let nonce_bits = crate::runtime::candidate_grinding_nonce_bits(
+        policy,
+        &key.opening_layout()?,
+        &folds,
+        &terminal_response,
+    )?;
+    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits, 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    total_bytes = total_bytes
+        .checked_add(nonce_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("generated proof byte total overflow".into()))?;
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
         setup_field_elements,
@@ -260,26 +290,7 @@ pub(crate) fn walk_generated_schedule_entry(
         policy,
         &key.opening_layout()?,
         folds,
-        CandidateTerminalResponse {
-            params: terminal_params,
-            sparse_challenge_config: if entry.terminal.response_l2_sq_cap.is_some() {
-                akita_challenges::selective_l2_challenge_config(
-                    entry.terminal.inner_commit_matrix.ring_dimension as usize,
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "generated terminal L2 route has no certified operator-norm challenge"
-                            .into(),
-                    )
-                })?
-            } else {
-                ring_challenge_config(entry.terminal.inner_commit_matrix.ring_dimension as usize)?
-            },
-            input_witness_len,
-            estimated_direct_payload_bytes: terminal_direct_bytes,
-            response_shape: witness_shape,
-            estimated_payload_bytes: terminal_bytes,
-        },
+        terminal_response,
     )?;
     Ok(GeneratedEntryWalkOutput { planned_schedule })
 }

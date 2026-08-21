@@ -209,7 +209,11 @@ pub use transcript_grinding::{
     GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS,
     TRANSCRIPT_SECURITY_BITS,
 };
-pub use transcript_grinding_plan::derive_transcript_grinding_plan_from_public_shape;
+pub use transcript_grinding_plan::{
+    derive_transcript_grinding_plan_from_public_shape,
+    transcript_grinding_nonce_bits_for_planner_candidate,
+    transcript_grinding_nonce_bits_for_planner_edge,
+};
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,
