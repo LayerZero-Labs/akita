@@ -271,28 +271,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sampler::xof::XofCursor;
-
-    #[test]
-    fn pm1_only_matches_pm2_zero_sampler() {
-        let ring_d = 128;
-        let seed = [7u8; 32];
-        let prefix = IndexedXofPrefix::new(&seed).unwrap();
-        let legacy = {
-            let mut cursor = XofCursor::from_indexed_prefix(&prefix, 0);
-            let mut scratch = SignedSparseScratch::new(31, 0);
-            scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
-            scratch.take_challenge()
-        };
-        let unified = {
-            let mut cursor = XofCursor::from_indexed_prefix(&prefix, 0);
-            let mut scratch = SignedSparseScratch::new(31, 0);
-            scratch.sample(&mut cursor, ring_d, 31, 0).unwrap();
-            scratch.take_challenge()
-        };
-        assert_eq!(legacy.positions, unified.positions);
-        assert_eq!(legacy.coeffs, unified.coeffs);
-    }
 
     #[test]
     fn indexed_draw_matches_individual_coordinate_streams() {
