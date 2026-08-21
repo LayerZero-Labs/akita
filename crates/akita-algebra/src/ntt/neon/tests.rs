@@ -94,6 +94,34 @@ fn neon_forward_inverse_roundtrip_i32() {
     }
 }
 
+fn assert_neon_i8_forward_matches_scalar<const D: usize>() {
+    let prime = NttPrime::compute(TEST_PRIME_I32);
+    let tw = NttTwiddles::<i32, D>::compute(prime);
+    let digits = std::array::from_fn(|i| (i as i8).wrapping_mul(37).wrapping_add(11));
+
+    let mut neon = [MontCoeff::from_raw(0); D];
+    unsafe { forward_ntt_i8_i32(&mut neon, &digits, prime, &tw) };
+
+    let mut scalar = std::array::from_fn(|i| prime.from_canonical(i32::from(digits[i])));
+    scalar_forward_ntt(&mut scalar, prime, &tw, NttKernelPlan::SCALAR);
+
+    for i in 0..D {
+        assert_eq!(
+            prime.to_canonical(neon[i]),
+            prime.to_canonical(scalar[i]),
+            "D={D} fused i8 forward mismatch at {i}"
+        );
+    }
+}
+
+#[test]
+fn neon_i8_forward_ntt_matches_scalar() {
+    assert_neon_i8_forward_matches_scalar::<8>();
+    assert_neon_i8_forward_matches_scalar::<64>();
+    assert_neon_i8_forward_matches_scalar::<512>();
+    assert_neon_i8_forward_matches_scalar::<1024>();
+}
+
 #[test]
 fn neon_cyclic_ntt_i32_matches_scalar() {
     let prime = NttPrime::compute(TEST_PRIME_I32);

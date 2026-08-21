@@ -311,9 +311,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            lut.fill_limb(k, digits, params, limb);
-            forward_ntt(limb, params.primes[k], tw, params.kernel_plan);
+        for (k, limb) in limbs.iter_mut().enumerate() {
+            lut.fill_negacyclic_limb(k, digits, params, limb);
         }
         Self { limbs }
     }

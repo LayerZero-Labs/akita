@@ -189,6 +189,63 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         }
     }
 
+    forward_ntt_i32_from_twisted(a, prime, tw);
+}
+
+/// NEON-accelerated signed-i8 conversion and forward negacyclic NTT.
+///
+/// The conversion factor contains `psi^i * R^2`, so one Montgomery product
+/// both enters Montgomery form and applies the negacyclic twist.
+pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    digits: &[i8; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
+    let a_ptr = a.as_mut_ptr() as *mut i32;
+    let psi_r2_ptr = tw.psi_pows_r2.as_ptr();
+    let mut i = 0usize;
+    while i + 16 <= D {
+        let coefficients = vld1q_s8(digits.as_ptr().add(i));
+        let low_i16 = vmovl_s8(vget_low_s8(coefficients));
+        let high_i16 = vmovl_high_s8(coefficients);
+        let values = [
+            vmovl_s16(vget_low_s16(low_i16)),
+            vmovl_high_s16(low_i16),
+            vmovl_s16(vget_low_s16(high_i16)),
+            vmovl_high_s16(high_i16),
+        ];
+        for (chunk, values) in values.into_iter().enumerate() {
+            let offset = i + chunk * 4;
+            let psi_r2 = vld1q_s32(psi_r2_ptr.add(offset));
+            vst1q_s32(
+                a_ptr.add(offset),
+                mont_mul_4x_i32(values, psi_r2, p_q, pinv_q),
+            );
+        }
+        i += 16;
+    }
+    while i < D {
+        a[i] = MontCoeff::from_raw(prime.mont_mul_raw(i32::from(digits[i]), tw.psi_pows_r2[i]));
+        i += 1;
+    }
+
+    forward_ntt_i32_from_twisted(a, prime, tw);
+}
+
+/// Forward DIF butterfly stages for an already twisted i32 limb.
+#[inline]
+unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    let p_q = vdupq_n_s32(prime.p);
+    let pinv_q = vdupq_n_s32(prime.pinv);
+    let a_ptr = a.as_mut_ptr() as *mut i32;
+
     // DIF butterfly stages (4-wide while half-length permits).
     let mut len = D / 2;
     while len >= 4 {

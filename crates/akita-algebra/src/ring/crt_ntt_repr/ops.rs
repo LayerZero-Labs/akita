@@ -270,12 +270,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ) {
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                let prime = params.primes[k];
-                lut.fill_limb(k, digits, params, scratch_limb);
-                forward_ntt(scratch_limb, prime, tw, params.kernel_plan);
+            for (k, scratch_limb) in scratch.iter_mut().enumerate() {
+                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
@@ -357,11 +353,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
         #[cfg(target_arch = "aarch64")]
         if params.kernel_plan.uses_neon() {
-            for (k, (scratch_limb, tw)) in
-                scratch.iter_mut().zip(params.twiddles.iter()).enumerate()
-            {
-                lut.fill_limb(k, digits, params, scratch_limb);
-                forward_ntt(scratch_limb, params.primes[k], tw, params.kernel_plan);
+            for (k, scratch_limb) in scratch.iter_mut().enumerate() {
+                lut.fill_negacyclic_limb(k, digits, params, scratch_limb);
             }
 
             for (k, rhs_limb) in scratch.iter().enumerate() {
