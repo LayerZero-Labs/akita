@@ -144,7 +144,7 @@ akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "026226b0511fc105c1db5495cf7a22f3abb8f32c", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "7e4eb60216f0e7697da27bf79b6ce32ee263f013", default-features = false, features = [
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
