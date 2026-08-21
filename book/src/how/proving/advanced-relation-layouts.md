@@ -243,44 +243,54 @@ $$
 R=F[X]/(X^D+1),
 $$
 
-the `EvaluationTrace` opening method, and one unsliced $\mathbf B$ matrix. Let
-$N_{\mathrm{blk}}$ be the exact number of live blocks and let $C\ge 1$ be the
-chunk count. The implemented multi-chunk path requires $C$ to be a supported
-power of two; $C=1$ is the basic layout. Chunk $j$ owns
+and one unsliced $\mathbf B$ matrix. Let $N$ be the number of live blocks and
+let $C\ge 1$ be the chunk count. For this derivation, assume $C\mid N$ and set
+$L=N/C$. Chunk $j\in[C]$ owns the equal-sized range
 
 $$
 \mathcal I_j
 =
-\left\{
-b:
-\left\lfloor\frac{jN_{\mathrm{blk}}}{C}\right\rfloor
-\le b <
-\left\lfloor\frac{(j+1)N_{\mathrm{blk}}}{C}\right\rfloor
-\right\}.
+\{jL,jL+1,\ldots,(j+1)L-1\}.
 $$
 
-These ranges partition the exact live-block prefix without padding. The
-transcript still samples one challenge $c_b$ for every global live block; it
-does not sample an independent challenge family for each chunk.
+These ranges partition the live blocks without padding. The production layout
+also supports unequal and empty ranges through the [canonical proportional
+partition](./opening-points-layout.md#chunks-and-fold-challenges); that physical
+generality does not change the relations below. The transcript still samples
+one challenge $c_b$ for every global live block; it does not sample an
+independent challenge family for each chunk.
 
 Before the opening query, the incoming commitment has already fixed the
 commitment-side data. For every $b\in\mathcal I_j$, the commitment computation
-formed
+viewed the $b$-th polynomial block as one vector $\mathbf s_b$ and formed its
+inner image
 
 $$
-t_{b,\rho}
+\mathbf t_b
 =
-\sum_{p,a}A_{\rho,(p,a)}s_{b,p,a},
-\qquad
-t_{b,\rho}
-=
-\sum_hG_h^{\mathrm{out}}\hat t_{b,\rho,h}.
+\mathbf A\mathbf s_b.
 $$
 
-The commitment hint retains the recomposed inner rows $\mathbf t_b$, not a
-materialized $\hat{\mathbf t}$. During the current fold, the prover decomposes
-the rows belonging to $\mathcal I_j$ to recover the chunk segment
-$\hat{\mathbf t}^{(j)}$.
+Here $\mathbf s_b$ contains all inner-digit ring elements in block $b$; no
+additional coordinate indices are needed for this commitment path. Let
+$\mathbf G_{\mathrm{out}}$ denote the outer gadget-recomposition map applied
+coordinatewise to an inner image. Its bounded digit representation satisfies
+
+$$
+\mathbf t_b
+=
+\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b.
+$$
+
+The commitment hint retains the recomposed inner images $\mathbf t_b$, not
+materialized outer digits. During the current fold, chunk $j$ decomposes the
+images belonging to its range and collects the recovered digits as
+
+$$
+\hat{\mathbf t}^{(j)}
+=
+\mathop{\Vert}_{b\in\mathcal I_j}\hat{\mathbf t}_b.
+$$
 
 Let $\mathbf B^{(j)}$ denote the columns of $\mathbf B$ belonging to that
 segment. The chunk-local outer image
@@ -309,10 +319,12 @@ In compressed mode, this aggregate $\mathbf u$ is the hidden source of one
 $\mathbf F$ chain. Multi-chunking does not create one compression payload per
 chunk.
 
-### Chunk-local partial evaluations and folded responses
+### Chunk-local partial evaluations and opening commitment
 
 The opening point supplies the same position weights $Q_p$ as in the basic
-derivation. For every block $b\in\mathcal I_j$, chunk $j$ computes
+derivation. Where this evaluation requires coordinates, write $s_{b,p,a}$ for
+the entry of $\mathbf s_b$ at position $p$ and inner digit $a$. For every block
+$b\in\mathcal I_j$, chunk $j$ computes
 
 $$
 F_{p,b}
@@ -332,64 +344,143 @@ E_b
 \sum_hG_h^{\mathrm{open}}\hat e_{b,h}.
 $$
 
-Collect these digits into $\hat{\mathbf e}^{(j)}$. If
-$\mathbf D^{(j)}$ denotes the corresponding columns of the opening-commitment
-matrix, then
+Write $\hat{\mathbf e}_b$ for the opening digits of $E_b$ and collect the
+blocks belonging to chunk $j$ into $\hat{\mathbf e}^{(j)}$. The complete
+opening-digit vector is their concatenation:
+
+$$
+\boxed{
+\hat{\mathbf e}
+=
+\hat{\mathbf e}^{(0)}
+\Vert\cdots\Vert
+\hat{\mathbf e}^{(C-1)}.
+}
+$$
+
+The partial evaluations $E_b$ and the digit segments
+$\hat{\mathbf e}^{(j)}$ remain local to their chunks. Partition the columns of
+the opening-commitment matrix along the same ranges,
+
+$$
+\mathbf D
+=
+[\mathbf D^{(0)}\mid\cdots\mid\mathbf D^{(C-1)}].
+$$
+
+Chunk $j$ can then compute its opening-commitment contribution directly:
 
 $$
 \mathbf v_D^{(j)}
 =
-\mathbf D^{(j)}\hat{\mathbf e}^{(j)},
-\qquad
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)}.
+$$
+
+By linearity, the semantic opening commitment is obtained by reducing only
+these smaller images:
+
+$$
 \boxed{
 \mathbf v_D
 =
-\sum_{j=0}^{C-1}\mathbf v_D^{(j)}.
+\sum_{j=0}^{C-1}\mathbf v_D^{(j)}
+=
+\sum_{j=0}^{C-1}
+\mathbf D^{(j)}\hat{\mathbf e}^{(j)}.
 }
 $$
 
-Like $\mathbf u^{(j)}$, the partial value $\mathbf v_D^{(j)}$ is not a public
-payload. Raw mode exposes the aggregate $\mathbf v_D$; compressed mode uses it
-as the hidden source of one $\mathbf H$ chain. The payload binding
-$\mathbf u$ and $\mathbf v_D$ is fixed before the fold challenges are sampled.
+Thus a distributed prover does not aggregate the block-indexed partial
+evaluations or their digit segments. Each worker first applies its local
+columns of $\mathbf D$, and the workers aggregate only the resulting
+opening-commitment images. Like $\mathbf u^{(j)}$, the partial image
+$\mathbf v_D^{(j)}$ is not a public payload. Raw mode exposes the aggregate
+$\mathbf v_D$; compressed mode uses that same aggregate as the hidden source
+of one $\mathbf H$ chain. Multi-chunking does not create one compression chain
+per chunk.
+
+### Chunk-local folded responses and witness relations
+
+The payload binding $\mathbf u$ and $\mathbf v_D$ is fixed before the
+transcript samples the fold challenges $c_b$. Computing the basic global
+response at this point would require the workers to reduce a full-width
+vector. Multi-chunking instead keeps the response local.
 
 Chunk $j$ then folds only its own source blocks:
 
 $$
 \boxed{
-z_{p,a}^{(j)}
+\mathbf z^{(j)}
 =
-\sum_{b\in\mathcal I_j}c_bs_{b,p,a}.
+\sum_{b\in\mathcal I_j}c_b\mathbf s_b.
 }
 $$
 
 Each $\mathbf z^{(j)}$ has the same full ambient width as the single response
 $\mathbf z$. It is a partial sum over blocks, not a width slice. Decompose it
-with the ordinary fold gadget:
+with the ordinary fold gadget. Writing $\mathbf G_{\mathrm{fold}}$ for its
+coordinatewise recomposition map gives
 
 $$
-z_{p,a}^{(j)}
+\mathbf z^{(j)}
 =
-\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}^{(j)}.
+\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}.
 $$
 
-The aggregate response remains the derived value
+Together with the local opening and outer-commitment digits, this gives the
+chunk-local witness unit
 
 $$
+\boxed{
+\mathbf w^{(j)}
+=
+[\hat{\mathbf z}^{(j)}
+ \mid\hat{\mathbf e}^{(j)}
+ \mid\hat{\mathbf t}^{(j)}].
+}
+$$
+
+Within the ordinary witness prefix, the three segments of each unit are
+contiguous, and the units themselves are concatenated in chunk order:
+
+$$
+\boxed{
+\mathbf w_{0,\mathrm{chunk}}
+=
+\big\Vert_{j=0}^{C-1}\mathbf w^{(j)}.
+}
+$$
+
+This is the portion of the outgoing witness contributed by the chunks. When
+the complete current-level witness is committed as the next level's
+polynomial, these units remain contiguous source ranges inside the flat
+witness. The shared quotient and compression suffixes are appended afterward,
+so a current chunk unit need not coincide with exactly one next-level block.
+
+The local responses still define the same global folded response
+algebraically:
+
+$$
+\boxed{
 \mathbf z
 =
-\sum_{j=0}^{C-1}\mathbf z^{(j)},
+\sum_{j=0}^{C-1}\mathbf z^{(j)}
+=
+\sum_{j=0}^{C-1}
+\mathbf G_{\mathrm{fold}}\hat{\mathbf z}^{(j)}.
+}
 $$
 
-but it is not an additional coordinate of the chunked committed witness. If a
-chunk range is empty, its E and T segments are empty and the honest prover puts
-zero in its full-width Z segment.
-
-### From chunk-local identities to the proved relations
+The global $\mathbf z$ is therefore determined by the chunk-local witnesses,
+but it is not an additional committed coordinate and need not be materialized
+through a full-width reduction before constructing the outgoing witness. If a
+production chunk range is empty, its E and T segments are empty and the honest
+prover puts zero in its full-width Z segment.
 
 For an honestly constructed chunk, the same linear derivation as in the basic
 case can be performed over its local block range. Evaluation within each block
-and then folding gives
+and then folding gives the recomposed identity, where $z_{p,a}^{(j)}$ denotes
+the corresponding coordinate of $\mathbf z^{(j)}$:
 
 $$
 \begin{aligned}
@@ -403,7 +494,8 @@ c_bQ_pG_a^{\mathrm{in}}s_{b,p,a}
 \end{aligned}
 $$
 
-Likewise, applying $\mathbf A$ before or after the local fold gives
+Likewise, applying $\mathbf A$ before or after the local fold gives the second
+recomposed identity
 
 $$
 \sum_{b\in\mathcal I_j}c_b\mathbf t_b
@@ -411,59 +503,43 @@ $$
 \mathbf A\mathbf z^{(j)}.
 $$
 
-Substituting the opening, outer, and folded-response digit decompositions gives
-the two chunk-local identities
-
-$$
-\sum_{b\in\mathcal I_j,h}
-c_bG_h^{\mathrm{open}}\hat e_{b,h}
-=
-\sum_{p,a,f}
-Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}
-\hat z_{p,a,f}^{(j)},
-$$
-
-and, for every row $\rho$ of $\mathbf A$,
-
-$$
-\sum_{b\in\mathcal I_j,h}
-c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
-=
-\sum_{p,a,f}
-A_{\rho,(p,a)}G_f^{\mathrm{fold}}
-\hat z_{p,a,f}^{(j)}.
-$$
-
 These local identities explain how an honest distributed prover constructs
 each witness unit. The protocol does not add a separate consistency row or set
 of $\mathbf A$ rows for every chunk. Instead, it proves their aggregate in the
-same rows as the basic relation. The fold-evaluation consistency relation is
+same rows as the basic relation. Only at this aggregate step do we substitute
+the digit decompositions carried by the witness.
+
+To keep the aggregate equations at the block-vector level, let
+$\mathbf G_{\mathrm{in}}$ recompose the inner digits of every position, let
+$\mathbf Q$ apply the position weights $Q_p$, and let
+$\mathbf G_{\mathrm{open}}$ recompose one block's opening digits. The
+$\mathbf G$ maps are the matrix forms of the gadget weights already used
+above, while $\mathbf Q$ is the row map defined by the opening weights. The
+fold-evaluation consistency relation is then
 
 $$
 \boxed{
 \sum_{j=0}^{C-1}
-\sum_{b\in\mathcal I_j,h}
-c_bG_h^{\mathrm{open}}\hat e_{b,h}
+\sum_{b\in\mathcal I_j}
+c_b\mathbf G_{\mathrm{open}}\hat{\mathbf e}_b
 =
 \sum_{j=0}^{C-1}
-\sum_{p,a,f}
-Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}
-\hat z_{p,a,f}^{(j)}.
+\mathbf Q\mathbf G_{\mathrm{in}}\mathbf G_{\mathrm{fold}}
+\hat{\mathbf z}^{(j)}.
 }
 $$
 
-For every row $\rho$ of $\mathbf A$, inner-commitment consistency is
+In vector form, inner-commitment consistency is
 
 $$
 \boxed{
 \sum_{j=0}^{C-1}
-\sum_{b\in\mathcal I_j,h}
-c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
+\sum_{b\in\mathcal I_j}
+c_b\mathbf G_{\mathrm{out}}\hat{\mathbf t}_b
 =
 \sum_{j=0}^{C-1}
-\sum_{p,a,f}
-A_{\rho,(p,a)}G_f^{\mathrm{fold}}
-\hat z_{p,a,f}^{(j)}.
+\mathbf A\mathbf G_{\mathrm{fold}}
+\hat{\mathbf z}^{(j)}.
 }
 $$
 
@@ -495,23 +571,48 @@ independently; chunks are column ranges inside one prover's aggregate relation.
 
 ### Logical witness and physical realization
 
-Define one logical witness unit per chunk by
+The chunk-major prefix defined above is the chunk-local core of the outgoing
+witness. After the shared quotient and, in compressed mode, compression
+segments described below are appended, the next fold views the complete flat
+outgoing witness as a new polynomial and partitions it into new block vectors
+$\mathbf s'_0,\ldots,\mathbf s'_{N'-1}$. A next-level chunk owns a range
+$\mathcal I'_j$ of those blocks; one current unit $\mathbf w^{(j)}$ need not be
+exactly one next-level block.
+
+If chunked execution continues, each worker can commit its assigned next-level
+blocks by the same path that produced the current commitment-side data:
 
 $$
-\mathbf w^{(j)}
+\mathbf t'_b
 =
-[\hat{\mathbf z}^{(j)}
- \mid\hat{\mathbf e}^{(j)}
- \mid\hat{\mathbf t}^{(j)}].
-$$
-
-The complete ordinary witness prefix is
-
-$$
-\mathbf w_{0,\mathrm{chunk}}
+\mathbf A'\mathbf s'_b,
+\qquad
+\mathbf t'_b
 =
-\big\Vert_{j=0}^{C-1}\mathbf w^{(j)}.
+\mathbf G'_{\mathrm{out}}\hat{\mathbf t}'_b,
+\qquad b\in\mathcal I'_j.
 $$
+
+Collecting the local outer digits into $\hat{\mathbf t}'^{(j)}$, the worker
+forms a partial outer image and the workers reduce only those smaller images:
+
+$$
+\mathbf u'^{(j)}
+=
+\mathbf B'^{(j)}\hat{\mathbf t}'^{(j)},
+\qquad
+\boxed{
+\mathbf u'
+=
+\sum_{j=0}^{C-1}\mathbf u'^{(j)}.
+}
+$$
+
+Thus the current chunk witness becomes distributed source data for the next
+level without first reducing the full-width $\hat{\mathbf z}^{(j)}$ segments.
+Only the smaller commitment images are combined. The primes distinguish the
+next level's blocks, matrices, digits, and commitment from the current level's
+objects.
 
 Let $\mathbf M^{(j)}$ be the full-height relation column block acting on
 $\mathbf w^{(j)}$. The $\hat{\mathbf e}^{(j)}$ and
