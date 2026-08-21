@@ -17,6 +17,65 @@ live in the book and `docs/`.
 
 See also [`specs/PRUNING.md`](../specs/PRUNING.md) for spec lifecycle.
 
+## Audience and writing standard
+
+The Book is a self-contained introduction to Akita. It serves several readers
+who enter the project with different questions.
+
+| Reader | What the Book must provide |
+| --- | --- |
+| Programmer new to proof systems | The purpose of each mechanism, the terms needed to understand it, and small examples before general formulas |
+| Application integrator | The public entry points, configuration choices, accepted inputs, errors, and operational limits |
+| Akita contributor | The path that data follows through the crates, the owner of each decision, and the tests that protect it |
+| Cryptographer or security reviewer | A clear account of the protocol chosen by the schedule and the code that enforces each claim |
+| Performance engineer | The physical data layout, storage types, dispatch conditions, fast paths, and scalar reference behavior |
+| Maintainer or reviewer | The source of truth for each fact and the other documentation that must change when code moves |
+
+These are reading goals, not separate editions of the Book. A chapter should
+build one shared explanation from first principles, then provide clear paths
+into the public interface, implementation, security checks, and performance
+details that apply to its topic.
+
+A reader should not need to read source code before starting a Book chapter.
+The chapter may link to the source for inspection, but it must first explain
+the ideas needed to follow its own text.
+
+The Akita paper is unpublished and still changing. Book prose must not cite,
+mention, or depend on it. If the draft contains an idea that readers need, the
+Book must explain that idea in full and verify it against current code, live
+specifications, and tests. Do not describe a design that appears only in the
+draft as current or planned behavior. This restriction remains in force until
+maintainers explicitly mark the paper as published and stable.
+
+When a chapter introduces a technical mechanism, it should proceed in this
+order when the topic allows it:
+
+1. State the problem that the mechanism solves.
+2. Define each new term in plain language before using it in an equation.
+3. Give one concrete example with small values.
+4. Introduce the general notation and explain what each symbol means.
+5. Explain where the mechanism appears in Akita's protocol.
+6. Show the main path through the code.
+7. Distinguish the protocol rule from choices made by the current
+   implementation.
+8. Identify the checks and tests that support security or compatibility claims.
+
+Do not replace an explanation with a list of source files. Do not assume that
+the reader already knows Akita names such as a fold, an opening, a committed
+source, or a setup prefix. Define these terms when they first appear in a
+reader path. If a common cryptography term is necessary, explain it in the
+same paragraph.
+
+Accuracy still comes from current code and live specifications. Extra context
+must explain the implementation that exists. It must not preserve an older
+design or describe planned work as current behavior.
+
+A source map is not an audit map. When a chapter covers a security relevant
+mechanism, it should state what property each important source path enforces,
+where public parameters enter, and what evidence a reviewer can use to check
+the correspondence. Tests are regression evidence. They do not replace the
+protocol argument or a review of the enforcing code.
+
 ## Per-PR obligations
 
 Every implementation PR must do **all** that apply:
@@ -106,9 +165,10 @@ Fork PRs do not receive blast-radius comments (read-only `GITHUB_TOKEN`).
 - **Quarterly:** execute a PRUNING audit slice (classify, fold, archive); refresh
   `book/src/foundations/spec-index.md` and `specs/archive/README.md`.
 
-## Relationship to the paper
+## Unpublished design material
 
-The Akita paper is upstream narrative for **Foundations** and parts of **How it
-works**. Book chapters cite paper sections in their stubs; when paper and code
-diverge, **code + specs win** until the paper is updated.
-Do not fork long proofs into the book; summarize and link.
+Draft research material can help maintainers discover a concept, but it is not
+a Book source and must not appear as a Book citation. Before adding the concept,
+check it against current code, live specifications, and tests. Then explain it
+in full inside the Book. Leave out designs that the repository does not support
+or plan to support.

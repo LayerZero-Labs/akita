@@ -2,7 +2,7 @@ use akita_config::{
     policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::find_schedule;
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams, PolynomialGroupLayout};
 
 fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
@@ -20,28 +20,10 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     );
     println!(
         "  L0: {:?}, ranks={}/{}/{}, input={}, output={}",
-        schedule.root.params.final_group.commitment.role_dims(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .inner_commit_matrix
-            .output_rank(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .outer_commit_matrix
-            .output_rank(),
-        schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .open_commit_matrix
-            .output_rank(),
+        schedule.root.params.role_dims(),
+        schedule.root.params.inner().matrix.output_rank(),
+        schedule.root.params.outer().matrix.output_rank(),
+        schedule.root.params.open().matrix.output_rank(),
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     );
@@ -49,10 +31,10 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
         println!(
             "  L{}: {:?}, ranks={}/{}/{}, input={}, output={}",
             index + 1,
-            fold.params.witness.role_dims(),
-            fold.params.witness.inner_commit_matrix.output_rank(),
-            fold.params.witness.outer_commit_matrix.output_rank(),
-            fold.params.witness.open_commit_matrix.output_rank(),
+            fold.params.role_dims(),
+            fold.params.inner().matrix.output_rank(),
+            fold.params.outer().matrix.output_rank(),
+            fold.params.open().matrix.output_rank(),
             fold.input_witness_len,
             fold.output_witness_len,
         );
@@ -60,13 +42,8 @@ fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     println!(
         "  L{} terminal: D{}, rank={}, input={}",
         schedule.recursive_folds.len() + 1,
-        schedule.terminal.params.witness.d_a(),
-        schedule
-            .terminal
-            .params
-            .witness
-            .inner_commit_matrix
-            .output_rank(),
+        schedule.terminal.d_a(),
+        schedule.terminal.inner.matrix.output_rank(),
         schedule.terminal.input_witness_len,
     );
 }
@@ -115,9 +92,9 @@ fn main() -> Result<(), akita_error::AkitaError> {
         &direct_policy,
         OneHot::ring_challenge_config,
     )?;
-    let descriptor = CommittedGroupProfile::try_from_params(
+    let descriptor = GroupCommitPhaseParams::try_from_params(
         precommit_layout,
-        &independent.schedule.root.params.final_group.commitment,
+        &independent.schedule.root.params,
     )?;
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),

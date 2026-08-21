@@ -23,7 +23,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
     assert_eq!(setup_levels.len(), 1 + schedule.recursive_folds.len());
     assert_eq!(
         setup_levels[0].role_dims(),
-        schedule.root.params.final_group.commitment.role_dims()
+        schedule.root.params.role_dims()
     );
 }
 
@@ -36,7 +36,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
     .expect("generated one-hot schedule")
     .into_schedule();
     schedule.validate_structure().expect("typed topology");
-    assert!(schedule.terminal.params.witness.inner_width() > 0);
+    assert!(schedule.terminal.inner_width() > 0);
     assert_eq!(
         schedule.terminal.input_witness_len,
         schedule
@@ -57,33 +57,30 @@ fn d64_selective_l2_binds_the_certified_operator_norm_family() {
     let (step, table_key, response_cap) = schedule
         .recursive_folds
         .iter()
-        .find_map(
-            |step| match step.params.witness.inner_commit_matrix.security_route() {
-                akita_types::InnerCommitSecurityRoute::Linf(_) => None,
-                akita_types::InnerCommitSecurityRoute::L2 {
-                    table_key,
-                    response_l2_sq_cap,
-                    ..
-                } => Some((step, table_key, response_l2_sq_cap)),
-            },
-        )
+        .find_map(|step| match step.params.inner().matrix.security_route() {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => None,
+            akita_types::InnerCommitSecurityRoute::L2 {
+                table_key,
+                response_l2_sq_cap,
+                ..
+            } => Some((step, table_key, response_l2_sq_cap)),
+        })
         .expect("shipped fp128 row must retain one L2 route");
     assert_eq!(
-        step.params.witness.fold_challenge_config,
+        step.params.fold_challenge_config(),
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(step.params.witness.log_basis_open, 4);
-    assert_eq!(step.params.witness.num_digits_fold, 3);
+    assert_eq!(step.params.open().digits.log_basis, 4);
+    assert_eq!(step.params.num_digits_fold(), 3);
     assert_eq!(
-        step.params.witness.inner_commit_matrix.input_width()
-            * step.params.witness.inner_commit_matrix.ring_dimension(),
+        step.params.inner().matrix.input_width() * step.params.inner().matrix.ring_dimension(),
         65_536,
     );
     assert_eq!(
-        step.params.witness.inner_commit_matrix.output_rank(),
+        step.params.inner().matrix.output_rank(),
         akita_types::sis::min_secure_l2_rank(
             table_key,
-            step.params.witness.inner_commit_matrix.input_width() as u64,
+            step.params.inner().matrix.input_width() as u64,
         )
         .expect("shipped L2 geometry must have an audited rank")
     );
@@ -131,16 +128,16 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         .expect("generated fp64 schedule")
         .into_schedule();
     assert!(schedule.recursive_folds.iter().any(|step| matches!(
-        step.params.witness.inner_commit_matrix.security_route(),
+        step.params.inner().matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     )));
-    let terminal = &schedule.terminal.params;
+    let terminal = &schedule.terminal;
     assert_eq!(
-        terminal.sparse_challenge_config,
+        terminal.fold_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.witness.response_l2_sq_cap(), Some(798_341_908));
-    assert_eq!(terminal.witness.inner_commit_matrix.output_rank(), 6);
+    assert_eq!(terminal.response_l2_sq_cap(), Some(798_341_908));
+    assert_eq!(terminal.inner.matrix.output_rank(), 6);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");
     let entry = akita_schedules::generated::table_entry(catalog, &key).expect("catalog row");
@@ -180,8 +177,8 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         .into_schedule();
     assert_eq!(
         (
-            schedule.terminal.params.witness.fold_log_basis,
-            schedule.terminal.params.witness.fold_digit_count,
+            schedule.terminal.fold.log_basis,
+            schedule.terminal.fold.num_digits,
         ),
         (
             entry.terminal.fold_log_basis,
@@ -190,12 +187,7 @@ fn terminal_l2_uses_its_catalog_fold_geometry() {
         "expanded terminal must preserve its generated selective-L2 fold geometry"
     );
     assert!(matches!(
-        schedule
-            .terminal
-            .params
-            .witness
-            .inner_commit_matrix
-            .security_route(),
+        schedule.terminal.inner.matrix.security_route(),
         akita_types::InnerCommitSecurityRoute::L2 { .. }
     ));
 }
@@ -225,16 +217,11 @@ fn every_generated_profile_opts_in_and_selected_l2_coverage_remains_broad() {
                 .into_schedule();
             schedule.recursive_folds.iter().any(|step| {
                 matches!(
-                    step.params.witness.inner_commit_matrix.security_route(),
+                    step.params.inner().matrix.security_route(),
                     akita_types::InnerCommitSecurityRoute::L2 { .. }
                 )
             }) || matches!(
-                schedule
-                    .terminal
-                    .params
-                    .witness
-                    .inner_commit_matrix
-                    .security_route(),
+                schedule.terminal.inner.matrix.security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             )
         });
@@ -271,12 +258,13 @@ fn setup_capacity_includes_terminal_inner_matrix() {
     .expect("generated fp128 schedule")
     .into_schedule();
     let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
-    let terminal = &schedule.terminal.params.witness;
+    let terminal = &schedule.terminal;
     let terminal_a = terminal
-        .inner_commit_matrix
+        .inner
+        .matrix
         .output_rank()
         .checked_mul(terminal.inner_width())
-        .and_then(|width| width.checked_mul(terminal.inner_commit_matrix.ring_dimension()))
+        .and_then(|width| width.checked_mul(terminal.inner.matrix.ring_dimension()))
         .expect("terminal setup capacity");
     assert!(envelope.num_field_elements >= terminal_a);
 }
@@ -302,7 +290,7 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
         if !entry.root.precommitted_groups.is_empty() {
             continue;
         }
-        let key = entry.root.final_group.layout;
+        let key = entry.final_group;
         let schedule = schedule_from_entry(
             entry,
             &AkitaScheduleLookupKey::single(key),
@@ -310,7 +298,7 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
             Cfg::ring_challenge_config,
         )
         .expect("shipped entry should materialize");
-        let terminal = &schedule.terminal.params.witness;
+        let terminal = &schedule.terminal;
         let width = terminal.inner_width();
         let requires_i16_tail = akita_types::dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
@@ -357,10 +345,10 @@ fn fp128_adaptive_onehot_catalog_freezes_root_fold_digits() {
     let schedule = fp128::OneHot::resolve_catalog_row_for_key(&first.to_runtime_lookup_key())
         .expect("resolve adaptive one-hot row")
         .into_schedule();
-    let root = &schedule.root.params.final_group.commitment;
+    let root = &schedule.root.params;
     assert_eq!(
-        root.num_digits_fold,
-        first.root.final_group.num_digits_fold as usize
+        root.num_digits_fold(),
+        first.root.core.group.num_digits_fold as usize
     );
 }
 
@@ -419,12 +407,12 @@ fn setup_capacity_includes_standalone_precommit_recipes() {
         fp128::Dense::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
             .expect("independent profile");
     let capacity = fp128::Dense::setup_matrix_capacity(16, 1).expect("dense setup capacity");
-    let a_fields = profile.inner_commit_matrix.output_rank()
-        * profile.inner_commit_matrix.input_width()
-        * profile.inner_commit_matrix.ring_dimension();
-    let b_fields = profile.outer_commit_matrix.output_rank()
-        * profile.outer_commit_matrix.input_width()
-        * profile.outer_commit_matrix.ring_dimension();
+    let a_fields = profile.inner.matrix.output_rank()
+        * profile.inner.matrix.input_width()
+        * profile.inner.matrix.ring_dimension();
+    let b_fields = profile.outer.matrix.output_rank()
+        * profile.outer.matrix.input_width()
+        * profile.outer.matrix.ring_dimension();
 
     assert!(capacity.num_field_elements >= a_fields);
     assert!(capacity.num_field_elements >= b_fields);

@@ -134,22 +134,23 @@ fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::S
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("candidate parameters");
-    let inner = params.inner_commit_matrix;
-    params.inner_commit_matrix = akita_types::sis::InnerCommitMatrixParams::new_unchecked(
-        inner.security_policy(),
-        inner
-            .sis_table_key()
-            .expect("L infinity matrix")
-            .table_digest,
-        inner.sis_modulus_profile(),
-        inner.output_rank(),
-        inner.input_width(),
-        4_095,
-        inner.ring_dimension(),
-    );
-    params.log_basis_open = 3;
+    let inner = params.inner().matrix;
+    params.own_group_mut().profile.inner.matrix =
+        akita_types::sis::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("L infinity matrix")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            4_095,
+            inner.ring_dimension(),
+        );
+    assert_eq!(params.open().digits.log_basis, 3);
     let (terminal_params, linf_cap) =
-        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(params.clone())
+        akita_types::TerminalFoldParams::try_from_expanded_group(params.clone())
             .expect("terminal parameters");
     let response_shape = akita_types::TerminalResponseShape::derive(&terminal_params, linf_cap)
         .expect("terminal response shape");

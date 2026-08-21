@@ -214,7 +214,7 @@ pub fn canonical_proof_shape(
     fn stage3_shape(
         successor: Option<&CommittedGroupParams>,
     ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
-        let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+        let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
             return Ok(None);
         };
         let n_prefix = prefix.n_prefix()?;
@@ -242,11 +242,13 @@ pub fn canonical_proof_shape(
         successor: Option<&CommittedGroupParams>,
     ) -> Result<LevelProofShape, AkitaError> {
         let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
-        let basis = 1usize.checked_shl(params.log_basis_open).ok_or_else(|| {
-            AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
-        })?;
+        let basis = 1usize
+            .checked_shl(params.open().digits.log_basis)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("digit-range basis does not fit usize".to_string())
+            })?;
         let (stage1_stages, stage1_norm) = DigitRangePlan::new(basis)?
-            .proof_shapes_for_route(rounds, params.inner_commit_matrix.security_route())?;
+            .proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
         let next_witness_binding = match successor {
             Some(next) => NextWitnessBindingShape::OuterPayload {
                 coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),
@@ -270,40 +272,33 @@ pub fn canonical_proof_shape(
         })
     }
 
-    let root_successor = schedule
-        .recursive_folds
-        .first()
-        .map(|step| &step.params.witness);
+    let root_successor = schedule.recursive_folds.first().map(|step| &step.params);
     let root = level_shape(
-        &schedule.root.params.final_group.commitment,
+        &schedule.root.params,
         root_opening_layout,
         extension_degree,
         schedule.root.output_witness_len,
         root_successor,
     )?;
     let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
-    let mut predecessor_rounds = crate::sumcheck_rounds(
-        schedule.root.params.final_group.commitment.d_a(),
-        schedule.root.output_witness_len,
-    );
+    let mut predecessor_rounds =
+        crate::sumcheck_rounds(schedule.root.params.d_a(), schedule.root.output_witness_len);
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let successor = schedule
             .recursive_folds
             .get(index + 1)
-            .map(|next| &next.params.witness);
+            .map(|next| &next.params);
         let opening_layout = step
             .params
-            .witness
             .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
         recursive_folds.push(level_shape(
-            &step.params.witness,
+            &step.params,
             &opening_layout,
             extension_degree,
             step.output_witness_len,
             successor,
         )?);
-        predecessor_rounds =
-            crate::sumcheck_rounds(step.params.witness.d_a(), step.output_witness_len);
+        predecessor_rounds = crate::sumcheck_rounds(step.params.d_a(), step.output_witness_len);
     }
     Ok(AkitaBatchedProofShape {
         root,
@@ -317,7 +312,7 @@ pub fn canonical_proof_shape(
                     extension_degree,
                 )?)
             },
-            terminal_response: schedule.terminal.params.response_shape.clone(),
+            terminal_response: schedule.terminal.response_shape.clone(),
         },
     })
 }

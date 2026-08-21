@@ -20,10 +20,11 @@ pub(crate) struct TerminalNttCacheRequirement {
 pub(crate) fn terminal_ntt_cache_requirement(
     schedule: &FoldSchedule,
 ) -> Result<TerminalNttCacheRequirement, AkitaError> {
-    let terminal = &schedule.terminal.params.witness;
+    let terminal = &schedule.terminal;
     let width = terminal.inner_width();
     let prefix_len = terminal
-        .inner_commit_matrix
+        .inner
+        .matrix
         .output_rank()
         .checked_mul(width)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal A cache prefix overflow".into()))?;

@@ -1,6 +1,6 @@
 //! Human-readable committed-source annotations for generated schedule tables.
 //!
-//! A [`CommittedGroupProfile`] and a `CATALOG_IDENTITY` record only the
+//! A [`GroupCommitPhaseParams`] and a `CATALOG_IDENTITY` record only the
 //! *consequence* of a committed-source class (digit depth at a basis), never the
 //! class or the declared bound. These emitters regenerate that context as
 //! comments so a reader of `akita-schedules/src/generated/` can see why a bounded
@@ -22,7 +22,7 @@ const MAX_EXACT_REACH_SPAN_BITS: u128 = 16;
 
 /// One-line description of a frozen precommitted group's committed source.
 ///
-/// A [`akita_types::CommittedGroupProfile`] records geometry and matrices, never
+/// A [`akita_types::GroupCommitPhaseParams`] records geometry and matrices, never
 /// the source class or the bound its producer declared — those are offline
 /// planning inputs and deliberately absent from runtime schedule identity. What
 /// survives is the *consequence*: `num_digits_inner` digits at `log_basis_inner`,
@@ -46,7 +46,7 @@ const MAX_EXACT_REACH_SPAN_BITS: u128 = 16;
 /// It is **not** enough to state a balanced-digit source's admitted set. That is
 /// the producer's `log_commit_bound` intersected with the digit envelope
 /// ([`akita_types::sis::CommittedSourceContract::accepted_bounds`]), and a frozen
-/// [`akita_types::CommittedGroupProfile`] deliberately records only the
+/// [`akita_types::GroupCommitPhaseParams`] deliberately records only the
 /// consequence of the declaration, never the declaration. `DenseBounded` enforces
 /// `[-2^64, 2^64 - 1]` while its 14 base-`2^5` digits span 70 bits, so printing
 /// the envelope as an acceptance claim would overstate the admitted set by 32x in

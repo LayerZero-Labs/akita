@@ -13,6 +13,12 @@ largest physical matrix requirement across the selected schedule. Generated
 schedules and setup-prefix identifiers bind the exact geometry that uses this
 vector.
 
+A recursive setup schedule may require commitments to selected power of two
+prefixes of this vector. Setup construction materializes exactly those prefix
+slots and checks that no required slot is missing. The prover later opens a
+slot when a fold defers its setup contribution. See
+[Setup offloading](./setup-offloading.md) for the complete lifecycle.
+
 ## Ajtai commitment mechanics
 
 The commitment path decomposes each witness block into commit digits `s_hat`.

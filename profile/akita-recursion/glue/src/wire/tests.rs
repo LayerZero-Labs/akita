@@ -3,8 +3,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
-    CommittedGroupProfile, CompressionChainPlan, GroupOpeningPlan, InnerCommitMatrixParams,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
+    CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
+    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
     SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
@@ -24,7 +24,7 @@ fn blob_prefix() -> Vec<u8> {
     bytes
 }
 
-fn prefix_commitment_params() -> PrecommittedLevelParams {
+fn prefix_commitment_params() -> GroupOpenPhaseParams {
     let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -49,20 +49,21 @@ fn prefix_commitment_params() -> PrecommittedLevelParams {
         inner_commit_matrix.output_rank(),
     )
     .expect("audited prefix B matrix");
-    PrecommittedLevelParams {
-        layout: CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+    GroupOpenPhaseParams {
+        setup_natural_len: None,
+        profile: GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
-            num_live_ring_elements_per_claim: 1,
-            num_positions_per_block: 1,
-            num_live_blocks: 1,
+            blocks: akita_types::BlockGeometry::new(1, 1, 1),
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            log_basis_inner: 1,
-            num_digits_inner: 1,
-            inner_commit_matrix,
-            log_basis_outer: 1,
-            num_digits_outer: 1,
-            outer_commit_matrix,
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(1, 1),
+                inner_commit_matrix,
+            ),
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(1, 1),
+                outer_commit_matrix,
+            ),
         },
         opening: GroupOpeningPlan::evaluation_trace(SparseChallengeConfig::pm1_only(0), 1, 1, 1),
     }
@@ -192,14 +193,16 @@ fn strict_setup_decoder_preserves_prefix_slots() {
     };
     let shared_matrix = derive_public_matrix_prefix::<TestF>(2 * TEST_D, &setup_seed);
     let commitment_params = prefix_commitment_params();
-    let matrix = &commitment_params.layout.outer_commit_matrix;
+    let matrix = &commitment_params.profile.outer.matrix;
     let payload_coefficients = CompressionChainPlan::for_complete_source(
         matrix.sis_modulus_profile(),
         matrix.output_rank() * matrix.ring_dimension(),
     )
     .expect("setup-prefix compression plan")
     .terminal_coefficients();
-    let id = scheduled_setup_prefix(1, commitment_params).slot_id();
+    let id = scheduled_setup_prefix(PREFIX_D, commitment_params)
+        .slot_id()
+        .expect("setup prefix group");
     let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.clone());
     prefix_slots
         .insert(SetupPrefixVerifierSlot {

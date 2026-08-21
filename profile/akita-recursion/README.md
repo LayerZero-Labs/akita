@@ -166,7 +166,7 @@ overrides for those values.
    through `tracing`.
 3. **`guest`** (running inside the Jolt RISC-V emulator) decodes the
    blob and invokes `akita_verifier::batched_verify` directly —
-   bypassing `akita-scheme::batched_verify`, which would otherwise
+   bypassing `AkitaCommitmentScheme::batched_verify`, which would otherwise
    call `Instant::now()` (the Jolt runtime doesn't implement
    `clock_gettime`, and the guest aborts there). Four
    `start_cycle_tracking` / `end_cycle_tracking` pairs wrap
@@ -248,7 +248,7 @@ is `None`. The guest then uses the ordinary portable warming path. This keeps
 plain guest builds functional and lets other architectures use their own
 derived representation later.
 
-## Adaptive dimension pin and historical D64 measurements
+## Adaptive dimension pin
 
 The artifact, host, and guest share a fixed source-view dimension `D = 512`.
 The planner-generated recursive `nv=32` row has a `(32, 2)` final group,
@@ -262,28 +262,6 @@ setup-prefix opening into the successor fold. The successor verifies the setup
 contribution together with its witness group. This is distinct from the direct
 profile, where setup is consumed locally and no setup claim is carried to the
 successor.
-
-Historical D64 measurements remain useful context, but they do not describe
-the current adaptive binary. D32 is not a valid A-role fold degree (`d_a ≥ 64`),
-and historical D32 Jolt traces were more expensive than fixed D64 at equal
-`num_vars`. Three compounding effects explained the old D32 penalty:
-
-1. **More recursion levels.** Folding nv=32 to a tractable terminal
-   takes 6 levels at D=64 vs 7 at D=32. Each level adds a full
-   sumcheck-with-range-checks verification step.
-2. **Larger verifier-setup matrix at D=32.** Halving `D` does not halve the
-   matrix — Ajtai security forces the stride (column count) to grow to
-   compensate. Net: the old D=32 blob was roughly **4.5×** larger than D=64.
-3. **Cycle count ≠ wall clock.** On a real CPU, fp128 ops at D=32 vs
-   D=64 don't differ much in time (SIMD, cache prefetch, wide
-   multiply). Inside `riscv64imac` emulation every fp128 mul is a
-   fixed-length sequence of 64-bit instructions, each counted as a
-   cycle. Smaller-D work doesn't compress into fewer RV64
-   instructions.
-
-For historical reference, fixed-D64 OneHot at `nv=32` produced a trace on the
-order of 8 G cycles, about 30% cheaper inside Jolt than the retired D32
-configuration. Remeasure before making claims about the adaptive preset.
 
 ## Historical optimization results at `nv=20` (fixed D64)
 
@@ -331,10 +309,9 @@ size.
 
 4. **Upstreaming candidates** — small, mechanical changes that would
    benefit any future Jolt integration with Akita:
-   - If the public trait entry point ever becomes timer-free and verifier-only,
-     it should delegate to the same `akita_config::batched_verify_with_config`
-     adapter; the guest should remain free of `akita-scheme`, `akita-prover`,
-     and `akita-setup` dependencies.
+   - If the umbrella verification entry point ever becomes timer-free, the
+     guest can reconsider using it. Until then, the guest should remain free of
+     `akita-pcs`, `akita-prover`, and `akita-setup` dependencies.
    - `AkitaSerialize` / `AkitaDeserialize` impls for proof-shape types
      (already added under `akita-types::proof` and used by the `glue`
      crate).

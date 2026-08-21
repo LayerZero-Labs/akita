@@ -89,7 +89,7 @@ pub fn level_proof_bytes(
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     let v_bytes = payload_bytes(
         base_field_bits,
-        lp.open_commit_matrix.sis_modulus_profile(),
+        lp.open().matrix.sis_modulus_profile(),
         lp.opening_payload_geometry()?,
     )?;
     let next_commit_bytes = match next_witness_binding {
@@ -101,7 +101,7 @@ pub fn level_proof_bytes(
             })?;
             payload_bytes(
                 base_field_bits,
-                next_lp.outer_commit_matrix.sis_modulus_profile(),
+                next_lp.outer().matrix.sis_modulus_profile(),
                 next_lp.outer_payload_geometry()?,
             )?
         }
@@ -113,12 +113,12 @@ pub fn level_proof_bytes(
         }
     };
     let next_eval_bytes = challenge_elem_bytes;
-    let b = 1usize << lp.log_basis_open;
+    let b = 1usize << lp.open().digits.log_basis;
     let stage1_bytes = stage1_proof_bytes(
         rounds,
         b,
         challenge_elem_bytes,
-        lp.inner_commit_matrix.security_route(),
+        lp.inner().matrix.security_route(),
     )?;
     Ok(v_bytes
         + FOLD_GRIND_NONCE_BYTES
@@ -214,7 +214,7 @@ mod tests {
             lp,
             field_bits,
             [(
-                lp as &dyn crate::LevelParamsLike,
+                lp.final_group_scalar().expect("scalar final group"),
                 num_claims,
                 num_claims,
                 1,
@@ -342,13 +342,13 @@ mod tests {
         let current_coeffs = lp.opening_payload_geometry()?.transmitted_coefficients();
         let next_commit_coeffs = next_lp.outer_payload_geometry()?.transmitted_coefficients();
         let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
-        let b = 1usize << lp.log_basis_open;
+        let b = 1usize << lp.open().digits.log_basis;
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_coeffs(vec![B::zero(); current_coeffs]),
             fold_grind_nonce: 0,
-            stage1: dummy_stage1_proof::<E>(rounds, b, lp.inner_commit_matrix.security_route()),
+            stage1: dummy_stage1_proof::<E>(rounds, b, lp.inner().matrix.security_route()),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck::<E>(rounds, 3),
                 next_witness_binding: match next_witness_binding {
@@ -384,10 +384,10 @@ mod tests {
         let mut lp = CommittedGroupParams::params_only(profile, D, log_basis, 4, 2, 2, challenge)
             .with_decomp(256, 8, 1, 1, 1)
             .unwrap();
-        lp.num_digits_fold = fold_digit_count;
+        lp.own_group_mut().opening.num_digits_fold = fold_digit_count;
         let shape = PhysicalL2NormProofShape::derive(
             profile,
-            lp.inner_commit_matrix.input_width() * D,
+            lp.inner().matrix.input_width() * D,
             1usize << log_basis,
             fold_digit_count,
         )
@@ -400,13 +400,14 @@ mod tests {
             1u128 << 50,
         )
         .expect("profile L2 key");
-        lp.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
-            table_key,
-            lp.inner_commit_matrix.input_width(),
-            1u128 << 32,
-            shape,
-        )
-        .expect("profile L2 matrix");
+        lp.own_group_mut().profile.inner.matrix =
+            crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                table_key,
+                lp.inner().matrix.input_width(),
+                1u128 << 32,
+                shape,
+            )
+            .expect("profile L2 matrix");
         let next_lp = CommittedGroupParams::params_only(profile, D, 3, 2, 2, 2, challenge)
             .with_decomp(8, 8, 1, 1, 1)
             .unwrap();
@@ -527,13 +528,14 @@ mod tests {
             )
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
-            lp.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
-                table_key,
-                shape.physical_response_len() / D,
-                1u128 << 30,
-                shape,
-            )
-            .expect("audited L2 matrix");
+            lp.own_group_mut().profile.inner.matrix =
+                crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                    table_key,
+                    shape.physical_response_len() / D,
+                    1u128 << 30,
+                    shape,
+                )
+                .expect("audited L2 matrix");
             let output_witness_len = D * 8;
             assert_eq!(
                 level_proof_bytes(
@@ -589,22 +591,22 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
-        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-            lp.outer_commit_matrix.security_policy(),
-            lp.outer_commit_matrix.sis_table_key().table_digest,
-            lp.outer_commit_matrix.sis_modulus_profile(),
-            lp.outer_commit_matrix.output_rank(),
-            lp.outer_commit_matrix.input_width() * 2,
-            lp.outer_commit_matrix.coeff_linf_bound(),
+        lp.own_group_mut().profile.outer.matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            lp.outer().matrix.security_policy(),
+            lp.outer().matrix.sis_table_key().table_digest,
+            lp.outer().matrix.sis_modulus_profile(),
+            lp.outer().matrix.output_rank(),
+            lp.outer().matrix.input_width() * 2,
+            lp.outer().matrix.coeff_linf_bound(),
             64,
         );
-        lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
-            lp.open_commit_matrix.security_policy(),
-            lp.open_commit_matrix.sis_table_key().table_digest,
-            lp.open_commit_matrix.sis_modulus_profile(),
-            lp.open_commit_matrix.output_rank(),
-            lp.open_commit_matrix.input_width() * 4,
-            lp.open_commit_matrix.coeff_linf_bound(),
+        lp.open_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            lp.open().matrix.security_policy(),
+            lp.open().matrix.sis_table_key().table_digest,
+            lp.open().matrix.sis_modulus_profile(),
+            lp.open().matrix.output_rank(),
+            lp.open().matrix.input_width() * 4,
+            lp.open().matrix.coeff_linf_bound(),
             32,
         );
 
@@ -617,22 +619,23 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        next_lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-            next_lp.outer_commit_matrix.security_policy(),
-            next_lp.outer_commit_matrix.sis_table_key().table_digest,
-            next_lp.outer_commit_matrix.sis_modulus_profile(),
-            next_lp.outer_commit_matrix.output_rank(),
-            next_lp.outer_commit_matrix.input_width() * 2,
-            next_lp.outer_commit_matrix.coeff_linf_bound(),
-            64,
-        );
-        next_lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
-            next_lp.open_commit_matrix.security_policy(),
-            next_lp.open_commit_matrix.sis_table_key().table_digest,
-            next_lp.open_commit_matrix.sis_modulus_profile(),
-            next_lp.open_commit_matrix.output_rank(),
-            next_lp.open_commit_matrix.input_width() * 2,
-            next_lp.open_commit_matrix.coeff_linf_bound(),
+        next_lp.own_group_mut().profile.outer.matrix =
+            crate::OuterCommitMatrixParams::new_unchecked(
+                next_lp.outer().matrix.security_policy(),
+                next_lp.outer().matrix.sis_table_key().table_digest,
+                next_lp.outer().matrix.sis_modulus_profile(),
+                next_lp.outer().matrix.output_rank(),
+                next_lp.outer().matrix.input_width() * 2,
+                next_lp.outer().matrix.coeff_linf_bound(),
+                64,
+            );
+        next_lp.open_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            next_lp.open().matrix.security_policy(),
+            next_lp.open().matrix.sis_table_key().table_digest,
+            next_lp.open().matrix.sis_modulus_profile(),
+            next_lp.open().matrix.output_rank(),
+            next_lp.open().matrix.input_width() * 2,
+            next_lp.open().matrix.coeff_linf_bound(),
             64,
         );
 
@@ -860,8 +863,8 @@ mod tests {
             )
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
-            let inner = lp.inner_commit_matrix;
-            lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+            let inner = lp.inner().matrix;
+            lp.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
                 inner
                     .sis_table_key()

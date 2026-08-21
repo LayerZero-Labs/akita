@@ -1,52 +1,70 @@
 # Extension-opening reduction
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
+Akita sometimes commits to a polynomial whose coefficients lie in a base field
+the base field $\mathbb{F}$, then opens that polynomial at a point whose
+coordinates lie in a larger extension field $\mathbb{E}$. Extension-opening reduction bridges
+those two field roles. It converts the original opening into an opening of a
+smaller polynomial whose values already lie in $\mathbb{E}$.
 
-The reduction that resolves the base-field-polynomial / extension-field-point
-mismatch (raised in [rings and fields](./rings-and-fields.md#base-field-coefficients-vs-extension-evaluation-points)):
-a sum-check that turns an evaluation claim on a base-field multilinear
-\\( f \\) at an extension point into a single claim on a **packed** polynomial
-\\( g \\) over the extension with \\( \kappa \\) fewer variables. This is the
-generic protocol and its soundness (paper §2.5); Akita's prover paths and
-scheduling are in
+This chapter gives the protocol idea needed to follow the implementation. A
+worked numerical example and a complete soundness derivation are deferred to a
+later documentation slice. For Akita's scheduling and prover paths, see
 [How it works → Extension-opening reduction](../how/proving/extension-opening-reduction.md).
 
-> Terminology: Diamond-Posen call this "ring switching" (FRI-Binius); Hashcaster
-> uses the Frobenius-orbit form. The book reserves "ring switching" for Hachi's
-> lattice fold and uses "extension-opening reduction" for this tensor bridge.
+## Packing several Boolean variables into one value
 
-## The packed polynomial
+Suppose $\mathbb{E}$ has degree $2^\kappa$ over $\mathbb{F}$. Choose an
+$\mathbb{F}$-basis $(\beta_y)_{y\in\{0,1\}^\kappa}$ for $\mathbb{E}$.
+If the original multilinear polynomial $f$ has $n$ variables, split its
+input into $\kappa$ leading variables $y$ and $n-\kappa$ remaining
+variables $x$. Akita defines the packed polynomial
 
-Splitting \\( f \\)'s variables into \\( \kappa \\) head + \\( \ell-\kappa \\)
-tail and packing the head into an \\( \mathbb{F}_q \\)-basis
-\\( (\beta_y) \\) of \\( \mathbb{F}_{q^{2^\kappa}} \\):
-\\( g(X) = \sum_y f(y,X)\,\beta_y \\).
+$$
+g(x)=\sum_{y\in\{0,1\}^\kappa} f(y,x)\,\beta_y.
+$$
 
-**Sources to fold in**
+The new polynomial $g$ has only $n-\kappa$ variables. Each value of $g$
+packs one full block of $2^\kappa$ base-field values into a single
+extension-field value. The implementation uses little-endian Boolean order
+for this basis packing.
 
-- Paper §2.5 `sec:prelim-ext-opening` ("Packed polynomial", input/output instances).
+## Column partials and row partials
 
-## Column and row partials, and the tensor algebra
+At the claimed opening point, the verifier needs to connect two views of the
+same table:
 
-Why the naive \\( \sum_y \beta_y S_y \\) shortcut is insecure, and how the
-verifier works in the tensor algebra
-\\( \mathbb{F}_{q^{2^\kappa}} \otimes_{\mathbb{F}_q} \mathbb{F}_{q^{2^\kappa}} \\)
-(column partials \\( S_y \\), row partials \\( \mathrm{row}_u \\)) to bind the
-\\( S_y \\) to \\( g \\) over \\( \mathbb{F}_q \\).
+- The column view fixes the first $\kappa$ Boolean variables and evaluates
+  the remaining variables. This produces one base-field value for each basis
+  position.
+- The row view transposes those column values through the chosen extension
+  basis. This produces the extension-field values used in the packed opening.
 
-**Sources to fold in**
+The row values are not extra witness data chosen independently by the prover.
+They are a deterministic basis transpose of the column values. This detail is
+what binds the packed polynomial back to the original base-field polynomial.
 
-- Paper §2.5 ("Column and row partials").
-- `crates/akita-types/src/extension_opening_reduction.rs`.
+## The reduction check
 
-## The reduction sum-check and soundness
+Akita checks the connection with a degree-two sum-check. The sum-check reduces
+the many table positions to one randomly selected point. At that point, the
+verifier checks that the packed witness value and the transparent tensor
+factor reproduce the claimed opening. The transcript samples the random
+coefficients only after the relevant claims have been absorbed, so the prover
+cannot adapt the claims to those coefficients.
 
-Row-batching with \\( \eta \\), the degree-2 sum-check on
-\\( A_\eta(w)\,g(w) \\), the transparent factor \\( A_\eta(\rho) \\) from the
-tensor-algebra equality, and the soundness bound
-\\( \kappa/q^{2^\kappa} + 2(\ell-\kappa)/q^{2^\kappa} \\).
+Akita runs this reduction only when a scheduled fold uses an evaluation trace
+and the extension degree is greater than one. Configurations whose base and
+extension fields are the same do not need it. A fold that uses coefficient
+packing also opens its extension-valued claim directly and skips this
+reduction.
 
-**Sources to fold in**
+## Implementation map
 
-- Paper §2.5 ("Reduction sum-check", `fig:ext-opening-reduction`, `thm:ext-opening-soundness` / Binius2 Thm 3.5).
-- External: FRI-Binius (Diamond-Posen), Hashcaster.
+- `crates/akita-types/src/extension_opening_reduction.rs` contains the shared
+  tensor algebra, field split, packing, and transpose operations.
+- `crates/akita-prover/src/protocol/extension_opening_reduction/` contains the
+  prover implementation.
+- `crates/akita-verifier/src/protocol/core/fold/extension_claim.rs` replays the
+  resulting claim on the verifier side.
+- [Fold path and field geometry](../how/proving/fold-path.md) explains which
+  schedules select this path.

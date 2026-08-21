@@ -331,9 +331,10 @@ mod tests {
         let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
             .expect("adaptive schedule")
             .into_schedule();
-        let params = &schedule.terminal.params.witness;
+        let params = &schedule.terminal;
         let prefix_len = params
-            .inner_commit_matrix
+            .inner
+            .matrix
             .output_rank()
             .checked_mul(params.inner_width())
             .expect("terminal prefix");

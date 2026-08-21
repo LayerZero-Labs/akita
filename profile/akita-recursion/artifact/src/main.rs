@@ -164,12 +164,15 @@ where
     FF: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid,
     CpuBackend: ComputeBackendSetup<FF>,
 {
-    for slot_id in schedule
+    for setup_prefix in schedule
         .recursive_folds
         .iter()
-        .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
+        .filter_map(|fold| fold.incoming_setup_prefix())
     {
-        if setup.prefix_slots.get(&slot_id.slot_id()).is_some() {
+        let slot_id = setup_prefix.slot_id().ok_or_else(|| {
+            akita_error::AkitaError::InvalidSetup("group is not a setup prefix".into())
+        })?;
+        if setup.prefix_slots.get(&slot_id).is_some() {
             continue;
         }
         let n_prefix = slot_id.n_prefix()?;
@@ -182,7 +185,7 @@ where
                     &setup.expanded,
                     backend,
                     prepared,
-                    &slot_id.commitment_params.layout,
+                    &slot_id.commitment_profile,
                     n_prefix,
                     slot_id.natural_len,
                 )
@@ -336,7 +339,7 @@ macro_rules! generate_scalar_case {
             .map_err(|err| format!("{} opening layout: {err}", case))?;
         let schedule = ScalarCfg::resolve_catalog_row_for_opening(&opening_layout)
             .map_err(|err| format!("{} schedule: {err}", case))?;
-        let root_d = schedule.schedule().root.params.final_group.commitment.d_a();
+        let root_d = schedule.schedule().root.params.d_a();
         if root_d != $d {
             return Err(format!(
                 "{} root commitment uses D={root_d}, but its Jolt input monomorphization uses D={}",
@@ -602,13 +605,7 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("recursive opening layout: {err}"))?;
     let schedule = Cfg::resolve_catalog_row_for_key(&key)
         .map_err(|err| format!("recursive proof schedule: {err}"))?;
-    let layout = schedule
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+    let layout = schedule.schedule().root.params.clone();
     let alpha_bits = SOURCE_VIEW_D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
