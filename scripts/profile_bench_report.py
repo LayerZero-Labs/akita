@@ -727,7 +727,10 @@ def benchmark_name(
     if setup_mode != "direct":
         setup_suffix = f" ({setup_mode} setup contribution)"
     if metadata.opening_topology == "multi_group":
-        return f"{metadata.field_family} multi-group opening with {num_polys} polynomials{setup_suffix}"
+        return (
+            f"{metadata.field_family} multi-group opening, final nv{num_vars}, "
+            f"{num_polys} polynomials total{setup_suffix}"
+        )
     if metadata.workload == "onehot":
         if num_polys > 1:
             return (
@@ -2381,6 +2384,10 @@ def human_case_label(summary: dict[str, object]) -> str:
         label = f"{field_segment} multi-group"
         if chunk_variant:
             label += f" {chunk_variant.group(0).upper()}"
+        label += (
+            f" (final nv{int(summary['num_vars'])}, "
+            f"{int(summary.get('num_polys', 1))} polys total)"
+        )
         return f"{label}, {setup_mode} setup check"
 
     workload_token = "one-hot" if workload == "onehot" else "dense"
@@ -2792,6 +2799,16 @@ def render_matrix_summary(
                 "Grinding retries are rejected attempts at each fold, listed in "
                 "measured-run order. Zero means the first sampled nonce was accepted."
             )
+            if any(
+                case_metadata(str(case.get("mode", ""))).opening_topology
+                == "multi_group"
+                for case in current_cases
+            ):
+                print()
+                print(
+                    "Each multi-group profile has two precommitted nv16 singleton "
+                    "polynomials and two polynomials in the displayed final group."
+                )
 
     if main_baseline is not None:
         print()

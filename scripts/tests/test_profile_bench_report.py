@@ -1362,8 +1362,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             human_case_label(summary), "Fp128 one-hot nv32, direct setup check"
         )
 
-    def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
-        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+    def test_adaptive_multi_group_case_label_exposes_workload_shape(self) -> None:
+        from scripts.profile_bench_report import (
+            human_case_label,
+            normalize_case_summary,
+            render_matrix_summary,
+        )
 
         summary = normalize_case_summary(
             {
@@ -1379,7 +1383,22 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 multi-group, direct setup check",
+            "Fp128 multi-group (final nv32, 4 polys total), direct setup check",
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_matrix_summary([summary], None)
+        self.assertIn(
+            "two precommitted nv16 singleton polynomials and two polynomials "
+            "in the displayed final group",
+            output.getvalue(),
+        )
+
+        summary["config"] = "adaptive recursive multi-group W8R2"
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 multi-group W8R2 (final nv32, 4 polys total), direct setup check",
         )
 
     def test_recursive_singleton_case_label_matches_direct_workload(self) -> None:
@@ -1468,7 +1487,8 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         self.assertIn("2 34 variable polynomials", statement)
         self.assertEqual(
             name,
-            "fp128 multi-group opening with 4 polynomials (recursive setup contribution)",
+            "fp128 multi-group opening, final nv34, 4 polynomials total "
+            "(recursive setup contribution)",
         )
         self.assertNotIn("same-point", name)
 
