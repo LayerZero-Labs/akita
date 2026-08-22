@@ -3,9 +3,33 @@ mod trace_prefix;
 use super::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::pad_compact_witness;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::Prime128Offset275;
+use akita_field::unreduced::HasUnreducedOps;
+use akita_field::{Ext2, FpExt4, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
 type F = Prime128Offset275;
+
+fn assert_delayed_relation_accumulator_matches_eager<E>()
+where
+    E: FieldCore + FromPrimitiveInt + HasUnreducedOps + std::fmt::Debug,
+{
+    let mut eager = [E::zero(); 3];
+    let mut delayed = RelationAccum::<E>::zero();
+    for i in 0..4096u64 {
+        let w0 = E::from_u64(i.wrapping_mul(0x9e37_79b9).wrapping_add(17));
+        let dw = E::from_u64(i.wrapping_mul(0x85eb_ca6b).wrapping_add(29));
+        let p0 = E::from_u64(i.wrapping_mul(0xc2b2_ae35).wrapping_add(43));
+        let p1 = E::from_u64(i.wrapping_mul(0x27d4_eb2f).wrapping_add(71));
+        accumulate_relation_coeffs(&mut eager, w0, dw, p0, p1);
+        delayed.accumulate(w0, dw, p0, p1);
+    }
+    assert_eq!(delayed.reduce(), eager);
+}
+
+#[test]
+fn delayed_relation_accumulator_matches_eager_small_fields() {
+    assert_delayed_relation_accumulator_matches_eager::<FpExt4<Prime32Offset99>>();
+    assert_delayed_relation_accumulator_matches_eager::<Ext2<Prime64Offset59>>();
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Stage2Params<'a> {

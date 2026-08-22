@@ -198,7 +198,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 2], [E::zero(); 3]),
+                || ([E::zero(); 2], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::zero(); 2];
                     let base = j_high * num_first;
@@ -242,17 +242,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs.reduce())
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 3], [E::zero(); 3]),
+                || ([E::zero(); 3], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::zero(); 3];
                     let base = j_high * num_first;
@@ -299,13 +297,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::Full(virt_coeffs), rel_coeffs.reduce())
         }
     }
 

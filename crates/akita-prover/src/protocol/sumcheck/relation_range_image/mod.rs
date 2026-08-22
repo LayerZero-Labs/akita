@@ -116,6 +116,61 @@ type CompactVirtAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 4];
 type CompactVirtSkipLinearAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 2];
 type CompactRelAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 6];
 
+pub(super) enum RelationAccum<E: FieldCore + HasUnreducedOps> {
+    Reduced([E; 3]),
+    Delayed([E::ProductAccum; 3]),
+}
+
+impl<E: FieldCore + HasUnreducedOps> RelationAccum<E> {
+    #[inline]
+    fn zero() -> Self {
+        if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+            Self::Delayed([E::ProductAccum::zero(); 3])
+        } else {
+            Self::Reduced([E::zero(); 3])
+        }
+    }
+
+    #[inline]
+    fn accumulate(&mut self, w0: E, dw: E, p0: E, p1: E) {
+        match self {
+            Self::Reduced(rel) => accumulate_relation_coeffs(rel, w0, dw, p0, p1),
+            Self::Delayed(rel) => {
+                let dp = p1 - p0;
+                rel[0] += w0.mul_to_product_accum(p0);
+                rel[1] += w0.mul_to_product_accum(dp);
+                rel[1] += dw.mul_to_product_accum(p0);
+                rel[2] += dw.mul_to_product_accum(dp);
+            }
+        }
+    }
+
+    #[inline]
+    fn merge(&mut self, other: Self) {
+        match (self, other) {
+            (Self::Reduced(target), Self::Reduced(source)) => {
+                for (target, source) in target.iter_mut().zip(source) {
+                    *target += source;
+                }
+            }
+            (Self::Delayed(target), Self::Delayed(source)) => {
+                for (target, source) in target.iter_mut().zip(source) {
+                    *target += source;
+                }
+            }
+            _ => unreachable!("relation accumulator mode is fixed by the field type"),
+        }
+    }
+
+    #[inline]
+    fn reduce(self) -> [E; 3] {
+        match self {
+            Self::Reduced(rel) => rel,
+            Self::Delayed(rel) => rel.map(E::reduce_product_accum),
+        }
+    }
+}
+
 #[inline]
 fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
@@ -284,7 +339,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear(
         &self,
-        rel: &mut [E; 3],
+        rel: &mut RelationAccum<E>,
         w0: E,
         dw: E,
         witness_idx0: usize,
@@ -295,7 +350,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let (t0, t1) = self
             .linear_terms
             .pair_from_flat_index(witness_idx0, coeff_count);
-        accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
+        rel.accumulate(w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]

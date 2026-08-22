@@ -2,10 +2,10 @@ use super::*;
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-fn accumulate_fused_partial_lane_relation<E: FieldCore>(
+fn accumulate_fused_partial_lane_relation<E: FieldCore + HasUnreducedOps>(
     linear_terms: &PreparedProverLinearTerms<E>,
     linear_coeff_count: usize,
-    rel: &mut [E; 3],
+    rel: &mut RelationAccum<E>,
     w0: E,
     dw: E,
     p0: E,
@@ -27,7 +27,7 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
             E::zero(),
         )
     };
-    accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
+    rel.accumulate(w0, dw, p0 + t0, p1 + t1);
 }
 
 #[inline]
@@ -94,7 +94,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut virt = [E::zero(); 2];
-                    let mut rel = [E::zero(); 3];
+                    let mut rel = RelationAccum::<E>::zero();
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
@@ -155,14 +155,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     (virt, rel)
                 })
                 .reduce(
-                    || ([E::zero(); 2], [E::zero(); 3]),
+                    || ([E::zero(); 2], RelationAccum::<E>::zero()),
                     |(mut va, mut ra), (vb, rb)| {
                         for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                             *ai += *bi;
                         }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
+                        ra.merge(rb);
                         (va, ra)
                     },
                 );
@@ -170,7 +168,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             #[cfg(not(feature = "parallel"))]
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
-                let mut rel = [E::zero(); 3];
+                let mut rel = RelationAccum::<E>::zero();
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
@@ -241,7 +239,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 out,
                 next_relation_lane_weights,
                 NormRoundTerms::SkipLinear(virt_coeffs),
-                rel_coeffs,
+                rel_coeffs.reduce(),
             )
         } else {
             #[cfg(feature = "parallel")]
@@ -254,7 +252,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
                     let mut virt = [E::zero(); 3];
-                    let mut rel = [E::zero(); 3];
+                    let mut rel = RelationAccum::<E>::zero();
 
                     let mut blk = 0usize;
                     while blk < live_pairs {
@@ -318,14 +316,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     (virt, rel)
                 })
                 .reduce(
-                    || ([E::zero(); 3], [E::zero(); 3]),
+                    || ([E::zero(); 3], RelationAccum::<E>::zero()),
                     |(mut va, mut ra), (vb, rb)| {
                         for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                             *ai += *bi;
                         }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
+                        ra.merge(rb);
                         (va, ra)
                     },
                 );
@@ -333,7 +329,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             #[cfg(not(feature = "parallel"))]
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
-                let mut rel = [E::zero(); 3];
+                let mut rel = RelationAccum::<E>::zero();
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
@@ -407,7 +403,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 out,
                 next_relation_lane_weights,
                 NormRoundTerms::Full(virt_coeffs),
-                rel_coeffs,
+                rel_coeffs.reduce(),
             )
         }
     }
@@ -653,7 +649,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 tiles.work_items(),
-                || ([E::zero(); 2], [E::zero(); 3]),
+                || ([E::zero(); 2], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), work_item| {
                     let tile = tiles.decode(work_item);
                     let coefficient = tile.outer;
@@ -715,17 +711,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs.reduce())
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 tiles.work_items(),
-                || ([E::zero(); 3], [E::zero(); 3]),
+                || ([E::zero(); 3], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), work_item| {
                     let tile = tiles.decode(work_item);
                     let coefficient = tile.outer;
@@ -790,13 +784,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::Full(virt_coeffs), rel_coeffs.reduce())
         }
     }
 

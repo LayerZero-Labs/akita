@@ -571,6 +571,10 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
     // batch and reducing once matches per-limb reduce-then-add exactly. Covered
     // by `fp_ext4_fp32_accum_summation`.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
+    // For the Stage-2 tensor norm, summing small-scalar terms before the outer
+    // extension-field weight removes enough full FpExt4 products to win across
+    // complete dense profiles. The wider FpExt2<Fp64> arithmetic does not opt in.
+    const PREFER_FACTORED_SMALL_SUM: bool = true;
 
     #[inline]
     fn mul_small_unreduced(self, small: u64) -> Self::SmallMulAccum {

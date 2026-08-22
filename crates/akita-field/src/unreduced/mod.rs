@@ -662,6 +662,15 @@ pub trait HasUnreducedOps: FieldCore {
     /// path, so callers that must stay byte-identical to `Mul` are unaffected.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
 
+    /// Whether this field benefits from factoring a tensor-weighted small-scalar
+    /// sum before applying the outer full-field weight.
+    ///
+    /// This is a performance preference, not a correctness capability. The
+    /// default keeps the direct product order. Implementations opt in only when
+    /// full-field multiplication is materially more expensive than accumulating
+    /// the inner small-scalar sum.
+    const PREFER_FACTORED_SMALL_SUM: bool = false;
+
     /// Multiply by a small integer without reducing the product.
     fn mul_small_unreduced(self, small: u64) -> Self::SmallMulAccum;
 
