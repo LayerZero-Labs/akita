@@ -56,8 +56,8 @@ MODE_NUM_POLYS = {
 MODE_NUM_VARS = {
     "onehot_fp32": {34},
     "dense_fp32": {30},
-    "onehot_fp64": {34},
-    "dense_fp64": {30},
+    "onehot_fp64": {35},
+    "dense_fp64": {29},
     "dense_fp128": {28},
     "onehot_fp128": {36},
     "onehot_fp128_multi_group": {34},

@@ -1393,7 +1393,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             normalize_case_summary(
                 {
                     "mode": "dense_fp64",
-                    "num_vars": 30,
+                    "num_vars": 29,
                     "num_polys": 1,
                     "benchmark_shard": "2-fp64-base",
                 }
@@ -1412,13 +1412,13 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             shard_section,
         )
         self.assertIn(
-            "| <code>2-fp64-base</code> | Fp64 dense nv30, direct setup check |",
+            "| <code>2-fp64-base</code> | Fp64 dense nv29, direct setup check |",
             shard_section,
         )
         self.assertIn("Over Fp32", statement_section)
         self.assertIn("Fp32 dense nv30, direct setup check", statement_section)
         self.assertIn("Over Fp64", statement_section)
-        self.assertIn("Fp64 dense nv30, direct setup check", statement_section)
+        self.assertIn("Fp64 dense nv29, direct setup check", statement_section)
 
     def test_partial_merge_base_coverage_is_explicit(self) -> None:
         from scripts.profile_bench_report import render_report

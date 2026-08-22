@@ -200,10 +200,11 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(29),
     PolynomialGroupLayout::singleton(30),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1), (35, 1)];
 
 /// One generated schedule-table family.
 ///
