@@ -8,21 +8,23 @@ use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
 
-fn eor_test_plan(rounds: usize) -> akita_types::GrindingPlan {
-    let mut runs = vec![
-        akita_types::GrindingRun::proof_of_work(
-            akita_types::GrindingSite::ExtensionOpeningPoint,
-            1,
-            128,
-        )
-        .unwrap(),
-        akita_types::GrindingRun::proof_of_work(
-            akita_types::GrindingSite::ExtensionOpeningClaimBatch,
-            1,
-            128,
-        )
-        .unwrap(),
-    ];
+fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
+    let mut runs = vec![akita_types::GrindingRun::proof_of_work(
+        akita_types::GrindingSite::ExtensionOpeningPoint,
+        1,
+        128,
+    )
+    .unwrap()];
+    if batches_claims {
+        runs.push(
+            akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch,
+                1,
+                128,
+            )
+            .unwrap(),
+        );
+    }
     for round in 0..rounds {
         runs.push(
             akita_types::GrindingRun::proof_of_work(
@@ -77,7 +79,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         point: &point,
         ring_dimension: 64,
     }];
-    let plan = eor_test_plan(point.len() - 1);
+    let plan = eor_test_plan(point.len() - 1, false);
     let mut transcript =
         akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
@@ -128,7 +130,7 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
         },
     ];
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
-    let plan = eor_test_plan(long_point.len() - 1);
+    let plan = eor_test_plan(long_point.len() - 1, true);
     let mut transcript =
         akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
 

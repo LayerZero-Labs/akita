@@ -1029,6 +1029,67 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         with self.assertRaisesRegex(ValueError, "accepted nonce plus one"):
             extract_summary(impossible_log, "onehot_fp128_d64", 24, 1)
 
+    def test_grinding_plan_reports_exact_bits_by_fold_and_query(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_fold_details
+
+        log = "\n".join(
+            [
+                "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=104 "
+                "accounted_bytes=104 akita_fold_bytes=100 nonce_stream_bytes=4 tail_bytes=0",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=26 nonce_stream_bytes=4 padding_bits=6 run_count=3 "
+                "expanded_query_count=10",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=fold_response query=response_search protocol=none stage=None "
+                "round=None group=None kind=fold_response loss_factor=0 grind_bits=0 "
+                "nonce_bits=12 multiplicity=1 run_nonce_bits=12",
+                "INFO grinding plan run label=onehot_fp128 run_index=1 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(2) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=2 level=0 "
+                "component=fold_challenge query=challenge_coordinates protocol=none "
+                "stage=None round=None group=Some(1) kind=fold_challenge_coordinates "
+                "loss_factor=0 grind_bits=0 nonce_bits=0 multiplicity=8 run_nonce_bits=0",
+                "INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=100 "
+                "fold_grind_nonce_bytes=0 grind_nonce=0 grind_attempts=1 root_variant=terminal",
+            ]
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        plan = summary["grinding_plan"]
+
+        self.assertEqual(summary["nonce_stream_bits"], 26)
+        self.assertEqual(summary["nonce_stream_padding_bits"], 6)
+        self.assertEqual(plan["runs"][1]["stage"], 0)
+        self.assertEqual(plan["runs"][1]["round"], 2)
+        self.assertEqual(plan["runs"][2]["group"], 1)
+
+        baseline_proof = [{"level": 0, "fold_grind_nonce_bytes": 4}]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                [],
+                summary["proof_levels"],
+                None,
+                None,
+                baseline_proof,
+                None,
+                plan,
+                None,
+            )
+        report = output.getvalue()
+
+        self.assertIn("Transcript grinding bits", report)
+        self.assertIn("Proof-global packed nonce stream", report)
+        self.assertIn("26<br><sub>Merge base</sub><br>12", report)
+        self.assertIn("6<br><sub>Merge base</sub><br>20", report)
+        self.assertIn("Stage 1 | sumcheck stage 0, round 2 | 4 | 3 | 14", report)
+        self.assertIn("challenge coordinates group 1", report)
+        self.assertIn("**L0 subtotal**", report)
+        self.assertIn("rounded to bytes once for the whole proof", report)
+        self.assertIn("legacy 32-bit field", report)
+        self.assertIn("12-bit fold-response entry", report)
+
     def test_l2_grinding_observations_survive_sample_aggregation(self) -> None:
         from scripts.profile_bench_report import (
             combine_case_run_summaries,

@@ -15,6 +15,8 @@ use akita_types::{
 use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 
+mod grinding;
+
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
@@ -1286,6 +1288,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         tail_bytes = tail_total,
         "proof summary"
     );
+    grinding::emit_grinding_plan_report(label, grinding_plan, &proof.nonce_stream);
     eprintln!(
         "[{label}] proof: total={} bytes, nonce_stream={} bytes, akita_fold={} bytes, tail={} bytes, levels={}",
         proof.size(),

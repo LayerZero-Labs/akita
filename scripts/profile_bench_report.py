@@ -89,7 +89,7 @@ RSS_PATTERNS = [
 ]
 ONEHOT_ARITY = 256
 ONEHOT_WORKLOAD_LABEL = f"1-of-{ONEHOT_ARITY} one-hot"
-CASE_SCHEMA_VERSION = 7
+CASE_SCHEMA_VERSION = 8
 REQUIRED_RUN_METRICS = (
     "setup_s",
     "commit_s",
@@ -819,6 +819,8 @@ def extract_summary(
     planned_groups: dict[int, list[dict[str, object]]] = {}
     terminal_plan: dict[str, object] | None = None
     proof_levels: dict[int, dict[str, object]] = {}
+    grinding_plan_summary: dict[str, object] | None = None
+    grinding_plan_runs: list[dict[str, object]] = []
     onehot_commit_schedules: list[dict[str, object]] = []
     active_verify_mode = "multi threaded"
 
@@ -915,6 +917,36 @@ def extract_summary(
             summary["tail_bytes"] = int(kvs["tail_bytes"])
             if "levels" in kvs:
                 summary["akita_levels"] = int(kvs["levels"])
+        elif "grinding plan summary" in line and kvs.get("label") == mode:
+            grinding_plan_summary = {
+                "nominal_capacity_bits": int(kvs["nominal_capacity_bits"]),
+                "total_nonce_bits": int(kvs["total_nonce_bits"]),
+                "nonce_stream_bytes": int(kvs["nonce_stream_bytes"]),
+                "padding_bits": int(kvs["padding_bits"]),
+                "run_count": int(kvs["run_count"]),
+                "expanded_query_count": int(kvs["expanded_query_count"]),
+            }
+            summary["nonce_stream_bits"] = int(kvs["total_nonce_bits"])
+            summary["nonce_stream_padding_bits"] = int(kvs["padding_bits"])
+        elif "grinding plan run" in line and kvs.get("label") == mode:
+            grinding_plan_runs.append(
+                {
+                    "run_index": int(kvs["run_index"]),
+                    "level": int(kvs["level"]),
+                    "component": kvs["component"],
+                    "query": kvs["query"],
+                    "protocol": kvs["protocol"],
+                    "stage": parse_tracing_optional_int(kvs.get("stage")),
+                    "round": parse_tracing_optional_int(kvs.get("round")),
+                    "group": parse_tracing_optional_int(kvs.get("group")),
+                    "kind": kvs["kind"],
+                    "loss_factor": int(kvs["loss_factor"]),
+                    "grind_bits": int(kvs["grind_bits"]),
+                    "nonce_bits": int(kvs["nonce_bits"]),
+                    "multiplicity": int(kvs["multiplicity"]),
+                    "run_nonce_bits": int(kvs["run_nonce_bits"]),
+                }
+            )
         elif "profile extension field" in line and kvs.get("label") == mode:
             summary["ext_degree"] = int(kvs["ext_degree"])
         elif "profile setup-contribution mode" in line and kvs.get("label") == mode:
@@ -1383,6 +1415,37 @@ def extract_summary(
             summary["grind_nonces"] = ",".join(
                 str(level["grind_nonce_val"]) for level in grind_rows
             )
+    if grinding_plan_summary is not None:
+        grinding_plan_runs.sort(key=lambda run: int(run["run_index"]))
+        expected_indices = list(range(int(grinding_plan_summary["run_count"])))
+        actual_indices = [int(run["run_index"]) for run in grinding_plan_runs]
+        if actual_indices != expected_indices:
+            raise ValueError(
+                "grinding plan run indices do not match the reported run count: "
+                f"expected={expected_indices}, actual={actual_indices}"
+            )
+        total_run_bits = sum(int(run["run_nonce_bits"]) for run in grinding_plan_runs)
+        if total_run_bits != int(grinding_plan_summary["total_nonce_bits"]):
+            raise ValueError(
+                "grinding plan run bits do not match the reported stream width: "
+                f"runs={total_run_bits}, stream={grinding_plan_summary['total_nonce_bits']}"
+            )
+        expected_bytes = (total_run_bits + 7) // 8
+        if expected_bytes != int(grinding_plan_summary["nonce_stream_bytes"]):
+            raise ValueError(
+                "grinding plan bit width does not match the reported stream bytes: "
+                f"bits={total_run_bits}, bytes={grinding_plan_summary['nonce_stream_bytes']}"
+            )
+        expected_padding = expected_bytes * 8 - total_run_bits
+        if expected_padding != int(grinding_plan_summary["padding_bits"]):
+            raise ValueError(
+                "grinding plan padding does not match the final byte: "
+                f"expected={expected_padding}, actual={grinding_plan_summary['padding_bits']}"
+            )
+        grinding_plan_summary["runs"] = grinding_plan_runs
+        summary["grinding_plan"] = grinding_plan_summary
+    elif grinding_plan_runs:
+        raise ValueError("grinding plan runs were emitted without a plan summary")
     if onehot_commit_schedules:
         summary["onehot_commit_schedules"] = onehot_commit_schedules
 
@@ -1653,6 +1716,9 @@ SUMMARY_CSV_COLUMNS = (
     "proof_size_bytes",
     "accounted_bytes",
     "akita_fold_bytes",
+    "nonce_stream_bytes",
+    "nonce_stream_bits",
+    "nonce_stream_padding_bits",
     "tail_bytes",
     "akita_levels",
     "grind_levels",
@@ -3133,6 +3199,8 @@ def render_report(args: argparse.Namespace) -> int:
                 baseline_planned_levels,
                 baseline_proof_levels,
                 main_case.get("terminal_plan") if main_case is not None else None,
+                current.get("grinding_plan"),
+                main_case.get("grinding_plan") if main_case is not None else None,
             )
         if len(current_cases) > 1:
             print()
