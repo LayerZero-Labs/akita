@@ -193,8 +193,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_pos = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                    let mut inner_neg = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    let mut inner_pos = [E::SmallMulAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    let mut inner_neg = [E::SmallMulAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
                     for pair_x in blk..blk_end {
                         let j_low = (j_base + pair_x) & (num_first - 1);

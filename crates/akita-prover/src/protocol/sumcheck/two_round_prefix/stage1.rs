@@ -187,8 +187,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 0..live_x_cols,
                 || {
                     (
-                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::SmallMulAccum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::SmallMulAccum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
                     )
                 },
                 |(mut pos, mut neg), x_col| {
@@ -266,8 +266,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 }
             );
 
-            let mut pos = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
-            let mut neg = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut pos = [E::SmallMulAccum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut neg = [E::SmallMulAccum::zero(); STAGE1_PREFIX_EVAL_COUNT];
             for (lookup_idx, class_weight) in class_weights.into_iter().enumerate() {
                 if !class_weight.is_zero() {
                     accum_lookup_vector_signed(

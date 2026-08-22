@@ -486,9 +486,15 @@ impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for FpExt8<
 macro_rules! impl_fp_ext8_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
         impl<const $p: $pty> HasUnreducedOps for FpExt8<$base<$p>> {
+            type SmallMulAccum = Self;
             type MulU64Accum = Self;
             type ProductAccum = Self;
 
+            #[inline]
+            fn mul_small_unreduced(self, small: u64) -> Self::SmallMulAccum {
+                let small = $base::<$p>::from_u64(small);
+                Self::new(self.coeffs.map(|coeff| coeff * small))
+            }
             #[inline]
             fn mul_u64_unreduced(self, small: u64) -> Self {
                 let small = $base::<$p>::from_u64(small);
@@ -500,6 +506,10 @@ macro_rules! impl_fp_ext8_unreduced_identity {
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_small_accum(accum: Self::SmallMulAccum) -> Self {
                 accum
             }
             #[inline]

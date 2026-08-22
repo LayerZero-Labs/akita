@@ -254,7 +254,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
     where
         E: HasUnreducedOps,
     {
-        let mut coefficients = [E::MulU64Accum::zero(); 8];
+        let mut coefficients = [E::SmallMulAccum::zero(); 8];
         let mut cursor = 0usize;
         while cursor < self.weights.len() {
             let parent = self.weights[cursor].index >> 1;

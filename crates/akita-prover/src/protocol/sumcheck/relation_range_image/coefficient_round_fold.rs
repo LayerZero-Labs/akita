@@ -16,12 +16,12 @@ fn fold_lane_and_compute_next_round<
     e_second: &[E],
     first_bits: usize,
     block_size: usize,
-) -> ([E; 3], [E; 3]) {
+) -> ([E; 3], RelationAccum<E>) {
     let next_coeff_count = target.len();
     let next_coefficient_half = next_coeff_count / 2;
     let equality_address_base = lane * next_coefficient_half;
     let mut virt = [E::zero(); 3];
-    let mut rel = [E::zero(); 3];
+    let mut rel = RelationAccum::<E>::zero();
     let mut blk = 0usize;
 
     while blk < next_coefficient_half {
@@ -60,7 +60,7 @@ fn fold_lane_and_compute_next_round<
             let (t0, t1) = prover
                 .linear_terms
                 .pair_from_flat_index(linear_index, next_coeff_count);
-            accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
+            rel.accumulate(w0, dw, p0 + t0, p1 + t1);
         }
 
         let e_out = e_second[j_high];
@@ -75,13 +75,14 @@ fn fold_lane_and_compute_next_round<
     (virt, rel)
 }
 
-fn add_round_terms<E: FieldCore>(left: &mut ([E; 3], [E; 3]), right: ([E; 3], [E; 3])) {
+fn add_round_terms<E: FieldCore + HasUnreducedOps>(
+    left: &mut ([E; 3], RelationAccum<E>),
+    right: ([E; 3], RelationAccum<E>),
+) {
     for (left_term, right_term) in left.0.iter_mut().zip(right.0) {
         *left_term += right_term;
     }
-    for (left_term, right_term) in left.1.iter_mut().zip(right.1) {
-        *left_term += right_term;
-    }
+    left.1.merge(right.1);
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
@@ -148,7 +149,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 }
             })
             .reduce(
-                || ([E::zero(); 3], [E::zero(); 3]),
+                || ([E::zero(); 3], RelationAccum::<E>::zero()),
                 |mut left, right| {
                     add_round_terms(&mut left, right);
                     left
@@ -157,7 +158,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
         #[cfg(not(feature = "parallel"))]
         let totals = {
-            let mut totals = ([E::zero(); 3], [E::zero(); 3]);
+            let mut totals = ([E::zero(); 3], RelationAccum::<E>::zero());
             for (lane, target) in output.chunks_mut(next_coeff_count).enumerate() {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
@@ -201,6 +202,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             NormRoundTerms::Full(totals.0)
         };
-        (output, virt_terms, totals.1)
+        (output, virt_terms, totals.1.reduce())
     }
 }

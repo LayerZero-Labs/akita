@@ -24,9 +24,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallMulAccum::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                    let mut inner_virt = [E::SmallMulAccum::zero(); 2];
                     let base = j_high * num_first;
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -39,11 +39,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                         let q0 = w0_i64 * (w0_i64 + 1);
                         if q0 != 0 {
-                            inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                            inner_virt[0] += e_in.mul_small_unreduced(q0 as u64);
                         }
                         let q2 = dw_i64 * dw_i64;
                         if q2 != 0 {
-                            inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
+                            inner_virt[1] += e_in.mul_small_unreduced(q2 as u64);
                         }
 
                         let (a0, a1, m0, m1) = if folding_y_round {
@@ -98,9 +98,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallMulAccum::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                    let mut inner_virt = [E::SmallMulAccum::zero(); 4];
                     let base = j_high * num_first;
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
@@ -113,13 +113,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                         let q0 = w0_i64 * (w0_i64 + 1);
                         if q0 != 0 {
-                            inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                            inner_virt[0] += e_in.mul_small_unreduced(q0 as u64);
                         }
                         let q1 = dw_i64 * (2 * w0_i64 + 1);
                         accum_small_signed::<E>(&mut inner_virt, 1, e_in, q1);
                         let q2 = dw_i64 * dw_i64;
                         if q2 != 0 {
-                            inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
+                            inner_virt[3] += e_in.mul_small_unreduced(q2 as u64);
                         }
 
                         let (a0, a1, m0, m1) = if folding_y_round {
@@ -198,7 +198,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 2], [E::zero(); 3]),
+                || ([E::zero(); 2], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::zero(); 2];
                     let base = j_high * num_first;
@@ -242,17 +242,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs.reduce())
         } else {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 3], [E::zero(); 3]),
+                || ([E::zero(); 3], RelationAccum::<E>::zero()),
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::zero(); 3];
                     let base = j_high * num_first;
@@ -299,13 +297,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                         *ai += *bi;
                     }
-                    for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                        *ai += *bi;
-                    }
+                    ra.merge(rb);
                     (va, ra)
                 }
             );
-            (NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+            (NormRoundTerms::Full(virt_coeffs), rel_coeffs.reduce())
         }
     }
 

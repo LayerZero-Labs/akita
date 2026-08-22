@@ -198,7 +198,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 2];
-                    let mut rel = [E::zero(); 3];
+                    let mut rel = RelationAccum::<E>::zero();
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
@@ -237,7 +237,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 &mut p0,
                                 &mut p1,
                             );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                            rel.accumulate(w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -249,14 +249,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     (virt, rel)
                 })
                 .reduce(
-                    || ([E::zero(); 2], [E::zero(); 3]),
+                    || ([E::zero(); 2], RelationAccum::<E>::zero()),
                     |(mut va, mut ra), (vb, rb)| {
                         for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                             *ai += *bi;
                         }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
+                        ra.merge(rb);
                         (va, ra)
                     },
                 );
@@ -264,7 +262,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             #[cfg(not(feature = "parallel"))]
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
-                let mut rel = [E::zero(); 3];
+                let mut rel = RelationAccum::<E>::zero();
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
                     let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
@@ -308,7 +306,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 &mut p0,
                                 &mut p1,
                             );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                            rel.accumulate(w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -320,7 +318,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 (virt, rel)
             };
 
-            (out, NormRoundTerms::SkipLinear(virt_coeffs), rel_coeffs)
+            (
+                out,
+                NormRoundTerms::SkipLinear(virt_coeffs),
+                rel_coeffs.reduce(),
+            )
         } else {
             #[cfg(feature = "parallel")]
             let (virt_coeffs, rel_coeffs) = out
@@ -332,7 +334,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 3];
-                    let mut rel = [E::zero(); 3];
+                    let mut rel = RelationAccum::<E>::zero();
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
@@ -373,7 +375,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 &mut p0,
                                 &mut p1,
                             );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                            rel.accumulate(w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -386,14 +388,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                     (virt, rel)
                 })
                 .reduce(
-                    || ([E::zero(); 3], [E::zero(); 3]),
+                    || ([E::zero(); 3], RelationAccum::<E>::zero()),
                     |(mut va, mut ra), (vb, rb)| {
                         for (ai, bi) in va.iter_mut().zip(vb.iter()) {
                             *ai += *bi;
                         }
-                        for (ai, bi) in ra.iter_mut().zip(rb.iter()) {
-                            *ai += *bi;
-                        }
+                        ra.merge(rb);
                         (va, ra)
                     },
                 );
@@ -401,7 +401,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             #[cfg(not(feature = "parallel"))]
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
-                let mut rel = [E::zero(); 3];
+                let mut rel = RelationAccum::<E>::zero();
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
                     let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
@@ -447,7 +447,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 &mut p0,
                                 &mut p1,
                             );
-                            accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
+                            rel.accumulate(w0, dw, p0, p1);
                         }
 
                         let e_out = e_second[j_high];
@@ -460,7 +460,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 (virt, rel)
             };
 
-            (out, NormRoundTerms::Full(virt_coeffs), rel_coeffs)
+            (out, NormRoundTerms::Full(virt_coeffs), rel_coeffs.reduce())
         }
     }
 }

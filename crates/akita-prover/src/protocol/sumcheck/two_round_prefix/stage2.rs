@@ -55,6 +55,104 @@ pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
     pub evals_except_corner: [E; 8],
 }
 
+enum Stage2NormAccum<E: FieldCore + HasUnreducedOps> {
+    Direct {
+        pos: [E::SmallMulAccum; STAGE2_COMPRESSED_POINT_COUNT],
+        neg: [E::SmallMulAccum; STAGE2_COMPRESSED_POINT_COUNT],
+    },
+    Factored([E; STAGE2_COMPRESSED_POINT_COUNT]),
+}
+
+impl<E: FieldCore + HasUnreducedOps> Stage2NormAccum<E> {
+    #[inline]
+    fn zero() -> Self {
+        if E::PREFER_FACTORED_SMALL_SUM {
+            Self::Factored([E::zero(); STAGE2_COMPRESSED_POINT_COUNT])
+        } else {
+            Self::Direct {
+                pos: [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                neg: [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+            }
+        }
+    }
+
+    #[inline]
+    fn accumulate_direct(
+        &mut self,
+        weight: E,
+        values: &[i64; STAGE2_PREFIX_POINT_COUNT],
+        selected_indices: &[usize; STAGE2_COMPRESSED_POINT_COUNT],
+    ) {
+        match self {
+            Self::Direct { pos, neg } => {
+                accum_lookup_vector_signed_selected(pos, neg, weight, values, selected_indices);
+            }
+            Self::Factored(_) => {
+                unreachable!("factored norm accumulation must use the column boundary")
+            }
+        }
+    }
+
+    #[inline]
+    fn accumulate_factored_column(
+        &mut self,
+        outer_weight: E,
+        pos: [E::SmallMulAccum; STAGE2_COMPRESSED_POINT_COUNT],
+        neg: [E::SmallMulAccum; STAGE2_COMPRESSED_POINT_COUNT],
+    ) {
+        match self {
+            Self::Factored(sum) => {
+                for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
+                    sum[idx] += outer_weight * reduce_signed_accum::<E>(pos[idx], neg[idx]);
+                }
+            }
+            Self::Direct { .. } => {
+                unreachable!("direct norm accumulation has no factored column boundary")
+            }
+        }
+    }
+
+    #[inline]
+    #[cfg(feature = "parallel")]
+    fn merge(&mut self, other: Self) {
+        match (self, other) {
+            (
+                Self::Direct {
+                    pos: target_pos,
+                    neg: target_neg,
+                },
+                Self::Direct {
+                    pos: source_pos,
+                    neg: source_neg,
+                },
+            ) => {
+                for (target, source) in target_pos.iter_mut().zip(source_pos) {
+                    *target += source;
+                }
+                for (target, source) in target_neg.iter_mut().zip(source_neg) {
+                    *target += source;
+                }
+            }
+            (Self::Factored(target), Self::Factored(source)) => {
+                for (target, source) in target.iter_mut().zip(source) {
+                    *target += source;
+                }
+            }
+            _ => unreachable!("stage-2 norm accumulation mode is fixed by the field type"),
+        }
+    }
+
+    #[inline]
+    fn reduce(self) -> [E; STAGE2_COMPRESSED_POINT_COUNT] {
+        match self {
+            Self::Direct { pos, neg } => {
+                std::array::from_fn(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
+            }
+            Self::Factored(sum) => sum,
+        }
+    }
+}
+
 impl<E: FieldCore> Stage2CompressedGrid<E> {
     #[cfg(test)]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
@@ -276,23 +374,24 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
         _ => unreachable!(),
     };
 
-    let (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg) = cfg_fold_reduce!(
+    let (norm_accum, rel_accum, linear_pos, linear_neg) = cfg_fold_reduce!(
         0..live_x_cols,
         || {
             (
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                Stage2NormAccum::<E>::zero(),
                 [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
-        |(mut norm_pos, mut norm_neg, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
+        |(mut norm_accum, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_norm_pos = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_norm_neg = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_pos = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([
@@ -301,14 +400,21 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     w_digit_fn(column[base + 2]),
                     w_digit_fn(column[base + 3]),
                 ]);
-                let norm_weight = eq_y_weight * eq_x_weight;
-                accum_lookup_vector_signed_selected(
-                    &mut norm_pos,
-                    &mut norm_neg,
-                    norm_weight,
-                    &norm_table[lookup_idx],
-                    norm_point_indices,
-                );
+                if E::PREFER_FACTORED_SMALL_SUM {
+                    accum_lookup_vector_signed_selected(
+                        &mut x_norm_pos,
+                        &mut x_norm_neg,
+                        eq_y_weight,
+                        &norm_table[lookup_idx],
+                        norm_point_indices,
+                    );
+                } else {
+                    norm_accum.accumulate_direct(
+                        eq_x_weight * eq_y_weight,
+                        &norm_table[lookup_idx],
+                        norm_point_indices,
+                    );
+                }
                 accum_pointwise_signed(
                     &mut x_rel_pos,
                     &mut x_rel_neg,
@@ -324,20 +430,18 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     &rel_table[lookup_idx],
                 );
             }
+            if E::PREFER_FACTORED_SMALL_SUM {
+                norm_accum.accumulate_factored_column(eq_x_weight, x_norm_pos, x_norm_neg);
+            }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
                 rel_accum[idx] += row_val.mul_to_product_accum(x_rel);
             }
-            (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg)
+            (norm_accum, rel_accum, linear_pos, linear_neg)
         },
-        |(mut norm_pos_a, mut norm_neg_a, mut rel_accum_a, mut linear_pos_a, mut linear_neg_a),
-         (norm_pos_b, norm_neg_b, rel_accum_b, linear_pos_b, linear_neg_b)| {
-            for (dst, src) in norm_pos_a.iter_mut().zip(norm_pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in norm_neg_a.iter_mut().zip(norm_neg_b.iter()) {
-                *dst += *src;
-            }
+        |(mut norm_accum_a, mut rel_accum_a, mut linear_pos_a, mut linear_neg_a),
+         (norm_accum_b, rel_accum_b, linear_pos_b, linear_neg_b)| {
+            norm_accum_a.merge(norm_accum_b);
             for (dst, src) in rel_accum_a.iter_mut().zip(rel_accum_b.iter()) {
                 *dst += *src;
             }
@@ -347,17 +451,10 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
             for (dst, src) in linear_neg_a.iter_mut().zip(linear_neg_b.iter()) {
                 *dst += *src;
             }
-            (
-                norm_pos_a,
-                norm_neg_a,
-                rel_accum_a,
-                linear_pos_a,
-                linear_neg_a,
-            )
+            (norm_accum_a, rel_accum_a, linear_pos_a, linear_neg_a)
         }
     );
-    let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
+    let norm_evals_except_corner = norm_accum.reduce();
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| {
             E::reduce_product_accum(rel_accum[idx])

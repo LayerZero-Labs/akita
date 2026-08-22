@@ -393,9 +393,14 @@ impl<F: FieldCore + BalancedDigitLookup + Valid, C: FpExt2Config<F>> BalancedDig
 macro_rules! impl_fp_ext2_unreduced_identity {
     ($base:ident<$p:ident: $pty:ty>) => {
         impl<const $p: $pty, C: FpExt2Config<$base<$p>>> HasUnreducedOps for FpExt2<$base<$p>, C> {
+            type SmallMulAccum = Self;
             type MulU64Accum = Self;
             type ProductAccum = Self;
 
+            #[inline]
+            fn mul_small_unreduced(self, small: u64) -> Self::SmallMulAccum {
+                self * Self::from_u64(small)
+            }
             #[inline]
             fn mul_u64_unreduced(self, small: u64) -> Self {
                 self * Self::from_u64(small)
@@ -406,6 +411,10 @@ macro_rules! impl_fp_ext2_unreduced_identity {
             }
             #[inline]
             fn reduce_mul_u64_accum(accum: Self) -> Self {
+                accum
+            }
+            #[inline]
+            fn reduce_small_accum(accum: Self::SmallMulAccum) -> Self {
                 accum
             }
             #[inline]
@@ -571,6 +580,7 @@ fn fp_ext2_reduced_product_accum<const P: u64, C: FpExt2Config<Fp64<P>>>(
 }
 
 impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>, C> {
+    type SmallMulAccum = AccumPair<<Fp64<P> as HasUnreducedOps>::SmallMulAccum>;
     type MulU64Accum = AccumPair<<Fp64<P> as HasUnreducedOps>::MulU64Accum>;
     type ProductAccum = FpExt2Fp64ProductAccum;
 
@@ -579,6 +589,14 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>,
     // Covered by the `Ext2<Prime64Offset59>` rounds in
     // `sparse_tensor_factor_matches_dense_factor_rounds`.
     const DELAYED_PRODUCT_SUM_IS_EXACT: bool = true;
+
+    #[inline]
+    fn mul_small_unreduced(self, small: u64) -> Self::SmallMulAccum {
+        AccumPair(
+            self.coeffs[0].mul_small_unreduced(small),
+            self.coeffs[1].mul_small_unreduced(small),
+        )
+    }
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
@@ -598,6 +616,14 @@ impl<const P: u64, C: FpExt2Config<Fp64<P>>> HasUnreducedOps for FpExt2<Fp64<P>,
         Self::new(
             Fp64::<P>::reduce_mul_u64_accum(accum.0),
             Fp64::<P>::reduce_mul_u64_accum(accum.1),
+        )
+    }
+
+    #[inline]
+    fn reduce_small_accum(accum: Self::SmallMulAccum) -> Self {
+        Self::new(
+            Fp64::<P>::reduce_small_accum(accum.0),
+            Fp64::<P>::reduce_small_accum(accum.1),
         )
     }
 

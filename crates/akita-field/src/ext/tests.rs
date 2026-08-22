@@ -419,6 +419,35 @@ fn fp_ext4_fp32_accum_summation() {
 }
 
 #[test]
+fn fp_ext4_fp32_small_accum_matches_direct_sum() {
+    use crate::{FpExt4, Prime32Offset99};
+    use num_traits::Zero;
+
+    type E = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0xACC2);
+    let pairs: Vec<(E, u64)> = (0..1024)
+        .map(|index| {
+            let small = match index {
+                0 => 0,
+                1 => u64::MAX,
+                _ => rng.next_u64(),
+            };
+            (E::random(&mut rng), small)
+        })
+        .collect();
+    let direct = pairs.iter().fold(E::zero(), |sum, &(value, small)| {
+        sum + value * E::from_u64(small)
+    });
+    let accumulated = pairs.iter().fold(
+        <E as HasUnreducedOps>::SmallMulAccum::zero(),
+        |sum, &(value, small)| sum + value.mul_small_unreduced(small),
+    );
+
+    assert_eq!(direct, E::reduce_small_accum(accumulated));
+}
+
+#[test]
 fn mul_base_to_product_accum_matches_mul_base_sum() {
     use crate::{Fp32, MulBaseUnreduced};
     use num_traits::Zero;

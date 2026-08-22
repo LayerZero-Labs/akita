@@ -10,8 +10,8 @@ use akita_field::FieldCore;
 /// Reduce separated positive and negative unreduced accumulators into one field
 /// element.
 pub fn reduce_signed_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
+    pos: E::SmallMulAccum,
+    neg: E::SmallMulAccum,
 ) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
+    E::reduce_small_accum(pos) - E::reduce_small_accum(neg)
 }
