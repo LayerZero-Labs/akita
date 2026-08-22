@@ -25,6 +25,7 @@ policy and the checker use the same live set in
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
+| [`verifier-hol-light-kernels`](../../../specs/verifier-hol-light-kernels.md) | proposed | Defines the proof targets and production linkage needed for verifier arithmetic kernels. |
 
 ## Archived records
 
