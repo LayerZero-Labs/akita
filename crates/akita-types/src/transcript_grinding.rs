@@ -12,7 +12,6 @@ pub use akita_transcript::{
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
     MAX_GRINDING_BITS,
 };
-use std::marker::PhantomData;
 use std::num::NonZeroU8;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
@@ -203,6 +202,40 @@ impl GrindingSite {
             Self::FoldChallengeCoordinates { .. } => GrindingQueryKind::FoldChallengeCoordinates,
             _ => GrindingQueryKind::ProofOfWork,
         }
+    }
+
+    /// Canonical transcript label for a proof-of-work query.
+    #[must_use]
+    pub const fn proof_of_work_label(self) -> Option<&'static [u8]> {
+        use akita_transcript::labels;
+
+        match self {
+            Self::EvaluationBatch => Some(labels::CHALLENGE_EVAL_BATCH),
+            Self::ExtensionOpeningPoint | Self::Stage2Batch { .. } => {
+                Some(labels::CHALLENGE_SUMCHECK_BATCH)
+            }
+            Self::ExtensionOpeningClaimBatch => Some(labels::CHALLENGE_EOR_CLAIM_BATCH),
+            Self::SumcheckRound { .. } => Some(labels::CHALLENGE_SUMCHECK_ROUND),
+            Self::RingSwitchAlpha { .. } => Some(labels::CHALLENGE_RING_SWITCH),
+            Self::Tau0Point { .. } => Some(labels::CHALLENGE_TAU0),
+            Self::Tau1Point { .. } => Some(labels::CHALLENGE_TAU1),
+            Self::Stage1InterstageBatch { .. } => Some(labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH),
+            Self::L2SubclaimBatch { .. } => Some(labels::CHALLENGE_L2_NORM_BATCH),
+            Self::L2NormMerge { .. } => Some(labels::CHALLENGE_L2_NORM_MERGE),
+            Self::L2VirtualBatch { .. } => Some(labels::CHALLENGE_L2_VIRTUAL_BATCH),
+            Self::CompressionBinary { .. } => Some(labels::CHALLENGE_COMPRESSION_BINARY),
+            Self::FoldResponse { .. }
+            | Self::FoldChallengeRoot { .. }
+            | Self::FoldChallengeCoordinates { .. } => None,
+        }
+    }
+
+    /// Fixed-width canonical encoding used by plan digests and audit events.
+    #[must_use]
+    pub fn canonical_bytes(self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_canonical_bytes(&mut bytes);
+        bytes
     }
 
     fn validate(self) -> Result<(), AkitaError> {
@@ -493,605 +526,13 @@ pub struct GrindingPlan {
     expanded_query_count: u64,
 }
 
-#[derive(Clone, Copy)]
-struct GrindingPlanEntry {
-    site: GrindingSite,
-    kind: GrindingQueryKind,
-    grind_bits: u8,
-    nonce_bits: u8,
-}
-
-struct GrindingPlanCursor<'a> {
-    plan: &'a GrindingPlan,
-    run_index: usize,
-    run_offset: u64,
-}
-
-impl<'a> GrindingPlanCursor<'a> {
-    const fn new(plan: &'a GrindingPlan) -> Self {
-        Self {
-            plan,
-            run_index: 0,
-            run_offset: 0,
-        }
-    }
-
-    fn next(&mut self) -> Option<GrindingPlanEntry> {
-        let run = *self.plan.runs.get(self.run_index)?;
-        let entry = GrindingPlanEntry {
-            site: run.site,
-            kind: run.kind(),
-            grind_bits: run.grind_bits,
-            nonce_bits: run.nonce_bits,
-        };
-        self.run_offset += 1;
-        if self.run_offset == run.multiplicity {
-            self.run_index += 1;
-            self.run_offset = 0;
-        }
-        Some(entry)
-    }
-}
-
-/// Headerless, low-bit-first packed values for the public grinding plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TranscriptNonceStream {
-    bytes: Vec<u8>,
-    bit_len: usize,
-}
-
-impl TranscriptNonceStream {
-    /// Construct a stream from its exact raw bytes and public bit width.
-    pub fn from_bytes(bytes: Vec<u8>, bit_len: usize) -> Result<Self, SerializationError> {
-        let expected_bytes = nonce_byte_len(bit_len)?;
-        if bytes.len() != expected_bytes {
-            return Err(SerializationError::InvalidData(
-                "nonce stream byte length does not match its bit width".into(),
-            ));
-        }
-        if let (Some(&last), Some(used_bits)) = (bytes.last(), bit_len.checked_rem(8)) {
-            if used_bits != 0 && last >> used_bits != 0 {
-                return Err(SerializationError::InvalidData(
-                    "nonce stream has nonzero high padding bits".into(),
-                ));
-            }
-        }
-        Ok(Self { bytes, bit_len })
-    }
-
-    /// Exact number of meaningful packed bits.
-    #[must_use]
-    pub const fn bit_len(&self) -> usize {
-        self.bit_len
-    }
-
-    /// Exact raw proof bytes, without a length prefix.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    /// Start checked sequential replay against `plan`.
-    pub fn reader<'a>(
-        &'a self,
-        plan: &'a GrindingPlan,
-    ) -> Result<TranscriptNonceReader<'a>, AkitaError> {
-        if self.bit_len != plan.total_nonce_bits {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(TranscriptNonceReader {
-            stream: self,
-            plan: GrindingPlanCursor::new(plan),
-            bit_offset: 0,
-        })
-    }
-}
-
-/// Checked sequential writer for one public grinding plan.
-pub struct TranscriptNonceWriter<'a> {
-    bytes: Vec<u8>,
-    plan: GrindingPlanCursor<'a>,
-    bit_offset: usize,
-}
-
-impl<'a> TranscriptNonceWriter<'a> {
-    /// Allocate the exact packed byte count prescribed by `plan`.
-    pub fn new(plan: &'a GrindingPlan) -> Result<Self, AkitaError> {
-        let byte_len = nonce_byte_len(plan.total_nonce_bits)
-            .map_err(|_| AkitaError::InvalidSetup("nonce stream byte width overflow".into()))?;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(byte_len)
-            .map_err(|_| AkitaError::InvalidSetup("nonce stream allocation failed".into()))?;
-        bytes.resize(byte_len, 0);
-        Ok(Self {
-            bytes,
-            plan: GrindingPlanCursor::new(plan),
-            bit_offset: 0,
-        })
-    }
-
-    /// Write the next expected logical entry and reject a site or width mismatch.
-    pub fn write(&mut self, site: GrindingSite, value: u32) -> Result<(), AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || !value_fits(value, entry.nonce_bits) {
-            return Err(AkitaError::InvalidProof);
-        }
-        write_bits(&mut self.bytes, self.bit_offset, entry.nonce_bits, value);
-        self.bit_offset = self
-            .bit_offset
-            .checked_add(usize::from(entry.nonce_bits))
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(())
-    }
-
-    /// Search and commit the next scheduled proof-of-work transition.
-    pub fn grind<F, T>(
-        &mut self,
-        transcript: &mut T,
-        site: GrindingSite,
-        site_label: &[u8],
-    ) -> Result<(), AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F> + TranscriptChallengePreview,
-    {
-        let entry = self.next_expected(site, GrindingQueryKind::ProofOfWork)?;
-        let nonce = search_grinding_nonce(transcript, entry.grind_bits, entry.nonce_bits)
-            .ok_or_else(|| AkitaError::InvalidInput("transcript grinding exhausted".into()))?;
-        let predicate =
-            transcript.grinding_predicate(site_label, entry.grind_bits, entry.nonce_bits, nonce);
-        match (NonZeroU8::new(entry.grind_bits), predicate) {
-            (None, None) => {}
-            (Some(bits), Some(predicate)) if grinding_predicate_accepts(&predicate, bits) => {}
-            _ => {
-                return Err(AkitaError::InvalidInput(
-                    "transcript grinding preview/live mismatch".into(),
-                ));
-            }
-        }
-        self.write_entry(entry, nonce)
-    }
-
-    /// Commit the next scheduled fold-response search nonce.
-    pub fn write_fold_response(
-        &mut self,
-        site: GrindingSite,
-        nonce: u32,
-    ) -> Result<(), AkitaError> {
-        let entry = self.next_expected(site, GrindingQueryKind::FoldResponse)?;
-        self.write_entry(entry, nonce)
-    }
-
-    /// Consume the zero-width root and indexed-coordinate records for one fold group.
-    pub fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.consume_zero_width(GrindingSite::FoldChallengeRoot { level, group })?;
-        for _ in 0..coordinate_count {
-            self.consume_zero_width(GrindingSite::FoldChallengeCoordinates { level, group })?;
-        }
-        Ok(())
-    }
-
-    /// Finish the stream, requiring exact plan and bit-cursor exhaustion.
-    pub fn finish(self) -> Result<TranscriptNonceStream, AkitaError> {
-        if self.plan.run_index != self.plan.plan.runs.len() || self.plan.run_offset != 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        if self.bit_offset != self.plan.plan.total_nonce_bits {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(TranscriptNonceStream {
-            bytes: self.bytes,
-            bit_len: self.bit_offset,
-        })
-    }
-
-    fn next_expected(
-        &mut self,
-        site: GrindingSite,
-        kind: GrindingQueryKind,
-    ) -> Result<GrindingPlanEntry, AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.kind != kind {
-            return Err(AkitaError::InvalidInput(format!(
-                "grinding writer expected {site:?}/{kind:?}, plan has {:?}/{:?}",
-                entry.site, entry.kind
-            )));
-        }
-        Ok(entry)
-    }
-
-    fn write_entry(&mut self, entry: GrindingPlanEntry, value: u32) -> Result<(), AkitaError> {
-        if !value_fits(value, entry.nonce_bits) {
-            return Err(AkitaError::InvalidProof);
-        }
-        write_bits(&mut self.bytes, self.bit_offset, entry.nonce_bits, value);
-        self.bit_offset = self
-            .bit_offset
-            .checked_add(usize::from(entry.nonce_bits))
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(())
-    }
-
-    fn consume_zero_width(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.nonce_bits != 0 || entry.grind_bits != 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
-    }
-}
-
-/// Checked sequential reader for one public grinding plan.
-pub struct TranscriptNonceReader<'a> {
-    stream: &'a TranscriptNonceStream,
-    plan: GrindingPlanCursor<'a>,
-    bit_offset: usize,
-}
-
-impl TranscriptNonceReader<'_> {
-    /// Read the next expected logical entry and reject a site mismatch.
-    pub fn read(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site {
-            return Err(AkitaError::InvalidProof);
-        }
-        let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
-        self.bit_offset = self
-            .bit_offset
-            .checked_add(usize::from(entry.nonce_bits))
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(value)
-    }
-
-    /// Read and verify the next scheduled proof-of-work transition.
-    pub fn grind<F, T>(
-        &mut self,
-        transcript: &mut T,
-        site: GrindingSite,
-        site_label: &[u8],
-    ) -> Result<(), AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        T: Transcript<F>,
-    {
-        let entry = self.next_expected(site, GrindingQueryKind::ProofOfWork)?;
-        let nonce = self.read_entry(entry)?;
-        let predicate =
-            transcript.grinding_predicate(site_label, entry.grind_bits, entry.nonce_bits, nonce);
-        match (NonZeroU8::new(entry.grind_bits), predicate) {
-            (None, None) => Ok(()),
-            (Some(bits), Some(predicate)) if grinding_predicate_accepts(&predicate, bits) => Ok(()),
-            _ => Err(AkitaError::InvalidInput(format!(
-                "transcript grinding predicate rejected at {site:?}"
-            ))),
-        }
-    }
-
-    /// Read the next scheduled fold-response search nonce.
-    pub fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
-        let entry = self.next_expected(site, GrindingQueryKind::FoldResponse)?;
-        self.read_entry(entry)
-    }
-
-    /// Consume the zero-width root and indexed-coordinate records for one fold group.
-    pub fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.consume_zero_width(GrindingSite::FoldChallengeRoot { level, group })?;
-        for _ in 0..coordinate_count {
-            self.consume_zero_width(GrindingSite::FoldChallengeCoordinates { level, group })?;
-        }
-        Ok(())
-    }
-
-    /// Finish replay, requiring exact plan and bit-cursor exhaustion.
-    pub fn finish(self) -> Result<(), AkitaError> {
-        if self.plan.run_index != self.plan.plan.runs.len() || self.plan.run_offset != 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        if self.bit_offset != self.stream.bit_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
-    }
-
-    fn next_expected(
-        &mut self,
-        site: GrindingSite,
-        kind: GrindingQueryKind,
-    ) -> Result<GrindingPlanEntry, AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.kind != kind {
-            return Err(AkitaError::InvalidInput(format!(
-                "grinding reader expected {site:?}/{kind:?}, plan has {:?}/{:?}",
-                entry.site, entry.kind
-            )));
-        }
-        Ok(entry)
-    }
-
-    fn read_entry(&mut self, entry: GrindingPlanEntry) -> Result<u32, AkitaError> {
-        let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
-        self.bit_offset = self
-            .bit_offset
-            .checked_add(usize::from(entry.nonce_bits))
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(value)
-    }
-
-    fn consume_zero_width(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-        let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.nonce_bits != 0 || entry.grind_bits != 0 {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(())
-    }
-}
-
-/// Prover-side transcript operations backed by the canonical nonce writer.
-pub trait ProverTranscriptGrinding<F>: Transcript<F> + TranscriptChallengePreview
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Apply the scheduled PoW transition immediately before its challenge draw.
-    fn grind_query(&mut self, site: GrindingSite, site_label: &[u8]) -> Result<(), AkitaError>;
-
-    /// Commit the accepted fold-response nonce before replaying its indexed challenges.
-    fn commit_fold_response(&mut self, site: GrindingSite, nonce: u32) -> Result<(), AkitaError>;
-
-    /// Record one group-local root draw and all indexed coordinate challenges.
-    fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError>;
-}
-
-/// Verifier-side transcript operations backed by the canonical nonce reader.
-pub trait VerifierTranscriptGrinding<F>: Transcript<F>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Verify the scheduled PoW transition immediately before its challenge draw.
-    fn grind_query(&mut self, site: GrindingSite, site_label: &[u8]) -> Result<(), AkitaError>;
-
-    /// Read the next scheduled fold-response nonce before replaying its challenges.
-    fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError>;
-
-    /// Record one group-local root draw and all indexed coordinate challenges.
-    fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError>;
-}
-
-/// Borrowed prover transcript with exclusive ownership of one nonce-stream cursor.
-pub struct ProverGrindingTranscript<'transcript, 'plan, F, T>
-where
-    F: FieldCore + CanonicalField,
-{
-    transcript: &'transcript mut T,
-    writer: TranscriptNonceWriter<'plan>,
-    _field: PhantomData<F>,
-}
-
-impl<'transcript, 'plan, F, T> ProverGrindingTranscript<'transcript, 'plan, F, T>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Attach the exact public plan to an already-bound prover transcript.
-    pub fn new(
-        transcript: &'transcript mut T,
-        plan: &'plan GrindingPlan,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
-            transcript,
-            writer: TranscriptNonceWriter::new(plan)?,
-            _field: PhantomData,
-        })
-    }
-
-    /// Require exact cursor exhaustion and return the packed proof stream.
-    pub fn finish(self) -> Result<TranscriptNonceStream, AkitaError> {
-        self.writer.finish()
-    }
-}
-
-/// Borrowed verifier transcript with exclusive ownership of one nonce-stream cursor.
-pub struct VerifierGrindingTranscript<'transcript, 'proof, F, T>
-where
-    F: FieldCore + CanonicalField,
-{
-    transcript: &'transcript mut T,
-    reader: TranscriptNonceReader<'proof>,
-    _field: PhantomData<F>,
-}
-
-impl<'transcript, 'proof, F, T> VerifierGrindingTranscript<'transcript, 'proof, F, T>
-where
-    F: FieldCore + CanonicalField,
-{
-    /// Attach the exact public plan and proof stream to an already-bound verifier transcript.
-    pub fn new(
-        transcript: &'transcript mut T,
-        stream: &'proof TranscriptNonceStream,
-        plan: &'proof GrindingPlan,
-    ) -> Result<Self, AkitaError> {
-        Ok(Self {
-            transcript,
-            reader: stream.reader(plan)?,
-            _field: PhantomData,
-        })
-    }
-
-    /// Require exact plan and proof-bit exhaustion.
-    pub fn finish(self) -> Result<(), AkitaError> {
-        self.reader.finish()
-    }
-}
-
-macro_rules! impl_transcript_forwarding {
-    ($adapter:ident) => {
-        impl<F, T> Transcript<F> for $adapter<'_, '_, F, T>
-        where
-            F: FieldCore + CanonicalField,
-            T: Transcript<F>,
-        {
-            fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
-                self.transcript.bind_instance_bytes(instance_bytes);
-            }
-
-            fn record_wire_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
-                self.transcript.record_wire_serde(label, value);
-            }
-
-            fn record_wire_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-                self.transcript.record_wire_bytes(label, bytes);
-            }
-
-            fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-                self.transcript.append_bytes(label, bytes);
-            }
-
-            fn append_field(&mut self, label: &[u8], value: &F) {
-                self.transcript.append_field(label, value);
-            }
-
-            fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
-                self.transcript.append_serde(label, value);
-            }
-
-            fn challenge_scalar(&mut self, label: &[u8]) -> F {
-                self.transcript.challenge_scalar(label)
-            }
-
-            fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
-                self.transcript.challenge_bytes(label, len)
-            }
-
-            fn challenge_block(
-                &mut self,
-                label: &[u8],
-            ) -> [u8; akita_transcript::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
-                self.transcript.challenge_block(label)
-            }
-
-            fn grinding_predicate(
-                &mut self,
-                site_label: &[u8],
-                grind_bits: u8,
-                nonce_bits: u8,
-                nonce: u32,
-            ) -> Option<[u8; akita_transcript::GRINDING_PREDICATE_LEN]> {
-                self.transcript
-                    .grinding_predicate(site_label, grind_bits, nonce_bits, nonce)
-            }
-        }
-    };
-}
-
-impl_transcript_forwarding!(ProverGrindingTranscript);
-impl_transcript_forwarding!(VerifierGrindingTranscript);
-
-impl<F, T> TranscriptChallengePreview for ProverGrindingTranscript<'_, '_, F, T>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F> + TranscriptChallengePreview,
-{
-    fn preview_challenge_block(
-        &self,
-        absorb_payloads: &[&[u8]],
-    ) -> [u8; akita_transcript::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
-        self.transcript.preview_challenge_block(absorb_payloads)
-    }
-}
-
-impl<F, T> ProverTranscriptGrinding<F> for ProverGrindingTranscript<'_, '_, F, T>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F> + TranscriptChallengePreview,
-{
-    fn grind_query(&mut self, site: GrindingSite, site_label: &[u8]) -> Result<(), AkitaError> {
-        self.writer.grind::<F, T>(self.transcript, site, site_label)
-    }
-
-    fn commit_fold_response(&mut self, site: GrindingSite, nonce: u32) -> Result<(), AkitaError> {
-        self.writer.write_fold_response(site, nonce)
-    }
-
-    fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.writer
-            .record_fold_challenges(level, group, coordinate_count)
-    }
-}
-
-impl<F, T> VerifierTranscriptGrinding<F> for VerifierGrindingTranscript<'_, '_, F, T>
-where
-    F: FieldCore + CanonicalField,
-    T: Transcript<F>,
-{
-    fn grind_query(&mut self, site: GrindingSite, site_label: &[u8]) -> Result<(), AkitaError> {
-        self.reader.grind::<F, T>(self.transcript, site, site_label)
-    }
-
-    fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
-        self.reader.read_fold_response(site)
-    }
-
-    fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.reader
-            .record_fold_challenges(level, group, coordinate_count)
-    }
-}
-
-fn nonce_byte_len(bit_len: usize) -> Result<usize, SerializationError> {
-    akita_error::checked::div_ceil(bit_len, 8)
-        .ok_or_else(|| SerializationError::InvalidData("invalid nonce stream byte width".into()))
-}
-
-fn value_fits(value: u32, width: u8) -> bool {
-    width == u32::BITS as u8 || value < (1u32 << width)
-}
-
-fn write_bits(bytes: &mut [u8], offset: usize, width: u8, value: u32) {
-    for bit in 0..usize::from(width) {
-        if (value >> bit) & 1 == 1 {
-            let stream_bit = offset + bit;
-            bytes[stream_bit / 8] |= 1 << (stream_bit % 8);
-        }
-    }
-}
-
-fn read_bits(bytes: &[u8], offset: usize, width: u8) -> u32 {
-    let mut value = 0u32;
-    for bit in 0..usize::from(width) {
-        let stream_bit = offset + bit;
-        value |= u32::from((bytes[stream_bit / 8] >> (stream_bit % 8)) & 1) << bit;
-    }
-    value
-}
+#[path = "transcript_grinding/replay.rs"]
+mod replay;
+pub use replay::{
+    ProverGrindingTranscript, ProverTranscriptGrinding, TranscriptNonceReader,
+    TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,
+    VerifierTranscriptGrinding,
+};
 
 impl GrindingPlan {
     /// Validate ordered runs and derive all aggregate counts once.
@@ -1142,6 +583,7 @@ impl GrindingPlan {
         })
     }
 
+    /// Compact ordered runs in this validated plan.
     #[must_use]
     pub fn runs(&self) -> &[GrindingRun] {
         &self.runs

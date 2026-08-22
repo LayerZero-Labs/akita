@@ -31,7 +31,7 @@ pub(super) fn verify_root<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if proof.extension_opening_reduction().is_some()
         || root_lp.source_encoding
@@ -162,7 +162,7 @@ fn verify_root_inner<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
         claims,

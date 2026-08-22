@@ -19,6 +19,23 @@ fn stream_test_plan() -> GrindingPlan {
     .unwrap()
 }
 
+fn test_fold_response_nonce(site: GrindingSite) -> u32 {
+    site.canonical_bytes()
+        .into_iter()
+        .fold(0u32, |value, byte| value.wrapping_add(u32::from(byte)))
+        % FOLD_RESPONSE_ATTEMPTS
+}
+
+fn test_nonce(site: GrindingSite, width: u8) -> u32 {
+    let mask = (1u32 << width) - 1;
+    site.canonical_bytes()
+        .into_iter()
+        .fold(u32::default(), |value, byte| {
+            value.rotate_left(5) ^ u32::from(byte)
+        })
+        & mask
+}
+
 #[test]
 fn one_proof_of_work_entry_searches_packs_and_replays() {
     let site = GrindingSite::Tau0Point { level: 0 };
@@ -70,47 +87,103 @@ fn one_proof_of_work_entry_searches_packs_and_replays() {
 }
 
 #[test]
+fn verifier_replay_accepts_exactly_the_public_predicate() {
+    let site = GrindingSite::Tau0Point { level: 0 };
+    let run = GrindingRun::proof_of_work(site, 1, 127).unwrap();
+    let plan = GrindingPlan::new(vec![run], 127).unwrap();
+    let transcript =
+        AkitaTranscript::<Prime128Offset275>::prover(b"grinding-predicate-test", b"instance");
+    let grind_bits = NonZeroU8::new(run.grind_bits()).unwrap();
+    let candidate_limit = 1u64 << run.nonce_bits();
+    let mut accepted = None;
+    let mut rejected = None;
+    for candidate in 0..candidate_limit {
+        let candidate = u32::try_from(candidate).unwrap();
+        let predicate =
+            preview_grinding_predicate(&transcript, run.grind_bits(), run.nonce_bits(), candidate)
+                .unwrap();
+        if grinding_predicate_accepts(&predicate, grind_bits) {
+            accepted.get_or_insert(candidate);
+        } else {
+            rejected.get_or_insert(candidate);
+        }
+        if accepted.is_some() && rejected.is_some() {
+            break;
+        }
+    }
+    let accepted = accepted.expect("one-bit predicate must have an accepted nonce");
+    let rejected = rejected.expect("one-bit predicate must have a rejected nonce");
+
+    let stream_for = |nonce| {
+        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+        writer.write(site, nonce).unwrap();
+        writer.finish().unwrap()
+    };
+
+    let accepted_stream = stream_for(accepted);
+    let mut accepted_transcript =
+        AkitaTranscript::<Prime128Offset275>::verifier(b"grinding-predicate-test", b"instance");
+    let mut accepted_replay =
+        VerifierGrindingTranscript::new(&mut accepted_transcript, &accepted_stream, &plan).unwrap();
+    accepted_replay.grind_query(site).unwrap();
+    let _: Prime128Offset275 =
+        accepted_replay.challenge_scalar(site.proof_of_work_label().unwrap());
+    accepted_replay.finish().unwrap();
+
+    let rejected_stream = stream_for(rejected);
+    let mut rejected_transcript =
+        AkitaTranscript::<Prime128Offset275>::verifier(b"grinding-predicate-test", b"instance");
+    let mut rejected_replay =
+        VerifierGrindingTranscript::new(&mut rejected_transcript, &rejected_stream, &plan).unwrap();
+    assert!(rejected_replay.grind_query(site).is_err());
+}
+
+#[test]
 fn nonce_stream_is_little_endian_and_crosses_byte_boundaries() {
     let plan = stream_test_plan();
+    let alpha = test_nonce(GrindingSite::RingSwitchAlpha { level: 0 }, 8);
+    let first_fold = test_fold_response_nonce(GrindingSite::FoldResponse { level: 0 });
+    let tau0 = test_nonce(GrindingSite::Tau0Point { level: 0 }, 9);
+    let second_fold = test_fold_response_nonce(GrindingSite::FoldResponse { level: 1 });
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     writer
-        .write(GrindingSite::RingSwitchAlpha { level: 0 }, 0xa5)
+        .write(GrindingSite::RingSwitchAlpha { level: 0 }, alpha)
         .unwrap();
     writer
-        .write(GrindingSite::FoldResponse { level: 0 }, 0xabc)
+        .write(GrindingSite::FoldResponse { level: 0 }, first_fold)
         .unwrap();
     writer
-        .write(GrindingSite::Tau0Point { level: 0 }, 0x101)
+        .write(GrindingSite::Tau0Point { level: 0 }, tau0)
         .unwrap();
     writer
-        .write(GrindingSite::FoldResponse { level: 1 }, 0x123)
+        .write(GrindingSite::FoldResponse { level: 1 }, second_fold)
         .unwrap();
     let stream = writer.finish().unwrap();
     assert_eq!(stream.bit_len(), 41);
-    assert_eq!(stream.as_bytes(), &[0xa5, 0xbc, 0x1a, 0x70, 0x24, 0x00]);
+    assert_eq!(stream.as_bytes(), &[0x00, 0x04, 0x00, 0xa0, 0x00, 0x00]);
 
     let mut reader = stream.reader(&plan).unwrap();
     assert_eq!(
         reader
             .read(GrindingSite::RingSwitchAlpha { level: 0 })
             .unwrap(),
-        0xa5
+        alpha
     );
     assert_eq!(
         reader
             .read(GrindingSite::FoldResponse { level: 0 })
             .unwrap(),
-        0xabc
+        first_fold
     );
     assert_eq!(
         reader.read(GrindingSite::Tau0Point { level: 0 }).unwrap(),
-        0x101
+        tau0
     );
     assert_eq!(
         reader
             .read(GrindingSite::FoldResponse { level: 1 })
             .unwrap(),
-        0x123
+        second_fold
     );
     reader.finish().unwrap();
 }
@@ -118,20 +191,22 @@ fn nonce_stream_is_little_endian_and_crosses_byte_boundaries() {
 #[test]
 fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
     let plan = stream_test_plan();
+    let first_fold_nonce = test_fold_response_nonce(GrindingSite::FoldResponse { level: 0 });
+    let second_fold_nonce = test_fold_response_nonce(GrindingSite::FoldResponse { level: 1 });
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     assert!(writer
-        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, first_fold_nonce,)
         .is_err());
 
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     writer
-        .write(GrindingSite::RingSwitchAlpha { level: 0 }, 0)
+        .write(GrindingSite::RingSwitchAlpha { level: 0 }, u32::default())
         .unwrap();
     writer
-        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, first_fold_nonce)
         .unwrap();
     writer
-        .write(GrindingSite::Tau0Point { level: 0 }, 0)
+        .write(GrindingSite::Tau0Point { level: 0 }, u32::default())
         .unwrap();
     assert!(writer
         .write_fold_response(
@@ -142,16 +217,16 @@ fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
 
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     writer
-        .write(GrindingSite::RingSwitchAlpha { level: 0 }, 0)
+        .write(GrindingSite::RingSwitchAlpha { level: 0 }, u32::default())
         .unwrap();
     writer
-        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, first_fold_nonce)
         .unwrap();
     writer
-        .write(GrindingSite::Tau0Point { level: 0 }, 0)
+        .write(GrindingSite::Tau0Point { level: 0 }, u32::default())
         .unwrap();
     writer
-        .write_fold_response(GrindingSite::FoldResponse { level: 1 }, 23)
+        .write_fold_response(GrindingSite::FoldResponse { level: 1 }, second_fold_nonce)
         .unwrap();
     let stream = writer.finish().unwrap();
 
@@ -171,7 +246,7 @@ fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
         reader
             .read_fold_response(GrindingSite::FoldResponse { level: 0 })
             .unwrap(),
-        17
+        first_fold_nonce
     );
     assert_eq!(
         reader.read(GrindingSite::Tau0Point { level: 0 }).unwrap(),
@@ -181,7 +256,7 @@ fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
         reader
             .read_fold_response(GrindingSite::FoldResponse { level: 1 })
             .unwrap(),
-        23
+        second_fold_nonce
     );
     reader.finish().unwrap();
 }

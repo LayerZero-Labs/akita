@@ -79,7 +79,7 @@ pub fn search_grinding_nonce(
     nonce_bits: u8,
 ) -> Option<u32> {
     let Some(grind_bits_nonzero) = NonZeroU8::new(grind_bits) else {
-        return (nonce_bits == 0).then_some(0);
+        return (nonce_bits == 0).then_some(u32::default());
     };
     if grind_bits > MAX_GRINDING_BITS
         || nonce_bits != grind_bits.checked_add(GRINDING_NONCE_SLACK_BITS)?
@@ -117,10 +117,15 @@ mod tests {
 
     #[test]
     fn payload_encoding_is_exact() {
-        let payload = grinding_payload(NonZeroU8::new(9).unwrap(), 16, 0x7856_3412);
+        let nonce_bytes = [0x12, 0x34, 0x56, 0x78];
+        let payload = grinding_payload(
+            NonZeroU8::new(9).unwrap(),
+            16,
+            u32::from_le_bytes(nonce_bytes),
+        );
         let mut expected = b"akita/transcript-grinding/v1".to_vec();
         expected.extend_from_slice(&[9, 16]);
-        expected.extend_from_slice(&0x7856_3412u32.to_le_bytes());
+        expected.extend_from_slice(&nonce_bytes);
         assert_eq!(payload.as_slice(), expected);
     }
 

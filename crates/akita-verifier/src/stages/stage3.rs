@@ -87,7 +87,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
-        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         let ring_d = self
             .setup_contribution_plan
@@ -134,7 +134,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
-        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let mut round = 0u32;

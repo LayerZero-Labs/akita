@@ -30,7 +30,7 @@ use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_transcript::labels;
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     append_digit_range_child_claims, AkitaStage1Proof, AkitaStage1StageProof,
     DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, PhysicalResponsePlan,
@@ -65,7 +65,7 @@ fn prove_class_indexed_product_subcheck<F, E, T, const LANES: usize>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
         input.source,
@@ -120,7 +120,7 @@ fn prove_product_prefix<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let leaf_coeffs = plan.leaf_coeffs::<E>();
     let mut stage_proofs = Vec::with_capacity(plan.product_stage_arities().len());
@@ -174,10 +174,8 @@ where
             _ => return Err(AkitaError::InvalidProof),
         };
         append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-        transcript.grind_query(
-            akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
-            labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-        )?;
+        transcript
+            .grind_query(akita_types::GrindingSite::Stage1InterstageBatch { level, stage })?;
         let gamma = sample_ext_challenge::<F, E, T>(
             transcript,
             labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
@@ -321,7 +319,7 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
     where
         F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
         E: ExtField<F>,
-        T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+        T: akita_types::ProverTranscriptGrinding<F>,
     {
         let Self {
             mut digit_source,

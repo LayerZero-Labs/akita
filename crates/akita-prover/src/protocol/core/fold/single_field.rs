@@ -5,10 +5,9 @@ use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::core::RootProverGroupOpening;
-use crate::{ProverOpeningData, ProverTranscriptGrind};
+use crate::ProverOpeningData;
 use akita_error::AkitaError;
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use jolt_field::{Fold, Unreduced};
@@ -44,7 +43,7 @@ where
         + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
     V: FnOnce() -> Result<(), AkitaError>,
     C: ComputeBackendSetup<F>,

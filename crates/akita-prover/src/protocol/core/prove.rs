@@ -54,7 +54,7 @@ where
         + Fold
         + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -163,7 +163,7 @@ where
         + Fold
         + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -238,7 +238,7 @@ where
     );
 
     let mut grinding_transcript =
-        akita_types::ProverGrindingTranscript::<Cfg::Field, T>::new(transcript, grinding_plan)?;
+        akita_types::ProverGrindingTranscript::<T>::new(transcript, grinding_plan)?;
     let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,

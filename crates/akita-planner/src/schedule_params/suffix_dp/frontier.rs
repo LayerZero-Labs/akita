@@ -32,7 +32,7 @@ pub(super) fn consider_child_suffixes<'a>(
     };
     let edge_price = child_edge_price(edge, first.first_fold_params())?;
     let first_edge_nonce_bits = edge_grinding_nonce_bits(edge, first)?;
-    let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params))?;
+    let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
     for suffix in std::iter::once(first).chain(child_candidates) {
         let edge_nonce_bits = if same_grinding_successor(first, suffix) {
             first_edge_nonce_bits
@@ -71,15 +71,23 @@ fn same_grinding_successor(left: &ScheduleCandidate, right: &ScheduleCandidate) 
 fn parent_visible_cost(
     policy: &PlannerPolicy,
     first: Option<&akita_types::CommittedGroupParams>,
+    terminal: Option<&akita_types::TerminalFoldParams>,
 ) -> Result<ParentObservableKey, AkitaError> {
-    ParentObservableKey::new(policy, first)
+    ParentObservableKey::new(policy, first, terminal)
 }
 
 fn first_parent_visible_cost(
     policy: &PlannerPolicy,
     candidate: &ScheduleCandidate,
 ) -> Result<ParentObservableKey, AkitaError> {
-    parent_visible_cost(policy, candidate.first_fold_params())
+    parent_visible_cost(
+        policy,
+        candidate.first_fold_params(),
+        candidate
+            .folds
+            .is_empty()
+            .then_some(&candidate.terminal.params),
+    )
 }
 
 #[derive(Clone, Copy)]

@@ -377,7 +377,7 @@ fn direct_edge_bound_is_strictly_worse(
             frontier,
         )),
         GuideScope::RecursivePrefix => {
-            let parent_cost = ParentObservableKey::new(policy, Some(params))?;
+            let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
             Ok(frontier.recursive_direct_bound_is_strictly_worse(
                 &parent_cost,
                 SetupPrefixCapacity::for_natural_len(natural_setup_field_len),

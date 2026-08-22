@@ -213,7 +213,7 @@ pub use transcript_grinding::{
     MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
-    derive_transcript_grinding_plan_from_public_shape,
+    derive_transcript_grinding_plan_from_public_shape, setup_prefix_sumcheck_rounds,
     transcript_grinding_nonce_bits_for_planner_candidate,
     transcript_grinding_nonce_bits_for_planner_edge,
 };

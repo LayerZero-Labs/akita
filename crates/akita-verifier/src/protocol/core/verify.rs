@@ -142,7 +142,7 @@ pub(crate) fn verify<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let root_step = schedule.root_fold();
     let first_recursive_params = schedule.recursive_folds.first();
@@ -339,7 +339,7 @@ where
             transcript,
         )?
     };
-    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<Cfg::Field, T>::new(
+    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<T>::new(
         transcript,
         &proof.nonce_stream,
         &grinding_plan,

@@ -57,6 +57,9 @@ pub trait FoldDraw {
     fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8])
         -> [u8; FOLD_CHALLENGE_SEED_LEN];
 
+    #[cfg(feature = "logging-transcript")]
+    fn record_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
+
     fn draw_folding_challenges(
         &mut self,
         ring_d: usize,
@@ -148,6 +151,8 @@ pub trait FoldDraw {
         let challenges = crate::sampler::sample_indexed_challenges_from_seed(
             &seed, ring_d, total, cfg, rejection,
         )?;
+        #[cfg(feature = "logging-transcript")]
+        self.record_challenge_range(group_index, total);
         Challenges::from_sparse(challenges, num_live_blocks, num_claims)
     }
 }
@@ -204,6 +209,12 @@ where
     ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         self.transcript.append_bytes(label, payload);
         self.transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE)
+    }
+
+    #[cfg(feature = "logging-transcript")]
+    fn record_challenge_range(&mut self, group_index: usize, coordinate_count: usize) {
+        self.transcript
+            .record_fold_challenge_range(group_index, coordinate_count);
     }
 }
 

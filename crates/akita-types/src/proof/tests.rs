@@ -21,6 +21,13 @@ fn decode_golden_hex(encoded: &str) -> Vec<u8> {
         .collect()
 }
 
+fn test_fold_response_nonce(site: crate::GrindingSite) -> u32 {
+    site.canonical_bytes()
+        .into_iter()
+        .fold(0u32, |value, byte| value.wrapping_add(u32::from(byte)))
+        % crate::FOLD_RESPONSE_ATTEMPTS
+}
+
 fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
@@ -396,15 +403,24 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         128,
     )
     .expect("grinding plan");
+    let first_fold_site = crate::GrindingSite::FoldResponse { level: 0 };
+    let second_fold_site = crate::GrindingSite::FoldResponse { level: 1 };
+    let first_fold_nonce = test_fold_response_nonce(first_fold_site);
+    let second_fold_nonce = test_fold_response_nonce(second_fold_site);
+    let evaluation_batch_nonce = crate::GrindingSite::EvaluationBatch
+        .canonical_bytes()
+        .into_iter()
+        .fold(u32::default(), |value, byte| value ^ u32::from(byte))
+        & ((1 << 9) - 1);
     let mut nonce_writer = crate::TranscriptNonceWriter::new(&grinding_plan).unwrap();
     nonce_writer
-        .write(crate::GrindingSite::EvaluationBatch, 0)
+        .write(crate::GrindingSite::EvaluationBatch, evaluation_batch_nonce)
         .unwrap();
     nonce_writer
-        .write_fold_response(crate::GrindingSite::FoldResponse { level: 0 }, 3)
+        .write_fold_response(first_fold_site, first_fold_nonce)
         .unwrap();
     nonce_writer
-        .write_fold_response(crate::GrindingSite::FoldResponse { level: 1 }, 7)
+        .write_fold_response(second_fold_site, second_fold_nonce)
         .unwrap();
     let batched = AkitaBatchedProof {
         nonce_stream: nonce_writer.finish().unwrap(),

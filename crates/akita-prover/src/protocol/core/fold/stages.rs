@@ -10,7 +10,7 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -104,7 +104,7 @@ pub(super) fn prove_stage2<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -241,7 +241,7 @@ where
         + AkitaSerialize
         + jolt_field::Unreduced
         + jolt_field::MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {

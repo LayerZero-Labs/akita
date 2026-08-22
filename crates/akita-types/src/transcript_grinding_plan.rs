@@ -179,11 +179,13 @@ fn append_nonterminal(
         append_eor(runs, capacity, extension_degree, level, layout)?;
     }
 
-    runs.push(GrindingRun::proof_of_work(
-        GrindingSite::EvaluationBatch,
-        1,
-        capacity,
-    )?);
+    if layout.requires_row_batch_challenge() {
+        runs.push(GrindingRun::proof_of_work(
+            GrindingSite::EvaluationBatch,
+            1,
+            capacity,
+        )?);
+    }
 
     runs.push(GrindingRun::fold_response(level));
     append_fold_queries(runs, level, params, layout)?;
@@ -307,7 +309,7 @@ fn append_nonterminal(
     }
     if let Some(successor) = recursive_successor {
         if let Some(prefix) = successor.setup_prefix() {
-            for round in 0..setup_prefix_rounds(prefix)? {
+            for round in 0..setup_prefix_sumcheck_rounds(prefix)? {
                 append_sumcheck(runs, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
             }
         }
@@ -329,11 +331,6 @@ fn append_terminal(
     if extension_degree > 1 {
         append_eor(runs, capacity, extension_degree, level, &layout)?;
     }
-    runs.push(GrindingRun::proof_of_work(
-        GrindingSite::EvaluationBatch,
-        1,
-        capacity,
-    )?);
     runs.push(GrindingRun::fold_response(level));
     runs.push(GrindingRun::fold_challenge_root(level, 0));
     runs.push(GrindingRun::fold_challenge_coordinates(
@@ -385,11 +382,13 @@ fn append_eor(
         multilinear_point_loss_factor(split_bits)?,
         capacity,
     )?);
-    runs.push(GrindingRun::proof_of_work(
-        GrindingSite::ExtensionOpeningClaimBatch,
-        1,
-        capacity,
-    )?);
+    if layout.requires_row_batch_challenge() {
+        runs.push(GrindingRun::proof_of_work(
+            GrindingSite::ExtensionOpeningClaimBatch,
+            1,
+            capacity,
+        )?);
+    }
     let encoded_level = if level == 0 { u32::MAX } else { level };
     for round in 0..layout.max_num_vars() - split_bits {
         append_sumcheck(
@@ -434,9 +433,9 @@ fn recursive_layout(
 ) -> Result<OpeningClaimsLayout, AkitaError> {
     let mut groups = Vec::with_capacity(2);
     if let Some(prefix) = current.setup_prefix() {
-        groups.push(PolynomialGroupLayout::singleton(setup_prefix_rounds(
-            prefix,
-        )?));
+        groups.push(PolynomialGroupLayout::singleton(
+            setup_prefix_sumcheck_rounds(prefix)?,
+        ));
     }
     groups.push(PolynomialGroupLayout::singleton(crate::sumcheck_rounds(
         predecessor_params.d_a(),
@@ -445,7 +444,10 @@ fn recursive_layout(
     OpeningClaimsLayout::from_groups(groups)
 }
 
-fn setup_prefix_rounds(prefix: &crate::GroupOpenPhaseParams) -> Result<usize, AkitaError> {
+/// Number of Stage 3 sumcheck rounds induced when a successor consumes a setup prefix.
+pub fn setup_prefix_sumcheck_rounds(
+    prefix: &crate::GroupOpenPhaseParams,
+) -> Result<usize, AkitaError> {
     let n_prefix = prefix.n_prefix()?;
     let d_setup = prefix.d_setup();
     if d_setup == 0 || !n_prefix.is_multiple_of(d_setup) {

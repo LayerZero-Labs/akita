@@ -82,7 +82,7 @@ fn verify_eor_sumcheck<F, E, T>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims || group_points.len() != opening_batch.num_groups() {
@@ -135,10 +135,7 @@ where
     if claim_offset != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(
-        akita_types::GrindingSite::ExtensionOpeningPoint,
-        CHALLENGE_SUMCHECK_BATCH,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint)?;
     let eta = (0..shape.split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -146,12 +143,12 @@ where
     if input_claims.len() != num_claims || reduction.final_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(
-        akita_types::GrindingSite::ExtensionOpeningClaimBatch,
+    let claim_coefficients = sample_row_coefficients::<F, E, T>(
+        opening_batch,
         CHALLENGE_EOR_CLAIM_BATCH,
+        transcript,
+        |transcript| transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningClaimBatch),
     )?;
-    let claim_coefficients =
-        sample_row_coefficients::<F, E, T>(opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
     let batched_input_claim = input_claims
         .iter()
         .zip(&claim_coefficients)
@@ -236,7 +233,7 @@ pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_terminal_fold_eor_kernel::<F, E, T, D>(
@@ -272,7 +269,7 @@ fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if challenge_point.len() > opening_batch.max_num_vars() || opening_batch.num_groups() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -331,7 +328,7 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let replay = verify_eor_sumcheck::<F, E, T>(
         extension_opening_reduction,
@@ -404,7 +401,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
     let FoldEorReplay {
@@ -456,7 +453,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let FoldEorReplay {
         groups,
@@ -553,7 +550,7 @@ mod tests {
         let stream = akita_types::TranscriptNonceStream::from_bytes(Vec::new(), 0)
             .map_err(|_| AkitaError::InvalidProof)?;
         let mut transcript =
-            akita_types::VerifierGrindingTranscript::<F, _>::new(transcript, &stream, &plan)?;
+            akita_types::VerifierGrindingTranscript::<_>::new(transcript, &stream, &plan)?;
         verify_eor_sumcheck::<F, E, _>(
             reduction,
             group_points,
