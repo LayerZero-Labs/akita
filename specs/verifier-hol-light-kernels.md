@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-22 |
 | Status | proposed |
-| PR | this PR |
+| PR | [#436](https://github.com/LayerZero-Labs/akita/pull/436) |
 | Supersedes | |
 | Superseded-by | |
 | Book-chapter | |
