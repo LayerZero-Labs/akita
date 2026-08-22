@@ -50,7 +50,7 @@ impl NttExecutionRequirements {
     pub fn from_commit_and_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         let mut requirements = Self::from_prove_schedule(schedule)?;
         let root = &schedule.root.params;
-        requirements.add_group_commit(0, root)?;
+        requirements.add_group_commit(0, root, SignedCommitSource::Dense)?;
         for precommitted in root.precommitted_groups() {
             requirements.add_precommitted_commit(0, precommitted)?;
         }
@@ -103,7 +103,11 @@ impl NttExecutionRequirements {
             let predecessor_level = index;
             let level = index + 1;
             let num_chunks = step.params.witness_chunk.num_chunks;
-            requirements.add_group_commit(predecessor_level, &step.params)?;
+            requirements.add_group_commit(
+                predecessor_level,
+                &step.params,
+                SignedCommitSource::RecursiveWitness,
+            )?;
             requirements.add_group_relation(level, &step.params, num_chunks)?;
             if let Some(prefix) = &step.params.setup_prefix() {
                 requirements.add_setup_prefix_commitment(
@@ -165,6 +169,7 @@ impl NttExecutionRequirements {
                 params.inner.matrix.ring_dimension(),
                 params.inner.matrix.input_width(),
                 params.inner.digits.log_basis,
+                SignedCommitSource::Dense,
             )?,
         )?;
         self.add_matrix(
@@ -229,6 +234,7 @@ impl NttExecutionRequirements {
         &mut self,
         level: usize,
         params: &CommittedGroupParams,
+        source: SignedCommitSource,
     ) -> Result<(), AkitaError> {
         let inner_key = NttCacheKey::from_matrix_shape(
             params.inner().matrix.ring_dimension(),
@@ -239,6 +245,7 @@ impl NttExecutionRequirements {
                 params.inner().matrix.ring_dimension(),
                 params.inner().matrix.input_width(),
                 params.inner().digits.log_basis,
+                source,
             )?,
         )?;
         self.add_matrix(
@@ -328,6 +335,7 @@ impl NttExecutionRequirements {
                 layout.inner.matrix.ring_dimension(),
                 layout.inner.matrix.input_width(),
                 layout.inner.digits.log_basis,
+                SignedCommitSource::Dense,
             )?,
         )?;
         self.add_matrix(
@@ -432,6 +440,7 @@ impl NttExecutionRequirements {
                 params.inner.matrix.ring_dimension(),
                 params.inner.matrix.input_width(),
                 params.inner.digits.log_basis,
+                SignedCommitSource::RecursiveWitness,
             )?,
         )?;
         self.add_matrix(
@@ -453,22 +462,30 @@ fn matrix_extent(num_rows: usize, active_width: usize) -> Result<usize, AkitaErr
 }
 
 /// Transform domain required to commit balanced digits at one basis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SignedCommitSource {
+    Dense,
+    RecursiveWitness,
+}
+
 fn signed_commit_domain(
     modulus_profile: SisModulusProfileId,
     ring_dimension: usize,
     width: usize,
     log_basis: u32,
+    source: SignedCommitSource,
 ) -> Result<NttTransformDomain, AkitaError> {
     let rhs_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     match crate::validation::signed_digit_kernel_for_setup(log_basis, "for NTT cache planning")? {
         akita_types::SignedDigitKernel::I8
-            if !akita_types::dense_i8_commit_prefers_exact_ifma52(
-                modulus_profile.modulus(),
-                ring_dimension,
-                width,
-                rhs_abs_bound,
-            ) =>
+            if source == SignedCommitSource::RecursiveWitness
+                || !akita_types::dense_i8_commit_prefers_exact_ifma52(
+                    modulus_profile.modulus(),
+                    ring_dimension,
+                    width,
+                    rhs_abs_bound,
+                ) =>
         {
             Ok(NttTransformDomain::Negacyclic)
         }
@@ -508,6 +525,35 @@ mod tests {
     use akita_config::CommitmentConfig;
     #[cfg(feature = "schedules-default")]
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+
+    #[test]
+    fn recursive_signed_commit_domains_match_runtime_kernels() {
+        let i8_domain = signed_commit_domain(
+            SisModulusProfileId::Q128OffsetA7F7,
+            512,
+            19_456,
+            7,
+            SignedCommitSource::RecursiveWitness,
+        )
+        .expect("recursive i8 domain");
+        assert_eq!(i8_domain, NttTransformDomain::Negacyclic);
+
+        let i16_domain = signed_commit_domain(
+            SisModulusProfileId::Q128OffsetA7F7,
+            512,
+            19_456,
+            9,
+            SignedCommitSource::RecursiveWitness,
+        )
+        .expect("recursive i16 domain");
+        assert_eq!(
+            i16_domain,
+            NttTransformDomain::ExactNegacyclicI16 {
+                width: 19_456,
+                rhs_abs_bound: 256,
+            }
+        );
+    }
 
     #[test]
     fn equal_routing_coordinates_remain_exact_before_backend_routing() {
@@ -716,7 +762,11 @@ mod tests {
         let mut expected_root_level_commits = NttExecutionRequirements::default();
         if let Some(first_recursive) = schedule.recursive_folds.first() {
             expected_root_level_commits
-                .add_group_commit(0, &first_recursive.params)
+                .add_group_commit(
+                    0,
+                    &first_recursive.params,
+                    SignedCommitSource::RecursiveWitness,
+                )
                 .expect("recursive witness requirements");
         } else {
             expected_root_level_commits
@@ -806,6 +856,7 @@ mod tests {
                 root.inner().matrix.ring_dimension(),
                 width,
                 root.inner().digits.log_basis,
+                SignedCommitSource::Dense,
             )
             .expect("selected root commit domain");
             let expected = NttCacheKey::from_matrix_shape(
@@ -856,6 +907,7 @@ mod tests {
                 root.inner().matrix.ring_dimension(),
                 root.inner().matrix.input_width(),
                 root.inner().digits.log_basis,
+                SignedCommitSource::Dense,
             )
             .expect("selected commit domain");
             let expected_commit_key = NttCacheKey::from_matrix_shape(
