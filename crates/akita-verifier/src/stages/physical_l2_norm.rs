@@ -9,7 +9,7 @@ use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
     CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan, SisModulusProfileId,
@@ -228,7 +228,7 @@ pub(crate) fn verify_physical_l2_norm<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
         return Err(AkitaError::InvalidSetup(
@@ -244,10 +244,7 @@ where
     let norm_input_claim = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => E::from_u128(proof.response_l2_sq),
         PhysicalL2NormProofShape::LimbGram { .. } => {
-            transcript.grind_query(
-                akita_types::GrindingSite::L2SubclaimBatch { level },
-                CHALLENGE_L2_NORM_BATCH,
-            )?;
+            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
             let mut power = E::one();
             for _ in 0..proof.subclaims.len() {
@@ -261,10 +258,7 @@ where
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
         }
     };
-    transcript.grind_query(
-        akita_types::GrindingSite::L2NormMerge { level },
-        CHALLENGE_L2_NORM_MERGE,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let verifier = PhysicalL2NormVerifier {
         plan,

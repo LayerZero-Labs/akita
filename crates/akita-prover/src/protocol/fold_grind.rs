@@ -8,7 +8,6 @@ use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
 use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_transcript::{AkitaTranscript, Transcript, TranscriptChallengePreview, TranscriptSponge};
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::ProverTranscriptGrinding;
 use akita_types::{
@@ -27,37 +26,6 @@ use super::ring_relation::{
 use super::ring_relation_witness::{CenteredFoldChunk, FoldChunkCoefficients};
 use crate::DecomposeFoldWitness;
 use akita_types::dispatch_for_field;
-
-/// Preview-only transcript access for prover-side fold grinding.
-///
-/// Implemented only for production prover transcripts. Mutable live transcript
-/// operations remain on [`Transcript`], while scratch-state access stays on
-/// this prover-only bound.
-pub trait ProverTranscriptGrind<F>: Transcript<F> + TranscriptChallengePreview
-where
-    F: FieldCore + CanonicalField,
-{
-}
-
-impl<F> ProverTranscriptGrind<F> for AkitaTranscript<F, TranscriptSponge> where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge
-{
-}
-
-impl<F, T> ProverTranscriptGrind<F> for akita_types::ProverGrindingTranscript<'_, '_, F, T>
-where
-    F: FieldCore + CanonicalField,
-    T: ProverTranscriptGrind<F>,
-{
-}
-
-#[cfg(feature = "logging-transcript")]
-impl<F, T> ProverTranscriptGrind<F> for akita_transcript::LoggingTranscript<T>
-where
-    F: FieldCore + CanonicalField + akita_field::CanonicalBytes + akita_field::TranscriptChallenge,
-    T: ProverTranscriptGrind<F>,
-{
-}
 
 struct FoldGrindAcceptanceCtx {
     digit_negative_abs_bound: u128,
@@ -181,7 +149,7 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     P: RuntimeOpeningSource<F> + crate::compute::RootPolyMeta<F>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
-    T: Transcript<F> + ProverTranscriptGrind<F> + ProverTranscriptGrinding<F>,
+    T: ProverTranscriptGrinding<F>,
 {
     let expected_group =
         shape.layout.groups.first().ok_or_else(|| {
@@ -422,7 +390,7 @@ where
         + akita_serialization::AkitaSerialize,
     G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F> + ProverTranscriptGrinding<F>,
+    T: ProverTranscriptGrinding<F>,
 {
     if groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -571,7 +539,7 @@ where
         + akita_serialization::AkitaSerialize,
     G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
     B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F> + ProverTranscriptGrinding<F>,
+    T: ProverTranscriptGrinding<F>,
 {
     if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSetup(

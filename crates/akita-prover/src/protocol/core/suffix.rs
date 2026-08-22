@@ -86,9 +86,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
-    T: Transcript<Cfg::Field>
-        + ProverTranscriptGrind<Cfg::Field>
-        + akita_types::ProverTranscriptGrinding<Cfg::Field>,
+    T: akita_types::ProverTranscriptGrinding<Cfg::Field>,
     C: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
@@ -236,7 +234,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     O: SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
@@ -442,7 +440,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
         + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>,
     O: DigitRowsComputeBackend<F>
@@ -602,7 +600,7 @@ mod tests {
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
         let plan = evaluation_batch_plan();
         let mut transcript =
-            akita_types::ProverGrindingTranscript::<TestF, _>::new(&mut transcript, &plan).unwrap();
+            akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
         let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
@@ -640,7 +638,7 @@ mod tests {
             AkitaTranscript::<TestF>::new(b"test/suffix-independent-late-eor-batch");
         let plan = evaluation_batch_plan();
         let mut transcript =
-            akita_types::ProverGrindingTranscript::<TestF, _>::new(&mut transcript, &plan).unwrap();
+            akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
         let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,

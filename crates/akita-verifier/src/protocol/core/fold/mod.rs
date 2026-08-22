@@ -57,7 +57,7 @@ pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, 
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::EXT_DEGREE)?
         .rhs_layout()
@@ -75,14 +75,11 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(
-        akita_types::GrindingSite::EvaluationBatch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-    )?;
     let row_coefficients = sample_row_coefficients::<F, E, T>(
         opening_shape,
         akita_transcript::labels::CHALLENGE_EVAL_BATCH,
         transcript,
+        |transcript| transcript.grind_query(akita_types::GrindingSite::EvaluationBatch),
     )?;
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
@@ -168,7 +165,7 @@ fn verify_stage1<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
     if rs.tau0.len() != num_rounds {
@@ -235,10 +232,7 @@ where
     let (physical_l2_claim, physical_l2_families) =
         match (physical_l2_virtual_evaluations, physical_plan) {
             (Some(evaluations), Some(plan)) => {
-                transcript.grind_query(
-                    akita_types::GrindingSite::L2VirtualBatch { level },
-                    akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
-                )?;
+                transcript.grind_query(akita_types::GrindingSite::L2VirtualBatch { level })?;
                 let eta = sample_ext_challenge::<F, E, T>(
                     transcript,
                     akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
@@ -257,10 +251,7 @@ where
             _ => return Err(AkitaError::InvalidProof),
         };
     let binary_batching = if rs.compression_relation_weights.is_some() {
-        transcript.grind_query(
-            akita_types::GrindingSite::CompressionBinary { level },
-            CHALLENGE_COMPRESSION_BINARY,
-        )?;
+        transcript.grind_query(akita_types::GrindingSite::CompressionBinary { level })?;
         Some(sample_ext_challenge::<F, E, T>(
             transcript,
             CHALLENGE_COMPRESSION_BINARY,
@@ -268,10 +259,7 @@ where
     } else {
         None
     };
-    transcript.grind_query(
-        akita_types::GrindingSite::Stage2Batch { level },
-        CHALLENGE_SUMCHECK_BATCH,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::Stage2Batch { level })?;
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
@@ -298,7 +286,7 @@ fn verify_stage2<F, E, T>(
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let witness_eval = stage2.next_w_eval();
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
@@ -352,7 +340,7 @@ fn verify_stage3<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
         let setup_coefficient_bits = rs
@@ -391,7 +379,7 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
 where
     F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let opening_shape = prepared.opening_shape.clone();
     let num_groups = opening_shape.num_groups();

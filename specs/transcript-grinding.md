@@ -492,16 +492,15 @@ reason to double every current grind target without a theorem.
 contains every conditional challenge site, including zero-bit sites, and a
 compact run for every group-root and fold-coordinate derivation. Only entries
 with a nonce width consume stream bits. Runs avoid allocating one plan object
-per sparse coordinate while still expanding to one deterministic audit event
-per coordinate.
+or logging event per sparse coordinate; one checked range event records the
+group index and exact coordinate count at the live sampler boundary.
 
 The current protocol order for each fold level is:
 
 1. Optional extension-opening reduction point, claim batching, and per-round
    sumcheck challenges. The coefficient-packing root omits this reduction.
 2. Opening claim and evaluation batching after the opening payload is bound.
-   The terminal singleton batch still consumes its zero-bit audit entry and
-   does not draw a coefficient.
+   A singleton batch returns coefficient one and has no plan entry or draw.
 3. One fold-response entry for the fold, then one group-root entry and one
    claim-major coordinate run for each commitment group.
 4. Ring-switch `alpha`, then the `tau0` and `tau1` point sites that
@@ -521,10 +520,10 @@ not the byte label alone, select the rule.
 
 | Current label | Current context | Catalog rule |
 |---|---|---|
-| `CHALLENGE_EVAL_BATCH` | independent opening coefficients | independent coefficient vector, `g = 0` |
+| `CHALLENGE_EVAL_BATCH` | independent opening coefficients when the layout has more than one polynomial | independent coefficient vector, `g = 0`; a singleton returns coefficient one and has no query |
 | `CHALLENGE_SUMCHECK_BATCH` | EOR split point | multilinear point, `g = ceil_log2(max(1, split_bits))` |
 | `CHALLENGE_SUMCHECK_BATCH` | Stage 2 relation merge | one linear merge, `g = 0` |
-| `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients | independent coefficient vector, `g = 0` |
+| `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients when there is more than one claim | independent coefficient vector, `g = 0`; a singleton has no query |
 | `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | full verifier-checked round degree from the canonical shape; Stage 1 uses `q_degree + 1` for the equality-factored product |
 | `CHALLENGE_SPARSE_CHALLENGE` | one sparse group root | zero-bit group-root entry after the fold-response entry |
 | indexed fold-coordinate query | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
@@ -566,12 +565,31 @@ The plan MUST mirror the actual branch structure. In particular:
    MUST price that full degree. Production degrees 2 and 4 therefore use loss
    factors 3 and 5, which require 2 and 3 grind bits at nominal 128-bit
    capacity.
+9. `EvaluationBatch` and `ExtensionOpeningClaimBatch` exist only when the
+   shared row-coefficient sampler draws a challenge. The sampler owns the
+   `m > 1` gate and invokes a fallible pre-draw hook, so the plan and both
+   protocol directions cannot disagree about singleton behavior.
 
 The first implementation MUST include an audit test that records every
 challenge label and indexed fold-coordinate event reached by each production
 schedule and proves that it matches the expanded plan in the same order. A
 challenge draw that bypasses the catalog is a test failure even when its
 assigned grind bits would be zero.
+
+The `logging-transcript` build enforces this audit at the active adapter. A
+proof-of-work plan entry creates one pending typed site. Every consecutive
+base-field draw for that logical scalar, extension element, or tuple must have
+the site's canonical diagnostic label, with extension limbs normalized to
+their base label. Every draw is logged. A non-challenge transcript mutation,
+the next plan action, or final exhaustion seals the site and requires at least
+one matching draw. Production fp32 extension tests additionally compare the
+exact limb counts for extension-opening, `tau0`, `tau1`, and every
+single-extension-element query against the public geometry. Live sparse
+sampling records the root squeeze and indexed coordinate range at the sampler
+boundary, and later compact plan consumption must match that range exactly.
+Final adapter exhaustion rejects an uncataloged challenge, a label mismatch,
+a missing challenge, an omitted boundary between absorbed round messages, or
+an unmatched fold root or coordinate range.
 
 ## Design
 
@@ -987,7 +1005,7 @@ generated output.
       documentation states the separate
       `sum_i q_i 2^-g_i L_i / |E_i|` classical ROM bound and its conditional
       bad-set premise.
-- [ ] Every current challenge label reached by a production proof has exactly
+- [x] Every current challenge label reached by a production proof has exactly
       one matching logical plan entry. Zero-bit entries remain visible to the
       audit but consume no stream bits and make no transcript change.
 - [x] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` in the
@@ -1029,23 +1047,23 @@ generated output.
 - [x] The predicate squeeze is distinct from the following protocol challenge.
       A regression test fails if the predicate bytes are reused as challenge
       bytes.
-- [ ] Every protected sumcheck round grinds after absorbing its round
+- [x] Every protected sumcheck round grinds after absorbing its round
       polynomial and before sampling that round's challenge.
-- [ ] Every protected consecutive challenge vector grinds once before its
+- [x] Every protected consecutive challenge vector grinds once before its
       first coordinate when one conditional bad-set bound covers the complete
       tuple. No extension-field limb receives a separate stream entry.
-- [ ] Independent random coefficient vectors and single linear merges receive
+- [x] Independent random coefficient vectors and single linear merges receive
       zero grind bits. Powers-of-gamma batching receives
       `ceil_log2(m - 1)` bits when `m > 2`.
-- [ ] Ring-switch alpha uses the canonical relation degree helper. Subring
+- [x] Ring-switch alpha uses the canonical relation degree helper. Subring
       coefficient packing uses `L = 2s - 1`. `alpha`, `tau0`, and `tau1` are
       replayed as separate conditional sites in that order.
-- [ ] Sparse fold challenges receive no proof-of-work predicate. Their only
+- [x] Sparse fold challenges receive no proof-of-work predicate. Their only
       stream entry is the existing 12-bit fold-response search value.
-- [ ] Logging tests show identical prover and verifier transcript events and
+- [x] Logging tests show identical prover and verifier transcript events and
       identical ordered plan-consumption events. Zero-bit sites emit no grind
       event.
-- [ ] Verifier acceptance of a proof-of-work nonce equals recomputation of the
+- [x] Verifier acceptance of a proof-of-work nonce equals recomputation of the
       public predicate. Fixed known nonpassing mutations reject. A mutated
       nonce may pass only when its own predicate passes. Fold-response mutations
       still require the checked response to match. Nonzero final padding
@@ -1337,7 +1355,7 @@ decode, and check one proof-of-work entry without protocol integration.
 
 ### Slice 5: Protocol query integration
 
-Status: implemented on PR #417. Final repository validation is in progress.
+Status: complete on PR #417.
 
 The implementation order was:
 
@@ -1355,6 +1373,12 @@ The implementation order was:
    queries, virtual L2 batching, compression, Stage 2, and Stage 3.
 6. Give the root prover and batched verifier top-level cursor ownership and
    require exact exhaustion after the terminal fold.
+7. Derive the diagnostic label from `GrindingSite` inside the adapter. Call
+   sites supply no independent raw label that could disagree with the public
+   plan.
+8. Omit singleton coefficient-batching sites through the shared fallible
+   pre-draw hook, and add the feature-gated actual-challenge audit described
+   above.
 
 Prover and verifier mirrors consume every entry at the same logical boundary.
 Integration exposed and corrected one older plan mismatch: evaluation batching
@@ -1367,11 +1391,18 @@ and stream cursors are exactly exhausted.
 
 ### Slice 6: Planner, generated schedules, and reporting
 
+Status: implemented on PR #417. Generated-table validation remains part of
+the final CI pass.
+
 1. Add exact stream bytes and expected predicate work to candidate pricing.
 2. Add plan revision to schedule and catalog identity.
 3. Emit query counts, target histogram, exhaustion bound, and proof bytes in
    planner and profile reports.
 4. Regenerate schedule tables and update stable snapshots.
+5. Key suffix-frontier candidates by the exact successor data visible to a
+   parent's grinding edge: successor kind, `d_a`, recursive opening variables,
+   and recursive Stage 3 round count. Payload-only keys are unsound because
+   equal-size successors can induce different packed parent nonce costs.
 
 Exit condition: generated catalog drift checks pass and serialized proof sizes
 match planner estimates for every production profile fixture.

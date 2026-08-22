@@ -36,7 +36,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if proof.extension_opening_reduction().is_some()
         || root_lp.source_encoding
@@ -173,7 +173,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
         claims,

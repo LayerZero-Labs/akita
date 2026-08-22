@@ -53,17 +53,14 @@ pub(crate) fn sample_grinded_sumcheck_challenge<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
-    transcript.grind_query(
-        akita_types::GrindingSite::SumcheckRound {
-            protocol,
-            level,
-            stage,
-            round,
-        },
-        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::SumcheckRound {
+        protocol,
+        level,
+        stage,
+        round,
+    })?;
     Ok(sample_ext_challenge::<F, E, T>(
         transcript,
         akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,

@@ -15,7 +15,7 @@ use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
     CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     reconstruct_l2_sq_from_gram, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan,
@@ -336,7 +336,7 @@ pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if EqFactoredSumcheckInstanceProver::num_rounds(&range) != plan.domain().num_vars() {
         return Err(AkitaError::InvalidSetup(
@@ -353,10 +353,7 @@ where
     let (norm_input_claim, subclaim_weights) = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => (E::from_u128(response_l2_sq), Vec::new()),
         PhysicalL2NormProofShape::LimbGram { .. } => {
-            transcript.grind_query(
-                akita_types::GrindingSite::L2SubclaimBatch { level },
-                CHALLENGE_L2_NORM_BATCH,
-            )?;
+            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
             let mut power = E::one();
             let mut weights = Vec::with_capacity(subclaims.len());
@@ -370,10 +367,7 @@ where
         }
     };
     let norm = prepare_norm_term(plan, integers, &subclaim_weights)?;
-    transcript.grind_query(
-        akita_types::GrindingSite::L2NormMerge { level },
-        CHALLENGE_L2_NORM_MERGE,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let range_input_claim = EqFactoredSumcheckInstanceProver::input_claim(&range);
     let mut prover = FusedRangeNormProver {

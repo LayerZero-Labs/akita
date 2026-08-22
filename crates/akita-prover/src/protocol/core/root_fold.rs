@@ -61,7 +61,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
@@ -143,7 +143,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,

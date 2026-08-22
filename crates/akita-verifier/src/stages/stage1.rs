@@ -12,7 +12,7 @@ use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels;
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     append_digit_range_child_claims, draw_group_fold_challenges, AkitaStage1Proof,
     CommittedGroupParams, DigitRangeEqualityPoint, DigitRangePlan, GroupFoldChallenges,
@@ -53,7 +53,7 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
     E: ExtField<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
@@ -192,7 +192,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
-        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         let product_stage_arities = self.plan.product_stage_arities();
         if product_stage_proofs.len() != product_stage_arities.len() {
@@ -254,10 +254,8 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
                 },
             )?;
             append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
-            transcript.grind_query(
-                akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
-                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
-            )?;
+            transcript
+                .grind_query(akita_types::GrindingSite::Stage1InterstageBatch { level, stage })?;
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
@@ -293,7 +291,7 @@ impl<E: FieldCore + FromPrimitiveInt + AkitaSerialize> AkitaStage1Verifier<E> {
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F>,
-        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         self.plan
             .validate_proof_shape(proof, self.equality_point.coordinates().len())?;

@@ -17,7 +17,6 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
-use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingVec};
@@ -33,7 +32,7 @@ use super::coefficient_packing::{
 use super::core::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
 };
-use super::fold_grind::{self, ProverTranscriptGrind};
+use super::fold_grind;
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::backend::RingSwitchRelationView;
 
@@ -464,7 +463,7 @@ impl RingRelationProver {
         F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
-        T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+        T: akita_types::ProverTranscriptGrinding<F>,
         PointF: akita_types::FpExtEncoding<F>
             + akita_field::ExtField<F>
             + akita_serialization::AkitaSerialize,

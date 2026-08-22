@@ -145,6 +145,11 @@ impl OpeningClaimsLayout {
             .sum()
     }
 
+    /// Whether transcript batching needs a sampled row coefficient challenge.
+    pub fn requires_row_batch_challenge(&self) -> bool {
+        self.num_total_polynomials() > 1
+    }
+
     /// Collapse this batch into the single group shape used by extension
     /// opening reduction sizing.
     ///
@@ -613,6 +618,7 @@ pub fn sample_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
     challenge_label: &'static [u8],
     transcript: &mut T,
+    before_challenge: impl FnOnce(&mut T) -> Result<(), AkitaError>,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -620,9 +626,10 @@ where
     T: Transcript<F>,
 {
     layout.check()?;
-    if layout.num_total_polynomials() == 1 {
+    if !layout.requires_row_batch_challenge() {
         return Ok(vec![L::one()]);
     }
+    before_challenge(transcript)?;
     Ok((0..layout.num_total_polynomials())
         .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
         .collect())
@@ -803,6 +810,7 @@ mod tests {
                 &layout,
                 akita_transcript::labels::CHALLENGE_EVAL_BATCH,
                 &mut transcript,
+                |_| Ok(()),
             )
             .expect("derive coefficients");
             layout

@@ -56,7 +56,7 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -166,7 +166,7 @@ where
         + HasOptimizedFold
         + FromPrimitiveInt
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: FromPrimitiveInt + 'static,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -244,7 +244,7 @@ where
     );
 
     let mut grinding_transcript =
-        akita_types::ProverGrindingTranscript::<Cfg::Field, T>::new(transcript, grinding_plan)?;
+        akita_types::ProverGrindingTranscript::<T>::new(transcript, grinding_plan)?;
     let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,

@@ -116,7 +116,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     for (offset, fold) in recursive_folds.iter().enumerate() {
         let level_index = offset + 1;
@@ -257,7 +257,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let params = &scheduled;
     let t_state = match &current_state.witness {
@@ -323,10 +323,6 @@ where
             replay.final_relation,
         )
     };
-    transcript.grind_query(
-        akita_types::GrindingSite::EvaluationBatch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
-    )?;
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
         proof.terminal_response(),
@@ -406,7 +402,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let role_dims = lp.role_dims();
     let commit_d = lp.outer_payload_geometry()?.transcript_ring_dimension();

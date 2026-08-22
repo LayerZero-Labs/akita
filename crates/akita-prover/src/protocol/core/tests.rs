@@ -79,7 +79,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     }];
     let plan = eor_test_plan(point.len() - 1);
     let mut transcript =
-        akita_types::ProverGrindingTranscript::<F, _>::new(&mut transcript, &plan).unwrap();
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
@@ -130,7 +130,7 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
     let plan = eor_test_plan(long_point.len() - 1);
     let mut transcript =
-        akita_types::ProverGrindingTranscript::<F, _>::new(&mut transcript, &plan).unwrap();
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,

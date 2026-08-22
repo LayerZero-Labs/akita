@@ -40,7 +40,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,

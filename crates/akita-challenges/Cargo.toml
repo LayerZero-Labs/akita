@@ -36,6 +36,7 @@ default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["akita-field/parallel"]
+logging-transcript = ["akita-transcript/logging-transcript"]
 
 [lints]
 workspace = true

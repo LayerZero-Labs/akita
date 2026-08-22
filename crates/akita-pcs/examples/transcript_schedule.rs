@@ -5,8 +5,6 @@ use akita_transcript::TranscriptEvent;
 
 #[cfg(feature = "logging-transcript")]
 fn main() {
-    use akita_config::proof_optimized::fp128;
-    use akita_config::CommitmentConfig;
     use akita_field::{CanonicalField, Fp64};
     use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript};
 
@@ -64,6 +62,33 @@ fn format_event(event: &TranscriptEvent) -> String {
             "wire label={} len={bytes_len} digest={}",
             label_text(label),
             hex_digest(bytes_digest)
+        ),
+        TranscriptEvent::Grinding {
+            site_label,
+            grind_bits,
+            nonce_bits,
+            nonce,
+            predicate_len,
+            predicate,
+        } => format!(
+            "grind label={} target={grind_bits} nonce_bits={nonce_bits} nonce={nonce} predicate_len={predicate_len} predicate={}",
+            label_text(site_label),
+            hex_digest(predicate)
+        ),
+        TranscriptEvent::GrindingPlanQuery { site, multiplicity } => format!(
+            "grinding-plan site={} multiplicity={multiplicity}",
+            hex_digest(site)
+        ),
+        TranscriptEvent::GrindingActualQuery { site, label } => format!(
+            "grinding-actual site={} label={}",
+            hex_digest(site),
+            label_text(label)
+        ),
+        TranscriptEvent::FoldChallengeRange {
+            group_index,
+            coordinate_count,
+        } => format!(
+            "fold-challenge-range group={group_index} coordinates={coordinate_count}"
         ),
     }
 }

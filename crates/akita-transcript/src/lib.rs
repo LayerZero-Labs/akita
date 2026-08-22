@@ -55,6 +55,18 @@ where
     /// Record verifier-side canonical bytes for logging checks.
     fn record_wire_bytes(&mut self, _label: &[u8], _bytes: &[u8]) {}
 
+    /// Record one compact public grinding-plan run for feature-gated audits.
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_plan_query(&mut self, _site: &[u8], _multiplicity: u64) {}
+
+    /// Record the protected challenge that discharged one pending PoW site.
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_actual_query(&mut self, _site: &[u8], _label: &[u8]) {}
+
+    /// Record the indexed coordinate range sampled by one live fold draw.
+    #[cfg(feature = "logging-transcript")]
+    fn record_fold_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
+
     /// Record a structured proof field for logging checks *and* absorb it into
     /// the transcript, in one call.
     ///

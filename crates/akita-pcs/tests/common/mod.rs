@@ -80,6 +80,114 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
+/// Require a logging transcript to consume exactly the public grinding plan
+/// and to expose the corresponding live challenge boundaries.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn assert_production_grinding_audit(
+    events: &[TranscriptEvent],
+    plan: &akita_types::GrindingPlan,
+) -> Vec<(akita_types::GrindingSite, usize)> {
+    use akita_types::{GrindingQueryKind, GrindingSite};
+
+    let expected_plan = plan
+        .runs()
+        .iter()
+        .map(|run| (run.site().canonical_bytes(), run.multiplicity()))
+        .collect::<Vec<_>>();
+    let consumed_plan = events
+        .iter()
+        .filter_map(|event| match event {
+            TranscriptEvent::GrindingPlanQuery { site, multiplicity } => {
+                Some((site.clone(), *multiplicity))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        consumed_plan, expected_plan,
+        "adapter consumption must equal the public plan"
+    );
+
+    let mut run_index = 0usize;
+    let mut active_pow = None;
+    let mut actual_draw_counts = Vec::new();
+    for event in events {
+        match event {
+            TranscriptEvent::GrindingPlanQuery { .. } => {
+                let run = plan
+                    .runs()
+                    .get(run_index)
+                    .expect("validated plan event count");
+                run_index += 1;
+                active_pow = (run.kind() == GrindingQueryKind::ProofOfWork).then(|| {
+                    actual_draw_counts.push((run.site(), 0));
+                    actual_draw_counts.len() - 1
+                });
+            }
+            TranscriptEvent::GrindingActualQuery { site, label } => {
+                let index = active_pow.expect("actual challenge must follow a proof-of-work run");
+                let (expected_site, count) = &mut actual_draw_counts[index];
+                assert_eq!(site, &expected_site.canonical_bytes());
+                let normalized_label =
+                    akita_transcript::ext_limb_base_label(label).unwrap_or(label);
+                assert_eq!(
+                    normalized_label,
+                    expected_site.proof_of_work_label().unwrap()
+                );
+                *count += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(run_index, plan.runs().len());
+    assert!(
+        actual_draw_counts.iter().all(|(_, count)| *count > 0),
+        "every proof-of-work run must protect at least one live draw"
+    );
+
+    let expected_ranges = plan
+        .runs()
+        .iter()
+        .filter_map(|run| match run.site() {
+            GrindingSite::FoldChallengeCoordinates { group, .. } => {
+                Some((group as usize, run.multiplicity() as usize))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let actual_ranges = events
+        .iter()
+        .filter_map(|event| match event {
+            TranscriptEvent::FoldChallengeRange {
+                group_index,
+                coordinate_count,
+            } => Some((*group_index, *coordinate_count)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_ranges, expected_ranges,
+        "live indexed draws must equal coordinate runs"
+    );
+
+    let expected_roots = plan
+        .runs()
+        .iter()
+        .filter(|run| run.kind() == GrindingQueryKind::FoldChallengeRoot)
+        .count();
+    let actual_roots = events
+        .iter()
+        .filter(|event| {
+            matches!(event, TranscriptEvent::Squeeze { label, .. } if label == akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE)
+        })
+        .count();
+    assert_eq!(
+        actual_roots, expected_roots,
+        "live fold roots must equal root runs"
+    );
+    actual_draw_counts
+}
+
 /// Canonical byte encoding of an ordered logging-transcript event stream.
 #[cfg(feature = "logging-transcript")]
 pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8> {
@@ -128,6 +236,7 @@ pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8>
                 nonce_bits,
                 nonce,
                 predicate_len,
+                predicate,
             } => {
                 bytes.push(4);
                 bytes.extend_from_slice(&u64::try_from(site_label.len()).unwrap().to_le_bytes());
@@ -136,6 +245,28 @@ pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8>
                 bytes.push(*nonce_bits);
                 bytes.extend_from_slice(&nonce.to_le_bytes());
                 bytes.extend_from_slice(&u64::try_from(*predicate_len).unwrap().to_le_bytes());
+                bytes.extend_from_slice(predicate);
+            }
+            TranscriptEvent::GrindingPlanQuery { site, multiplicity } => {
+                bytes.push(5);
+                bytes.extend_from_slice(&u64::try_from(site.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(site);
+                bytes.extend_from_slice(&multiplicity.to_le_bytes());
+            }
+            TranscriptEvent::GrindingActualQuery { site, label } => {
+                bytes.push(6);
+                bytes.extend_from_slice(&u64::try_from(site.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(site);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+            }
+            TranscriptEvent::FoldChallengeRange {
+                group_index,
+                coordinate_count,
+            } => {
+                bytes.push(7);
+                bytes.extend_from_slice(&u64::try_from(*group_index).unwrap().to_le_bytes());
+                bytes.extend_from_slice(&u64::try_from(*coordinate_count).unwrap().to_le_bytes());
             }
         }
     }
@@ -578,7 +709,10 @@ pub(super) fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&
         | akita_transcript::TranscriptEvent::Squeeze { label, .. }
         | akita_transcript::TranscriptEvent::Wire { label, .. } => Some(label),
         akita_transcript::TranscriptEvent::Grinding { site_label, .. } => Some(site_label),
-        akita_transcript::TranscriptEvent::Preamble { .. } => None,
+        akita_transcript::TranscriptEvent::Preamble { .. }
+        | akita_transcript::TranscriptEvent::GrindingPlanQuery { .. }
+        | akita_transcript::TranscriptEvent::GrindingActualQuery { .. }
+        | akita_transcript::TranscriptEvent::FoldChallengeRange { .. } => None,
     }
 }
 

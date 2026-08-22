@@ -44,6 +44,7 @@ transcript-keccak = [
   "akita-transcript/transcript-keccak",
 ]
 parallel = ["dep:rayon", "akita-algebra/parallel", "akita-field/parallel"]
+logging-transcript = ["akita-transcript/logging-transcript"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

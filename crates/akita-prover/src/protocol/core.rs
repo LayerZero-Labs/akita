@@ -13,8 +13,8 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AdditionalRelationTerms, RelationRangeImageProver};
 use crate::protocol::RingRelationProver;
 use crate::{
-    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, ProverTranscriptGrind,
-    RingRelationInstance, RingRelationWitness,
+    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, RingRelationInstance,
+    RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -32,7 +32,9 @@ use akita_transcript::labels::{
     ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY,
     CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH,
 };
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_transcript::{
+    append_ext_field, sample_ext_challenge, Transcript, TranscriptChallengePreview,
+};
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
@@ -61,17 +63,14 @@ pub(crate) fn sample_grinded_sumcheck_challenge<F, E, T>(
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
-    transcript.grind_query(
-        akita_types::GrindingSite::SumcheckRound {
-            protocol,
-            level,
-            stage,
-            round,
-        },
-        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::SumcheckRound {
+        protocol,
+        level,
+        stage,
+        round,
+    })?;
     Ok(sample_ext_challenge::<F, E, T>(
         transcript,
         akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,

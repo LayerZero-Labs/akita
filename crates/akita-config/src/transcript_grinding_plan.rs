@@ -48,14 +48,15 @@ mod tests {
 
         assert_eq!(
             plan.runs().first().unwrap().site(),
-            GrindingSite::EvaluationBatch
+            GrindingSite::FoldResponse { level: 0 }
         );
         assert_eq!(
             plan.runs()
                 .iter()
                 .filter(|run| run.site() == GrindingSite::EvaluationBatch)
                 .count(),
-            row.schedule().num_fold_levels()
+            0,
+            "singleton row batching draws no challenge and has no plan entry"
         );
         for run in plan.runs() {
             if run.kind() == GrindingQueryKind::ProofOfWork {
@@ -78,12 +79,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                47,
-                52,
+                45,
+                50,
                 383,
                 [
-                    129, 121, 3, 136, 87, 61, 70, 145, 64, 228, 166, 194, 149, 28, 185, 42, 45,
-                    162, 230, 31, 23, 46, 23, 165, 200, 122, 176, 56, 67, 213, 137, 195,
+                    103, 131, 192, 98, 157, 109, 64, 62, 14, 155, 185, 76, 246, 243, 109, 151, 102,
+                    231, 187, 147, 37, 181, 63, 178, 130, 31, 215, 33, 184, 212, 149, 223,
                 ],
             )
         );

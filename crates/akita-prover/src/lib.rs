@@ -43,7 +43,6 @@ pub use compute::{
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
     TieredProveStacks, UniformProverStack,
 };
-pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{
     DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,
 };

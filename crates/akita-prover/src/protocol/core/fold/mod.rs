@@ -120,7 +120,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     Q: RootProverGroupOpening<F, E, O>,
     O: DigitRowsComputeBackend<F>,
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
@@ -380,7 +380,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -500,13 +500,10 @@ where
         &stage1_proof.range_image_evaluation,
     );
     let physical_l2 = if let Some(mut replay) = physical_l2 {
-        transcript.grind_query(
-            akita_types::GrindingSite::L2VirtualBatch {
-                level: u32::try_from(level)
-                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-            },
-            akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
-        )?;
+        transcript.grind_query(akita_types::GrindingSite::L2VirtualBatch {
+            level: u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+        })?;
         let eta = sample_ext_challenge::<F, E, T>(
             transcript,
             akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
@@ -525,13 +522,10 @@ where
     };
     let stage1_proof = Some(stage1_proof);
     let binary_batching = if lp.payload_mode.is_compressed() {
-        transcript.grind_query(
-            akita_types::GrindingSite::CompressionBinary {
-                level: u32::try_from(level)
-                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-            },
-            CHALLENGE_COMPRESSION_BINARY,
-        )?;
+        transcript.grind_query(akita_types::GrindingSite::CompressionBinary {
+            level: u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+        })?;
         Some(sample_ext_challenge::<F, E, T>(
             transcript,
             CHALLENGE_COMPRESSION_BINARY,
@@ -539,13 +533,10 @@ where
     } else {
         None
     };
-    transcript.grind_query(
-        akita_types::GrindingSite::Stage2Batch {
-            level: u32::try_from(level)
-                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-        },
-        CHALLENGE_SUMCHECK_BATCH,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::Stage2Batch {
+        level: u32::try_from(level)
+            .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+    })?;
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     let opening_preparation_span = tracing::info_span!(
         "stage2_opening_preparation",

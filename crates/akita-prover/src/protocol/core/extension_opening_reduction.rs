@@ -92,7 +92,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
-    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     G: RootProverGroupTensor<F, E, B>,
     B: ComputeBackendSetup<F>,
 {
@@ -167,10 +167,7 @@ where
     for partial in &proof_partials {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
     }
-    transcript.grind_query(
-        akita_types::GrindingSite::ExtensionOpeningPoint,
-        CHALLENGE_SUMCHECK_BATCH,
-    )?;
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint)?;
     let eta = (0..split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -179,12 +176,12 @@ where
         .flat_map(|group| group.row_partials_by_claim.iter())
         .map(|row_partials| tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta))
         .collect::<Result<Vec<_>, _>>()?;
-    transcript.grind_query(
-        akita_types::GrindingSite::ExtensionOpeningClaimBatch,
+    let claim_coefficients = sample_row_coefficients::<F, E, T>(
+        &opening_batch,
         CHALLENGE_EOR_CLAIM_BATCH,
+        transcript,
+        |transcript| transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningClaimBatch),
     )?;
-    let claim_coefficients =
-        sample_row_coefficients::<F, E, T>(&opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
     let true_input_claim = true_input_claims
         .iter()
         .zip(&claim_coefficients)

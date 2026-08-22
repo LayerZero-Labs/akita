@@ -790,6 +790,44 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         );
         #[cfg(feature = "logging-transcript")]
         {
+            let opening_layout = akita_types::OpeningClaimsLayout::new(EXT4_NV, EXT4_BATCH)
+                .expect("fp32 extension opening layout");
+            let grinding_plan = akita_config::derive_transcript_grinding_plan::<Cfg>(
+                resolved.schedule(),
+                &opening_layout,
+            )
+            .expect("fp32 extension grinding plan");
+            let prover_draw_counts = common::assert_production_grinding_audit(
+                prover_transcript.events(),
+                &grinding_plan,
+            );
+            common::assert_production_grinding_audit(vt.events(), &grinding_plan);
+            let expected_pow = grinding_plan
+                .runs()
+                .iter()
+                .filter(|run| run.kind() == akita_types::GrindingQueryKind::ProofOfWork);
+            for ((site, actual_draws), run) in prover_draw_counts.iter().zip(expected_pow) {
+                assert_eq!(*site, run.site());
+                match site {
+                    akita_types::GrindingSite::ExtensionOpeningPoint
+                    | akita_types::GrindingSite::Tau0Point { .. }
+                    | akita_types::GrindingSite::Tau1Point { .. } => {
+                        let expected_draws = usize::try_from(run.loss_factor()).unwrap()
+                            * <SE as ExtField<SF>>::EXT_DEGREE;
+                        assert_eq!(
+                            *actual_draws, expected_draws,
+                            "extension point draw count must match the public geometry"
+                        );
+                    }
+                    akita_types::GrindingSite::EvaluationBatch
+                    | akita_types::GrindingSite::ExtensionOpeningClaimBatch => {}
+                    _ => assert_eq!(
+                        *actual_draws,
+                        <SE as ExtField<SF>>::EXT_DEGREE,
+                        "one-element challenge must consume exactly one extension-field draw"
+                    ),
+                }
+            }
             let prover_events = common::public_transcript_events(prover_transcript.events());
             let verifier_events = common::public_transcript_events(vt.events());
             if prover_events != verifier_events {
@@ -808,7 +846,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             }
             assert!(
                 common::assert_claim_batching_follows_opening_payload(&prover_events) > 0,
-                "multi-claim EOR must batch claims after the opening payload"
+                "multi-opening evaluation batching must follow the opening payload"
             );
             let event_index = |label: &[u8]| {
                 prover_events
@@ -820,8 +858,16 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     })
                     .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
             };
-            let beta = event_index(akita_transcript::labels::CHALLENGE_EOR_CLAIM_BATCH);
-            let eta = prover_events[..beta]
+            let terminal_claim = event_index(akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM);
+            let combined_claim = prover_events[..terminal_claim]
+                .iter()
+                .rposition(|event| {
+                    common::event_label(event).is_some_and(|candidate| {
+                        candidate == akita_transcript::labels::ABSORB_SUMCHECK_CLAIM
+                    })
+                })
+                .expect("EOR combined claim must precede its terminal claim");
+            let eta = prover_events[..combined_claim]
                 .iter()
                 .rposition(|event| {
                     common::event_label(event).is_some_and(|candidate| {
@@ -832,36 +878,9 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     })
                 })
                 .expect("EOR eta must precede claim batching");
-            let event_index_after = |start: usize, label: &[u8]| {
-                prover_events[start..]
-                    .iter()
-                    .position(|event| {
-                        common::event_label(event).is_some_and(|candidate| {
-                            common::is_label_or_extension_limb(candidate, label)
-                        })
-                    })
-                    .map(|offset| start + offset)
-                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
-            };
-            let combined_claim =
-                event_index_after(beta + 1, akita_transcript::labels::ABSORB_SUMCHECK_CLAIM);
-            let terminal_claim = event_index_after(
-                combined_claim + 1,
-                akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM,
-            );
-            let payload = event_index_after(
-                terminal_claim + 1,
-                akita_transcript::labels::ABSORB_OPENING_PAYLOAD,
-            );
-            let gamma =
-                event_index_after(payload + 1, akita_transcript::labels::CHALLENGE_EVAL_BATCH);
             assert!(
-                eta < beta
-                    && beta < combined_claim
-                    && combined_claim < terminal_claim
-                    && terminal_claim < payload
-                    && payload < gamma,
-                "EOR transcript must order beta, sumcheck, terminal claims, payload, then gamma"
+                eta < combined_claim && combined_claim < terminal_claim,
+                "singleton EOR transcript must order eta before its sumcheck and terminal claims"
             );
         }
         honest_result.expect("honest fp32 extension proof must verify");
