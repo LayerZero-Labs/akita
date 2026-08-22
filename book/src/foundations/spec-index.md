@@ -12,6 +12,7 @@ policy and the checker use the same live set in
 | Spec | Status | Why it remains live |
 |------|--------|---------------------|
 | [`akita-compute-backend-metal`](../../../specs/akita-compute-backend-metal.md) | active | Metal and hybrid backend work remains open. |
+| [`certified-planner-architecture`](../../../specs/certified-planner-architecture.md) | proposed | Defines the target exact guided search and phased commitment workload architecture. |
 | [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | implemented | Defines the current witness chunk partition contract. |
 | [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |

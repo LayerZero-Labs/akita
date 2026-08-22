@@ -126,6 +126,7 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 # only these live design records unless --all.
 live_specs=(
   specs/akita-compute-backend-metal.md
+  specs/certified-planner-architecture.md
   specs/dyadic-chunk-partition.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
