@@ -39,9 +39,13 @@ $F(\mathbf r) = \mathbf b^\top[\mathbf a^\top\mathbf f_1,\dots,\mathbf f_B]$.
 
 We partition the block index set $[B]$ into contiguous ranges
 $[B] = \mathcal I_0 \sqcup \dots \sqcup \mathcal I_{\mathcal M-1}$, where
-$\mathcal I_j := \{\, i \in [B] : \lfloor i\,\mathcal M / B \rfloor = j \,\}$, and
-assign $\mathcal I_j$ to machine $P_j$. Larger index spaces are always partitioned
-at the block level: for any $k \ge 1$ the block partition induces
+$\mathcal I_j := \{\, i \in [B] : \lfloor jB/\mathcal M\rfloor \le i <
+\lfloor (j+1)B/\mathcal M\rfloor \,\}$, and assign $\mathcal I_j$ to machine
+$P_j$. For $B=10$ and $\mathcal M=4$, these ranges are
+$[0,2),[2,5),[5,7),[7,10)$. This is the
+[canonical proportional partition](./opening-points-layout.md#chunks-and-fold-challenges)
+owned by `WitnessLayout`. Larger index spaces are always partitioned at the block
+level: for any $k \ge 1$ the block partition induces
 $[kB] = \mathcal I_0^{[k]} \sqcup \dots \sqcup \mathcal I_{\mathcal M-1}^{[k]}$.
 
 The public key is still the three uniformly random matrices
