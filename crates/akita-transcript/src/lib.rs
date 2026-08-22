@@ -116,10 +116,10 @@ where
         _site_label: &[u8],
         grind_bits: u8,
         nonce_bits: u8,
-        nonce: u32,
+        counter: u32,
     ) -> Option<[u8; GRINDING_PREDICATE_LEN]> {
         let grind_bits = std::num::NonZeroU8::new(grind_bits)?;
-        let payload = grinding_payload(grind_bits, nonce_bits, nonce);
+        let payload = grinding_payload(grind_bits, nonce_bits, counter);
         self.append_bytes(labels::ABSORB_TRANSCRIPT_GRINDING, &payload);
         Some(self.challenge_block(labels::CHALLENGE_GRINDING_PREDICATE))
     }

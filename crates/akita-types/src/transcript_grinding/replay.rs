@@ -303,12 +303,12 @@ impl<'a> TranscriptNonceWriter<'a> {
     pub fn write_fold_response(
         &mut self,
         site: GrindingSite,
-        nonce: u32,
+        counter: u32,
     ) -> Result<(), AkitaError> {
         let entry = self
             .cursor
             .next_kind(site, GrindingQueryKind::FoldResponse)?;
-        self.write_entry(entry, nonce)
+        self.write_entry(entry, counter)
     }
 
     /// Consume the zero-width root and indexed-coordinate records for one fold group.
@@ -453,7 +453,7 @@ where
     F: FieldCore + CanonicalField,
 {
     /// Commit the accepted fold-response nonce before replaying its indexed challenges.
-    fn commit_fold_response(&mut self, site: GrindingSite, nonce: u32) -> Result<(), AkitaError>;
+    fn commit_fold_response(&mut self, site: GrindingSite, counter: u32) -> Result<(), AkitaError>;
 }
 
 /// Verifier-side transcript operations backed by the canonical nonce reader.
@@ -638,10 +638,10 @@ macro_rules! impl_transcript_forwarding {
                 site_label: &[u8],
                 grind_bits: u8,
                 nonce_bits: u8,
-                nonce: u32,
+                counter: u32,
             ) -> Option<[u8; akita_transcript::GRINDING_PREDICATE_LEN]> {
                 self.transcript
-                    .grinding_predicate(site_label, grind_bits, nonce_bits, nonce)
+                    .grinding_predicate(site_label, grind_bits, nonce_bits, counter)
             }
         }
     };
@@ -717,8 +717,8 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F> + TranscriptChallengePreview,
 {
-    fn commit_fold_response(&mut self, site: GrindingSite, nonce: u32) -> Result<(), AkitaError> {
-        self.writer.write_fold_response(site, nonce)?;
+    fn commit_fold_response(&mut self, site: GrindingSite, counter: u32) -> Result<(), AkitaError> {
+        self.writer.write_fold_response(site, counter)?;
         #[cfg(feature = "logging-transcript")]
         {
             self.audit.seal_query();

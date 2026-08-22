@@ -387,17 +387,17 @@ where
         site_label: &[u8],
         grind_bits: u8,
         nonce_bits: u8,
-        nonce: u32,
+        counter: u32,
     ) -> Option<[u8; crate::GRINDING_PREDICATE_LEN]> {
         let predicate = self
             .inner
-            .grinding_predicate(site_label, grind_bits, nonce_bits, nonce);
+            .grinding_predicate(site_label, grind_bits, nonce_bits, counter);
         if let Some(predicate_bytes) = predicate {
             self.record(TranscriptEvent::Grinding {
                 site_label: site_label.to_vec(),
                 grind_bits,
                 nonce_bits,
-                nonce,
+                nonce: counter,
                 predicate_len: crate::GRINDING_PREDICATE_LEN,
                 predicate: predicate_bytes,
             });

@@ -31,13 +31,13 @@ pub trait TranscriptChallengePreview {
 pub fn grinding_payload(
     grind_bits: NonZeroU8,
     nonce_bits: u8,
-    nonce: u32,
+    counter: u32,
 ) -> [u8; GRINDING_PAYLOAD_BYTES] {
     let mut payload = [0u8; GRINDING_PAYLOAD_BYTES];
     payload[..GRINDING_PAYLOAD_DOMAIN.len()].copy_from_slice(GRINDING_PAYLOAD_DOMAIN);
     payload[GRINDING_PAYLOAD_DOMAIN.len()] = grind_bits.get();
     payload[GRINDING_PAYLOAD_DOMAIN.len() + 1] = nonce_bits;
-    payload[(GRINDING_PAYLOAD_DOMAIN.len() + 2)..].copy_from_slice(&nonce.to_le_bytes());
+    payload[(GRINDING_PAYLOAD_DOMAIN.len() + 2)..].copy_from_slice(&counter.to_le_bytes());
     payload
 }
 
@@ -60,10 +60,10 @@ pub fn preview_grinding_predicate(
     preview: &(impl TranscriptChallengePreview + ?Sized),
     grind_bits: u8,
     nonce_bits: u8,
-    nonce: u32,
+    counter: u32,
 ) -> Option<[u8; GRINDING_PREDICATE_LEN]> {
     let grind_bits = NonZeroU8::new(grind_bits)?;
-    let payload = grinding_payload(grind_bits, nonce_bits, nonce);
+    let payload = grinding_payload(grind_bits, nonce_bits, counter);
     Some(preview.preview_challenge_block(&[payload.as_slice()]))
 }
 
@@ -89,9 +89,9 @@ pub fn search_grinding_nonce(
     }
     let attempts = 1u64.checked_shl(u32::from(nonce_bits))?;
     (0..attempts).find_map(|candidate| {
-        let nonce = u32::try_from(candidate).ok()?;
-        let predicate = preview_grinding_predicate(preview, grind_bits, nonce_bits, nonce)?;
-        grinding_predicate_accepts(&predicate, grind_bits_nonzero).then_some(nonce)
+        let counter = u32::try_from(candidate).ok()?;
+        let predicate = preview_grinding_predicate(preview, grind_bits, nonce_bits, counter)?;
+        grinding_predicate_accepts(&predicate, grind_bits_nonzero).then_some(counter)
     })
 }
 
