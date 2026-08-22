@@ -1,4 +1,5 @@
 use super::exact_i16::{
+    dense_commit_cached_digit_rows as dense_commit_cached_digit_rows_i16,
     dense_commit_rows as dense_commit_rows_i16,
     recursive_witness_commit_rows as recursive_witness_commit_rows_i16,
 };
@@ -13,7 +14,10 @@ use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore};
-use akita_types::{NttCacheKey, NttTransformDomain, SignedDigitKernel};
+use akita_types::{
+    balanced_signed_digit_abs_bound, dense_i8_commit_prefers_exact_ifma52, field_modulus,
+    NttCacheKey, NttTransformDomain, SignedDigitKernel,
+};
 use std::array::from_fn;
 
 impl CpuBackend {
@@ -32,6 +36,15 @@ impl CpuBackend {
                 log_basis_inner,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
+                if dense_i8_exact_ifma52_preferred::<F, D>(row_width, log_basis_inner)? {
+                    return dense_commit_cached_digit_rows_i16(
+                        prepared,
+                        n_a,
+                        row_width,
+                        &digit_block_slices,
+                        log_basis_inner,
+                    );
+                }
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
@@ -60,9 +73,11 @@ impl CpuBackend {
                         AkitaError::InvalidSetup("dense coefficient row width overflow".into())
                     })
                 })?;
-                if signed_digit_kernel_for_setup(log_basis_inner, "for dense commitment")?
-                    == SignedDigitKernel::I16
-                {
+                let signed_digit_kernel =
+                    signed_digit_kernel_for_setup(log_basis_inner, "for dense commitment")?;
+                let use_exact_ifma52 = signed_digit_kernel == SignedDigitKernel::I8
+                    && dense_i8_exact_ifma52_preferred::<F, D>(row_width, log_basis_inner)?;
+                if signed_digit_kernel == SignedDigitKernel::I16 || use_exact_ifma52 {
                     dense_commit_rows_i16(
                         prepared,
                         n_a,
@@ -218,4 +233,18 @@ impl CpuBackend {
             )
         }
     }
+}
+
+fn dense_i8_exact_ifma52_preferred<F: CanonicalField, const D: usize>(
+    row_width: usize,
+    log_basis: u32,
+) -> Result<bool, AkitaError> {
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    Ok(dense_i8_commit_prefers_exact_ifma52(
+        field_modulus::<F>(),
+        D,
+        row_width,
+        rhs_abs_bound,
+    ))
 }

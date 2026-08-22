@@ -7,6 +7,7 @@ use crate::kernels::linear::{
     fused_split_eq_quotients_prover_bounds, mat_vec_mul_ntt_single_i8,
     mat_vec_mul_ntt_single_i8_cyclic,
 };
+use akita_error::AkitaError;
 use akita_types::{NttCacheKey, NttTransformDomain};
 
 #[test]
@@ -15,7 +16,7 @@ fn cpu_digit_rows_match_direct_kernel() {
     let digits = vec![[1i8; D], [-1i8; D], [2i8; D]];
     let log_basis = 3;
     let via_backend = CpuBackend::DEFAULT
-        .digit_rows::<D>(&prepared, 2, &digits, log_basis)
+        .digit_rows::<D>(&prepared, 2, &[digits.as_slice()], log_basis)
         .expect("backend digit rows");
     let direct = prepared
         .with_shared_ntt::<D, _>(
@@ -24,7 +25,7 @@ fn cpu_digit_rows_match_direct_kernel() {
             |ntt| mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis),
         )
         .expect("direct digit rows");
-    assert_eq!(via_backend, direct);
+    assert_eq!(via_backend, vec![direct]);
 }
 
 #[test]
@@ -33,7 +34,7 @@ fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
     let digits = vec![[1i8; D]; 12];
     let log_basis = 3;
     let via_backend = CpuBackend::DEFAULT
-        .digit_rows::<D>(&prepared, 2, &digits, log_basis)
+        .digit_rows::<D>(&prepared, 2, &[digits.as_slice()], log_basis)
         .expect("backend digit rows");
     let direct = prepared
         .with_shared_ntt::<D, _>(
@@ -42,7 +43,56 @@ fn cpu_digit_rows_accept_logical_input_longer_than_stride() {
             |ntt| mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis),
         )
         .expect("direct digit rows");
+    assert_eq!(via_backend, vec![direct]);
+}
+
+#[test]
+fn cpu_digit_row_batch_matches_independent_single_kernels() {
+    let prepared = prepared();
+    let first = vec![[1i8; D], [-1i8; D], [2i8; D]];
+    let second = vec![[-2i8; D], [0i8; D], [3i8; D]];
+    let log_basis = 3;
+    let via_backend = CpuBackend::DEFAULT
+        .digit_rows::<D>(
+            &prepared,
+            2,
+            &[first.as_slice(), second.as_slice()],
+            log_basis,
+        )
+        .expect("backend digit row batch");
+    let direct = prepared
+        .with_shared_ntt::<D, _>(
+            NttCacheKey::from_matrix_shape(D, 2, first.len(), NttTransformDomain::Negacyclic)
+                .unwrap(),
+            |ntt| {
+                [first.as_slice(), second.as_slice()]
+                    .into_iter()
+                    .map(|digits| {
+                        mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), digits, log_basis)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            },
+        )
+        .expect("independent digit rows");
     assert_eq!(via_backend, direct);
+}
+
+#[test]
+fn cpu_digit_row_batch_rejects_empty_or_ragged_inputs() {
+    let prepared = prepared();
+    let empty: [&[[i8; D]]; 0] = [];
+    assert!(matches!(
+        CpuBackend::DEFAULT.digit_rows::<D>(&prepared, 2, &empty, 3),
+        Err(AkitaError::InvalidInput(_))
+    ));
+
+    let wide = vec![[1i8; D]; 3];
+    let narrow = vec![[1i8; D]; 2];
+    assert!(matches!(
+        CpuBackend::DEFAULT
+            .digit_rows::<D>(&prepared, 2, &[wide.as_slice(), narrow.as_slice()], 3,),
+        Err(AkitaError::InvalidInput(_))
+    ));
 }
 
 #[test]

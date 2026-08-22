@@ -377,11 +377,13 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::Dense;
     assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
-    run_dense_mode::<512, Cfg>(
-        "dense_fp128",
-        &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
-        nv,
-    );
+    let title = format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ===");
+    let root_dimension = resolve_layout::<F, Cfg>(PolynomialGroupLayout::singleton(nv)).d_a();
+    match root_dimension {
+        256 => run_dense_mode::<256, Cfg>("dense_fp128", &title, nv),
+        512 => run_dense_mode::<512, Cfg>("dense_fp128", &title, nv),
+        dimension => panic!("dense_fp128 profile does not compile ring dimension D={dimension}"),
+    }
 }
 
 fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {

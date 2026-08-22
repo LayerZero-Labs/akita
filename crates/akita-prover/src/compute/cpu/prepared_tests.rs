@@ -57,7 +57,7 @@ fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
 fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
     let prepared = prepared();
     CpuBackend::DEFAULT
-        .digit_rows::<D>(&prepared, 1, &[[1i8; D]], 2)
+        .digit_rows::<D>(&prepared, 1, &[&[[1i8; D]]], 2)
         .expect("build exact NTT prefix");
     let profile = prepared.shared_ntt_profile(D).expect("profile");
 

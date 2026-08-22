@@ -18,4 +18,4 @@ pub use butterfly::NttTwiddles;
 pub use crt::{CrtCapacity, GarnerData, LimbQ, RADIX_BITS};
 pub use digit_validation::i16_values_in_balanced_range;
 pub use plan::NttKernelPlan;
-pub use prime::{MontCoeff, NttPrime, PrimeWidth};
+pub use prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
