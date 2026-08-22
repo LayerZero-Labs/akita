@@ -422,9 +422,10 @@ The prover MUST NOT apply a second check against an analytic
 The verifier MUST continue to enforce the balanced digit decomposition and
 range relations. It MUST NOT evaluate the honest fold policy.
 
-The shared fold nonce remains a fixed `u32`. The prover MUST probe nonces in
-ascending order starting at zero and MUST publish the first accepting nonce.
-The verifier MUST reject a nonce outside the fixed global attempt range.
+The shared fold-response nonce remains a 12-bit value. The prover MUST probe
+nonces in ascending order starting at zero and MUST publish the first
+accepting nonce in the proof-level packed stream. The verifier MUST reject a
+decoded value outside the fixed global attempt range.
 
 Akita MUST remove transcript-seeded shuffle constants, descriptor fields,
 preview labels, permutation helpers, branches, and tests that exist only for ZK

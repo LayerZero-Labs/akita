@@ -41,17 +41,44 @@ impl SuffixResult {
 pub(crate) struct ParentObservableKey {
     outer_payload_bytes: usize,
     setup_prefix_payload_bytes: usize,
+    grinding_successor: GrindingSuccessorKey,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum GrindingSuccessorKey {
+    Recursive {
+        d_a: usize,
+        opening_vars: usize,
+        stage3_rounds: usize,
+    },
+    Terminal {
+        d_a: usize,
+        opening_vars: usize,
+    },
 }
 
 impl ParentObservableKey {
     pub(super) fn new(
         policy: &PlannerPolicy,
-        first: Option<&akita_types::CommittedGroupParams>,
+        recursive: Option<&akita_types::CommittedGroupParams>,
+        terminal: Option<&akita_types::TerminalFoldParams>,
     ) -> Result<Self, AkitaError> {
-        let Some(first) = first else {
+        if recursive.is_some() == terminal.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "parent key requires exactly one successor".into(),
+            ));
+        }
+        let Some(first) = recursive else {
+            let terminal = terminal.ok_or_else(|| {
+                AkitaError::InvalidSetup("parent key is missing its terminal successor".into())
+            })?;
             return Ok(Self {
                 outer_payload_bytes: 0,
                 setup_prefix_payload_bytes: 0,
+                grinding_successor: GrindingSuccessorKey::Terminal {
+                    d_a: terminal.d_a(),
+                    opening_vars: terminal.recursive_opening_num_vars()?,
+                },
             });
         };
         let payload = first.outer_payload_geometry()?;
@@ -68,6 +95,15 @@ impl ParentObservableKey {
                     policy,
                     Some(first),
                 )?,
+            grinding_successor: GrindingSuccessorKey::Recursive {
+                d_a: first.d_a(),
+                opening_vars: first.recursive_opening_num_vars()?,
+                stage3_rounds: first
+                    .setup_prefix()
+                    .map(akita_types::setup_prefix_sumcheck_rounds)
+                    .transpose()?
+                    .unwrap_or(0),
+            },
         })
     }
 }

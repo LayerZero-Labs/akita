@@ -32,7 +32,7 @@ where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         let mut claim = self.input_claim();
@@ -74,7 +74,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &compressed);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             r.push(r_i);
 
             claim = compressed.eval_from_hint(&claim, &r_i);
@@ -123,7 +123,7 @@ where
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         if proof.round_polys.len() != num_rounds {
@@ -154,7 +154,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             challenges.push(r_i);
             claim = poly.eval_from_hint(&claim, &r_i);
         }

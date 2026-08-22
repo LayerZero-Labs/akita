@@ -7,7 +7,7 @@ use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
 use akita_sumcheck::SumcheckInstanceProverExt;
-use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript};
+use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript};
 use akita_types::tensor_opening_split;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
@@ -157,14 +157,16 @@ where
             for _ in 0..iters {
                 let mut prover =
                     ExtensionOpeningReductionProver::new(terms.clone(), input_claim).unwrap();
-                let mut transcript = <AkitaTranscript<F> as Transcript<F>>::new(b"bench/eor");
+                let mut transcript = <AkitaTranscript<F> as akita_transcript::TranscriptFactory<
+                    F,
+                >>::new(b"bench/eor");
                 let start = Instant::now();
                 let proof = prover
                     .prove::<F, _, _>(&mut transcript, |transcript| {
-                        sample_ext_challenge::<F, E, _>(
+                        Ok(sample_ext_challenge::<F, E, _>(
                             transcript,
                             labels::CHALLENGE_SUMCHECK_ROUND,
-                        )
+                        ))
                     })
                     .unwrap();
                 total += start.elapsed();

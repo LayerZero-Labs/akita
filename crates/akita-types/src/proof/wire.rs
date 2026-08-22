@@ -196,18 +196,6 @@ where
     Ok(())
 }
 
-fn deserialize_fold_grind_nonce<R: Read>(
-    reader: R,
-    compress: Compress,
-    validate: Validate,
-) -> Result<u32, SerializationError> {
-    u32::deserialize_with_mode(reader, compress, validate, &())
-}
-
-fn fold_grind_nonce_serialized_size(compress: Compress) -> usize {
-    0u32.serialized_size(compress)
-}
-
 fn serialize_next_witness_binding<F, W>(
     binding: &NextWitnessBinding<F>,
     writer: W,
@@ -269,7 +257,6 @@ fn serialize_intermediate_fold_wire_prefix<F, E, W>(
     mut writer: W,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     opening_payload: &RingVec<F>,
-    fold_grind_nonce: u32,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
@@ -278,8 +265,7 @@ where
     W: Write,
 {
     serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
-    opening_payload.serialize_with_mode(&mut writer, compress)?;
-    fold_grind_nonce.serialize_with_mode(writer, compress)
+    opening_payload.serialize_with_mode(writer, compress)
 }
 
 fn intermediate_fold_wire_prefix_serialized_size<F, E>(
@@ -293,11 +279,9 @@ where
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
         + opening_payload.serialized_size(compress)
-        + fold_grind_nonce_serialized_size(compress)
 }
 
-type IntermediateFoldWirePrefix<F, E> =
-    (Option<ExtensionOpeningReductionProof<E>>, RingVec<F>, u32);
+type IntermediateFoldWirePrefix<F, E> = (Option<ExtensionOpeningReductionProof<E>>, RingVec<F>);
 
 fn deserialize_intermediate_fold_wire_prefix<F, E, R>(
     mut reader: R,
@@ -315,26 +299,19 @@ where
         deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
     let opening_payload =
         RingVec::deserialize_with_mode(&mut reader, compress, validate, opening_payload_shape)?;
-    let fold_grind_nonce = deserialize_fold_grind_nonce(&mut reader, compress, validate)?;
-    Ok((
-        extension_opening_reduction,
-        opening_payload,
-        fold_grind_nonce,
-    ))
+    Ok((extension_opening_reduction, opening_payload))
 }
 
 fn serialize_terminal_fold_wire_prefix<E, W>(
-    mut writer: W,
+    writer: W,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    fold_grind_nonce: u32,
     compress: Compress,
 ) -> Result<(), SerializationError>
 where
     E: FieldCore + AkitaSerialize,
     W: Write,
 {
-    serialize_extension_opening_reduction(extension_opening_reduction, &mut writer, compress)?;
-    fold_grind_nonce.serialize_with_mode(writer, compress)
+    serialize_extension_opening_reduction(extension_opening_reduction, writer, compress)
 }
 
 fn terminal_fold_wire_prefix_serialized_size<E>(
@@ -345,7 +322,6 @@ where
     E: FieldCore + AkitaSerialize,
 {
     extension_opening_reduction_serialized_size(extension_opening_reduction, compress)
-        + fold_grind_nonce_serialized_size(compress)
 }
 
 fn deserialize_terminal_fold_wire_prefix<E, R>(
@@ -353,15 +329,12 @@ fn deserialize_terminal_fold_wire_prefix<E, R>(
     compress: Compress,
     validate: Validate,
     extension_shape: Option<&ExtensionOpeningReductionShape>,
-) -> Result<(Option<ExtensionOpeningReductionProof<E>>, u32), SerializationError>
+) -> Result<Option<ExtensionOpeningReductionProof<E>>, SerializationError>
 where
     E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
     R: Read,
 {
-    let extension_opening_reduction =
-        deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)?;
-    let fold_grind_nonce = deserialize_fold_grind_nonce(&mut reader, compress, validate)?;
-    Ok((extension_opening_reduction, fold_grind_nonce))
+    deserialize_extension_opening_reduction(&mut reader, compress, validate, extension_shape)
 }
 
 fn serialize_stage3_sumcheck<E, W>(
@@ -437,7 +410,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         serialize_terminal_fold_wire_prefix(
             &mut writer,
             self.extension_opening_reduction.as_ref(),
-            self.fold_grind_nonce,
             compress,
         )?;
         self.terminal_response
@@ -475,13 +447,12 @@ impl<
         ctx: &TerminalLevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let (extension_opening_reduction, fold_grind_nonce) =
-            deserialize_terminal_fold_wire_prefix(
-                &mut reader,
-                compress,
-                validate,
-                ctx.extension_opening_reduction.as_ref(),
-            )?;
+        let extension_opening_reduction = deserialize_terminal_fold_wire_prefix(
+            &mut reader,
+            compress,
+            validate,
+            ctx.extension_opening_reduction.as_ref(),
+        )?;
         reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
         let terminal_response = TerminalResponse::deserialize_with_mode(
             &mut reader,
@@ -491,7 +462,6 @@ impl<
         )?;
         let out = Self {
             extension_opening_reduction,
-            fold_grind_nonce,
             terminal_response,
         };
         if matches!(validate, Validate::Yes) {
@@ -514,7 +484,6 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             &mut writer,
             self.extension_opening_reduction.as_ref(),
             &self.opening_payload,
-            self.fold_grind_nonce,
             compress,
         )?;
         for stage in &self.stage1.stages {
@@ -613,7 +582,7 @@ impl<
         ctx: &LevelProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
-        let (extension_opening_reduction, opening_payload, fold_grind_nonce) =
+        let (extension_opening_reduction, opening_payload) =
             deserialize_intermediate_fold_wire_prefix(
                 &mut reader,
                 compress,
@@ -688,7 +657,6 @@ impl<
         let out = Self {
             extension_opening_reduction,
             opening_payload,
-            fold_grind_nonce,
             stage1,
             stage2,
             stage3_sumcheck_proof,
@@ -708,6 +676,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        writer.write_all(self.nonce_stream.as_bytes())?;
         self.root.serialize_with_mode(&mut writer, compress)?;
         for fold in &self.recursive_folds {
             fold.serialize_with_mode(&mut writer, compress)?;
@@ -716,7 +685,8 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.root.serialized_size(compress)
+        self.nonce_stream.as_bytes().len()
+            + self.root.serialized_size(compress)
             + self
                 .recursive_folds
                 .iter()
@@ -749,6 +719,13 @@ impl<
         ctx: &AkitaBatchedProofShape,
     ) -> Result<Self, SerializationError> {
         ctx.check()?;
+        let nonce_stream_bytes = ctx.nonce_stream_bytes()?;
+        let mut packed_nonces = Vec::new();
+        reserve_shape_len(&mut packed_nonces, nonce_stream_bytes)?;
+        packed_nonces.resize(nonce_stream_bytes, 0);
+        reader.read_exact(&mut packed_nonces)?;
+        let nonce_stream =
+            crate::TranscriptNonceStream::from_bytes(packed_nonces, ctx.nonce_stream_bits)?;
         let root =
             FoldLevelProof::deserialize_with_mode(&mut reader, compress, validate, &ctx.root)?;
         let mut recursive_folds = Vec::new();
@@ -768,6 +745,7 @@ impl<
             &ctx.terminal,
         )?;
         let out = Self {
+            nonce_stream,
             root,
             recursive_folds,
             terminal,

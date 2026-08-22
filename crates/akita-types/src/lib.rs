@@ -35,6 +35,8 @@ pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
+mod transcript_grinding;
+mod transcript_grinding_plan;
 pub mod witness;
 
 pub use commitment_slicing::{
@@ -72,9 +74,9 @@ pub use golomb_rice::{
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_level_params, digest_serializable, setup_seed_digest,
-    AkitaInstanceDescriptor, AlgebraSection, CallSection, FoldLinfProtocolBinding, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    digest_descriptor_bytes, digest_effective_schedule, digest_level_params, digest_serializable,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
+    ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
@@ -154,7 +156,7 @@ pub use proof::{
     append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
     DigitRangePlan, FlatBooleanDomain,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::level_proof_bytes;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
@@ -197,6 +199,22 @@ pub use trace_weight::{
     TraceTermBatch, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
+pub use transcript_grinding::{
+    grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
+    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
+    sample_grinded_sumcheck_challenge, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    ProverGrindingTranscript, ProverTranscriptGrinding, SumcheckProtocol, TranscriptGrinding,
+    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
+    VerifierGrindingTranscript, VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
+};
+pub use transcript_grinding_plan::{
+    derive_transcript_grinding_plan_from_public_shape, setup_prefix_sumcheck_rounds,
+    transcript_grinding_nonce_bits_for_planner_candidate,
+    transcript_grinding_nonce_bits_for_planner_edge, GrindingPlanSuccessor,
+};
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,

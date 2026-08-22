@@ -13,11 +13,10 @@ use akita_prover::compute::{
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, UniformProverStack,
 };
-use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
 use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::Transcript;
+use akita_transcript::{Transcript, TranscriptChallengePreview};
 use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
@@ -151,7 +150,7 @@ where
         basis: BasisMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
     where
-        T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+        T: Transcript<Cfg::Field> + TranscriptChallengePreview,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
         P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,

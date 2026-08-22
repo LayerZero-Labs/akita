@@ -8,22 +8,50 @@ use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLa
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
 
+fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
+    let mut runs = vec![akita_types::GrindingRun::proof_of_work(
+        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+        1,
+        128,
+    )
+    .unwrap()];
+    if batches_claims {
+        runs.push(
+            akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
+                1,
+                128,
+            )
+            .unwrap(),
+        );
+    }
+    for round in 0..rounds {
+        runs.push(
+            akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::SumcheckRound {
+                    protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    level: 1,
+                    stage: 0,
+                    round: u32::try_from(round).unwrap(),
+                },
+                1,
+                128,
+            )
+            .unwrap(),
+        );
+    }
+    akita_types::GrindingPlan::new(runs, 128).unwrap()
+}
+
 #[test]
 fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing, true
-    ));
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing,
-        <E as ExtField<F>>::EXT_DEGREE > 1,
-    ));
-    assert!(super::fold::extension_opening_reduction_enabled(
-        akita_types::OpeningMethod::EvaluationTrace,
-        true,
-    ));
+    assert!(!packing.requires_extension_opening_reduction(2));
+    assert!(!packing.requires_extension_opening_reduction(<E as ExtField<F>>::EXT_DEGREE));
+    assert!(akita_types::OpeningMethod::EvaluationTrace
+        .requires_extension_opening_reduction(<E as ExtField<F>>::EXT_DEGREE));
 }
 
 #[test]
@@ -51,14 +79,19 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         point: &point,
         ring_dimension: 64,
     }];
+    let plan = eor_test_plan(point.len() - 1, false);
+    let mut transcript =
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
+        1,
         "recursive",
     )
     .expect("padded logical witnesses should reduce over the opening cube");
+    transcript.finish().unwrap();
 
     assert_eq!(
         proved.reduction.proof.partials.len(),
@@ -97,15 +130,20 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
         },
     ];
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
+    let plan = eor_test_plan(long_point.len() - 1, true);
+    let mut transcript =
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
+        1,
         "recursive",
     )
     .expect("all groups should reduce through one shared challenge sequence");
+    transcript.finish().unwrap();
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);

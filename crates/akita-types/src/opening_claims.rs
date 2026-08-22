@@ -6,7 +6,7 @@ use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::batch::append_claim_values_to_transcript;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupDescriptor;
-use crate::{CommittedGroup, OpeningScheduleSelection};
+use crate::{CommittedGroup, GrindingSite, OpeningScheduleSelection, TranscriptGrinding};
 use akita_error::{checked, AkitaError};
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::ABSORB_BATCH_SHAPE;
@@ -143,6 +143,11 @@ impl OpeningClaimsLayout {
             .iter()
             .map(|group| group.num_polynomials())
             .sum()
+    }
+
+    /// Whether transcript batching needs a sampled row coefficient challenge.
+    pub fn requires_row_batch_challenge(&self) -> bool {
+        self.num_total_polynomials() > 1
     }
 
     /// Collapse this batch into the single group shape used by extension
@@ -603,7 +608,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     }
 }
 
-/// Sample row-batching coefficients in the caller-selected transcript domain.
+/// Apply the scheduled work and sample row-batching coefficients for a protocol site.
 ///
 /// Claimed values must already have been absorbed. Keeping message binding
 /// separate makes the phase boundary explicit. The caller chooses whether this
@@ -611,18 +616,22 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 /// must use the corresponding transcript phase.
 pub fn sample_row_coefficients<F, L, T>(
     layout: &OpeningClaimsLayout,
-    challenge_label: &'static [u8],
+    site: GrindingSite,
     transcript: &mut T,
 ) -> Result<Vec<L>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     L: ExtField<F>,
-    T: Transcript<F>,
+    T: TranscriptGrinding<F>,
 {
     layout.check()?;
-    if layout.num_total_polynomials() == 1 {
+    if !layout.requires_row_batch_challenge() {
         return Ok(vec![L::one()]);
     }
+    transcript.grind_query(site)?;
+    let challenge_label = site.proof_of_work_label().ok_or_else(|| {
+        AkitaError::InvalidInput("row batching requires a proof-of-work grinding site".into())
+    })?;
     Ok((0..layout.num_total_polynomials())
         .map(|_| sample_ext_challenge::<F, L, T>(transcript, challenge_label))
         .collect())
@@ -797,14 +806,27 @@ mod tests {
         let tampered = [openings[0] + delta, openings[1] - delta];
 
         let target = |values: &[F]| {
-            let mut transcript = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
-            append_claim_values_to_transcript::<F, F, _>(values, &mut transcript);
+            let mut inner = AkitaTranscript::<F>::new(b"test/public-row-claim-binding");
+            append_claim_values_to_transcript::<F, F, _>(values, &mut inner);
+            let plan = crate::GrindingPlan::new(
+                vec![crate::GrindingRun::proof_of_work(
+                    GrindingSite::EvaluationBatch { level: 0 },
+                    1,
+                    128,
+                )
+                .expect("grinding run")],
+                128,
+            )
+            .expect("grinding plan");
+            let mut transcript = crate::ProverGrindingTranscript::new(&mut inner, &plan)
+                .expect("grinding transcript");
             let coefficients = sample_row_coefficients::<F, F, _>(
                 &layout,
-                akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+                GrindingSite::EvaluationBatch { level: 0 },
                 &mut transcript,
             )
             .expect("derive coefficients");
+            transcript.finish().expect("finish grinding");
             layout
                 .batched_eval_target(&coefficients, values)
                 .expect("batched target")

@@ -70,7 +70,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     let mut t1 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (final_claim_1, r_1) = proof
         .verify::<F, _, _>(claim0, num_rounds, degree_bound, &mut t1, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -169,7 +169,7 @@ fn prove_and_verify_single_sumcheck() {
 
     let (proof, prover_challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -183,7 +183,7 @@ fn prove_and_verify_single_sumcheck() {
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -208,7 +208,7 @@ fn verify_rejects_wrong_claim() {
 
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut pt, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -221,7 +221,7 @@ fn verify_rejects_wrong_claim() {
     let mut vt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let result = verifier.verify::<F, _, _>(&proof, &mut vt, |tr| {
-        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
     });
 
     assert!(result.is_err());
@@ -251,7 +251,7 @@ fn e2e_sumcheck_2_pow_20() {
 
     let (proof, prover_challenges, final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -275,7 +275,7 @@ fn e2e_sumcheck_2_pow_20() {
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 

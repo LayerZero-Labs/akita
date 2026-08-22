@@ -12,10 +12,8 @@ use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{
-    ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
-};
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::labels::{ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM};
+use akita_transcript::Transcript;
 #[cfg(test)]
 use akita_types::AkitaExpandedSetup;
 use akita_types::{
@@ -84,11 +82,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         next_fold_level_params: &CommittedGroupParams,
         proof: &SetupSumcheckProof<E>,
         transcript: &mut T,
+        level: u32,
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
-        T: Transcript<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         let ring_d = self
             .setup_contribution_plan
@@ -121,7 +120,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             ring_d,
-            |D| self.verify_stage3_kernel::<F, T, D>(proof, setup_prefix_eval, transcript)
+            |D| self.verify_stage3_kernel::<F, T, D>(proof, setup_prefix_eval, transcript, level,)
         )
     }
 
@@ -130,19 +129,31 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         proof: &SetupSumcheckProof<E>,
         setup_prefix_eval: E,
         transcript: &mut T,
+        level: u32,
     ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
-        T: Transcript<F>,
+        T: akita_types::VerifierTranscriptGrinding<F>,
     {
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
+        let mut round = 0u32;
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
             self.rounds,
             SETUP_SUMCHECK_DEGREE,
             transcript,
-            |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+            |tr| {
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage3,
+                    level,
+                    0,
+                    round,
+                )?;
+                round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                Ok(challenge)
+            },
         )?;
         let (rho_y, rho_setup_idx) = challenges.split_at(self.ring_bits);
 

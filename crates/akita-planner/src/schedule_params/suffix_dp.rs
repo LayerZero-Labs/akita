@@ -17,8 +17,9 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
-    CompleteObjectiveBound, FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveSetupPrefix,
-    ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
+    CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
+    RecursiveSetupPrefix, ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache,
+    SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -69,6 +70,8 @@ fn offloaded_witness_contracts(
 struct ChildEdge<'a> {
     policy: &'a PlannerPolicy,
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
+    opening_layout: &'a OpeningClaimsLayout,
+    level: u32,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
@@ -79,6 +82,24 @@ struct ChildEdge<'a> {
     setup_field_budget: Option<usize>,
 }
 
+impl ChildEdge<'_> {
+    fn grinding_nonce_bits(&self, suffix: &ScheduleCandidate) -> Result<usize, AkitaError> {
+        let successor = suffix.folds.first().map_or_else(
+            || akita_types::GrindingPlanSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_types::GrindingPlanSuccessor::Recursive(fold.params.as_ref()),
+        );
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            self.candidate_params.as_ref(),
+            self.next_witness_len,
+            self.opening_layout,
+            successor,
+            self.policy.decomposition.field_bits(),
+            self.policy.claim_ext_degree,
+            self.level,
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ChildEdgePrice {
     direct_payload_bytes: usize,
@@ -87,7 +108,7 @@ struct ChildEdgePrice {
 
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
-    total_bytes: usize,
+    cost: PackedProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -193,7 +214,7 @@ impl PendingScheduleCandidate {
                 .map_or(super::SetupPrefixCapacity::MAX, |natural_len| {
                     super::SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            proof_bytes: self.total_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
     }
@@ -201,7 +222,7 @@ impl PendingScheduleCandidate {
     fn into_candidate(self) -> ScheduleCandidate {
         ScheduleCandidate {
             first_direct_setup_field_len: self.first_direct_setup_field_len,
-            total_bytes: self.total_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
             folds: self.suffix_folds.prepend(self.first_fold),
             terminal: self.terminal,
@@ -235,6 +256,7 @@ fn child_edge_price(
 fn child_choice(
     edge: &ChildEdge<'_>,
     edge_price: ChildEdgePrice,
+    edge_nonce_bits: usize,
     suffix: &ScheduleCandidate,
 ) -> Result<Option<PendingScheduleCandidate>, AkitaError> {
     if !frontier::ParentAdmissionClass::for_candidate(suffix).is_admitted_by(
@@ -245,11 +267,10 @@ fn child_choice(
         return Ok(None);
     }
 
-    let total_bytes = edge_price
+    let edge_payload_bytes = edge_price
         .direct_payload_bytes
         .checked_add(edge_price.stage3_payload_bytes)
-        .and_then(|value| value.checked_add(suffix.total_bytes))
-        .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("edge proof payload overflow".to_string()))?;
     let setup_field_elements = edge
         .level_setup_field_elements
         .max(suffix.setup_field_elements);
@@ -275,9 +296,12 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
+    let cost = suffix
+        .cost
+        .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
-        total_bytes,
+        cost,
         setup_field_elements,
         first_fold,
         suffix_folds: suffix.folds.clone(),
@@ -347,7 +371,7 @@ fn direct_edge_bound_is_strictly_worse(
             frontier,
         )),
         GuideScope::RecursivePrefix => {
-            let parent_cost = ParentObservableKey::new(policy, Some(params))?;
+            let parent_cost = ParentObservableKey::new(policy, Some(params), None)?;
             Ok(frontier.recursive_direct_bound_is_strictly_worse(
                 &parent_cost,
                 SetupPrefixCapacity::for_natural_len(natural_setup_field_len),
@@ -439,9 +463,7 @@ fn price_terminal_candidate(
     else {
         return Ok(());
     };
-    let level_proof_size = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-        .checked_add(opening_reduction_bytes)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".into()))?;
+    let level_proof_size = opening_reduction_bytes;
     let total = level_proof_size
         .checked_add(suffix_cost)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal proof size overflow".to_string()))?;
@@ -450,7 +472,7 @@ fn price_terminal_candidate(
         first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(|| {
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
-        total_bytes: total,
+        cost: PackedProofCost::new(total, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),
@@ -467,6 +489,7 @@ fn price_terminal_candidate(
 fn price_level_candidate_with_children(
     ctx: &SuffixCtx<'_>,
     state: SuffixState,
+    opening_layout: &OpeningClaimsLayout,
     candidate: LevelCandidateEdge<'_>,
     children: CandidateChildren<'_>,
     frontiers: &mut StateFrontiers,
@@ -493,6 +516,9 @@ fn price_level_candidate_with_children(
     let direct_edge = ChildEdge {
         policy,
         diagnostics: ctx.diagnostics,
+        opening_layout,
+        level: u32::try_from(state.level)
+            .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,
@@ -836,6 +862,7 @@ pub(crate) fn derive_selected_suffix_schedule(
             price_level_candidate_with_children(
                 ctx,
                 state,
+                current_opening_layout,
                 LevelCandidateEdge {
                     params: &candidate_params,
                     next_witness_len,

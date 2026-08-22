@@ -587,6 +587,35 @@ impl CommittedGroupParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// One opening method family shared by every group in this fold.
+    pub fn uniform_opening_method(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<OpeningMethod, AkitaError> {
+        let first = self.group_params(opening_batch, 0)?.opening_method();
+        for group_index in 1..opening_batch.num_groups() {
+            let next = self
+                .group_params(opening_batch, group_index)?
+                .opening_method();
+            let same_family = matches!(
+                (first, next),
+                (
+                    OpeningMethod::EvaluationTrace,
+                    OpeningMethod::EvaluationTrace
+                ) | (
+                    OpeningMethod::SubringCoefficientPacking { .. },
+                    OpeningMethod::SubringCoefficientPacking { .. }
+                )
+            );
+            if !same_family {
+                return Err(AkitaError::InvalidSetup(
+                    "one fold cannot mix opening method families".into(),
+                ));
+            }
+        }
+        Ok(first)
+    }
+
     fn multi_group_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,

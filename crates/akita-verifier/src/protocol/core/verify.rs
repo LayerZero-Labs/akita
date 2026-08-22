@@ -150,7 +150,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let root_step = schedule.root_fold();
     let first_recursive_params = schedule.recursive_folds.first();
@@ -336,7 +336,7 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    {
+    let grinding_plan = {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
         bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
             &setup.expanded,
@@ -345,8 +345,13 @@ where
             schedule,
             basis,
             transcript,
-        )?;
-    }
+        )?
+    };
+    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<T>::new(
+        transcript,
+        &proof.nonce_stream,
+        &grinding_plan,
+    )?;
 
     let raw_groups = claims
         .groups()
@@ -362,15 +367,16 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, T>(
+    verify::<Cfg::Field, Cfg::ExtField, _>(
         proof,
         setup,
-        transcript,
+        &mut grinding_transcript,
         raw_claims,
         &opening_batch,
         basis,
         schedule,
     )
+    .and_then(|()| grinding_transcript.finish())
     .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 

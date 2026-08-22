@@ -75,7 +75,7 @@ dependencies = [
  "akita-error",
  "akita-field",
  "akita-transcript",
- "sha3 0.10.9",
+ "keccak 0.1.6",
  "smallvec",
  "tracing",
 ]

@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -754,7 +755,6 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
         opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-        fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -851,21 +851,17 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
             terminal_response,
-            0,
         );
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level: a direct terminal level
-        // carries only the `fold_grind_nonce` (plus any extension-opening
-        // reduction, absent from this fixture), matching the planner's
-        // terminal-direct accounting.
+        // it from the serialized terminal level. The proof-level packed nonce
+        // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            crate::FOLD_GRIND_NONCE_BYTES,
-            serialized_without_witness,
+            0, serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
         );
@@ -919,7 +915,6 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 .unwrap()
                 .terminal_coefficients()
             ]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),

@@ -611,7 +611,7 @@ pub fn find_schedule(
         let metrics = best.metrics();
         diagnostics.record_selected(
             active_policy.selection_policy,
-            metrics.proof_bytes,
+            metrics.proof_bytes(),
             metrics.setup_field_elements,
             metrics.first_direct_setup_capacity.field_elements(),
             best.folds
@@ -624,10 +624,10 @@ pub fn find_schedule(
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.total_bytes,
+        best.cost.proof_bytes(),
         best.setup_field_elements,
         first_direct_setup_field_len,
-        active_policy.selection_policy,
+        active_policy,
         &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),

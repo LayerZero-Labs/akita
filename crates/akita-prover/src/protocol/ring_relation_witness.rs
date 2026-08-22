@@ -271,7 +271,6 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
 pub struct RingRelationWitness<F: FieldCore> {
-    pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
     /// Level-owned D-role quotient rows retained after transcript-time `v` construction.
     pub(crate) d_quotients: RingVec<F>,
@@ -281,13 +280,11 @@ pub struct RingRelationWitness<F: FieldCore> {
 impl<F: FieldCore> RingRelationWitness<F> {
     /// Construct from already-grouped witnesses.
     pub(crate) fn from_groups(
-        fold_grind_nonce: u32,
         groups: Vec<RingRelationGroupWitness<F>>,
         d_quotients: RingVec<F>,
         compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
-            fold_grind_nonce,
             groups,
             d_quotients,
             compression,

@@ -17,7 +17,6 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
-use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::RingMultiplierOpeningPoint;
 use akita_types::{assemble_compressed_relation_rhs, assemble_relation_rhs, RingVec};
@@ -33,7 +32,7 @@ use super::coefficient_packing::{
 use super::core::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
 };
-use super::fold_grind::{self, ProverTranscriptGrind};
+use super::fold_grind;
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::backend::RingSwitchRelationView;
 
@@ -457,13 +456,14 @@ impl RingRelationProver {
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         lp: CommittedGroupParams,
         transcript: &mut T,
+        level: u32,
         bind_claims_after_payload: BindClaims,
     ) -> Result<(PreparedRingRelation<F, PointF>, BoundClaims), AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
-        T: Transcript<F> + ProverTranscriptGrind<F>,
+        T: akita_types::ProverTranscriptGrinding<F>,
         PointF: akita_types::FpExtEncoding<F>
             + akita_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
@@ -838,10 +838,11 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let (grind_outputs, fold_grind_nonce) =
+        let grind_outputs =
             fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
                 opening_ctx,
                 transcript,
+                level,
                 &lp,
                 &opening_batch,
                 &grind_groups,
@@ -963,12 +964,7 @@ impl RingRelationProver {
         drop(instance_span);
 
         let witness_span = tracing::info_span!("ring_relation_build_witness").entered();
-        let witness = RingRelationWitness::from_groups(
-            fold_grind_nonce,
-            group_witnesses,
-            d_quotients,
-            compression,
-        );
+        let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression);
         validate_prepared_relation_groups(
             &prepared_relation_groups,
             &lp,

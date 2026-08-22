@@ -8,7 +8,7 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::checked;
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
@@ -647,9 +647,19 @@ where
             .profiles()
             .opening_layout()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let expected_shape =
-            canonical_proof_shape(resolved.schedule(), &root_opening_layout, E::EXT_DEGREE)
-                .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+            resolved.schedule(),
+            &root_opening_layout,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        proof_shape.validate_grinding_plan(&grinding_plan)?;
+        let expected_shape = canonical_proof_shape(
+            resolved.schedule(),
+            &root_opening_layout,
+            E::EXT_DEGREE,
+            &grinding_plan,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if *proof_shape != expected_shape {
             return Err(SerializationError::InvalidData(
                 "proof shape does not match the selected canonical schedule".to_string(),

@@ -8,7 +8,7 @@ use akita_field::{
     CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced, RandomSampling,
 };
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
     validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
@@ -145,11 +145,12 @@ pub(crate) fn ring_switch_verifier<F, E, T>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
+    level: u32,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let relation = replay.relation;
     let lp = replay.lp;
@@ -157,6 +158,7 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
+    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
     let alpha: E = {
         let _span = tracing::info_span!("ring_switch_transcript_challenges").entered();
         sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH)
@@ -222,11 +224,13 @@ where
             tau1_len = num_i
         )
         .entered();
+        transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
         let tau0 = Some(
             (0..num_sc_vars)
                 .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
                 .collect(),
         );
+        transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
         let tau1 = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect::<Vec<_>>();

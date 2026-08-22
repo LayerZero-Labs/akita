@@ -85,13 +85,14 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B
     tensor_prepared: Option<&B::PreparedSetup>,
     group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, G>],
     transcript: &mut T,
+    level: u32,
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     G: RootProverGroupTensor<F, E, B>,
     B: ComputeBackendSetup<F>,
 {
@@ -166,6 +167,7 @@ where
     for partial in &proof_partials {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
     }
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
     let eta = (0..split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -174,8 +176,11 @@ where
         .flat_map(|group| group.row_partials_by_claim.iter())
         .map(|row_partials| tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta))
         .collect::<Result<Vec<_>, _>>()?;
-    let claim_coefficients =
-        sample_row_coefficients::<F, E, T>(&opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
+    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+        &opening_batch,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
+        transcript,
+    )?;
     let true_input_claim = true_input_claims
         .iter()
         .zip(&claim_coefficients)
@@ -241,8 +246,19 @@ where
         ));
     }
     let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut round = 0u32;
     let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+            tr,
+            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+            level,
+            0,
+            round,
+        )?;
+        round = round
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("EOR round overflow".into()))?;
+        Ok(challenge)
     })?;
     let final_terms = prover.final_terms().ok_or_else(|| {
         AkitaError::InvalidInput(format!(
