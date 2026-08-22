@@ -70,31 +70,18 @@ where
     acc.finish()
 }
 
-pub(crate) fn fold_dense_reduction_tables_in_place<E: HasUnreducedOps + HasOptimizedFold>(
-    witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
-    r_round: E,
-) {
-    let _span = tracing::trace_span!(
-        "fold_dense_reduction_tables_in_place",
-        table_len = witness_evals.len()
-    )
-    .entered();
-    debug_assert_eq!(witness_evals.len(), factor_evals.len());
-    fold_evals_in_place(witness_evals, r_round);
-    fold_evals_in_place(factor_evals, r_round);
-}
-
 /// Fold both tables by one variable AND pre-compute the next round's
 /// `(constant, quadratic)` accumulation in a single pass over the data.
-pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
+pub(in crate::protocol::extension_opening_reduction) fn fused_fold_and_accumulate<
+    E: HasUnreducedOps + HasOptimizedFold,
+>(
     witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
+    factor: &mut DenseEorFactor<E>,
     r_round: E,
 ) -> (E, E) {
     let _span = tracing::trace_span!("fused_fold_and_accumulate", table_len = witness_evals.len())
         .entered();
-    debug_assert_eq!(witness_evals.len(), factor_evals.len());
+    debug_assert_eq!(witness_evals.len(), factor.as_slice().len());
     debug_assert!(witness_evals.len().is_power_of_two());
     debug_assert!(witness_evals.len() >= 4);
 
@@ -102,15 +89,15 @@ pub(crate) fn fused_fold_and_accumulate<E: HasUnreducedOps + HasOptimizedFold>(
     // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
     // `accumulate_dense_round`.
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
-        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DelayedDeg2<E>>(witness_evals, factor, r_round)
     } else {
-        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor_evals, r_round)
+        fused_fold_and_accumulate_with::<E, DirectDeg2<E>>(witness_evals, factor, r_round)
     }
 }
 
 fn fused_fold_and_accumulate_with<E, A>(
     witness_evals: &mut Vec<E>,
-    factor_evals: &mut Vec<E>,
+    factor: &mut DenseEorFactor<E>,
     r_round: E,
 ) -> (E, E)
 where
@@ -139,7 +126,7 @@ where
 
             let acc = {
                 let input_w: &[E] = witness_evals;
-                let input_f: &[E] = factor_evals;
+                let input_f: &[E] = factor.as_slice();
 
                 folded_w
                     .par_chunks_mut(2)
@@ -165,13 +152,18 @@ where
             };
 
             *witness_evals = folded_w;
-            *factor_evals = folded_f;
+            *factor = DenseEorFactor::Owned(folded_f);
             return acc.finish();
         }
     }
 
+    let mut folded_factor = match factor {
+        DenseEorFactor::Shared(_) => Some(Vec::with_capacity(half)),
+        DenseEorFactor::Owned(_) => None,
+    };
     let mut acc = A::zero();
     for i in 0..quarter {
+        let factor_evals = factor.as_slice();
         let fw0 = E::fold_one(&ctx, witness_evals[4 * i], witness_evals[4 * i + 1]);
         let fw1 = E::fold_one(&ctx, witness_evals[4 * i + 2], witness_evals[4 * i + 3]);
         let fa0 = E::fold_one(&ctx, factor_evals[4 * i], factor_evals[4 * i + 1]);
@@ -182,10 +174,19 @@ where
 
         witness_evals[2 * i] = fw0;
         witness_evals[2 * i + 1] = fw1;
-        factor_evals[2 * i] = fa0;
-        factor_evals[2 * i + 1] = fa1;
+        if let Some(output) = &mut folded_factor {
+            output.push(fa0);
+            output.push(fa1);
+        } else if let DenseEorFactor::Owned(factor_evals) = factor {
+            factor_evals[2 * i] = fa0;
+            factor_evals[2 * i + 1] = fa1;
+        }
     }
     witness_evals.truncate(half);
-    factor_evals.truncate(half);
+    if let Some(folded_factor) = folded_factor {
+        *factor = DenseEorFactor::Owned(folded_factor);
+    } else if let DenseEorFactor::Owned(factor_evals) = factor {
+        factor_evals.truncate(half);
+    }
     acc.finish()
 }

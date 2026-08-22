@@ -1130,6 +1130,14 @@ prefix with `EvaluationTrace`. No conversion is needed. The level 2 schedule
 binds the method and its conditional EOR, and it checks the frozen commitment
 geometry against the level 2 challenge family.
 
+Whether level 2 runs EOR depends on the field configuration. The fp128 presets
+have extension degree one, so evaluation trace opens the prefix and witness
+without EOR. The fp32 and fp64 presets use extension degrees four and two. In
+those presets, one EOR batches a dense term for the setup prefix with the
+recursive suffix term. This is not a limit on the number of setup-offloading
+levels. A later fold may create another prefix when the complete schedule and
+setup objective select that edge.
+
 The selective L2 branch currently rejects setup prefix derivation from an A
 commitment that has no SIS table key. Subring packing folds use Linf, so they do not
 enter that L2 path. The existing restriction remains unchanged for later

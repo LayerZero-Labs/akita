@@ -120,11 +120,10 @@ Both converge on the same five moves; copy them.
 
 | Loop | File:line | Shape |
 |------|-----------|-------|
-| EOR dense fold+accumulate | `extension_opening_reduction/dense.rs:173-190` (`fused_fold_and_accumulate`), `:60-69` (`accumulate_dense_round_with`) | scalar `E::fold_one`, `acc.add_constant_product` |
-| EOR factor fold (materialized) | `sparse.rs:883-903` (`fold_dense_reduction_tables_in_place` → `fold_evals_in_place`) | scalar `Vec<E>` |
-| EOR sparse accumulate / factor query | `sparse.rs:322-346` (`accumulate_entries_with_factor_using`), `:749-783` (`factor_pair`) | scalar over support + scalar `ProductAccum` dot |
-| EOR partials | `akita-types/src/extension_opening_reduction.rs:260-279` (`tensor_column_partials_split_fold`) | scalar base×ext via `SplitEqEvals` |
-| eq table | `akita-algebra/src/eq_poly.rs:232-252` (`SplitEqEvals`), `EqPolynomial::evals` | scalar `Vec<E>` |
+| EOR dense fold and accumulation | `extension_opening_reduction/dense.rs` (`accumulate_dense_round_with`, `fused_fold_and_accumulate_with`) | scalar `E::fold_one`, scalar `Deg2RoundAccum` |
+| EOR factor fold | `extension_opening_reduction/tables.rs` (`DenseEorFactor::fold_in_place`) and the fused path above | scalar `Vec<E>` |
+| EOR partials | `akita-types/src/extension_opening_reduction.rs` (`tensor_column_partials_split_fold`) | scalar base by extension contraction through `SplitEqEvals` |
+| equality table | `akita-algebra/src/eq_poly.rs` (`EqPolynomial::evals_mapped`) | scalar `Vec<E>` with parallel mapped construction |
 | digit-range round + fold | `digit_range/direct_range_leaf/`, `digit_range/class_indexed_product.rs`, `digit_range/class_indexed_range_leaf.rs` | basis-specialized compact and class-indexed kernels |
 | stage2 round + fold | `akita_stage2/dense_terms.rs:189-216`, `round_flow.rs:234` | scalar |
 | generic fold | `akita-algebra/src/poly.rs:225-228` (`fold_evals_in_place`) | scalar `E::fold_one` |

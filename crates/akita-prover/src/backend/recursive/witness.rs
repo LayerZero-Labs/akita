@@ -8,6 +8,8 @@
 
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
+mod tensor;
+
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
@@ -18,9 +20,7 @@ use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
-use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, WitnessLayout,
-};
+use akita_types::WitnessLayout;
 use std::{marker::PhantomData, sync::Arc};
 
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -242,100 +242,6 @@ impl<'a, F, const D: usize> SuffixWitnessView<'a, F, D>
 where
     F: FieldCore + CanonicalField,
 {
-    pub(crate) fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        let expected_len = self.padded_ring_elems.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidInput("recursive base evals length overflow".to_string())
-        })?;
-        let mut base_evals = Vec::with_capacity(expected_len);
-        for coeffs in self.coeffs {
-            base_evals.extend(coeffs.iter().copied().map(F::from_i8));
-        }
-        base_evals.resize(expected_len, F::zero());
-        Ok(base_evals)
-    }
-
-    pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
-    where
-        E: ExtField<F>,
-    {
-        let num_vars = self.num_vars();
-        let base_evals = self.base_evals()?;
-        tensor_packed_witness_evals::<F, E>(num_vars, &base_evals)
-    }
-
-    pub(crate) fn tensor_extension_column_partials<E>(
-        &self,
-        logical_point: &[E],
-    ) -> Result<Vec<E>, AkitaError>
-    where
-        E: akita_field::MulBaseUnreduced<F>,
-    {
-        let num_vars = self.num_vars();
-        if logical_point.len() != num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: num_vars,
-                actual: logical_point.len(),
-            });
-        }
-        let base_evals = self.base_evals()?;
-        tensor_column_partials_from_base_evals::<F, E>(num_vars, &base_evals, logical_point)
-    }
-
-    pub(crate) fn tensor_extension_column_partials_batch<E>(
-        polys: &[&Self],
-        logical_point: &[E],
-    ) -> Result<Vec<Vec<E>>, AkitaError>
-    where
-        E: akita_field::MulBaseUnreduced<F>,
-    {
-        polys
-            .iter()
-            .map(|poly| poly.tensor_extension_column_partials(logical_point))
-            .collect()
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_linear_combination<E>(
-        polys: &[&Self],
-        coeffs: &[E],
-    ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
-        AkitaError,
-    >
-    where
-        E: ExtField<F>,
-    {
-        if polys.len() != coeffs.len() {
-            return Err(AkitaError::InvalidSize {
-                expected: polys.len(),
-                actual: coeffs.len(),
-            });
-        }
-        let mut witnesses = Vec::with_capacity(polys.len());
-        for poly in polys {
-            let Some(witness) = poly.tensor_packed_extension_sparse_evals::<E>()? else {
-                return Ok(None);
-            };
-            witnesses.push(witness);
-        }
-        Ok(Some(
-            crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness::linear_combination(
-                coeffs.iter().copied().zip(witnesses.iter()),
-            )?,
-        ))
-    }
-
-    pub(crate) fn tensor_packed_extension_sparse_evals<E>(
-        &self,
-    ) -> Result<
-        Option<crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness<E>>,
-        AkitaError,
-    >
-    where
-        E: ExtField<F>,
-    {
-        Ok(None)
-    }
-
     #[cfg(test)]
     pub(crate) fn fold_blocks(
         &self,
@@ -511,10 +417,9 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootCommitSource, RootOpeningSource,
     RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
 
 fn padded_ring_elems_for_live_len<const D: usize>(live_coeff_len: usize) -> usize {
@@ -786,10 +691,8 @@ where
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: SuffixWitnessView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
-        Ok(TensorPackedWitness::Dense(
-            source.tensor_packed_extension_evals()?,
-        ))
+    ) -> Result<Vec<E>, AkitaError> {
+        source.tensor_packed_extension_evals()
     }
 }
 
@@ -815,21 +718,6 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_extension_column_partials_batch(&refs, logical_point)
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        _prepared: Option<&Self::PreparedSetup>,
-        source: SuffixWitnessBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        let polys = source
-            .polys
-            .iter()
-            .map(|witness| witness.view::<F, D>())
-            .collect::<Result<Vec<_>, _>>()?;
-        let refs = polys.iter().collect::<Vec<_>>();
-        SuffixWitnessView::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
     }
 }
 

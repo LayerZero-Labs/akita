@@ -1,7 +1,6 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    ComputeBackendSetup, RootTensorSource, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::unreduced::ReduceTo;
 use std::ops::Range;
@@ -234,13 +233,16 @@ where
     if terms.len() != num_claims || true_input_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
-    if prover_claim != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
+    #[cfg(debug_assertions)]
+    {
+        let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
+        if prover_claim != true_input_claim {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening reduction input claim mismatch".to_string(),
+            ));
+        }
     }
-    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut prover = ExtensionOpeningReductionProver::new(terms, true_input_claim)?;
     let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
@@ -340,9 +342,7 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
-    B: ComputeBackendSetup<F>
-        + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
-        + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
+    B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     let _span =
         tracing::info_span!("extension_opening_reduction_terms", num_terms = polys.len()).entered();
@@ -352,55 +352,20 @@ where
             actual: claim_coefficients.len(),
         });
     }
-    polys
-        .iter()
-        .zip(claim_coefficients)
-        .map(|(poly, &coefficient)| {
-            let witness = {
-                let _s = tracing::info_span!("eor_packed_witness").entered();
-                TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
-            };
-            extension_opening_term_from_packed_witness::<F, E>(
-                witness,
-                tail_point,
-                eta,
-                coefficient,
-            )
-        })
-        .collect()
-}
-
-fn extension_opening_term_from_packed_witness<F, E>(
-    witness: TensorPackedWitness<E>,
-    tail_point: &[E],
-    eta: &[E],
-    coeff: E,
-) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-{
-    match witness {
-        TensorPackedWitness::Dense(witness_evals) => {
-            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
-        }
-        TensorPackedWitness::Sparse(witness) => {
-            let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
-            if lazy_rounds == 0 {
-                let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-                ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
-            } else {
-                ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
-                    witness,
-                    tail_point.to_vec(),
-                    eta.to_vec(),
-                    coeff,
-                    lazy_rounds,
-                )
-            }
-        }
+    let shared_factor = std::sync::Arc::new(tensor_equality_factor_evals::<F, E>(tail_point, eta)?);
+    let mut terms = Vec::with_capacity(polys.len());
+    for (poly, &coefficient) in polys.iter().zip(claim_coefficients) {
+        let witness = {
+            let _span = tracing::info_span!("eor_packed_witness").entered();
+            TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
+        };
+        terms.push(ExtensionOpeningReductionTerm::new_with_shared_factor(
+            witness,
+            std::sync::Arc::clone(&shared_factor),
+            coefficient,
+        )?);
     }
+    Ok(terms)
 }
 
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =
