@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-21 |
 | Status        | proposed |
-| PR            | |
+| PR            | [#434](https://github.com/LayerZero-Labs/akita/pull/434) |
 | Supersedes    | Planner architecture portions of [`archive/2026-Q3/modular-planner-and-precommit-roles.md`](archive/2026-Q3/modular-planner-and-precommit-roles.md) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/configuration.md |
