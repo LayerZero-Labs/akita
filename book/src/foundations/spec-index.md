@@ -15,6 +15,7 @@ policy and the checker use the same live set in
 | [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | implemented | Defines the current witness chunk partition contract. |
 | [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
+| [`generic-sumcheck-backends`](../../../specs/generic-sumcheck-backends.md) | active | Defines the in-flight source, relation, executor, and heterogeneous backend boundary for sumcheck. |
 | [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | implemented | Defines current source-free group and fold-admission rules. |
 | [`large-digit-ntt-infrastructure`](../../../specs/large-digit-ntt-infrastructure.md) | implemented | Load-bearing large-digit NTT and terminal verification contract. |
 | [`packed-sumcheck`](../../../specs/packed-sumcheck.md) | approved | Approved packed EOR and sum-check implementation; earlier Stage 1 and Stage 2 prerequisite gates are complete. |

@@ -8,6 +8,7 @@ pub mod accum;
 pub mod batched_sumcheck;
 pub mod compact_fold;
 pub mod drivers;
+pub mod executor;
 pub mod traits;
 pub mod types;
 
@@ -25,6 +26,14 @@ pub use compact_fold::CompactPairFoldLut;
 pub use drivers::{
     advance_eq_factored_claim, check_sumcheck_output_claim, EqFactoredSumcheckInstanceProverExt,
     EqFactoredSumcheckInstanceVerifierExt, SumcheckInstanceProverExt, SumcheckInstanceVerifierExt,
+};
+pub use executor::{
+    prove_eq_factored_executor_batch, prove_standard_executor_batch,
+    verify_eq_factored_executor_batch_rounds, CheckedEqFactoredBatch, CheckedLocalRound,
+    CheckedRoundContext, CheckedRoundRequest, CheckedStandardBatch, CheckedSumcheckGroup,
+    EqFactoredBatchExecution, EqFactoredBatchRoundResult, EqFactoredTerminalObligation,
+    GroupRoundMessage, GroupTerminalClaims, StandardBatchExecution, SumcheckGroupSpec,
+    SumcheckMemberShape, SumcheckRoundExecutor,
 };
 pub use traits::{
     EqFactoredSumcheckInstanceProver, EqFactoredSumcheckInstanceVerifier,

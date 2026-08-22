@@ -27,7 +27,8 @@ The track covers:
 - safe device, buffer, and pipeline ownership;
 - typed preparation from the canonical expanded setup and selected schedule;
 - one deterministic dispatch smoke test before production kernels;
-- dense ring and NTT kernels followed by field, MLE, and sum-check kernels;
+- dense ring and NTT kernels followed by field and MLE kernels, then sumcheck
+  kernels behind `generic-sumcheck-backends.md`;
 - deterministic CPU and Metal differential tests for each migrated operation;
 - a documented Jolt opening adapter after the core backend boundary is stable.
 
@@ -60,6 +61,7 @@ continue to use the CPU path without compiling or loading Metal-only code.
 ## References
 
 - `book/src/roadmap/compute-backends.md`
+- `specs/generic-sumcheck-backends.md`
 - `crates/akita-prover/src/compute/`
 - `crates/akita-algebra/src/ntt/`
 - `crates/akita-prover/src/kernels/`
