@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{OpeningClaimsLayout, TranscriptGrindingBinding};
+use akita_types::OpeningClaimsLayout;
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: Field, E: Field> {
@@ -320,7 +320,6 @@ where
     )?;
     let fold_response_nonce =
         transcript.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
-    TranscriptGrindingBinding::validate_fold_response_nonce(fold_response_nonce)?;
     let operator_rejection = if params.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
@@ -529,6 +528,7 @@ where
         &opening_payload,
         claim_state,
         transcript,
+        level,
     )?;
     let current_commitment = match &current_state.witness {
         SuffixWitnessState::Commitment(commitment) => *commitment,

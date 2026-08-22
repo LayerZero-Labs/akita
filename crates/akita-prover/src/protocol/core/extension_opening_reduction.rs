@@ -164,7 +164,7 @@ where
     for partial in &proof_partials {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
     }
-    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint)?;
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
     let eta = (0..split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -173,11 +173,10 @@ where
         .flat_map(|group| group.row_partials_by_claim.iter())
         .map(|row_partials| tensor_reduction_claim_from_rows::<F, E>(row_partials, &eta))
         .collect::<Result<Vec<_>, _>>()?;
-    let claim_coefficients = sample_row_coefficients::<F, E, T>(
+    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         &opening_batch,
-        CHALLENGE_EOR_CLAIM_BATCH,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
         transcript,
-        |transcript| transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningClaimBatch),
     )?;
     let true_input_claim = true_input_claims
         .iter()
@@ -247,13 +246,12 @@ where
         );
     }
     let mut prover = ExtensionOpeningReductionProver::new(groups, true_input_claim)?;
-    let encoded_level = if level == 0 { u32::MAX } else { level };
     let mut round = 0u32;
     let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        let challenge = super::sample_grinded_sumcheck_challenge::<F, E, T>(
+        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
             tr,
             akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-            encoded_level,
+            level,
             0,
             round,
         )?;

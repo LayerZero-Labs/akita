@@ -10,7 +10,7 @@ type E = FpExt2<F, TwoNr>;
 
 fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
     let mut runs = vec![akita_types::GrindingRun::proof_of_work(
-        akita_types::GrindingSite::ExtensionOpeningPoint,
+        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
         1,
         128,
     )
@@ -18,7 +18,7 @@ fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPl
     if batches_claims {
         runs.push(
             akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningClaimBatch,
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
                 1,
                 128,
             )

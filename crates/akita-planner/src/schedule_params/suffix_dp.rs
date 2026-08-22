@@ -82,6 +82,24 @@ struct ChildEdge<'a> {
     setup_field_budget: Option<usize>,
 }
 
+impl ChildEdge<'_> {
+    fn grinding_nonce_bits(&self, suffix: &ScheduleCandidate) -> Result<usize, AkitaError> {
+        let successor = suffix.folds.first().map_or_else(
+            || akita_types::GrindingPlanSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_types::GrindingPlanSuccessor::Recursive(fold.params.as_ref()),
+        );
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            self.candidate_params.as_ref(),
+            self.next_witness_len,
+            self.opening_layout,
+            successor,
+            self.policy.decomposition.field_bits(),
+            self.policy.claim_ext_degree,
+            self.level,
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ChildEdgePrice {
     direct_payload_bytes: usize,
@@ -289,30 +307,6 @@ fn child_choice(
         suffix_folds: suffix.folds.clone(),
         terminal: suffix.terminal.clone(),
     }))
-}
-
-fn edge_grinding_nonce_bits(
-    edge: &ChildEdge<'_>,
-    suffix: &ScheduleCandidate,
-) -> Result<usize, AkitaError> {
-    let fold = CandidateFoldStep {
-        params: Arc::clone(&edge.candidate_params),
-        input_witness_len: edge.current_witness_len,
-        output_witness_len: edge.next_witness_len,
-        estimated_direct_payload_bytes: 0,
-        estimated_stage3_payload_bytes: 0,
-    };
-    let recursive_successor = suffix.folds.first();
-    akita_schedules::planner_support::candidate_edge_grinding_nonce_bits(
-        edge.policy,
-        edge.opening_layout,
-        &fold,
-        recursive_successor,
-        recursive_successor
-            .is_none()
-            .then_some(suffix.terminal.as_ref()),
-        edge.level,
-    )
 }
 
 fn direct_edge_lower_bound(

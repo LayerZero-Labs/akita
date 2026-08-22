@@ -36,9 +36,9 @@ pub mod planner_support {
         SelectiveL2CandidateGeometry,
     };
     pub use crate::runtime::{
-        candidate_edge_grinding_nonce_bits, candidate_grinding_nonce_bits,
-        first_direct_setup_capacity_for_schedule, first_direct_setup_field_len_for_schedule,
-        materialize_candidate_schedule, nonterminal_level_payload_bytes, planned_next_witness_len,
+        candidate_grinding_nonce_bits, first_direct_setup_capacity_for_schedule,
+        first_direct_setup_field_len_for_schedule, materialize_candidate_schedule,
+        nonterminal_level_payload_bytes, planned_next_witness_len,
         stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
         CandidateTerminalResponse, MAX_RECURSION_DEPTH,
     };

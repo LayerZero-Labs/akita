@@ -178,6 +178,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     basis: BasisMode,
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -232,11 +233,10 @@ where
     if reduction.is_none() {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
-        |transcript| transcript.grind_query(akita_types::GrindingSite::EvaluationBatch),
     )?;
     let resolved = resolve_evaluation_trace_claim(
         reduction.as_ref(),
@@ -329,6 +329,7 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
@@ -341,11 +342,10 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
-        |transcript| transcript.grind_query(akita_types::GrindingSite::EvaluationBatch),
     )?;
     let resolved = resolve_evaluation_trace_claim(
         reduction.as_ref(),

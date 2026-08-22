@@ -204,18 +204,18 @@ pub use transcript::AppendToTranscript;
 pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    GrindingPlan, GrindingPolicy, GrindingQueryKind, GrindingRun, GrindingSite,
-    ProverGrindingTranscript, ProverTranscriptGrinding, SumcheckProtocol, TranscriptNonceReader,
-    TranscriptNonceStream, TranscriptNonceWriter, VerifierGrindingTranscript,
-    VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS,
-    FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
-    GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES, GRINDING_QUERY_POLICY_REVISION,
-    MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
+    sample_grinded_sumcheck_challenge, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    ProverGrindingTranscript, ProverTranscriptGrinding, SumcheckProtocol, TranscriptGrinding,
+    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
+    VerifierGrindingTranscript, VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape, setup_prefix_sumcheck_rounds,
     transcript_grinding_nonce_bits_for_planner_candidate,
-    transcript_grinding_nonce_bits_for_planner_edge,
+    transcript_grinding_nonce_bits_for_planner_edge, GrindingPlanSuccessor,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,

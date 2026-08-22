@@ -8,6 +8,14 @@ use crate::{
 };
 use akita_error::AkitaError;
 
+/// Successor shape needed to price one planner edge.
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub enum GrindingPlanSuccessor<'a> {
+    Recursive(&'a CommittedGroupParams),
+    Terminal(&'a crate::TerminalFoldParams),
+}
+
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
 pub fn derive_transcript_grinding_plan_from_public_shape(
     schedule: &FoldSchedule,
@@ -46,17 +54,11 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     params: &CommittedGroupParams,
     output_witness_len: usize,
     layout: &OpeningClaimsLayout,
-    recursive_successor: Option<&CommittedGroupParams>,
-    terminal_successor: Option<&crate::TerminalFoldParams>,
+    successor: GrindingPlanSuccessor<'_>,
     modulus_bits: u32,
     extension_degree: usize,
     level: u32,
 ) -> Result<usize, AkitaError> {
-    if recursive_successor.is_some() == terminal_successor.is_some() {
-        return Err(AkitaError::InvalidSetup(
-            "planner grinding edge requires exactly one successor".into(),
-        ));
-    }
     layout.check()?;
     if extension_degree == 0 || !extension_degree.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
@@ -73,10 +75,9 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
         params,
         output_witness_len,
         layout,
-        recursive_successor,
-        terminal_successor,
+        successor,
     )?;
-    if let Some(terminal) = terminal_successor {
+    if let GrindingPlanSuccessor::Terminal(terminal) = successor {
         append_terminal(
             &mut runs,
             capacity,
@@ -116,11 +117,10 @@ fn derive_transcript_grinding_plan(
         &predecessor.params,
         predecessor.output_witness_len,
         root_layout,
-        schedule.recursive_folds.first().map(|step| &step.params),
-        schedule
-            .recursive_folds
-            .is_empty()
-            .then_some(&schedule.terminal),
+        schedule.recursive_folds.first().map_or(
+            GrindingPlanSuccessor::Terminal(&schedule.terminal),
+            |step| GrindingPlanSuccessor::Recursive(&step.params),
+        ),
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -129,10 +129,10 @@ fn derive_transcript_grinding_plan(
             predecessor.output_witness_len,
             &fold.params,
         )?;
-        let successor = schedule
-            .recursive_folds
-            .get(index + 1)
-            .map(|step| &step.params);
+        let successor = schedule.recursive_folds.get(index + 1).map_or(
+            GrindingPlanSuccessor::Terminal(&schedule.terminal),
+            |step| GrindingPlanSuccessor::Recursive(&step.params),
+        );
         append_nonterminal(
             &mut runs,
             capacity,
@@ -142,7 +142,6 @@ fn derive_transcript_grinding_plan(
             fold.output_witness_len,
             &layout,
             successor,
-            successor.is_none().then_some(&schedule.terminal),
         )?;
         predecessor = fold;
     }
@@ -171,8 +170,7 @@ fn append_nonterminal(
     params: &CommittedGroupParams,
     output_witness_len: usize,
     layout: &OpeningClaimsLayout,
-    recursive_successor: Option<&CommittedGroupParams>,
-    terminal_successor: Option<&crate::TerminalFoldParams>,
+    successor: GrindingPlanSuccessor<'_>,
 ) -> Result<(), AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
@@ -181,7 +179,7 @@ fn append_nonterminal(
 
     if layout.requires_row_batch_challenge() {
         runs.push(GrindingRun::proof_of_work(
-            GrindingSite::EvaluationBatch,
+            GrindingSite::EvaluationBatch { level },
             1,
             capacity,
         )?);
@@ -203,13 +201,13 @@ fn append_nonterminal(
         capacity,
     )?);
 
-    let (successor_d, successor_opening_vars) = if let Some(successor) = recursive_successor {
-        (successor.d_a(), successor.recursive_opening_num_vars()?)
-    } else {
-        let terminal = terminal_successor.ok_or_else(|| {
-            AkitaError::InvalidSetup("nonterminal grinding level has no successor".into())
-        })?;
-        (terminal.d_a(), terminal.recursive_opening_num_vars()?)
+    let (successor_d, successor_opening_vars) = match successor {
+        GrindingPlanSuccessor::Recursive(successor) => {
+            (successor.d_a(), successor.recursive_opening_num_vars()?)
+        }
+        GrindingPlanSuccessor::Terminal(terminal) => {
+            (terminal.d_a(), terminal.recursive_opening_num_vars()?)
+        }
     };
     let tau0_width = params
         .relation_address_geometry(layout, extension_degree, successor_d, output_witness_len)?
@@ -307,7 +305,7 @@ fn append_nonterminal(
     for round in 0..rounds {
         append_sumcheck(runs, capacity, SumcheckProtocol::Stage2, level, 0, round, 3)?;
     }
-    if let Some(successor) = recursive_successor {
+    if let GrindingPlanSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
             for round in 0..setup_prefix_sumcheck_rounds(prefix)? {
                 append_sumcheck(runs, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
@@ -332,12 +330,11 @@ fn append_terminal(
         append_eor(runs, capacity, extension_degree, level, &layout)?;
     }
     runs.push(GrindingRun::fold_response(level));
-    runs.push(GrindingRun::fold_challenge_root(level, 0));
-    runs.push(GrindingRun::fold_challenge_coordinates(
+    runs.push(GrindingRun::fold_challenge_group(
         level,
         0,
         usize_to_u64(terminal.blocks.live_blocks, "terminal fold coordinates")?,
-    ));
+    )?);
     Ok(())
 }
 
@@ -354,12 +351,11 @@ fn append_fold_queries(
             .num_polynomials()
             .checked_mul(params.num_live_blocks())
             .ok_or_else(|| AkitaError::InvalidSetup("fold coordinate count overflow".into()))?;
-        runs.push(GrindingRun::fold_challenge_root(level, group));
-        runs.push(GrindingRun::fold_challenge_coordinates(
+        runs.push(GrindingRun::fold_challenge_group(
             level,
             group,
             usize_to_u64(multiplicity, "fold coordinate count")?,
-        ));
+        )?);
     }
     Ok(())
 }
@@ -378,24 +374,23 @@ fn append_eor(
         ));
     }
     runs.push(GrindingRun::proof_of_work(
-        GrindingSite::ExtensionOpeningPoint,
+        GrindingSite::ExtensionOpeningPoint { level },
         multilinear_point_loss_factor(split_bits)?,
         capacity,
     )?);
     if layout.requires_row_batch_challenge() {
         runs.push(GrindingRun::proof_of_work(
-            GrindingSite::ExtensionOpeningClaimBatch,
+            GrindingSite::ExtensionOpeningClaimBatch { level },
             1,
             capacity,
         )?);
     }
-    let encoded_level = if level == 0 { u32::MAX } else { level };
     for round in 0..layout.max_num_vars() - split_bits {
         append_sumcheck(
             runs,
             capacity,
             SumcheckProtocol::ExtensionOpeningReduction,
-            encoded_level,
+            level,
             0,
             round,
             2,

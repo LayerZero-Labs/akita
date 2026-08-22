@@ -147,19 +147,6 @@ fn fold_groups_reject_empty_and_misordered_topologies_without_unwinding() {
 }
 
 #[test]
-fn fold_nonce_accepts_only_the_global_attempt_range() {
-    let (params, opening_batch) = sample_multi_group_root_params();
-    let attempts = crate::FOLD_RESPONSE_ATTEMPTS;
-
-    params
-        .validate_fold_grind_nonce(&opening_batch, attempts - 1)
-        .expect("last in-range nonce");
-    assert!(params
-        .validate_fold_grind_nonce(&opening_batch, attempts)
-        .is_err());
-}
-
-#[test]
 fn precommitted_challenge_l1_mass_counts_magnitude_two_coefficients_twice() {
     let (params, _) = sample_multi_group_root_params();
     let precommitted = &params.precommitted_groups()[0];

@@ -5,8 +5,8 @@ use akita_error::AkitaError;
 use crate::{schedule_params::CompleteObjectiveBound, PlannerPolicy};
 
 use super::{
-    child_choice, child_edge_price, edge_grinding_nonce_bits, ParentObservableKey,
-    PendingScheduleCandidate, ScheduleCandidate,
+    child_choice, child_edge_price, ParentObservableKey, PendingScheduleCandidate,
+    ScheduleCandidate,
 };
 
 #[derive(Clone, Copy)]
@@ -31,13 +31,13 @@ pub(super) fn consider_child_suffixes<'a>(
         return Ok(());
     };
     let edge_price = child_edge_price(edge, first.first_fold_params())?;
-    let first_edge_nonce_bits = edge_grinding_nonce_bits(edge, first)?;
+    let first_edge_nonce_bits = edge.grinding_nonce_bits(first)?;
     let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
     for suffix in std::iter::once(first).chain(child_candidates) {
         let edge_nonce_bits = if same_grinding_successor(first, suffix) {
             first_edge_nonce_bits
         } else {
-            edge_grinding_nonce_bits(edge, suffix)?
+            edge.grinding_nonce_bits(suffix)?
         };
         let Some(candidate) = child_choice(edge, edge_price, edge_nonce_bits, suffix)? else {
             continue;

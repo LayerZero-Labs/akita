@@ -241,14 +241,13 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 &stage_proof.sumcheck_proof,
                 transcript,
                 |tr| {
-                    let challenge =
-                        crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
-                            tr,
-                            akita_types::SumcheckProtocol::Stage1,
-                            level,
-                            stage,
-                            round,
-                        )?;
+                    let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                        tr,
+                        akita_types::SumcheckProtocol::Stage1,
+                        level,
+                        stage,
+                        round,
+                    )?;
                     round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
                     Ok(challenge)
                 },
@@ -313,7 +312,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             u32::try_from(product_stage_proofs.len()).map_err(|_| AkitaError::InvalidProof)?;
         let mut round = 0u32;
         leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
-            let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 tr,
                 akita_types::SumcheckProtocol::Stage1,
                 level,

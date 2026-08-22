@@ -806,7 +806,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             for ((site, actual_draws), run) in prover_draw_counts.iter().zip(expected_pow) {
                 assert_eq!(*site, run.site());
                 match site {
-                    akita_types::GrindingSite::ExtensionOpeningPoint
+                    akita_types::GrindingSite::ExtensionOpeningPoint { .. }
                     | akita_types::GrindingSite::Tau0Point { .. }
                     | akita_types::GrindingSite::Tau1Point { .. } => {
                         let expected_draws = usize::try_from(run.loss_factor()).unwrap()
@@ -816,8 +816,8 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                             "extension point draw count must match the public geometry"
                         );
                     }
-                    akita_types::GrindingSite::EvaluationBatch
-                    | akita_types::GrindingSite::ExtensionOpeningClaimBatch => {}
+                    akita_types::GrindingSite::EvaluationBatch { .. }
+                    | akita_types::GrindingSite::ExtensionOpeningClaimBatch { .. } => {}
                     _ => assert_eq!(
                         *actual_draws,
                         <SE as ExtField<SF>>::EXT_DEGREE,

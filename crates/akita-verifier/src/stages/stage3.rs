@@ -144,7 +144,7 @@ impl<E: Field> SetupSumcheckVerifier<E> {
             SETUP_SUMCHECK_DEGREE,
             transcript,
             |tr| {
-                let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                     tr,
                     akita_types::SumcheckProtocol::Stage3,
                     level,

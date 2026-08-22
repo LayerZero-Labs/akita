@@ -520,29 +520,6 @@ pub fn candidate_grinding_nonce_bits(
     )
 }
 
-/// Price one planner edge without rebuilding its complete suffix plan.
-#[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
-pub fn candidate_edge_grinding_nonce_bits(
-    policy: &PlannerPolicy,
-    layout: &OpeningClaimsLayout,
-    fold: &CandidateFoldStep,
-    recursive_successor: Option<&CandidateFoldStep>,
-    terminal_successor: Option<&CandidateTerminalResponse>,
-    level: u32,
-) -> Result<usize, AkitaError> {
-    akita_types::transcript_grinding_nonce_bits_for_planner_edge(
-        fold.params.as_ref(),
-        fold.output_witness_len,
-        layout,
-        recursive_successor.map(|successor| successor.params.as_ref()),
-        terminal_successor.map(|terminal| &terminal.params),
-        policy.decomposition.field_bits(),
-        policy.claim_ext_degree,
-        level,
-    )
-}
-
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
 pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,

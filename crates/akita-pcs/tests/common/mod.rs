@@ -149,9 +149,10 @@ pub(super) fn assert_production_grinding_audit(
         .runs()
         .iter()
         .filter_map(|run| match run.site() {
-            GrindingSite::FoldChallengeCoordinates { group, .. } => {
-                Some((group as usize, run.multiplicity() as usize))
-            }
+            GrindingSite::FoldChallengeGroup { group, .. } => Some((
+                group as usize,
+                run.fold_coordinate_count().unwrap() as usize,
+            )),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -173,7 +174,7 @@ pub(super) fn assert_production_grinding_audit(
     let expected_roots = plan
         .runs()
         .iter()
-        .filter(|run| run.kind() == GrindingQueryKind::FoldChallengeRoot)
+        .filter(|run| run.kind() == GrindingQueryKind::FoldChallengeGroup)
         .count();
     let actual_roots = events
         .iter()
@@ -183,7 +184,7 @@ pub(super) fn assert_production_grinding_audit(
         .count();
     assert_eq!(
         actual_roots, expected_roots,
-        "live fold roots must equal root runs"
+        "live fold roots must equal group runs"
     );
     actual_draw_counts
 }

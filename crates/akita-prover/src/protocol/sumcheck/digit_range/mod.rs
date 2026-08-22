@@ -79,7 +79,7 @@ where
     let mut round = 0u32;
     let (sumcheck_proof, next_equality_point, _final_claim) =
         stage.prove::<F, T, _>(transcript, |transcript| {
-            let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 transcript,
                 akita_types::SumcheckProtocol::Stage1,
                 level,
@@ -357,12 +357,12 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
             let mut round = 0u32;
             let (sumcheck, stage1_point, _final_claim) =
                 leaf_stage.prove::<F, T, _>(transcript, |tr| {
-                    let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<
-                        F,
-                        E,
-                        T,
-                    >(
-                        tr, akita_types::SumcheckProtocol::Stage1, level, 0, round
+                    let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                        tr,
+                        akita_types::SumcheckProtocol::Stage1,
+                        level,
+                        0,
+                        round,
                     )?;
                     round = round.checked_add(1).ok_or_else(|| {
                         AkitaError::InvalidSetup("Stage 1 sumcheck round overflow".into())
@@ -427,7 +427,7 @@ impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
         let mut round = 0u32;
         let (leaf_sumcheck, stage1_point, _leaf_final_claim) =
             leaf_stage.prove::<F, T, _>(transcript, |tr| {
-                let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                     tr,
                     akita_types::SumcheckProtocol::Stage1,
                     level,

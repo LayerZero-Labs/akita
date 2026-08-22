@@ -30,26 +30,25 @@ pub(super) fn emit_grinding_plan_report(
         "grinding plan summary"
     );
 
-    let levels = run_levels(plan);
-    for (run_index, (run, level)) in plan.runs().iter().zip(levels).enumerate() {
+    for (run_index, run) in plan.runs().iter().enumerate() {
         let site = site_report(run.site());
         let kind = match run.kind() {
             GrindingQueryKind::ProofOfWork => "proof_of_work",
             GrindingQueryKind::FoldResponse => "fold_response",
-            GrindingQueryKind::FoldChallengeRoot => "fold_challenge_root",
-            GrindingQueryKind::FoldChallengeCoordinates => "fold_challenge_coordinates",
+            GrindingQueryKind::FoldChallengeGroup => "fold_challenge_group",
         };
         let run_nonce_bits = u64::from(run.nonce_bits()) * run.multiplicity();
         tracing::info!(
             label,
             run_index,
-            level,
+            level = run.site().level(),
             component = site.component,
             query = site.query,
             protocol = site.protocol,
             stage = ?site.stage,
             round = ?site.round,
             group = ?site.group,
+            coordinate_count = ?run.fold_coordinate_count(),
             kind,
             loss_factor = run.loss_factor(),
             grind_bits = run.grind_bits(),
@@ -58,47 +57,6 @@ pub(super) fn emit_grinding_plan_report(
             run_nonce_bits,
             "grinding plan run"
         );
-    }
-}
-
-fn run_levels(plan: &GrindingPlan) -> Vec<u32> {
-    let mut levels = vec![None; plan.runs().len()];
-    let mut following_fold = None;
-    for (index, run) in plan.runs().iter().enumerate().rev() {
-        if let GrindingSite::FoldResponse { level } = run.site() {
-            following_fold = Some(level);
-        }
-        levels[index] = explicit_level(run.site()).or(following_fold);
-    }
-    levels
-        .into_iter()
-        .map(|level| level.expect("every profile grinding query belongs to a fold"))
-        .collect()
-}
-
-fn explicit_level(site: GrindingSite) -> Option<u32> {
-    match site {
-        GrindingSite::EvaluationBatch
-        | GrindingSite::ExtensionOpeningPoint
-        | GrindingSite::ExtensionOpeningClaimBatch => None,
-        GrindingSite::SumcheckRound {
-            protocol: SumcheckProtocol::ExtensionOpeningReduction,
-            level: u32::MAX,
-            ..
-        } => None,
-        GrindingSite::SumcheckRound { level, .. }
-        | GrindingSite::FoldResponse { level }
-        | GrindingSite::FoldChallengeRoot { level, .. }
-        | GrindingSite::FoldChallengeCoordinates { level, .. }
-        | GrindingSite::RingSwitchAlpha { level }
-        | GrindingSite::Tau0Point { level }
-        | GrindingSite::Tau1Point { level }
-        | GrindingSite::Stage1InterstageBatch { level, .. }
-        | GrindingSite::L2SubclaimBatch { level }
-        | GrindingSite::L2NormMerge { level }
-        | GrindingSite::L2VirtualBatch { level }
-        | GrindingSite::CompressionBinary { level }
-        | GrindingSite::Stage2Batch { level } => Some(level),
     }
 }
 
@@ -112,9 +70,11 @@ fn site_report(site: GrindingSite) -> SiteReport {
         group: None,
     };
     match site {
-        GrindingSite::EvaluationBatch => plain("opening", "evaluation_batch"),
-        GrindingSite::ExtensionOpeningPoint => plain("extension_opening", "opening_point"),
-        GrindingSite::ExtensionOpeningClaimBatch => plain("extension_opening", "claim_batch"),
+        GrindingSite::EvaluationBatch { .. } => plain("opening", "evaluation_batch"),
+        GrindingSite::ExtensionOpeningPoint { .. } => plain("extension_opening", "opening_point"),
+        GrindingSite::ExtensionOpeningClaimBatch { .. } => {
+            plain("extension_opening", "claim_batch")
+        }
         GrindingSite::SumcheckRound {
             protocol,
             stage,
@@ -129,13 +89,9 @@ fn site_report(site: GrindingSite) -> SiteReport {
             group: None,
         },
         GrindingSite::FoldResponse { .. } => plain("fold_response", "response_search"),
-        GrindingSite::FoldChallengeRoot { group, .. } => SiteReport {
+        GrindingSite::FoldChallengeGroup { group, .. } => SiteReport {
             group: Some(group),
-            ..plain("fold_challenge", "challenge_root")
-        },
-        GrindingSite::FoldChallengeCoordinates { group, .. } => SiteReport {
-            group: Some(group),
-            ..plain("fold_challenge", "challenge_coordinates")
+            ..plain("fold_challenge", "challenge_group")
         },
         GrindingSite::RingSwitchAlpha { .. } => plain("ring_switch", "alpha"),
         GrindingSite::Tau0Point { .. } => plain("ring_switch", "tau0_point"),
