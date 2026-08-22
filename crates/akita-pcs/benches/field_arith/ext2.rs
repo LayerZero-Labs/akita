@@ -1,6 +1,6 @@
-use akita_field::packed::{HasPacking, PackedFpExt2};
-use akita_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
 use criterion::Criterion;
+use jolt_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoNr};
+use jolt_field::{PackedFpExt2, WithPacking};
 
 use super::arithmetic::bench_arithmetic_case;
 use super::cases::Prime63Offset259;
@@ -8,24 +8,24 @@ use super::params::ArithmeticBenchParams;
 
 pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
     type F31 = Prime31Offset19;
-    type PF31 = <F31 as HasPacking>::Packing;
+    type PF31 = <F31 as WithPacking>::Packing;
     type F31FpExt2 = FpExt2<F31, TwoNr>;
-    type PF31FpExt2 = PackedFpExt2<F31, TwoNr, PF31>;
+    type PF31FpExt2 = PackedFpExt2<PF31, TwoNr>;
 
     type F32 = Prime32Offset99;
-    type PF32 = <F32 as HasPacking>::Packing;
+    type PF32 = <F32 as WithPacking>::Packing;
     type F32FpExt2 = FpExt2<F32, TwoNr>;
-    type PF32FpExt2 = PackedFpExt2<F32, TwoNr, PF32>;
+    type PF32FpExt2 = PackedFpExt2<PF32, TwoNr>;
 
     type F64 = Prime64Offset59;
-    type PF64 = <F64 as HasPacking>::Packing;
+    type PF64 = <F64 as WithPacking>::Packing;
     type F64FpExt2 = FpExt2<F64, TwoNr>;
-    type PF64FpExt2 = PackedFpExt2<F64, TwoNr, PF64>;
+    type PF64FpExt2 = PackedFpExt2<PF64, TwoNr>;
 
     type F63 = Prime63Offset259;
-    type PF63 = <F63 as HasPacking>::Packing;
+    type PF63 = <F63 as WithPacking>::Packing;
     type F63FpExt2 = FpExt2<F63, TwoNr>;
-    type PF63FpExt2 = PackedFpExt2<F63, TwoNr, PF63>;
+    type PF63FpExt2 = PackedFpExt2<PF63, TwoNr>;
 
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_EXT2_ARITH", 512, 128);
 

@@ -2,7 +2,7 @@
 
 use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
 use crate::offset_eq::eq_eval_at_index;
-use crate::FieldCore;
+use crate::Field;
 use akita_error::AkitaError;
 use std::collections::BTreeMap;
 
@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 /// equality arity, or recurrence work above
 /// [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`].
 pub fn eval_boolean_pair_tensor_families<
-    F: FieldCore,
+    F: Field,
     const LEFT_MONOMIAL: bool,
     const RIGHT_MONOMIAL: bool,
 >(
@@ -148,7 +148,7 @@ pub fn eval_boolean_pair_tensor_families<
     Ok(acc)
 }
 
-fn try_eval_aligned_family<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+fn try_eval_aligned_family<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     family: &EqPairTensorFamily<F>,
@@ -294,7 +294,7 @@ fn try_eval_aligned_family<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_
     Ok(Some(value))
 }
 
-fn eval_multi_axis_families<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+fn eval_multi_axis_families<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     families: &[&EqPairTensorFamily<F>],
@@ -448,7 +448,7 @@ fn eval_multi_axis_families<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT
 
 type PairState<F> = ((usize, usize), F);
 
-fn merge_pair_states<F: FieldCore>(
+fn merge_pair_states<F: Field>(
     mut states: Vec<PairState<F>>,
 ) -> Result<Vec<PairState<F>>, AkitaError> {
     states.sort_unstable_by_key(|(key, _)| *key);
@@ -473,7 +473,7 @@ fn merge_pair_states<F: FieldCore>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_residual_seeds<F: FieldCore>(
+fn collect_residual_seeds<F: Field>(
     family: &EqPairTensorFamily<F>,
     recurrence_axes: &[usize],
     axis_index: usize,
@@ -540,13 +540,13 @@ fn collect_residual_seeds<F: FieldCore>(
 }
 
 #[derive(Clone, Copy)]
-struct BitIntroduction<F: FieldCore> {
+struct BitIntroduction<F: Field> {
     left: usize,
     right: usize,
     factors: [F; 2],
 }
 
-fn bit_axis_choices<F: FieldCore>(
+fn bit_axis_choices<F: Field>(
     introductions: &[BitIntroduction<F>],
     work: &mut usize,
 ) -> Result<Vec<(usize, usize, F)>, AkitaError> {
@@ -592,10 +592,7 @@ fn bit_axis_choices<F: FieldCore>(
         .collect())
 }
 
-fn basis_bit_factor<F: FieldCore, const MONOMIAL: bool>(
-    challenge: Option<F>,
-    bit: usize,
-) -> Option<F> {
+fn basis_bit_factor<F: Field, const MONOMIAL: bool>(challenge: Option<F>, bit: usize) -> Option<F> {
     match (challenge, bit) {
         (Some(_), 0) if MONOMIAL => Some(F::one()),
         (Some(challenge), 0) => Some(F::one() - challenge),
@@ -607,7 +604,7 @@ fn basis_bit_factor<F: FieldCore, const MONOMIAL: bool>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_tensor_family_seeds<F: FieldCore>(
+fn collect_tensor_family_seeds<F: Field>(
     family: &EqPairTensorFamily<F>,
     stream_axis: Option<usize>,
     axis_index: usize,
@@ -698,7 +695,7 @@ struct EqPairSeed<F> {
     weight: F,
 }
 
-fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+fn eval_tensor_seed_batch<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     left_stride: usize,
@@ -821,7 +818,7 @@ fn eval_tensor_seed_batch<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_M
     Ok(acc)
 }
 
-fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
+fn finish_seed_states<F: Field, const LEFT_MONOMIAL: bool, const RIGHT_MONOMIAL: bool>(
     left_challenges: &[F],
     right_challenges: &[F],
     mut bit: usize,
@@ -884,7 +881,7 @@ fn finish_seed_states<F: FieldCore, const LEFT_MONOMIAL: bool, const RIGHT_MONOM
         .sum())
 }
 
-fn basis_carry_step<F: FieldCore, const MONOMIAL: bool>(
+fn basis_carry_step<F: Field, const MONOMIAL: bool>(
     challenge: Option<F>,
     carry: usize,
 ) -> Option<(usize, F)> {
@@ -898,7 +895,7 @@ fn basis_carry_step<F: FieldCore, const MONOMIAL: bool>(
     }
 }
 
-fn basis_eval_at_index<F: FieldCore, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
+fn basis_eval_at_index<F: Field, const MONOMIAL: bool>(challenges: &[F], index: usize) -> F {
     if challenges.len() < usize::BITS as usize && index >= 1usize << challenges.len() {
         return F::zero();
     }

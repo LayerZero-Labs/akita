@@ -1,12 +1,12 @@
 use super::*;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{Fp32, Prime128OffsetA7F7};
 use akita_types::{
     r_decomp_levels, AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
+use jolt_field::{Fp32, One, Prime128OffsetA7F7};
 
 type F = Fp32<251>;
 const D: usize = 64;

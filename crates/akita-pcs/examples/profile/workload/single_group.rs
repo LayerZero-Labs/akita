@@ -11,15 +11,6 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use akita_config::CommitmentConfig;
-use akita_field::parallel::*;
-use akita_field::unreduced::{
-    HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo,
-};
-use akita_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-    TranscriptChallenge,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
     RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
@@ -27,12 +18,18 @@ use akita_prover::compute::{
 };
 use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly};
-use akita_serialization::{AkitaSerialize, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{
+    AdditiveGroup, CanonicalBytes, CanonicalEncoding, ExtField, Field, MulBaseUnreduced,
+    PseudoMersenne, Ring,
+};
+use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -60,25 +57,21 @@ fn run_prove<
     // still reported in full.
     validate_against_planner: bool,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    <FF as HasWide>::Wide: From<FF> + ReduceTo<FF> + AdditiveGroup,
-    Cfg::ExtField: FpExtEncoding<FF>
-        + FrobeniusExtField<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    <FF as Unreduced>::Wide: From<FF> + AdditiveGroup,
+    Cfg::ExtField: FpExtEncoding<FF> + ExtField<FF> + Unreduced + Fold + AkitaSerialize + Valid,
     CpuBackend: RuntimeCommitBackendFor<FF, P>
         + RecursiveProveBackend<FF, P, Cfg::ExtField>
         + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
@@ -253,23 +246,24 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     plan: Option<&FoldSchedule>,
     validate_against_planner: bool,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
+    Cfg::ExtField: ExtField<FF>
         + FpExtEncoding<FF>
-        + HasUnreducedOps
+        + Unreduced
         + MulBaseUnreduced<FF>
-        + HasOptimizedFold
+        + Fold
         + AkitaSerialize
         + Valid,
 {
@@ -288,7 +282,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
                 .map(|index| {
                     let lo = splitmix64(0xbeef_cafe_u64.wrapping_add(2 * index as u64));
                     let hi = splitmix64(0xbeef_cafe_u64.wrapping_add(2 * index as u64 + 1));
-                    FF::from_canonical_u128_reduced(u128::from(lo) | (u128::from(hi) << 64))
+                    FF::from_u128_reduced(u128::from(lo) | (u128::from(hi) << 64))
                 })
                 .collect()
         } else {
@@ -399,24 +393,20 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     plan: Option<&FoldSchedule>,
     validate_against_planner: bool,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     let onehot_poly = make_profile_onehot_poly::<FF>(nv, 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);

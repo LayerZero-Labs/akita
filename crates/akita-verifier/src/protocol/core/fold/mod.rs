@@ -26,7 +26,7 @@ pub(in crate::protocol::core) use single_field::{
 /// Common prepared fold prefix produced by the single-field and
 /// extension-claim geometry modules, consumed by root and suffix finishing
 /// logic.
-pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct FoldPrefix<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
     pub(in crate::protocol::core) trace_eval_target: E,
@@ -40,7 +40,7 @@ pub(in crate::protocol::core) type PreparedFoldOpeningPoint<F, E> = OpeningFamil
 >;
 
 /// Fold material fixed before the shared opening payload is absorbed.
-pub(in crate::protocol::core) struct FoldClaimMaterial<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct FoldClaimMaterial<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedFoldOpeningPoint<F, E>>,
     pub(in crate::protocol::core) openings: Vec<E>,
     pub(in crate::protocol::core) reduction_final_claims: Option<Vec<E>>,
@@ -55,11 +55,11 @@ pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, 
     transcript: &mut T,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F>,
     T: Transcript<F>,
 {
-    let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::EXT_DEGREE)?
+    let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::DEGREE)?
         .rhs_layout()
         .opening_payload_geometry()?;
     if opening_payload.coeff_len() != geometry.transmitted_coefficients() {
@@ -109,7 +109,7 @@ where
     })
 }
 
-pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: Field, E: Field> {
     pub(in crate::protocol::core) lp: &'a CommittedGroupParams,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) opening_payload: RingVec<F>,
@@ -125,7 +125,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
+pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: Field> {
     Commitment {
         commitment: &'a RingVec<F>,
         ring_dim: usize,
@@ -133,7 +133,7 @@ pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
     TerminalT(&'a [u8]),
 }
 
-pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: Field, E: Field> {
     Recursive {
         stage1: &'a AkitaStage1Proof<E>,
         stage2: &'a AkitaStage2Proof<F, E>,
@@ -144,7 +144,7 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: Fiel
     },
 }
 
-struct Stage1Replay<E: FieldCore> {
+struct Stage1Replay<E: Field> {
     batching_coeff: E,
     binary_batching: Option<E>,
     range_image_evaluation: E,
@@ -161,8 +161,8 @@ fn verify_stage1<F, E, T>(
     transcript: &mut T,
 ) -> Result<Stage1Replay<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
@@ -270,8 +270,8 @@ fn verify_stage2<F, E, T>(
     opening_semantics: Stage2OpeningSemantics<'_, E>,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let witness_eval = stage2.next_w_eval();
@@ -314,8 +314,8 @@ fn verify_stage3<F, E, T>(
     stage3: Option<(&SetupSumcheckProof<E>, &CommittedGroupParams)>,
 ) -> Result<Option<(Vec<E>, E)>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
@@ -348,8 +348,8 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
     prepared: PreparedFoldReplay<'_, F, E>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let opening_shape = prepared.opening_shape.clone();
@@ -358,7 +358,7 @@ where
     let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
     let relation_geometry =
-        RelationWitnessGeometry::for_level(prepared.lp, &opening_shape, E::EXT_DEGREE).map_err(
+        RelationWitnessGeometry::for_level(prepared.lp, &opening_shape, E::DEGREE).map_err(
             |error| {
                 AkitaError::InvalidInput(format!("compressed relation layout failed: {error:?}"))
             },
@@ -466,7 +466,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let relation_instance = RingRelationInstance::new(
             group_openings,
-            E::EXT_DEGREE,
+            E::DEGREE,
             opening_shape.clone(),
             gamma,
             row_coefficient_rings,
@@ -635,7 +635,7 @@ where
     } else {
         let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
         let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
-        ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
+        ensure_trace_stage2_supported(<E as ExtField<F>>::DEGREE)?;
         let trace_witness_layout = relation_range_image_plan.witness_layout();
         let trace_preparation_span = tracing::info_span!(
             "stage2_evaluation_trace_preparation",

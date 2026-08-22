@@ -184,8 +184,8 @@ fn sweep_median_ms<F, const D: usize>(
     sweep: super::super::column_sweep::OneHotSweep,
 ) -> f64
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     use super::super::column_sweep::column_sweep_ajtai_onehot_multi_forced;
     use std::time::Instant;

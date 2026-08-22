@@ -1,13 +1,13 @@
 use super::CpuPreparedSetup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
-pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
     row_width: usize,
@@ -45,7 +45,7 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub(super) fn recursive_witness_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     coeffs: &[[i8; D]],
     n_rows: usize,

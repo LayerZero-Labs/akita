@@ -2,15 +2,15 @@
 
 use crate::AkitaJoltCase;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaVerifierSetup, CommittedGroup,
     GroupBatchStatement, OpeningClaims, OpeningScheduleSelection, PolynomialGroupClaims,
 };
+use jolt_field::Field;
 
 /// One ordered commitment group carried in a multi-group verifier statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaJoltOpeningGroup<F: FieldCore, E: FieldCore = F> {
+pub struct AkitaJoltOpeningGroup<F: Field, E: Field = F> {
     /// Opening point for this group.
     pub opening_point: Vec<E>,
     /// Claimed evaluations, one per polynomial in this group.
@@ -25,7 +25,7 @@ pub struct AkitaJoltOpeningGroup<F: FieldCore, E: FieldCore = F> {
 /// The guest must use the same value to reject blobs built for a different
 /// verifier monomorphization; per-level dimensions remain schedule-owned.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaJoltInputs<F: FieldCore, const D: usize, E: FieldCore = F> {
+pub struct AkitaJoltInputs<F: Field, const D: usize, E: Field = F> {
     /// Exact CI case and verifier monomorphization represented by this blob.
     pub case: AkitaJoltCase,
     /// Domain label both prover and verifier transcripts were initialized with.
@@ -50,7 +50,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize, E: FieldCore = F> {
     pub proof: AkitaBatchedProof<F, E>,
 }
 
-impl<F: FieldCore, const D: usize, E: FieldCore> AkitaJoltInputs<F, D, E> {
+impl<F: Field, const D: usize, E: Field> AkitaJoltInputs<F, D, E> {
     /// Build the ordered verifier claim represented by this blob.
     pub fn verifier_statement<'a>(&'a self) -> Result<GroupBatchStatement<'a, E, F>, AkitaError> {
         let num_vars = usize::try_from(self.num_vars).map_err(|_| {

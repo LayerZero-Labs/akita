@@ -1,6 +1,6 @@
 use akita_error::AkitaError;
-use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_types::{DigitRangePlan, FlatBooleanDomain};
+use jolt_field::{Field, Ring};
 use std::sync::Arc;
 
 /// Collision class of one balanced digit under `digit * (digit + 1)`.
@@ -28,7 +28,7 @@ impl RangeImageClass {
     }
 
     #[inline(always)]
-    pub(super) fn range_image<E: FieldCore + FromPrimitiveInt>(self) -> E {
+    pub(super) fn range_image<E: Field + Ring>(self) -> E {
         let class = i64::from(self.0);
         E::from_i64(class * (class + 1))
     }

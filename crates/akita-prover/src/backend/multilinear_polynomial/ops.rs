@@ -4,9 +4,9 @@
 //! falling back to a per-polynomial path for truly mixed batches.
 
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasCommitAccum, HasWide};
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_types::FpExtEncoding;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{Unreduced, WithCommitAccumulator};
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
 use crate::compute::{
@@ -25,7 +25,7 @@ impl<F, E, const D: usize, I>
     SubringCoefficientPackingBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
     E: ExtField<F> + FpExtEncoding<F>,
     I: OneHotIndex,
 {
@@ -90,7 +90,7 @@ where
 impl<F, const D: usize, I> RootCommitKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
 {
     fn commit_inner_group(
@@ -164,7 +164,7 @@ where
 impl<F, const D: usize, I> OpeningFoldKernel<MultilinearPolynomialView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -223,7 +223,7 @@ where
 impl<F, const D: usize, I> OpeningBatchKernel<MultilinearPolynomialBatchView<'_, F, D, I>, F, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(

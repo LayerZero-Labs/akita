@@ -8,7 +8,9 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-akita-field = { path = "../crates/akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { path = "../crates/akita-serialization" }
 akita-transcript = { path = "../crates/akita-transcript" }
 akita-types = { path = "../crates/akita-types" }

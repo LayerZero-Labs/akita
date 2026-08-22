@@ -11,10 +11,10 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::Field;
 use std::io::{Read, Write};
 
 /// Flat 1D vector of field elements, independent of ring dimension.
@@ -26,11 +26,11 @@ use std::io::{Read, Write};
 /// Any prefix of a uniformly random vector is uniformly random, so role matrices
 /// derived from prefixes of the same flat vector are binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlatMatrix<F: FieldCore> {
+pub struct FlatMatrix<F: Field> {
     data: Vec<F>,
 }
 
-impl<F: FieldCore> FlatMatrix<F> {
+impl<F: Field> FlatMatrix<F> {
     /// Number of stored base-field elements.
     #[inline]
     pub fn num_field_elements(&self) -> usize {
@@ -145,7 +145,7 @@ pub struct FlatRingMatrixView<'a, F> {
     ring_d: usize,
 }
 
-impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
+impl<'a, F: Field> FlatRingMatrixView<'a, F> {
     /// Ring dimension of every element in this view.
     #[must_use]
     pub fn ring_d(&self) -> usize {
@@ -202,7 +202,7 @@ impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
     /// Deserialize a flat matrix whose shape is already fixed by trusted
     /// metadata.
     ///
@@ -272,7 +272,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
+impl<F: Field + Valid> Valid for FlatMatrix<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.data.is_empty() {
             return Err(SerializationError::InvalidData(
@@ -286,7 +286,7 @@ impl<F: FieldCore + Valid> Valid for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -310,7 +310,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for FlatMatrix<F> {
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FlatMatrix<F> {
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for FlatMatrix<F> {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
         mut reader: R,
@@ -336,13 +336,13 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
 /// transmuting the underlying `&[F]` slice (safe because `CyclotomicRing`
 /// is `#[repr(transparent)]` over `[F; D]`).
 #[derive(Debug, Clone, Copy)]
-pub struct RingMatrixView<'a, F: FieldCore, const D: usize> {
+pub struct RingMatrixView<'a, F: Field, const D: usize> {
     data: &'a [F],
     num_rows: usize,
     num_cols: usize,
 }
 
-impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
+impl<'a, F: Field, const D: usize> RingMatrixView<'a, F, D> {
     fn check_layout(self) -> Result<Self, AkitaError> {
         let row_field_len = self.num_cols.checked_mul(D).ok_or_else(|| {
             AkitaError::InvalidSetup("matrix row field length overflow".to_string())
@@ -421,7 +421,7 @@ impl<'a, F: FieldCore, const D: usize> RingMatrixView<'a, F, D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Prime128Offset275, RandomSampling};
+    use jolt_field::{One, Prime128Offset275, Ring, Zero};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 

@@ -17,7 +17,9 @@ readme = "../../README.md"
 
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
-akita-field = { version = "0.1.0", path = "../akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rayon = { version = "1.10", optional = true }
@@ -37,7 +39,7 @@ harness = false
 
 [features]
 default = []
-parallel = ["dep:rayon", "akita-field/parallel"]
+parallel = ["dep:rayon", "jolt-field/parallel"]
 
 [lints]
 workspace = true

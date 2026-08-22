@@ -17,7 +17,7 @@ fn stage2_geometry(
     Ok((lane_capacity, coeff_count))
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     /// Create a stage-2 instance containing only the virtual range-image term.
     ///
     /// This is the standalone companion to

@@ -15,7 +15,7 @@ use akita_algebra::ring::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, Field, MulBaseUnreduced};
 use std::iter::repeat_n;
 
 #[path = "relation_layout.rs"]
@@ -625,7 +625,7 @@ fn compression_rhs_coeff_len(layout: &RelationRhsLayout) -> Result<usize, AkitaE
 }
 
 /// Number of ring rows decodable at role dimension `d` (compact or tagged storage).
-fn ring_row_count_at<F: FieldCore>(vec: &RingVec<F>, d: usize) -> Result<usize, AkitaError> {
+fn ring_row_count_at<F: Field>(vec: &RingVec<F>, d: usize) -> Result<usize, AkitaError> {
     if vec.coeff_len() == 0 {
         return Ok(0);
     }
@@ -659,7 +659,7 @@ pub fn generate_relation_rhs<F, const D: usize>(
     n_a: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     if v.len() != n_d {
         return Err(AkitaError::InvalidSize {
@@ -693,7 +693,7 @@ where
 /// # Errors
 ///
 /// Returns an error if segment lengths or role dimensions do not match `layout`.
-pub fn assemble_relation_rhs<F: FieldCore>(
+pub fn assemble_relation_rhs<F: Field>(
     layout: &RelationRhsLayout,
     v: &RingVec<F>,
     commitment_rows: &RingVec<F>,
@@ -768,7 +768,7 @@ pub fn assemble_relation_rhs<F: FieldCore>(
 ///
 /// B, D, and first-map rows are zero. Only each chain's terminal map row
 /// carries its 128-byte public payload.
-pub fn assemble_compressed_relation_rhs<F: FieldCore>(
+pub fn assemble_compressed_relation_rhs<F: Field>(
     layout: &RelationRhsLayout,
     group_terminal_payloads: &[&[F]],
     opening_terminal_payload: &[F],
@@ -859,8 +859,8 @@ fn accumulate_extension_rows<F, E, const D: usize>(
     acc: &mut E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     let alpha_pows = scalar_powers(alpha, D);
     for r in rows {
@@ -881,8 +881,8 @@ fn accumulate_extension_flat_rows<F, E, const D: usize>(
     acc: &mut E,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     if !coeffs.len().is_multiple_of(D) {
         return Err(AkitaError::InvalidSize {
@@ -914,7 +914,7 @@ where
 /// Returns an error if the equality table implied by `tau1` would overflow or
 /// exceed the verifier sequence bound.
 #[tracing::instrument(skip_all, name = "relation_claim_from_rows")]
-pub fn relation_claim_from_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub fn relation_claim_from_rows<F: Field + CanonicalEncoding, const D: usize>(
     tau1: &[F],
     alpha: F,
     n_a: usize,
@@ -960,8 +960,8 @@ pub fn relation_claim_from_rows_extension<F, E, const D: usize>(
     u: &[CyclotomicRing<F, D>],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     let row_count = 1usize
         .checked_add(n_a)
@@ -1003,8 +1003,8 @@ pub fn relation_claim_from_layout_extension<F, E>(
     u: &RingVec<F>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     layout.validate()?;
     if !v.can_decode_vec(layout.d_ring_dimension) {
@@ -1153,8 +1153,8 @@ pub fn relation_claim_from_compressed_rhs_extension<F, E>(
     rhs: &RingVec<F>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     relation_claim_from_rhs_matching(layout, tau1, alpha, rhs, |_| true)
 }
@@ -1167,8 +1167,8 @@ pub fn compression_relation_claim_from_rhs_extension<F, E>(
     rhs: &RingVec<F>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     relation_claim_from_rhs_matching(layout, tau1, alpha, rhs, |family| {
         matches!(
@@ -1186,8 +1186,8 @@ fn relation_claim_from_rhs_matching<F, E>(
     include: impl Fn(RelationRowFamily) -> bool,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + MulBaseUnreduced<F>,
 {
     let row_families = layout.row_families()?;
     if rhs.coeff_len() != relation_rhs_coeff_len(layout)? {
@@ -1253,7 +1253,7 @@ where
 }
 
 /// Equality weight for one authenticated relation-row index.
-pub fn relation_row_weight<E: FieldCore>(relation_row: usize, tau1: &[E]) -> Result<E, AkitaError> {
+pub fn relation_row_weight<E: Field>(relation_row: usize, tau1: &[E]) -> Result<E, AkitaError> {
     let num_vars = tau1.len();
     if num_vars >= usize::BITS as usize {
         return Err(AkitaError::InvalidSize {

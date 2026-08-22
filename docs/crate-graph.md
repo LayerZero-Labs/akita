@@ -14,7 +14,7 @@ orchestration lives in `akita-pcs`.
 | Crate | Role |
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas |
-| `akita-field` | Field traits, prime/extension fields, FFT, parallel macros |
+| `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
@@ -36,7 +36,7 @@ orchestration lives in `akita-pcs`.
 graph TD
   Error["akita-error"]
   Ser["akita-serialization"]
-  Field["akita-field"]
+  Field["jolt-field (external)"]
   Witness["akita-witness"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
@@ -51,8 +51,6 @@ graph TD
   Setup["akita-setup"]
   Pcs["akita-pcs"]
 
-  Field --> Error
-  Field --> Ser
   Witness --> Error
   Witness --> Field
   Algebra --> Error
@@ -136,7 +134,7 @@ graph TD
   is known. Generic checked helpers must not be redefined in downstream crates.
 - `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
   (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
-  It depends only on `akita-error` and `akita-field`. At the time of this graph,
+  It depends only on `akita-error` and external `jolt-field`. At the time of this graph,
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.

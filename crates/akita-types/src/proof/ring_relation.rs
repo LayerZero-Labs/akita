@@ -12,9 +12,9 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
-use akita_field::{CanonicalField, ExtField, FromPrimitiveInt};
 use challenge_validation::validate_packing_challenge_weights;
+use jolt_field::Field;
+use jolt_field::{CanonicalEncoding, ExtField, Ring};
 
 mod challenge_validation;
 
@@ -35,13 +35,13 @@ pub struct RingRelationOpeningCounts {
 
 /// Method-typed fold challenge and opening-point material for one relation group.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingRelationGroupOpening<F: FieldCore> {
+pub struct RingRelationGroupOpening<F: Field> {
     kind: OpeningFamily<EvaluationTraceGroupOpening<F>, CoefficientPackingChallenges>,
 }
 
 /// Borrowed, method-typed view of one relation group's opening material.
 #[derive(Debug, Clone, Copy)]
-pub enum RingRelationGroupOpeningView<'a, F: FieldCore> {
+pub enum RingRelationGroupOpeningView<'a, F: Field> {
     /// EvaluationTrace challenges and its ring-multiplier point.
     EvaluationTrace {
         challenges: &'a Challenges,
@@ -56,7 +56,7 @@ pub enum RingRelationGroupOpeningView<'a, F: FieldCore> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EvaluationTraceGroupOpening<F: FieldCore> {
+struct EvaluationTraceGroupOpening<F: Field> {
     challenges: Challenges,
     ring_multiplier_point: RingMultiplierOpeningPoint<F>,
 }
@@ -108,7 +108,7 @@ impl CoefficientPackingChallenges {
     }
 }
 
-impl<F: FieldCore> RingRelationGroupOpening<F> {
+impl<F: Field> RingRelationGroupOpening<F> {
     /// Borrow this opening without erasing its algebraic method.
     #[must_use]
     pub fn view(&self) -> RingRelationGroupOpeningView<'_, F> {
@@ -189,7 +189,7 @@ impl<F: FieldCore> RingRelationGroupOpening<F> {
 }
 
 /// Witness segment lengths shared by prover emission, layout offsets, and M-table sizing.
-pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
+pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
     lp: &CommittedGroupParams,
     opening_counts: RingRelationOpeningCounts,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
@@ -244,7 +244,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
 /// closures borrow typed role-local ring rows via [`Self::v_trusted`],
 /// and [`Self::row_coefficient_rings_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingRelationInstance<F: FieldCore> {
+pub struct RingRelationInstance<F: Field> {
     group_openings: Vec<RingRelationGroupOpening<F>>,
     extension_degree: usize,
     opening_batch: OpeningClaimsLayout,
@@ -255,7 +255,7 @@ pub struct RingRelationInstance<F: FieldCore> {
     role_dims: CommitmentRingDims,
 }
 
-impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
+impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
     /// Construct a validated ring-relation statement from D-free ring storage.
     ///
     /// Does not sample from the transcript; callers must absorb/sample before calling.
@@ -513,7 +513,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         row_coefficients: &[E],
     ) -> Result<(Vec<F>, RingVec<F>), AkitaError>
     where
-        F: FromPrimitiveInt,
+        F: Ring,
         E: FpExtEncoding<F> + ExtField<F>,
     {
         let mut gamma = Vec::with_capacity(row_coefficients.len());

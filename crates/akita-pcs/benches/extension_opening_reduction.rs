@@ -1,8 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalBytes, CanonicalField, ExtField, TranscriptChallenge};
 use akita_prover::protocol::extension_opening_reduction::{
     ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
 };
@@ -11,6 +9,8 @@ use akita_transcript::{labels, sample_ext_challenge, AkitaTranscript, Transcript
 use akita_types::tensor_opening_split;
 use criterion::measurement::WallTime;
 use criterion::{criterion_group, BenchmarkGroup, Criterion, SamplingMode};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field};
+use jolt_field::{Fold, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::hint::black_box;
@@ -37,11 +37,11 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {
 
 fn random_ext<F, E>(rng: &mut StdRng) -> E
 where
-    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
-    let coeffs = (0..E::EXT_DEGREE)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+    let coeffs = (0..E::DEGREE)
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect::<Vec<_>>();
     E::from_base_slice(&coeffs)
 }
@@ -51,7 +51,7 @@ fn sparse_suffix_tensor_witness<F, E>(
     num_polys: usize,
 ) -> SparseExtensionOpeningWitness<E>
 where
-    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>().unwrap();
@@ -110,7 +110,7 @@ where
 
 fn sparse_tensor_term<F, E>(num_vars: usize, num_polys: usize) -> ExtensionOpeningReductionTerm<E>
 where
-    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
+    F: CanonicalEncoding + CanonicalBytes + Field,
     E: ExtField<F>,
 {
     let (split_bits, _) = tensor_opening_split::<F, E>().unwrap();
@@ -138,8 +138,8 @@ where
 
 fn bench_case<F, E>(c: &mut Criterion, label: &str)
 where
-    F: CanonicalField + CanonicalBytes + TranscriptChallenge,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + akita_serialization::AkitaSerialize,
+    F: CanonicalEncoding + CanonicalBytes + Field,
+    E: ExtField<F> + Unreduced + Fold + akita_serialization::AkitaSerialize,
 {
     let num_vars = env_usize("AKITA_EOR_NUM_VARS", DEFAULT_NUM_VARS);
     let num_polys = env_usize("AKITA_EOR_NUM_POLYS", DEFAULT_NUM_POLYS);

@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::Fp64;
 use akita_transcript::AkitaTranscript;
+use jolt_field::{Fp64, One, Zero};
 
 type F = Fp64<4294967197>;
 

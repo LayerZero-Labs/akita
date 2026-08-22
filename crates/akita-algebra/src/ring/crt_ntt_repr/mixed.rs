@@ -1,7 +1,7 @@
 use std::array::from_fn;
 
 use crate::ntt::crt::modular_inverse;
-use crate::{CanonicalField, CyclotomicRing, FieldCore};
+use crate::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_error::AkitaError;
 
 use super::{CrtNttParamSet, CyclotomicCrtNtt};
@@ -53,7 +53,7 @@ impl<const K: usize, const D: usize> I16TailParams<K, D> {
 /// Keeping the two residue widths in separate slices avoids duplicating the
 /// base matrix when an exactness tail is added lazily. Shape relationships are
 /// checked before indexing so verifier callers reject malformed prepared state.
-pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+pub fn mat_vec_i16_with_tail<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     wide_matrix: &[CyclotomicCrtNtt<i32, K, D>],
     tail_matrix: &[CyclotomicCrtNtt<i16, 1, D>],
     num_rows: usize,
@@ -74,7 +74,7 @@ pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField, const K: usize, cons
 
 /// Reconstruct one negacyclic NTT accumulator from a wide CRT prefix and its
 /// exactness-only i16 tail.
-pub fn ntt_with_i16_tail_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+pub fn ntt_with_i16_tail_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     wide_ntt: &CyclotomicCrtNtt<i32, K, D>,
     tail_ntt: &CyclotomicCrtNtt<i16, 1, D>,
     params: &I16TailParams<K, D>,
@@ -87,7 +87,7 @@ pub fn ntt_with_i16_tail_to_ring<F: FieldCore + CanonicalField, const K: usize, 
 /// Reconstruct one cyclic NTT accumulator from a wide CRT prefix and its
 /// exactness-only i16 tail.
 pub fn cyclic_ntt_with_i16_tail_to_ring<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     const K: usize,
     const D: usize,
 >(
@@ -100,7 +100,7 @@ pub fn cyclic_ntt_with_i16_tail_to_ring<
     mixed_coefficients_to_ring(&wide, &tail, params)
 }
 
-fn mixed_coefficients_to_ring<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+fn mixed_coefficients_to_ring<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     wide: &[[i32; D]; K],
     tail: &[[i16; D]; 1],
     params: &I16TailParams<K, D>,
@@ -148,12 +148,12 @@ mod tests {
         q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
         Q64_PRIMES,
     };
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     fn assert_split_i16_matvec<F, const K: usize, const D: usize>(
         wide_params: CrtNttParamSet<i32, K, D>,
     ) where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let tail_params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
         let params = I16TailParams::new(wide_params.clone(), tail_params.clone());

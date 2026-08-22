@@ -4,11 +4,11 @@ use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::requirements::RoutedNttRequirement;
 use crate::kernels::linear::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, prepare_ntt_cache, AkitaExpandedSetup,
     NttCacheKey, NttCacheMode, NttTransformDomain, PreparedNttCache,
 };
+use jolt_field::{CanonicalEncoding, Field};
 use std::any::Any;
 use std::collections::HashMap;
 #[cfg(test)]
@@ -25,7 +25,7 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// of that prefix single-flight. Diagnostic compression caches remain in a
 /// separate namespace.
 #[derive(Debug)]
-pub struct CpuPreparedSetup<F: FieldCore> {
+pub struct CpuPreparedSetup<F: Field> {
     pub(super) expanded: Arc<AkitaExpandedSetup<F>>,
     pub(super) shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
     pub(super) compression_ntt: CompressionNttCache,
@@ -92,7 +92,7 @@ impl From<CrtI8CapacityProfile> for PreparedCrtNttProfile {
     }
 }
 
-impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
+impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
     #[cfg(test)]
     pub(crate) fn ntt_slot_build_count(&self) -> usize {
         self.ntt_slot_build_count.load(Ordering::Relaxed)
@@ -309,7 +309,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     }
 }
 
-fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
+fn build_ntt_slot_for_key<F: Field + CanonicalEncoding>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
@@ -338,7 +338,7 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     })
 }
 
-fn record_ntt_profile_on_prepared<F: FieldCore>(
+fn record_ntt_profile_on_prepared<F: Field>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
     profile: CrtI8CapacityProfile,
@@ -352,7 +352,7 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
     Ok(())
 }
 
-fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn prepare_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     requested_key: NttCacheKey,
 ) -> Result<Arc<ErasedCpuNttCache>, AkitaError> {
@@ -431,7 +431,7 @@ fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     }
 }
 
-fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn ensure_ntt_slot_on_prepared<F: Field + CanonicalEncoding>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
@@ -463,7 +463,7 @@ pub(super) fn validate_digit_row_request(
 
 impl<F> ComputeBackendSetup<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 

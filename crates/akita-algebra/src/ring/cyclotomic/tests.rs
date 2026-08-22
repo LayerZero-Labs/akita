@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::unreduced::{Fp128x8i32, Fp64x4i32, HasCommitAccum};
-use akita_field::{Fp64, Prime128Offset275, Prime32Offset99};
+use jolt_field::{Fp128x8i32, Fp64x4i32, WithCommitAccumulator};
+use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -11,7 +11,7 @@ const D: usize = 64;
 
 #[test]
 fn cyclotomic_ring_satisfies_jolt_ring_core() {
-    fn assert_ring_core<R: RingCore>() {}
+    fn assert_ring_core<R: Ring>() {}
     assert_ring_core::<CyclotomicRing<F64, D>>();
 
     let x = CyclotomicRing::<F64, D>::x();
@@ -155,7 +155,7 @@ fn wide_shift_accumulation_matches_narrow_at_field_cap() {
     let mut narrow = CyclotomicRing::<F64, D>::zero();
     let mut wide = WideCyclotomicRing::<Fp64x4i32, D>::zero();
 
-    for _ in 0..<F64 as HasCommitAccum>::MAX_COMMIT_ACCUMULATIONS {
+    for _ in 0..<F64 as WithCommitAccumulator>::MAX_COMMIT_ACCUMULATIONS {
         src.shift_accumulate_into(&mut narrow, 0);
         wide_src.shift_accumulate_into(&mut wide, 0);
     }
@@ -187,7 +187,10 @@ fn wide_many_accumulations_fp128() {
 
 #[test]
 fn center_for_decomposition_hits_fp128_overflow_boundaries() {
-    let q = (-F128::one()).to_canonical_u128() + 1;
+    let q = (-F128::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let i128_max = i128::MAX as u128;
 
     for &(levels, log_basis) in &[(64usize, 2u32), (32usize, 4u32)] {
@@ -213,7 +216,10 @@ fn center_for_decomposition_hits_fp128_overflow_boundaries() {
 
 #[test]
 fn asymmetric_centering_boundary_roundtrip_fp128() {
-    let q = (-F128::one()).to_canonical_u128() + 1;
+    let q = (-F128::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let i128_max = i128::MAX as u128;
 
     for &(log_basis, levels) in &[(2u32, 64usize), (4u32, 32usize)] {
@@ -230,7 +236,7 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
             q - 1,
         ];
         let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| {
-            F128::from_canonical_u128_reduced(boundary_values[i % boundary_values.len()])
+            F128::from_u128_reduced(boundary_values[i % boundary_values.len()])
         }));
 
         let mut digits = vec![CyclotomicRing::<F128, D>::zero(); levels];
@@ -259,13 +265,16 @@ fn flat_coefficient_decomposition_matches_ring_digit_layout() {
         2 => -F128::one(),
         3 => F128::from_u64((index * 17) as u64),
         4 => F128::from_i64(-((index * 19) as i64)),
-        _ => F128::from_canonical_u128_reduced(u128::MAX - index as u128),
+        _ => F128::from_u128_reduced(u128::MAX - index as u128),
     }));
 
     for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
         let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
         let mut flat_digits = vec![0i8; D * levels];
-        let q = (-F128::one()).to_canonical_u128() + 1;
+        let q = (-F128::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
         balanced_decompose_coefficients_pow2_i8_into(&ring.coeffs, &mut flat_digits, &params);
         assert_eq!(flat_digits, ring_digits.as_flattened());
@@ -274,7 +283,10 @@ fn flat_coefficient_decomposition_matches_ring_digit_layout() {
 
 #[test]
 fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
-    let q = (-F32::one()).to_canonical_u128() + 1;
+    let q = (-F32::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     for log_basis in 1..=8 {
         let levels = 32usize.div_ceil(log_basis as usize);
         let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
@@ -292,9 +304,8 @@ fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
             q - 2,
             q - 1,
         ];
-        let coefficients: [F32; D] = from_fn(|index| {
-            F32::from_canonical_u128_reduced(boundary_values[index % boundary_values.len()])
-        });
+        let coefficients: [F32; D] =
+            from_fn(|index| F32::from_u128_reduced(boundary_values[index % boundary_values.len()]));
         let mut actual = vec![0i8; D * levels];
         balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut actual, &params);
 
@@ -304,7 +315,9 @@ fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
         let mut expected = vec![0i8; D * levels];
         for (coefficient, value) in coefficients.iter().enumerate() {
             let (mut quotient, first) = peel_first_balanced_digit(
-                value.to_canonical_u128(),
+                value
+                    .to_u128_checked()
+                    .expect("Akita field element must fit in u128"),
                 q,
                 threshold,
                 mask,
@@ -326,7 +339,10 @@ fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
 
 #[test]
 fn fp32_i8_decomposition_with_zero_levels_is_a_noop() {
-    let q = (-F32::one()).to_canonical_u128() + 1;
+    let q = (-F32::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let params = BalancedDecomposePow2Params::new(0, 8, q);
     let coefficients = [F32::one(); D];
     let mut output = [];

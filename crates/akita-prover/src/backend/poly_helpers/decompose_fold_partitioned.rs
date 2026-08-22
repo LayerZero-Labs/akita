@@ -16,9 +16,10 @@ use super::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::parallel::*;
-use akita_field::CanonicalField;
 use akita_types::SignedDigitKernel;
+use jolt_field::solinas::parallel::*;
+use jolt_field::CanonicalEncoding;
+use jolt_field::Field;
 use std::ops::Range;
 
 struct PreparedPm1Challenge {
@@ -126,7 +127,7 @@ fn position_tile_len(num_positions_per_block: usize) -> usize {
         .max(1)
 }
 
-enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
+enum ElementFoldSource<'a, F: Field + CanonicalEncoding, const D: usize> {
     Predecomposed {
         digit_planes: &'a [[i8; D]],
         num_rings: usize,
@@ -143,7 +144,7 @@ enum DigitScratch<const D: usize> {
     I16(Vec<[i16; D]>),
 }
 
-impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
+impl<F: Field + CanonicalEncoding, const D: usize> ElementFoldSource<'_, F, D> {
     fn num_rings(&self) -> usize {
         match self {
             Self::Predecomposed { num_rings, .. } => *num_rings,
@@ -447,7 +448,7 @@ fn flush_narrow_accumulator<const D: usize>(narrow: &mut [[i16; D]], wide: &mut 
     }
 }
 
-fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
+fn element_partitioned_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
     source: ElementFoldSource<'_, F, D>,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -585,7 +586,7 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
 }
 
 /// Element-partitioned accumulation for predecomposed dense digit caches.
-pub fn cached_digit_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+pub fn cached_digit_decompose_fold_partitioned<F: Field + CanonicalEncoding, const D: usize>(
     digit_planes: &[[i8; D]],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -609,7 +610,7 @@ pub fn cached_digit_decompose_fold_partitioned<F: CanonicalField, const D: usize
 }
 
 /// Element-partitioned accumulation for multi-digit dense witnesses.
-pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+pub fn balanced_ring_decompose_fold_partitioned<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[CyclotomicRing<F, D>],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
@@ -625,7 +626,7 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
 }
 
 /// Position-partitioned accumulation for an already-tight recursive digit witness.
-pub fn balanced_tight_digit_fold_partitioned<F: CanonicalField, const D: usize>(
+pub fn balanced_tight_digit_fold_partitioned<F: Field + CanonicalEncoding, const D: usize>(
     coeffs: &[[i8; D]],
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,

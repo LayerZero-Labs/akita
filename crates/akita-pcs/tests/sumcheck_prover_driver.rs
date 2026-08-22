@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
 
-use akita_field::Fp64;
-use akita_field::RandomSampling;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, UniPoly};
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::Fp64;
+use jolt_field::{Field, One, Zero};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 

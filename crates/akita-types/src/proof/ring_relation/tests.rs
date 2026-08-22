@@ -12,7 +12,7 @@ use crate::{
     PolynomialGroupLayout, RingOpeningPoint,
 };
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::Fp32;
+use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
 
 type F = Fp32<251>;

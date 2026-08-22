@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::{Ext2, Fp32, FpExt4, FpExt8, MulBaseUnreduced};
+use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, MulBaseUnreduced, One, Ring, Zero};
 
 type F = Fp32<251>;
 
@@ -57,7 +57,7 @@ fn check_subfield_multiplier_high_half<L, const D: usize>()
 where
     L: FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
-    let k = L::EXT_DEGREE;
+    let k = L::DEGREE;
     let mut coordinate_cases = vec![vec![F::zero(); k]];
     let mut constant = vec![F::zero(); k];
     constant[0] = F::from_u64(9);

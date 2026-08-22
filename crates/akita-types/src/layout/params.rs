@@ -6,7 +6,7 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::CanonicalField;
+use jolt_field::CanonicalEncoding;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
@@ -765,12 +765,12 @@ impl CommittedGroupParams {
 
     /// Exact live next-witness length in field elements for scalar or
     /// multi-group folds.
-    pub fn output_witness_len<F: CanonicalField>(
+    pub fn output_witness_len<F: CanonicalEncoding>(
         &self,
         opening_batch: &OpeningClaimsLayout,
         extension_degree: usize,
     ) -> Result<usize, AkitaError> {
-        self.output_witness_len_for_field_bits(F::modulus_bits(), extension_degree, opening_batch)
+        self.output_witness_len_for_field_bits(F::MODULUS_BITS, extension_degree, opening_batch)
     }
 
     /// Exact live next-witness length using an explicit base-field bit width.

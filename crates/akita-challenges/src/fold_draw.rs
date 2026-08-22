@@ -3,9 +3,9 @@
 use crate::sampler::{XofCursor, MAX_STACK_RING_DIM};
 use crate::{Challenges, OperatorNormRejection, SparseChallengeConfig};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::{FoldChallengeSeedPreview, Transcript, FOLD_CHALLENGE_SEED_LEN};
+use jolt_field::{CanonicalEncoding, Field};
 use std::marker::PhantomData;
 
 const FOLD_CHALLENGE_ROUND_DOMAIN: &[u8] = b"akita/fold-challenge-round/v1";
@@ -198,7 +198,7 @@ impl<'a, F, T> LiveFoldDraw<'a, F, T> {
 
 impl<F, T> FoldDraw for LiveFoldDraw<'_, F, T>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8]) -> Vec<u8> {

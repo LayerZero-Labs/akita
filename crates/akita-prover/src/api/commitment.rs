@@ -11,8 +11,6 @@ use akita_config::{ensure_prover_schedule_fits_setup, CommitmentConfig};
 #[cfg(test)]
 use akita_error::checked;
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling};
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
@@ -21,6 +19,8 @@ use akita_types::{
     CompressionChainPlan, FpExtEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 mod inner;
 #[cfg(test)]
@@ -115,7 +115,7 @@ impl<'a> GroupContext<'a> {
 
 /// Result of committing one polynomial group.
 #[derive(Debug)]
-pub struct CommitOutput<F: FieldCore> {
+pub struct CommitOutput<F: Field> {
     /// Self-describing committed group.
     pub committed_group: CommittedGroup<F>,
     /// Prover-only opening hint.
@@ -158,7 +158,7 @@ fn validate_commitment_geometry<F>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     signed_digit_kernel_for_setup(
         geometry.log_basis_inner,
@@ -221,7 +221,7 @@ pub(crate) fn validate_commit_level_params<F>(
     num_polynomials: usize,
 ) -> Result<akita_types::CommitmentSliceGeometry, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let slice_geometry = params.validate_commitment_request(fold_level, num_polynomials)?;
     if params.blocks().live_blocks == 0 || params.blocks().positions_per_block == 0 {
@@ -275,7 +275,7 @@ pub fn prepare_commit_inputs<F, P>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<OpeningClaimsLayout, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     if polys.is_empty() {
@@ -322,7 +322,7 @@ fn ensure_sources_match_declared_class<F, P>(
     contract: CommittedSourceContract,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     P: RootPolyMeta<F>,
 {
     let Some(required_chunk_size) = contract.class().required_onehot_chunk_size() else {
@@ -359,10 +359,13 @@ fn ensure_sources_fit_accepted_interval<F, P, const D: usize>(
     contract: CommittedSourceContract,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RootCommitSource<F, D>,
 {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold =
         decompose_centering_threshold(plan.num_digits_inner, plan.log_basis_inner, modulus);
     let (negative_reach, positive_reach) =
@@ -406,14 +409,8 @@ fn commit_with_validated_geometry<F, P, B>(
     contract: CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
@@ -585,14 +582,8 @@ pub fn commit<Cfg, P, B>(
 ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    Cfg::Field: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeCommitSource<Cfg::Field>,
     B: RuntimeCommitBackendFor<Cfg::Field, P>,

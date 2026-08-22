@@ -1,10 +1,10 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
-use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use core::mem::size_of;
+use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-fn flat_zeros<F: FieldCore, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
+fn flat_zeros<F: Field, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
     crate::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
 }
 
@@ -227,7 +227,7 @@ fn exact_selector_changes_layout_at_the_strict_capacity_boundary() {
     assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 1 << 15).unwrap());
 }
 
-fn assert_quotient_tail_selectors_agree<F: CanonicalField, const D: usize>(
+fn assert_quotient_tail_selectors_agree<F: Field + CanonicalEncoding, const D: usize>(
     profile: SisModulusProfileId,
 ) {
     for rhs_abs_bound in [1, 1 << 15, 1_000_000, u64::from(u32::MAX)] {
@@ -410,12 +410,12 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     const ROWS: usize = 2;
     const COLS: usize = 3;
     type F = Prime128OffsetA7F7;
-    let modulus = u128::MAX - (<F as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let modulus = u128::MAX - (<F as PseudoMersenne>::OFFSET - 1);
     let matrix = (0..ROWS * COLS)
         .map(|entry| {
             CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
                 let magnitude = modulus / 2 - (entry * 257 + coefficient * 17) as u128;
-                let value = F::from_canonical_u128_reduced(magnitude);
+                let value = F::from_u128_reduced(magnitude);
                 if (entry + coefficient) % 2 == 0 {
                     value
                 } else {

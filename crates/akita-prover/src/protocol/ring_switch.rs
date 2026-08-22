@@ -6,9 +6,6 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
@@ -19,6 +16,7 @@ use akita_types::{
     CoefficientPackingBatchSemantics, DigitBlocks, OpeningFamily, RelationRangeImagePlan,
     RingRelationInstance,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 mod coeffs;
 mod commit;
@@ -41,7 +39,7 @@ pub use relation_weights::{
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<E: FieldCore> {
+pub struct RingSwitchOutput<E: Field> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
@@ -64,7 +62,7 @@ pub struct RingSwitchOutput<E: FieldCore> {
 
 /// Transcript-complete ring-switch state and the exact relation authority
 /// compiled from its freshly sampled challenges.
-pub(crate) struct RingSwitchFinalization<E: FieldCore> {
+pub(crate) struct RingSwitchFinalization<E: Field> {
     pub(crate) output: RingSwitchOutput<E>,
     pub(crate) relation_plan: RelationRangeImagePlan,
     pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,

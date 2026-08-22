@@ -13,8 +13,8 @@ use crate::kernels::linear::{
 };
 use crate::AkitaProverSetup;
 use akita_error::AkitaError;
-use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use std::sync::atomic::Ordering;
 
 type F = Prime64Offset59;

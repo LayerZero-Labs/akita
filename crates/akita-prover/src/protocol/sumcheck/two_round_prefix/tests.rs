@@ -4,10 +4,10 @@ use super::stage2::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
 use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
+use jolt_field::{Field, One, Prime128Offset275, Ring, Zero};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;
@@ -164,7 +164,7 @@ fn stage2_relation_round_values_from_full_grid(full_grid: [F; 9], r0: F) -> Vec<
     out
 }
 
-fn tensor_values<E: FieldCore, const NX: usize, const NY: usize>(
+fn tensor_values<E: Field, const NX: usize, const NY: usize>(
     xs: [PrefixPoint<E>; NX],
     ys: [PrefixPoint<E>; NY],
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,

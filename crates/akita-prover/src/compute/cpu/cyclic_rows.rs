@@ -4,12 +4,12 @@ use crate::compute::backend::CyclicRowsComputeBackend;
 use crate::kernels::linear::mat_vec_mul_ntt_single_i8_cyclic;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{NttCacheKey, NttTransformDomain};
+use jolt_field::{CanonicalEncoding, Field};
 
 impl<F> CyclicRowsComputeBackend<F> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn cyclic_digit_rows<const D: usize>(
         &self,

@@ -9,13 +9,13 @@ use super::{
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::CanonicalField;
-use akita_field::{Fp64, Prime128Offset275};
 use akita_types::sis::compute_num_digits_field_width;
+use jolt_field::CanonicalEncoding;
+use jolt_field::{Fp64, One, Prime128Offset275, Ring, Zero};
 
 #[test]
 fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
-    use akita_field::Prime32Offset99;
+    use jolt_field::Prime32Offset99;
 
     type F = Prime32Offset99;
     const D: usize = 512;
@@ -43,7 +43,10 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
                 .collect(),
         })
         .collect::<Vec<_>>();
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
     let params = DecomposeParams {
@@ -100,8 +103,8 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
 #[test]
 fn compact_subfield_fold_matches_materialized_ring_oracle_for_all_sources() {
     use crate::backend::{DensePoly, OneHotPoly, RecursiveWitnessFlat};
-    use akita_field::{ExtField, FpExt4, Prime32Offset99};
     use akita_types::{prepare_opening_point, BasisMode};
+    use jolt_field::{ExtField, FpExt4, Prime32Offset99};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -308,7 +311,7 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
     let rings = (0..4)
         .map(|ring| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
-                F::from_canonical_u128_reduced(((ring * D + coefficient) as u128 + 1) * 509)
+                F::from_u128_reduced(((ring * D + coefficient) as u128 + 1) * 509)
             }))
         })
         .collect::<Vec<_>>();
@@ -322,7 +325,10 @@ fn large_basis_partitioned_fold_preserves_i16_digits() {
             coeffs: vec![-1, 2, 1].into(),
         },
     ];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
     let params = DecomposeParams {
@@ -369,7 +375,7 @@ fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
     let rings = (0..4)
         .map(|ring| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
-                F::from_canonical_u128_reduced(((ring * D + coefficient) as u128 + 1) * 2053)
+                F::from_u128_reduced(((ring * D + coefficient) as u128 + 1) * 2053)
             }))
         })
         .collect::<Vec<_>>();
@@ -392,7 +398,10 @@ fn large_basis_d64_chunks_ring_and_falls_back_for_oversized_term() {
             coeffs: vec![127].into(),
         },
     ];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
     let params = DecomposeParams {
@@ -488,7 +497,10 @@ fn fused_full_challenge_accumulate_matches_generic_sparse_path() {
             })
             .collect(),
     };
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let log_basis = 3u32;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
@@ -556,7 +568,10 @@ fn partitioned_full_challenge_accumulate_matches_generic_sparse_path() {
                 .collect(),
         },
     ];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let log_basis = 3u32;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
@@ -627,7 +642,10 @@ fn partitioned_high_density_d64_challenge_uses_rotated_path() {
     assert!(should_use_rotated_challenge::<D>(&high_density));
     assert!(!should_use_rotated_challenge::<D>(&sparse));
     let challenges = vec![high_density, sparse];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let log_basis = 4u32;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
@@ -673,7 +691,10 @@ fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
 
     let log_basis = 4u32;
     let num_digits = compute_num_digits_field_width(128, log_basis);
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold =
         akita_algebra::ring::cyclotomic::decompose_centering_threshold(num_digits, log_basis, q);
     let i128_max = i128::MAX as u128;
@@ -686,7 +707,7 @@ fn fp128_overflow_paths_match_direct_and_fused_sparse_path() {
         q - 1,
     ];
     let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
-        F::from_canonical_u128_reduced(boundary_values[k % boundary_values.len()])
+        F::from_u128_reduced(boundary_values[k % boundary_values.len()])
     }));
     let challenge = SparseChallenge {
         positions: (0..D as u32).collect(),

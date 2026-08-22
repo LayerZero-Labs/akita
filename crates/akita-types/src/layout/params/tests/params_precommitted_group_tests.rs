@@ -348,7 +348,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
 
 #[test]
 fn native_group_dimensions_are_independent_of_final_group_order() {
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = lp.preceding_group_mut_for_test(0).unwrap();
@@ -588,7 +588,7 @@ fn relation_geometry_revalidates_frozen_precommitted_profiles() {
 
 #[test]
 fn compact_witness_addresses_match_independent_formula_matrix() {
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     for group_count in [1usize, 2, 3] {
         let (base_lp, batch) = address_oracle_fixture(group_count);

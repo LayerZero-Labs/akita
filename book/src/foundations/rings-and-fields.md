@@ -65,7 +65,7 @@ about 128 bits. The fp64 family reaches the same size with a degree 2
 extension. The fp128 family needs no extension.
 
 The code records this relationship through `ExtField<F>`. Its
-`EXT_DEGREE` constant gives $K$. `from_base_slice` and `to_base_vec` convert
+`DEGREE` constant gives $K$. `from_base_slice` and `to_base_vec` convert
 between an extension element and its canonical base field coordinates.
 
 ## Coefficients and evaluation points have different roles
@@ -255,8 +255,8 @@ chapter shows the full coefficient grid and the current packed proof relation.
 | Question | Primary source |
 | --- | --- |
 | How is a ring element stored and multiplied? | `crates/akita-algebra/src/ring/cyclotomic.rs` |
-| Which extension types exist? | `crates/akita-field/src/ext/` |
-| How are base values lifted into an extension? | `crates/akita-field/src/ext/lift.rs` |
+| Which extension types exist? | `jolt-field::solinas` (`FpExt2`, `FpExt4`, and `FpExt8`) |
+| How are base values lifted into an extension? | `jolt_field::ExtField` and the Solinas extension implementations |
 | Which field and extension does a preset use? | `crates/akita-config/src/proof_optimized/` |
 | Which ring dimensions may a preset schedule use? | The `A_RING_DIMENSIONS`, `B_RING_DIMENSIONS`, and `D_RING_DIMENSIONS` declarations in each preset |
 | How is subring coefficient packing validated? | `crates/akita-types/src/subring_coefficient_packing.rs` |

@@ -11,8 +11,8 @@ use crate::kernels::linear::{
     fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedQuotientRows,
 };
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
+use jolt_field::{CanonicalEncoding, Field};
 
 fn centered_rhs_abs_bound<const D: usize>(rows: &[[i32; D]], claimed: u32) -> u64 {
     rows.iter()
@@ -32,7 +32,7 @@ fn validate_role_shape(role: &str, rows: usize, width: usize) -> Result<(), Akit
     Ok(())
 }
 
-fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>(
+fn cached_b_a_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     source: RingSwitchRelationView<'_, D>,
     plan: RingSwitchRelationPlan,
@@ -127,7 +127,7 @@ fn cached_b_a_rows<F: FieldCore + CanonicalField + HalvingField, const D: usize>
 
 impl<F, const D: usize> RingSwitchRelationKernel<RingSwitchRelationView<'_, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn relation_rows(
         &self,
@@ -136,7 +136,7 @@ where
         plan: RingSwitchRelationPlan,
     ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
     where
-        F: HalvingField,
+        F: Field,
     {
         validate_role_shape("D", plan.n_d, source.e_hat.len())?;
         validate_role_shape("B", plan.n_b, source.t_hat.len())?;

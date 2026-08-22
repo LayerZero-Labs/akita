@@ -10,12 +10,12 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module deliberately depends only on `akita-field`; it does not pull in
+//! This module deliberately depends only on `jolt-field`; it does not pull in
 //! the transcript layer or the sampler.
 
 use akita_error::AkitaError;
 
-use akita_field::{FieldCore, FromPrimitiveInt, MulBase};
+use jolt_field::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
 use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
@@ -32,8 +32,8 @@ pub type SparseChallengeCoefficients = SmallVec<[i8; INLINE_SPARSE_WEIGHT]>;
 #[inline]
 pub(crate) fn accumulate_small_signed<F, E>(acc: &mut E, value: E, coeff: i64)
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
+    F: Field + Ring,
+    E: Field + ExtField<F>,
 {
     match coeff {
         1 => *acc += value,
@@ -146,8 +146,8 @@ impl SparseChallenge {
     /// does not re-check uniqueness of positions on the hot path.
     pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let ring_d = alpha_pows.len();
         if self.positions.len() != self.coeffs.len() {
@@ -178,7 +178,7 @@ impl SparseChallenge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
     const D: usize = 4;

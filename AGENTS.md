@@ -22,6 +22,7 @@ scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
+scripts/check-shared-field-identity.sh
 cargo machete --with-metadata
 typos
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
@@ -34,7 +35,6 @@ graphs differ:
 cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence,transcript-blake2b -- -D warnings
 cargo clippy --all --all-targets --release --no-default-features --features transcript-blake2b -- -D warnings
 cargo clippy -p akita-pcs --all-targets --release --no-default-features --features parallel,schedules-default,response-model-diagnostics,transcript-blake2b -- -D warnings
-cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
 ```
 
 Run path-specific workflows such as portability, Jolt compatibility, fuzzing,

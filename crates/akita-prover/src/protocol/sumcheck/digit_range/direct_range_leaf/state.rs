@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Build the low-basis prover from the compact witness table.
     ///
     /// `digit_witness` holds the `live_x_cols * 2^ring_bits` live digits in

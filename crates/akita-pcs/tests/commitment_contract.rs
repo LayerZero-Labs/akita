@@ -13,8 +13,6 @@ use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{
     CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
@@ -24,6 +22,8 @@ use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
 use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
@@ -107,7 +107,7 @@ struct ContractCommitBackend;
 
 impl<F> ComputeBackendSetup<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
@@ -136,7 +136,7 @@ where
 
 impl<F> DigitRowsComputeBackend<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn digit_rows<const RING_D: usize>(
         &self,
@@ -151,7 +151,7 @@ where
 
 impl<F> CompressionComputeBackend<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
         CpuBackend::DEFAULT.compression_cache_bytes(prepared)
@@ -168,8 +168,8 @@ where
 
 impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
+    <F as Unreduced>::Wide: From<F>,
 {
     fn commit_inner_group(
         &self,

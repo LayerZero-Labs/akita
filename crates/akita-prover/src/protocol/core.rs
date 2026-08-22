@@ -19,11 +19,6 @@ use crate::{
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    Invertible, LiftBase, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::{
@@ -50,9 +45,11 @@ use akita_types::{
     RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use std::sync::Arc;
 
-pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
+pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
     /// One transparent factor evaluation per opening group. The application
     /// batches the proof's terminal claims only after the complete opening
@@ -86,7 +83,7 @@ pub(crate) use root_group::{
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
-pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
+pub struct ProveLevelOutput<F: Field, E: Field> {
     /// Fold proof produced at this level.
     pub level_proof: FoldLevelProof<F, E>,
     /// Suffix prover state for the next level.
@@ -94,7 +91,7 @@ pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
 }
 
 /// Outcome of the recursive fold suffix after the root level.
-pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
+pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     /// Non-terminal recursive folds following the root.
     pub recursive_folds: Vec<FoldLevelProof<F, E>>,
     /// Required terminal fold.
@@ -107,7 +104,7 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
 pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
     (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
 
-pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
+pub(in crate::protocol::core) struct Stage3ProveOutput<E: Field> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
 }

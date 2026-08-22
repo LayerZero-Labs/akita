@@ -1,12 +1,12 @@
 use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
 use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_types::{RelationWeightContribution, RelationWeightEvent};
+use jolt_field::Field;
 
 /// Checked relation events plus the domain data needed by every consumer.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightEvents<E: FieldCore> {
+pub struct RelationWeightEvents<E: Field> {
     pub(super) events: Vec<RelationWeightEvent<E>>,
     pub(super) alpha_powers: Vec<E>,
     pub(super) relation_coefficient_block_len: usize,
@@ -16,12 +16,12 @@ pub struct RelationWeightEvents<E: FieldCore> {
 
 /// Exact common-alpha factorization of the padded relation-weight table.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightFactorization<E: FieldCore> {
+pub struct RelationWeightFactorization<E: Field> {
     common_alpha_factor: Vec<E>,
     relation_lane_weights: Vec<E>,
 }
 
-impl<E: FieldCore> RelationWeightFactorization<E> {
+impl<E: Field> RelationWeightFactorization<E> {
     /// Alpha powers on the low coefficient block shared by every role.
     #[must_use]
     pub fn common_alpha_factor(&self) -> &[E] {
@@ -59,7 +59,7 @@ impl<E: FieldCore> RelationWeightFactorization<E> {
     }
 }
 
-impl<E: FieldCore> RelationWeightEvents<E> {
+impl<E: Field> RelationWeightEvents<E> {
     pub(super) fn push(
         &mut self,
         physical_start: usize,

@@ -2,7 +2,7 @@ use super::*;
 
 /// Sparse transformed-witness evaluations for extension-opening reduction.
 #[derive(Debug, Clone)]
-pub struct SparseExtensionOpeningWitness<E: FieldCore> {
+pub struct SparseExtensionOpeningWitness<E: Field> {
     pub(super) table_len: usize,
     pub(super) entries: Vec<(usize, E)>,
     /// Number of upcoming folds guaranteed to leave at most one entry per pair
@@ -18,7 +18,7 @@ const SPARSE_PARALLEL_ENTRY_THRESHOLD: usize = 1 << 14;
 #[cfg(feature = "parallel")]
 const SPARSE_PARALLEL_CHUNKS_PER_THREAD: usize = 4;
 
-impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
+impl<E: Field> SparseExtensionOpeningWitness<E> {
     /// Construct a sparse witness table from `(index, value)` entries.
     ///
     /// Duplicate indices are combined, and zero entries are dropped.
@@ -320,7 +320,7 @@ impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
+impl<E: Field + Unreduced> SparseExtensionOpeningWitness<E> {
     pub(super) fn accumulate_entries_with_factor<P>(
         entries: &[(usize, E)],
         coeff: E,
@@ -330,7 +330,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     where
         P: Fn(usize) -> (E, E) + Sync,
     {
-        // Honor `DELAYED_PRODUCT_SUM_IS_EXACT`: only sum wide products and reduce
+        // Honor `SUM_IS_EXACT`: only sum wide products and reduce
         // once for fields whose accumulator is proven exact; otherwise reduce per
         // term so the coefficients stay byte-identical to `Mul`, matching the
         // dense round and `TensorEqualityFactor::factor_pair`.
@@ -338,7 +338,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
         // `merge_free` selects the closed-form pass valid while every pair has at
         // most one entry; it accumulates the identical products in the identical
         // order, so both paths agree bit-for-bit.
-        let (constant, quadratic) = match (E::DELAYED_PRODUCT_SUM_IS_EXACT, merge_free) {
+        let (constant, quadratic) = match (E::SUM_IS_EXACT, merge_free) {
             (true, false) => Self::accumulate_entries_with_factor_using::<DelayedDeg2<E>, P>(
                 entries,
                 factor_pair,
@@ -565,7 +565,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     where
         P: Fn(usize) -> (E, E) + Sync,
     {
-        let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        let (constant, quadratic) = if E::SUM_IS_EXACT {
             self.fused_fold_accumulate_merge_free_using::<DelayedDeg2<E>, P>(
                 r_round,
                 next_factor_pair,
@@ -634,7 +634,7 @@ impl<E: FieldCore + HasUnreducedOps> SparseExtensionOpeningWitness<E> {
     }
 }
 
-impl<E: FieldCore> SparseExtensionOpeningWitness<E> {
+impl<E: Field> SparseExtensionOpeningWitness<E> {
     pub(super) fn fold_in_place(&mut self, r_round: E) {
         let _span = tracing::trace_span!(
             "SparseExtensionOpeningWitness::fold_in_place",

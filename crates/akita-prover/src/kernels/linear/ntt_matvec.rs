@@ -41,7 +41,7 @@ macro_rules! dispatch_slot {
 /// on-the-fly per tile to avoid materializing all digits at once.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8")]
-pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_i8<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -66,7 +66,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// Skips the full-plane zero scans that are useful for sparse inputs but are
 /// almost always wasted work on dense witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense")]
-pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_i8_dense<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -88,7 +88,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
 
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
-pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_i8_dense_single_row<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -114,7 +114,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
 /// decomposition entirely because the caller already holds each coefficient as a
 /// balanced digit plane for a validated `log_basis <= 8`.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8")]
-pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -148,7 +148,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// cache is produced by Akita's validated decomposer and does not need a second
 /// full scan at each commit.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
-pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
@@ -175,7 +175,7 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, con
 /// coefficients past the balanced range. Coefficients too large for the CRT
 /// lift are rejected as `AkitaError` rather than panicking.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_digits_i8")]
-pub fn mat_vec_mul_ntt_raw_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+pub fn mat_vec_mul_ntt_raw_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,

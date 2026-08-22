@@ -7,8 +7,6 @@ pub(super) use opening_oracles::*;
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::RecursiveCommitmentConfig;
-use akita_field::Zero;
-pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -28,6 +26,8 @@ pub(super) use akita_types::{
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
+use jolt_field::{One, Zero};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -67,7 +67,7 @@ pub(super) fn init_rayon_pool() {
 pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
@@ -130,7 +130,7 @@ pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8>
 /// Canonical Stage 1 payload bytes in fold-wire order.
 pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: Field + AkitaSerialize,
 {
     let mut bytes = Vec::new();
     for stage in &proof.stages {
@@ -154,7 +154,7 @@ where
 /// Stable digest used by versioned protocol epochs.
 pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
 where
-    FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    FF: Field + CanonicalEncoding + CanonicalBytes + 'static,
 {
     let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
     transcript.append_bytes(labels::ABSORB_OPENING_PAYLOAD, payload);
@@ -370,7 +370,7 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
     for _ in 0..n {
         let v = splitmix64_next(&mut state);
-        out.push(F::from_canonical_u128_reduced(v as u128));
+        out.push(F::from_u128_reduced(v as u128));
     }
     out
 }
@@ -400,7 +400,7 @@ pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
             continue;
         }
         let draw = splitmix64_next(&mut state);
-        let magnitude = F::from_canonical_u128_reduced(u128::from(draw));
+        let magnitude = F::from_u128_reduced(u128::from(draw));
         out.push(if draw & 1 == 0 { magnitude } else { -magnitude });
     }
     out
@@ -413,7 +413,7 @@ pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
 /// reach further negative than positive, so a guard stated only on the positive
 /// side would miss it.
 pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
-    let max = F::from_canonical_u128_reduced(u128::from(u64::MAX));
+    let max = F::from_u128_reduced(u128::from(u64::MAX));
     [max, -max, F::one(), -F::one()]
 }
 
@@ -801,7 +801,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         );
 
         let mut tampered = final_openings;
-        tampered[0] += F::from_canonical_u128_reduced(1);
+        tampered[0] += F::from_u128_reduced(1);
         let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let tampered_result = Recursive::<BaseCfg>::batched_verify(
             &proof,

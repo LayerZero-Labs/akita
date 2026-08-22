@@ -1,5 +1,5 @@
-use akita_field::{CanonicalField, Prime128Offset275};
 use criterion::{black_box, Criterion};
+use jolt_field::{CanonicalEncoding, Prime128Offset275, Ring};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::data::rand_u128;
@@ -8,8 +8,8 @@ pub(crate) fn bench_wide_ops(c: &mut Criterion) {
     type F = Prime128Offset275;
 
     let mut rng = StdRng::seed_from_u64(0x01de_be0c_0001);
-    let a = F::from_canonical_u128_reduced(rand_u128(&mut rng));
-    let b = F::from_canonical_u128_reduced(rand_u128(&mut rng));
+    let a = F::from_u128_reduced(rand_u128(&mut rng));
+    let b = F::from_u128_reduced(rand_u128(&mut rng));
     let b_u64 = rng.next_u64();
 
     let mut group = c.benchmark_group("field_arith/wide/prime128_offset275");

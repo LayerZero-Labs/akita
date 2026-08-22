@@ -6,9 +6,9 @@ use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::borrow::Cow;
 use std::mem::size_of;
 use std::sync::OnceLock;
@@ -43,7 +43,7 @@ pub(super) struct DenseDigitCache {
 /// ring dimension is a view selected at kernel entry (each ring-shaped method
 /// takes it as a const generic).
 #[derive(Debug)]
-pub struct DensePoly<F: FieldCore> {
+pub struct DensePoly<F: Field> {
     /// Actual multilinear variable count of the source witness.
     pub(super) num_vars: usize,
     /// Flat field coefficients in sequential block order (untagged compact
@@ -55,7 +55,7 @@ pub struct DensePoly<F: FieldCore> {
     digit_cache: OnceLock<DenseDigitCache>,
 }
 
-impl<F: FieldCore + Clone> Clone for DensePoly<F> {
+impl<F: Field + Clone> Clone for DensePoly<F> {
     fn clone(&self) -> Self {
         Self {
             num_vars: self.num_vars,
@@ -66,7 +66,7 @@ impl<F: FieldCore + Clone> Clone for DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + PartialEq> PartialEq for DensePoly<F> {
+impl<F: Field + PartialEq> PartialEq for DensePoly<F> {
     fn eq(&self, other: &Self) -> bool {
         self.num_vars == other.num_vars
             && self.coeffs == other.coeffs
@@ -74,7 +74,7 @@ impl<F: FieldCore + PartialEq> PartialEq for DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
+impl<F: Field + Eq> Eq for DensePoly<F> {}
 
 /// Reinterpret a flat coefficient slice as ring elements of dimension `D`.
 ///
@@ -82,7 +82,7 @@ impl<F: FieldCore + Eq> Eq for DensePoly<F> {}
 /// callers slice the live prefix for their view dimension first, then
 /// reinterpret after checking divisibility.
 #[inline]
-fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
+fn as_ring_view<F: Field, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F, D>] {
     debug_assert!(D > 0);
     debug_assert!(flat.len().is_multiple_of(D));
     // SAFETY: `CyclotomicRing<F, D>` is `#[repr(transparent)]` over `[F; D]`,
@@ -92,7 +92,7 @@ fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F,
     }
 }
 
-impl<F: FieldCore> DensePoly<F> {
+impl<F: Field> DensePoly<F> {
     /// Full physical (zero-padded) flat coefficient buffer.
     pub fn field_coeffs(&self) -> &[F] {
         self.coeffs.coeffs()
@@ -145,7 +145,7 @@ impl<F: FieldCore> DensePoly<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField> DensePoly<F> {
+impl<F: Field + CanonicalEncoding> DensePoly<F> {
     /// Pack field-element evaluations into flat dense storage.
     ///
     /// At dimension `D` the first `α = log₂(D)` variables
@@ -178,7 +178,10 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         // Padding zeros are centered-0 (trivially small-i8), so a poly whose
         // live coefficients are all small stays all-small — identical to the
         // old per-ring check over the zero-padded last ring.
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let half_q = q / 2;
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);
         let mut all_small_i8 = true;
@@ -273,7 +276,10 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         }
 
         let rings = self.ring_coeffs::<D>().ok()?;
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)

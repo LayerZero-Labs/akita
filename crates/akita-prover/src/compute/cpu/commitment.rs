@@ -12,8 +12,8 @@ use crate::kernels::linear::{
 use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{NttCacheKey, NttTransformDomain, SignedDigitKernel};
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
 impl CpuBackend {
@@ -24,7 +24,7 @@ impl CpuBackend {
         input: DenseCommitInput<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         match input {
             DenseCommitInput::CachedDigits {
@@ -129,7 +129,7 @@ impl CpuBackend {
         known_balanced_log_basis: Option<u32>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let row_width = num_positions_per_block
             .checked_mul(num_digits_inner)

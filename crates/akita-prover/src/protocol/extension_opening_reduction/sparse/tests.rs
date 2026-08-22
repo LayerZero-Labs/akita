@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::RandomSampling;
-use akita_field::{FpExt4, Prime24Offset3};
+use jolt_field::Field;
+use jolt_field::{FpExt4, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 
@@ -9,7 +9,7 @@ type E = FpExt4<F>;
 
 /// One entry per stride-window at a random within-window offset — the real
 /// `np = 1` EOR witness shape (`stride = onehot_k / width = 2^s`).
-fn build_np1_witness<G: FieldCore + RandomSampling>(
+fn build_np1_witness<G: Field>(
     log_chunks: usize,
     s: usize,
     rng: &mut StdRng,
@@ -27,7 +27,7 @@ fn build_np1_witness<G: FieldCore + RandomSampling>(
 
 /// Standard multilinear fold of a dense factor table: `A'[p] = (1-r)·A[2p] +
 /// r·A[2p+1]`. Keeps the factor in lock-step with the folding witness.
-fn fold_dense<G: FieldCore>(factor: &mut Vec<G>, r: G) {
+fn fold_dense<G: Field>(factor: &mut Vec<G>, r: G) {
     let one_minus = G::one() - r;
     let half = factor.len() / 2;
     for p in 0..half {
@@ -103,11 +103,11 @@ fn merge_free_matches_general_round_by_round() {
 /// (`>= 2^14` entries) regimes.
 ///
 /// Uses `FpExt4<Fp32>` (the production fp32 `onehot_d32` field): it
-/// implements `HasOptimizedFold`, required by the term-level fused path, and
-/// takes the delayed-reduction accumulator (`DELAYED_PRODUCT_SUM_IS_EXACT`).
+/// implements `Fold`, required by the term-level fused path, and
+/// takes the delayed-reduction accumulator (`SUM_IS_EXACT`).
 #[test]
 fn fused_term_matches_unfused_reference() {
-    use akita_field::{FpExt4, Prime32Offset99};
+    use jolt_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
 
     for (log_chunks, s) in [(6usize, 4usize), (14usize, 4usize)] {
@@ -174,7 +174,7 @@ fn fused_term_matches_unfused_reference() {
 
 #[test]
 fn cylindrical_term_matches_materialized_high_variable_extension() {
-    use akita_field::{FpExt4, Prime32Offset99};
+    use jolt_field::{FpExt4, Prime32Offset99};
     type TE = FpExt4<Prime32Offset99>;
 
     let mut rng = StdRng::seed_from_u64(0xc711_1d3a);

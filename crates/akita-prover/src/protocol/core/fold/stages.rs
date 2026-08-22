@@ -7,8 +7,8 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     plan: &RelationRangeImagePlan,
 ) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
@@ -101,8 +101,8 @@ pub(super) fn prove_stage2<F, E, T>(
     plan: RelationRangeImagePlan,
 ) -> Result<RelationRangeImageProveResult<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
@@ -220,13 +220,13 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
-        + FromPrimitiveInt
-        + LiftBase<F>
+        + Ring
+        + ExtField<F>
         + AkitaSerialize
-        + akita_field::unreduced::HasUnreducedOps
-        + akita_field::MulBaseUnreduced<F>,
+        + jolt_field::Unreduced
+        + jolt_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {

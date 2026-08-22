@@ -5,9 +5,9 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::CommitInnerWitness;
 use akita_algebra::ring::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{DigitBlocks, RingVec};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
@@ -16,7 +16,7 @@ pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     n_a: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     inner.ensure_ring_dim::<D>()?;
 
@@ -65,7 +65,7 @@ pub(super) fn prepare_inner_commit_group<F, S, B, const D_A: usize, const D_B: u
     log_basis: u32,
 ) -> Result<Vec<(RingVec<F>, DigitBlocks)>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: ComputeBackendSetup<F> + RootCommitKernel<S, F, D_A>,
 {
     let source_count = sources.len();
@@ -95,7 +95,7 @@ pub(crate) fn commit_outer_slices<'a, F, B, const D_B: usize>(
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F>,
 {
     let mut stacked = Vec::with_capacity(geometry.logical_output_rows(n_b)?);

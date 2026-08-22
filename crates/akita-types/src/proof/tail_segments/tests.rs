@@ -1,8 +1,8 @@
 use super::*;
 use crate::SisModulusProfileId;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::CanonicalField;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::CanonicalEncoding;
+use jolt_field::{One, Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
@@ -135,7 +135,7 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
 #[test]
 fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let cap = 31;
     let layout = TerminalResponseShape::from_groups(
         &lp,
@@ -164,7 +164,7 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
 #[test]
 fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
@@ -185,7 +185,7 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 #[test]
 fn direct_terminal_builder_constructs_z_e_t_segments() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
@@ -223,11 +223,11 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
 
 #[test]
 fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
-    use akita_field::CanonicalField;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+    use jolt_field::CanonicalEncoding;
 
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
     let scheduled_z_bytes = terminal_response_z_payload_bytes(&layout);
     assert!(
@@ -271,11 +271,11 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
 #[test]
 fn terminal_e_absorb_matches_emitted_field_segment() {
     let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
     let group = layout.groups[0];
     let e_fields = RingVec::from_coeffs(
         (0..group.e_field_elems)
-            .map(|index| F::from_canonical_u128_reduced(index as u128 + 1))
+            .map(|index| F::from_u128_reduced(index as u128 + 1))
             .collect(),
     );
     let witness = TerminalResponse {
@@ -294,11 +294,11 @@ fn terminal_e_absorb_matches_emitted_field_segment() {
 #[test]
 fn terminal_transcript_parts_separate_t_state_from_z_response() {
     let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
     let group = layout.groups[0];
     let t_fields = RingVec::from_coeffs(
         (0..group.t_field_elems)
-            .map(|index| F::from_canonical_u128_reduced(index as u128 + 9))
+            .map(|index| F::from_u128_reduced(index as u128 + 9))
             .collect(),
     );
     let z = vec![3, 1, 4, 1];

@@ -1,6 +1,7 @@
 use super::physical_b::build_group_b_setup_tensors;
 use super::types::{ProjectedEqPairTensor, ProjectedEqPairTensorState};
 use super::*;
+use akita_algebra::fft::field_pow;
 use akita_algebra::{
     offset_eq::{
         eval_boolean_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
@@ -8,7 +9,6 @@ use akita_algebra::{
     },
     ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
 };
-use akita_field::fft::field_pow;
 
 struct GroupSetupIndexWeights<E> {
     projection_scales: [Option<Vec<E>>; 3],
@@ -16,7 +16,7 @@ struct GroupSetupIndexWeights<E> {
     physical_b_weights: Vec<E>,
 }
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub(super) fn materialize_role_tensor_weights(
         &self,
         ratio: usize,
@@ -442,7 +442,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 }
 
-fn rebase_relation_tensor<E: FieldCore>(
+fn rebase_relation_tensor<E: Field>(
     tensor: &EqPairTensorFamily<E>,
     bridge_ratio: usize,
 ) -> Result<EqPairTensorFamily<E>, AkitaError> {
@@ -475,7 +475,7 @@ fn rebase_relation_tensor<E: FieldCore>(
     )
 }
 
-fn build_group_role_tensors<E: FieldCore>(
+fn build_group_role_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
     witness_layout: &WitnessLayout,
@@ -648,7 +648,7 @@ fn build_group_role_tensors<E: FieldCore>(
     Ok([d_tensors, b_tensors, a_tensors])
 }
 
-fn lift_role_tensor<E: FieldCore>(
+fn lift_role_tensor<E: Field>(
     tensor: &EqPairTensorFamily<E>,
     left_offset: usize,
     row_stride: usize,
@@ -671,7 +671,7 @@ fn lift_role_tensor<E: FieldCore>(
 ///
 /// Families are chunk-major with `families_per_unit` semantic lanes inside
 /// each chunk. Unequal or non-affine layouts retain their original families.
-fn compact_affine_unit_families<E: FieldCore>(
+fn compact_affine_unit_families<E: Field>(
     families: Vec<EqPairTensorFamily<E>>,
     families_per_unit: usize,
 ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {
@@ -743,7 +743,7 @@ fn compact_affine_unit_families<E: FieldCore>(
     Ok(compact)
 }
 
-fn role_tensors_are_aligned<E: FieldCore>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
+fn role_tensors_are_aligned<E: Field>(tensors: &[EqPairTensorFamily<E>], ratio: usize) -> bool {
     ratio.is_power_of_two()
         && tensors.iter().all(|tensor| {
             tensor.right_offset.is_multiple_of(ratio)
@@ -754,7 +754,7 @@ fn role_tensors_are_aligned<E: FieldCore>(tensors: &[EqPairTensorFamily<E>], rat
         })
 }
 
-fn factor_aligned_role_tensors<E: FieldCore>(
+fn factor_aligned_role_tensors<E: Field>(
     tensors: &mut [EqPairTensorFamily<E>],
     ratio: usize,
 ) -> Result<(), AkitaError> {
@@ -772,7 +772,7 @@ fn factor_aligned_role_tensors<E: FieldCore>(
     Ok(())
 }
 
-fn role_projection_evaluation<E: FieldCore>(
+fn role_projection_evaluation<E: Field>(
     alpha: E,
     base_ring_dim: usize,
     low_point: &[E],
@@ -786,7 +786,7 @@ fn role_projection_evaluation<E: FieldCore>(
     ))
 }
 
-fn project_role_tensors<E: FieldCore>(
+fn project_role_tensors<E: Field>(
     tensors: &[EqPairTensorFamily<E>],
     ratio: usize,
     alpha: E,
@@ -808,7 +808,7 @@ fn project_role_tensors<E: FieldCore>(
         .collect()
 }
 
-fn push_projected_tensor<E: FieldCore>(
+fn push_projected_tensor<E: Field>(
     batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ratio: usize,
     family: EqPairTensorFamily<E>,
@@ -835,7 +835,7 @@ fn push_projected_tensor<E: FieldCore>(
 mod projection_tests {
     use super::*;
     use akita_algebra::offset_eq::{eq_eval_at_index, OffsetEqWindow};
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 

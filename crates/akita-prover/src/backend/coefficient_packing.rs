@@ -2,11 +2,11 @@
 
 use crate::compute::SubringCoefficientPackingPlan;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{ExtField, FieldCore};
 use akita_types::FpExtEncoding;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{ExtField, Field};
 
-fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
+fn zero_vec<T: Field>(len: usize) -> Result<Vec<T>, AkitaError> {
     let mut values = Vec::new();
     values.try_reserve_exact(len).map_err(|_| {
         AkitaError::InvalidInput(format!(
@@ -32,14 +32,14 @@ pub(super) fn partials_from_position_source<'a, F, E, S, const D: usize>(
     coefficient: impl Fn(usize, usize, S) -> F + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + FpExtEncoding<F>,
     S: Copy + Sync + 'a,
 {
     plan.validate::<D>(source_num_vars)?;
     let point = plan.point;
     let geometry = point.geometry();
-    if E::EXT_DEGREE != geometry.extension_degree() {
+    if E::DEGREE != geometry.extension_degree() {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing field extension degree mismatch".into(),
         ));
@@ -131,13 +131,13 @@ mod tests {
     };
     use akita_algebra::CyclotomicRing;
     use akita_error::AkitaError;
-    use akita_field::{
-        CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FromPrimitiveInt, Prime128OffsetA7F7,
-        Prime32Offset99, Prime64Offset59,
-    };
     use akita_types::{
         coefficient_packing_partials, BasisMode, FpExtEncoding,
         PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    };
+    use jolt_field::{
+        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
+        Prime64Offset59, Ring,
     };
 
     type F = Prime32Offset99;
@@ -155,11 +155,10 @@ mod tests {
 
     fn assert_dense_matches_reference<T, U, const RING_D: usize>(s: usize)
     where
-        T: FieldCore + CanonicalField + FromPrimitiveInt,
-        U: ExtField<T> + FpExtEncoding<T> + FromPrimitiveInt,
+        T: Field + CanonicalEncoding + Ring,
+        U: ExtField<T> + FpExtEncoding<T> + Ring,
     {
-        let geometry =
-            SubringCoefficientPackingGeometry::try_new(U::EXT_DEGREE, RING_D, s).unwrap();
+        let geometry = SubringCoefficientPackingGeometry::try_new(U::DEGREE, RING_D, s).unwrap();
         let point_len = (2 * RING_D).next_power_of_two().trailing_zeros() as usize;
         let public_point = (0..point_len)
             .map(|index| U::from_u64((index + 3) as u64))

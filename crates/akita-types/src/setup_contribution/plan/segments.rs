@@ -25,7 +25,7 @@ struct PackedALayout<'a, E> {
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
 pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     pub(crate) fn refresh_segments(
         &mut self,
         d_weights: &[E],
@@ -69,7 +69,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
     }
 }
 
-fn build_packed_segments<E: FieldCore>(
+fn build_packed_segments<E: Field>(
     d: PackedDLayout<'_, E>,
     b: PackedBLayout<'_, E>,
     a: PackedALayout<'_, E>,

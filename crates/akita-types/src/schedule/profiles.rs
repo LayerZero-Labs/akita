@@ -6,7 +6,7 @@ use crate::{
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use akita_error::AkitaError;
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Physical coefficient representation authenticated by a commitment.
 ///
@@ -357,7 +357,7 @@ impl PrecommittedGroupProfiles {
     /// Returns an error when `groups` is empty.
     pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
-        F: FieldCore + 'a,
+        F: Field + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
         I::IntoIter: ExactSizeIterator,
     {
@@ -551,7 +551,7 @@ impl CommittedGroupBatchProfile {
     /// Returns an error when `groups` is empty.
     pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
-        F: FieldCore + 'a,
+        F: Field + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
         I::IntoIter: ExactSizeIterator,
     {

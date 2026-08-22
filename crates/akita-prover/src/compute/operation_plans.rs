@@ -1,11 +1,11 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_types::{
     CommittedGroupParams, GroupCommitPhaseParams, PreparedSubringCoefficientPackingPoint,
     SubfieldMultiplierOpeningPoint, SubringCoefficientPackingGeometry,
 };
+use jolt_field::Field;
 
 // ===========================================================================
 // Open, source-typed operation boundary
@@ -78,7 +78,7 @@ impl CommitInnerPlan {
 /// The base/subfield split keeps degree-one scalar folds direct while proper
 /// extension folds retain their compact subfield coordinates.
 #[derive(Debug, Clone, Copy)]
-pub enum OpeningFoldPlan<'a, F: FieldCore> {
+pub enum OpeningFoldPlan<'a, F: Field> {
     /// Base multiplier point: scalar fold weights.
     Base {
         /// Outer evaluation scalars applied to the folded blocks.
@@ -97,7 +97,7 @@ pub enum OpeningFoldPlan<'a, F: FieldCore> {
     },
 }
 
-impl<F: FieldCore> OpeningFoldPlan<'_, F> {
+impl<F: Field> OpeningFoldPlan<'_, F> {
     pub(crate) fn num_positions_per_block(self) -> usize {
         match self {
             Self::Base {
@@ -150,7 +150,7 @@ impl<F: FieldCore> OpeningFoldPlan<'_, F> {
 
 /// Fused evaluate-and-fold output.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
+pub struct OpeningFoldOutput<F: Field, const D: usize> {
     /// Evaluation of the polynomial at the opening point.
     pub eval: CyclotomicRing<F, D>,
     /// Folded witness rows in ring form.
@@ -163,12 +163,12 @@ pub struct OpeningFoldOutput<F: FieldCore, const D: usize> {
 /// output layout is fixed by `geometry` as
 /// `[claim][block][extension coordinate][subring coefficient]`.
 #[derive(Debug, Clone, Copy)]
-pub struct SubringCoefficientPackingPlan<'a, E: FieldCore> {
+pub struct SubringCoefficientPackingPlan<'a, E: Field> {
     /// Canonically split public opening point.
     pub point: &'a PreparedSubringCoefficientPackingPoint<E>,
 }
 
-impl<E: FieldCore> SubringCoefficientPackingPlan<'_, E> {
+impl<E: Field> SubringCoefficientPackingPlan<'_, E> {
     /// Validate the plan at a source kernel boundary.
     pub fn validate<const D: usize>(&self, source_num_vars: usize) -> Result<(), AkitaError> {
         if self.point.geometry().a_ring_dimension() != D
@@ -184,13 +184,13 @@ impl<E: FieldCore> SubringCoefficientPackingPlan<'_, E> {
 
 /// Canonical base-field coordinates for one claim's packed partials.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubringCoefficientPackingPartials<F: FieldCore> {
+pub struct SubringCoefficientPackingPartials<F: Field> {
     geometry: SubringCoefficientPackingGeometry,
     num_live_blocks: usize,
     coordinates: Vec<F>,
 }
 
-impl<F: FieldCore> SubringCoefficientPackingPartials<F> {
+impl<F: Field> SubringCoefficientPackingPartials<F> {
     /// Build a typed partial buffer after checking its exact physical width.
     pub fn new(
         geometry: SubringCoefficientPackingGeometry,
@@ -231,7 +231,7 @@ impl<F: FieldCore> SubringCoefficientPackingPartials<F> {
     }
 }
 
-impl<F: FieldCore> AsRef<[F]> for SubringCoefficientPackingPartials<F> {
+impl<F: Field> AsRef<[F]> for SubringCoefficientPackingPartials<F> {
     fn as_ref(&self) -> &[F] {
         self.coordinates()
     }

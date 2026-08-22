@@ -3,7 +3,7 @@
 
 use akita_error::AkitaError;
 
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
@@ -17,14 +17,14 @@ use crate::{DensePoly, OneHotIndex, OneHotPoly};
 /// Wrappers take ownership of the inner polynomial by move so `P` has no lifetime
 /// parameter and participates in generic `commit<P, B>` like `DensePoly`.
 #[derive(Debug, Clone)]
-pub enum MultilinearPolynomial<F: FieldCore, I: OneHotIndex = usize> {
+pub enum MultilinearPolynomial<F: Field, I: OneHotIndex = usize> {
     /// Dense multilinear polynomial.
     Dense(DensePoly<F>),
     /// One-hot multilinear polynomial.
     OneHot(OneHotPoly<F, I>),
 }
 
-impl<F: FieldCore, I: OneHotIndex> MultilinearPolynomial<F, I> {
+impl<F: Field, I: OneHotIndex> MultilinearPolynomial<F, I> {
     /// Wrap a dense polynomial.
     pub fn dense(poly: DensePoly<F>) -> Self {
         Self::Dense(poly)
@@ -39,21 +39,20 @@ impl<F: FieldCore, I: OneHotIndex> MultilinearPolynomial<F, I> {
 /// Borrowed dispatch view for an Akita-owned multilinear root wrapper at
 /// dimension `D`.
 #[derive(Debug, Clone, Copy)]
-pub struct MultilinearPolynomialView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct MultilinearPolynomialView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     poly: &'a MultilinearPolynomial<F, I>,
 }
 
 /// Same-point batch dispatch view over multilinear root wrappers at
 /// dimension `D`.
 #[derive(Debug, Clone, Copy)]
-pub struct MultilinearPolynomialBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize>
-{
+pub struct MultilinearPolynomialBatchView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a MultilinearPolynomial<F, I>],
 }
 
 impl<'a, F, const D: usize, I> MultilinearPolynomialView<'a, F, D, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     pub(super) fn poly(self) -> &'a MultilinearPolynomial<F, I> {
@@ -74,7 +73,7 @@ where
 
 impl<'a, F, const D: usize, I> MultilinearPolynomialBatchView<'a, F, D, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     pub(super) fn polys(self) -> &'a [&'a MultilinearPolynomial<F, I>] {
@@ -106,7 +105,7 @@ where
 
 impl<F, I> RootPolyMeta<F> for MultilinearPolynomial<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_vars(&self) -> usize {
@@ -126,7 +125,7 @@ where
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
@@ -153,7 +152,7 @@ where
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for MultilinearPolynomial<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type CommitView<'view>
@@ -171,7 +170,7 @@ where
         centering_threshold: u128,
     ) -> Result<(u128, u128), AkitaError>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         match self {
             Self::Dense(poly) => RootCommitSource::<F, D>::committed_centered_reach(
@@ -190,7 +189,7 @@ where
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for MultilinearPolynomial<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type OpeningView<'view>

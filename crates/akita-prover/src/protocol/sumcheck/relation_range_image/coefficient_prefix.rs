@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_compact_partial_lane_coefficient_round_terms"
@@ -27,7 +27,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_lane_count,
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
@@ -45,7 +45,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             current_coefficient_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                        let mut inner_virt = [E::SmallProduct::zero(); 2];
 
                         for coefficient_pair in blk..blk_end {
                             let j_low =
@@ -106,7 +106,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_lane_count,
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
@@ -124,7 +124,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             current_coefficient_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                        let mut inner_virt = [E::SmallProduct::zero(); 4];
 
                         for coefficient_pair in blk..blk_end {
                             let j_low =

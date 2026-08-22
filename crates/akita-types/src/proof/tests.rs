@@ -1,10 +1,10 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::{One, Prime128Offset275, Ring, Zero};
 use rand::SeedableRng;
 
 type F = Prime128Offset275;
@@ -452,7 +452,7 @@ fn typed_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: CanonicalField,
+    F: CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_serde(label, &TypedRingSliceSerializer(ring_elems));
@@ -468,7 +468,7 @@ fn flat_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: AkitaSerialize + CanonicalField,
+    F: AkitaSerialize + CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let rv = RingVec::from_ring_elems(ring_elems);

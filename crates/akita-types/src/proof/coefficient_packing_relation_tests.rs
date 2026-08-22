@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
-use akita_field::{
-    CanonicalField, Ext2, FieldCore, FpExt4, FromPrimitiveInt, LiftBase, Prime128OffsetA7F7,
-    Prime32Offset99, Prime64Offset59,
+use jolt_field::{
+    CanonicalEncoding, Ext2, ExtField, Field, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99,
+    Prime64Offset59, Ring, Zero,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
 type F = Prime64Offset59;
 type E = Ext2<F>;
 
-struct Fixture<Base: FieldCore, Extension: FieldCore> {
+struct Fixture<Base: Field, Extension: Field> {
     params: CommittedGroupParams,
     opening_batch: OpeningClaimsLayout,
     relation_plan: RelationRangeImagePlan,
@@ -46,9 +46,8 @@ fn fixture<Base, Extension>(
     num_chunks: usize,
 ) -> Fixture<Base, Extension>
 where
-    Base: FieldCore + CanonicalField + FromPrimitiveInt,
-    Extension:
-        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+    Base: Field + CanonicalEncoding + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
     let config = SparseChallengeConfig::production_for_ring_dim(s).unwrap();
     let mut params = CommittedGroupParams::params_only(profile, d_a, 2, 2, 2, 2, config)
@@ -85,7 +84,7 @@ where
     let opening_batch =
         OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(num_vars, num_claims)])
             .unwrap();
-    let extension_degree = <Extension as ExtField<Base>>::EXT_DEGREE;
+    let extension_degree = <Extension as ExtField<Base>>::DEGREE;
     let relation_geometry =
         RelationWitnessGeometry::for_level(&params, &opening_batch, extension_degree).unwrap();
     let witness_layout = WitnessLayout::new(
@@ -193,7 +192,7 @@ fn packing_rejects_tensor_projected_commitment_source() {
         1,
         1,
     );
-    let extension_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let extension_degree = <E as ExtField<F>>::DEGREE;
     fixture.params.source_encoding =
         crate::CommittedSourceEncoding::TensorSubfieldProjection { extension_degree };
     assert!(matches!(
@@ -211,9 +210,8 @@ fn prepare<Base, Extension>(
     alpha: Extension,
 ) -> CoefficientPackingGroupSemantics<Extension>
 where
-    Base: FieldCore + CanonicalField + FromPrimitiveInt,
-    Extension:
-        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+    Base: Field + CanonicalEncoding + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
     prepare_coefficient_packing_group_semantics(CoefficientPackingGroupSemanticInputs {
         level_params: &fixture.params,
@@ -234,9 +232,8 @@ fn prepare_compact<Base, Extension>(
     alpha: Extension,
 ) -> CoefficientPackingVerifierGroupSemantics<Extension>
 where
-    Base: FieldCore + CanonicalField + FromPrimitiveInt,
-    Extension:
-        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+    Base: Field + CanonicalEncoding + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
     prepare_coefficient_packing_verifier_batch_semantics(CoefficientPackingBatchSemanticInputs {
         level_params: &fixture.params,
@@ -253,7 +250,7 @@ where
         .clone()
 }
 
-fn materialize_events<Extension: FieldCore>(
+fn materialize_events<Extension: Field>(
     events: &CoefficientPackingRelationEvents<Extension>,
 ) -> Vec<Extension> {
     let mut dense = vec![Extension::zero(); events.physical_field_len()];
@@ -266,7 +263,7 @@ fn materialize_events<Extension: FieldCore>(
     dense
 }
 
-fn materialize_stage2_source<Extension: FieldCore>(
+fn materialize_stage2_source<Extension: Field>(
     terms: &CoefficientPackingStage2Terms<Extension>,
     selected_source: CoefficientPackingStage2Source,
 ) -> Vec<Extension> {
@@ -381,9 +378,8 @@ fn compact_consumers_match_dense_event_and_stage2_oracles() {
 
 fn assert_compact_factors_match_dense<Base, Extension>(fixture: &Fixture<Base, Extension>)
 where
-    Base: FieldCore + CanonicalField + FromPrimitiveInt,
-    Extension:
-        ExtField<Base> + FpExtEncoding<Base> + FromPrimitiveInt + LiftBase<Base> + MulBase<Base>,
+    Base: Field + CanonicalEncoding + Ring,
+    Extension: ExtField<Base> + FpExtEncoding<Base> + Ring + ExtField<Base>,
 {
     for alpha in [Extension::zero(), Extension::one(), Extension::from_u64(19)] {
         let semantics = prepare(fixture, alpha);
@@ -709,7 +705,7 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
 
     let depth_open = fixture.params.open().digits.num_digits;
     let quotient_depth = fixture.relation_plan.witness_layout().quotient_depth();
-    let extension_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let extension_degree = <E as ExtField<F>>::DEGREE;
     let expected_e_events = 2 * 2 * depth_open * extension_degree;
     let expected_q_events = quotient_depth * extension_degree;
     let events = semantics.relation_events().events();

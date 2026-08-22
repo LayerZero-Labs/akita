@@ -2,7 +2,7 @@
 
 use akita_challenges::{Challenges, FoldChallengeDrawDomain, FoldDraw};
 use akita_error::AkitaError;
-use akita_field::{ExtField, FieldCore};
+use jolt_field::{ExtField, Field};
 
 use crate::{
     CoefficientPackingChallenges, InnerCommitSecurityRoute, OpeningFamily, OpeningMethod,
@@ -33,7 +33,7 @@ pub fn draw_group_fold_challenges<F, E, D>(
     grind_nonce: u32,
 ) -> Result<GroupFoldChallenges, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
     D: FoldDraw,
 {
@@ -71,7 +71,7 @@ where
                 ));
             }
             let geometry = SubringCoefficientPackingGeometry::try_new(
-                E::EXT_DEGREE,
+                E::DEGREE,
                 d_a,
                 challenge_subring_dimension,
             )?;

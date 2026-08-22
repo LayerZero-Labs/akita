@@ -101,12 +101,20 @@ impl CrtCapacity {
     ///
     /// The strict exactness condition is
     /// `2 * width * D * floor(q / 2) * rhs_abs_bound < product(primes)`.
-    pub fn supports<F: crate::CanonicalField, const D: usize>(
+    pub fn supports<F: crate::Field + crate::CanonicalEncoding, const D: usize>(
         &self,
         width: usize,
         rhs_abs_bound: u64,
     ) -> bool {
-        self.supports_modulus(width, D, (-F::one()).to_canonical_u128() + 1, rhs_abs_bound)
+        self.supports_modulus(
+            width,
+            D,
+            (-F::one())
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128")
+                + 1,
+            rhs_abs_bound,
+        )
     }
 
     /// Whether this CRT product can reconstruct an accumulation for an
@@ -128,11 +136,18 @@ impl CrtCapacity {
     }
 
     /// Conservative maximum matrix width supported at one coefficient bound.
-    pub fn max_safe_width<F: crate::CanonicalField, const D: usize>(
+    pub fn max_safe_width<F: crate::Field + crate::CanonicalEncoding, const D: usize>(
         &self,
         rhs_abs_bound: u64,
     ) -> Option<usize> {
-        self.max_safe_width_for_modulus(D, (-F::one()).to_canonical_u128() + 1, rhs_abs_bound)
+        self.max_safe_width_for_modulus(
+            D,
+            (-F::one())
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128")
+                + 1,
+            rhs_abs_bound,
+        )
     }
 
     /// Conservative maximum matrix width for an explicitly identified field
@@ -411,7 +426,7 @@ mod capacity_tests {
     use super::CrtCapacity;
     use crate::ntt::tables::{I16_TAIL_PRIME, Q32_PRIMES};
     use crate::PrimeWidth;
-    use akita_field::Prime32Offset99;
+    use jolt_field::Prime32Offset99;
 
     #[test]
     fn q32_capacity_matches_existing_exact_widths() {

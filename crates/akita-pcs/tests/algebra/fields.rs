@@ -1,10 +1,10 @@
 use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
-use akita_field::{
-    pseudo_mersenne_modulus, Fp32, Fp64, FpExt2, FpExt4, Invertible, Prime128Offset159,
-    Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec,
-    PseudoMersenneField, RandomSampling, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+use jolt_field::{
+    pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset159,
+    Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne,
+    Ring, Zero, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
 };
 
 use super::fixtures::{check_solinas_prime, NR};
@@ -197,7 +197,7 @@ fn field_sampling_respects_modulus() {
 
 #[test]
 fn prime_offset_registry_is_consistent() {
-    fn assert_is_pseudo_mersenne<F: PseudoMersenneField>() {}
+    fn assert_is_pseudo_mersenne<F: PseudoMersenne>() {}
     assert_is_pseudo_mersenne::<Prime128Offset275>();
 
     for PrimeOffsetSpec {

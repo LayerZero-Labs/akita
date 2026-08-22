@@ -7,7 +7,7 @@ use akita_algebra::offset_eq::{
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-struct CompressionRelationEvent<E: FieldCore> {
+struct CompressionRelationEvent<E: Field> {
     physical_start: usize,
     coefficient_count: usize,
     alpha_exponent_start: usize,
@@ -25,7 +25,7 @@ struct CompressionRelationEvent<E: FieldCore> {
 
 /// One alpha-evaluated prefix of the universal rank-one compression matrix.
 /// F and H rows with identical map geometry share this data.
-struct EvaluatedCompressionMatrix<E: FieldCore> {
+struct EvaluatedCompressionMatrix<E: Field> {
     input_width: usize,
     ring_dimension: usize,
     powers: Vec<E>,
@@ -34,7 +34,7 @@ struct EvaluatedCompressionMatrix<E: FieldCore> {
 
 /// Canonical additive relation table for every F/H compression layer.
 #[derive(Clone, Debug)]
-pub struct CompressionRelationWeights<E: FieldCore> {
+pub struct CompressionRelationWeights<E: Field> {
     events: Vec<CompressionRelationEvent<E>>,
     alpha_powers: Vec<E>,
     coefficient_block_len: usize,
@@ -79,7 +79,7 @@ impl NegativeBinarySupport {
     }
 
     /// Materialize the support indicator for prover-side folding.
-    pub fn materialize<E: FieldCore>(&self) -> Vec<E> {
+    pub fn materialize<E: Field>(&self) -> Vec<E> {
         let mut weights = vec![E::zero(); self.physical_field_len];
         for interval in &self.intervals {
             weights[interval.clone()].fill(E::one());
@@ -100,7 +100,7 @@ impl NegativeBinarySupport {
     /// `sum_{index in support} eq(equality_point, index) * eq(point, index)`,
     /// not the product of the two separately extended tables.
     #[tracing::instrument(skip_all, name = "negative_binary_support_mle")]
-    pub fn evaluate_restricted_equality_at_point<E: FieldCore>(
+    pub fn evaluate_restricted_equality_at_point<E: Field>(
         &self,
         equality_point: &[E],
         point: &[E],
@@ -129,7 +129,7 @@ impl NegativeBinarySupport {
     }
 }
 
-impl<E: FieldCore> CompressionRelationWeights<E> {
+impl<E: Field> CompressionRelationWeights<E> {
     fn push(
         &mut self,
         physical_start: usize,
@@ -336,8 +336,8 @@ fn push_recomposition<F, E>(
     row_weights: &[E],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
     if !source_ring_dim.is_multiple_of(digit_ring_dim)
         || source_row_count.checked_mul(source_ring_dim) != Some(source_coefficients)
@@ -388,8 +388,8 @@ pub fn build_compression_relation_weights<F, E>(
     physical_field_len: usize,
 ) -> Result<CompressionRelationWeights<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
     let relation_geometry =
@@ -416,7 +416,7 @@ where
         coefficient_block_len,
         physical_field_len,
     };
-    let field_bits = usize::try_from(F::modulus_bits())
+    let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
     let mut evaluated_matrices = Vec::<EvaluatedCompressionMatrix<E>>::new();
 
@@ -600,7 +600,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::One;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     #[test]
     fn sparse_evaluator_matches_dense_materialization() {

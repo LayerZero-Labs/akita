@@ -8,7 +8,6 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -20,6 +19,7 @@ use akita_types::{
     AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -145,7 +145,7 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
     Cfg::validate_sis_modulus_profile()?;
     let policy = policy_of::<Cfg>();
     akita_schedules::validate_policy(&policy)?;
-    let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE;
+    let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != actual_degree
         || policy.claim_ext_degree != actual_degree
         || policy.chal_ext_degree != actual_degree
@@ -164,7 +164,8 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
 
 /// Root group's source-specific policy for offline schedule generation.
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
-    Cfg::committed_source_class().honest_fold_policy(<Cfg::Field as CanonicalField>::modulus_bits())
+    Cfg::committed_source_class()
+        .honest_fold_policy(<Cfg::Field as CanonicalEncoding>::MODULUS_BITS)
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -179,7 +180,7 @@ pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::Hones
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalField + FieldCore;
+    type Field: CanonicalEncoding + Field;
 
     /// Field used by public openings and all proof scalars.
     type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
@@ -189,12 +190,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// This is the `K` consumed by [`field_reduction::psi_embed`] and
     /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
     /// validates `SubfieldParams<D, K>`. Default body delegates to
-    /// `<ExtField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// `<ExtField as ExtField<Field>>::DEGREE`; presets should not
     /// override unless they have a reason to disagree with that.
     ///
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
-    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
+    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
     /// Absorb an extension-field element into a base-field transcript.
     fn append_extension_field<T: Transcript<Self::Field>>(
@@ -239,7 +240,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// synthetic or miswired field cannot silently inherit a nearby profile.
     fn validate_sis_modulus_profile() -> Result<(), AkitaError> {
         let modulus = (-Self::Field::from_u64(1))
-            .to_canonical_u128()
+            .to_u128_checked()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("SIS field modulus does not fit in u128".to_string())
+            })?
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("SIS field modulus overflow".to_string()))?;
         if Self::sis_modulus_profile().matches_modulus(modulus) {
@@ -427,10 +431,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
+    use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
     type BaseExt = FpExt4<Base>;
@@ -536,7 +540,7 @@ mod tests {
     fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
             SingleExtensionConfig::EXT_DEGREE,
-            <BaseExt as ExtField<Base>>::EXT_DEGREE
+            <BaseExt as ExtField<Base>>::DEGREE
         );
         assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
     }

@@ -5,8 +5,8 @@
 /// Gated on `#[cfg(test)]` so the production binary never sees them.
 #[cfg(test)]
 use super::{CyclotomicRing, FlatBlocks, OneHotIndex, OneHotPoly, SparseRingBlockEntry};
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Reference ring-space evaluation for [`OneHotPoly`].
 ///
@@ -21,7 +21,7 @@ pub(crate) fn evaluate_ring_onehot<F, const D: usize, I>(
     scalars: &[F],
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     I: OneHotIndex,
 {
     let onehot_k = poly.onehot_k;
@@ -53,7 +53,7 @@ pub(crate) fn from_buckets<E>(buckets: Vec<Vec<E>>) -> FlatBlocks<E> {
 /// Production code always uses the wide accumulator; this simpler
 /// variant only exists so tests can assert the two paths agree.
 #[allow(non_snake_case)]
-pub(crate) fn inner_ajtai_reference<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn inner_ajtai_reference<F: Field + CanonicalEncoding, const D: usize>(
     A: &[Vec<CyclotomicRing<F, D>>],
     entries: &[SparseRingBlockEntry],
     num_digits: usize,

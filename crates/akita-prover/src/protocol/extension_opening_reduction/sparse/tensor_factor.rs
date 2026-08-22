@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-struct TensorFactorTransition<E: FieldCore> {
+struct TensorFactorTransition<E: Field> {
     zero: Vec<Vec<E>>,
     one: Vec<Vec<E>>,
 }
@@ -14,7 +14,7 @@ struct TensorFactorTransition<E: FieldCore> {
 /// it materializes into the ordinary dense factor table and rejoins the shared
 /// reduction path.
 #[derive(Debug, Clone)]
-pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor<E: FieldCore> {
+pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor<E: Field> {
     table_vars: usize,
     round: usize,
     materialize_at: usize,
@@ -24,14 +24,14 @@ pub(in crate::protocol::extension_opening_reduction) struct TensorEqualityFactor
     low_states: Vec<Vec<E>>,
 }
 
-impl<E: FieldCore> TensorEqualityFactor<E> {
+impl<E: Field> TensorEqualityFactor<E> {
     pub(super) fn new<F>(
         tail_point: Vec<E>,
         eta: Vec<E>,
         materialize_at: usize,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F>,
     {
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
@@ -109,7 +109,7 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
         width: usize,
     ) -> Result<TensorFactorTransition<E>, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F>,
     {
         let tail_zero = E::one() - tail;
@@ -264,22 +264,22 @@ impl<E: FieldCore> TensorEqualityFactor<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
+impl<E: Field + Unreduced> TensorEqualityFactor<E> {
     /// Factor inner product `sum_i state[i] * suffix_tables[i][suffix_index]`,
     /// reducing once at the end when the field's product accumulator is exact
     /// w.r.t. `Mul`, and otherwise falling back to the per-term
     /// [`Self::eval_state_at_suffix`].
     ///
     /// On the exact path (e.g. the fp32 `FpExt4<Fp32>` campaign field)
-    /// each product is widened into `E::ProductAccum` and the
-    /// `state.len() == E::EXT_DEGREE` terms are summed before a single
-    /// `reduce_product_accum`. The per-coefficient reduction is additive over
-    /// the accumulator and the wide sum cannot overflow (`EXT_DEGREE` is a small
+    /// each product is widened into `E::Product` and the
+    /// `state.len() == E::DEGREE` terms are summed before a single
+    /// `reduce_product`. The per-coefficient reduction is additive over
+    /// the accumulator and the wide sum cannot overflow (`DEGREE` is a small
     /// power of two — 4 here — far below the accumulator's >= 2^63 headroom), so
     /// the result is byte-identical to `eval_state_at_suffix`.
     ///
     /// Fields whose wide accumulator is lossy versus `Mul` leave
-    /// `DELAYED_PRODUCT_SUM_IS_EXACT` at `false` and take the per-term path, so
+    /// `SUM_IS_EXACT` at `false` and take the per-term path, so
     /// the emitted factor, and the proof, stay unchanged. `FpExt2<Fp64>` opts into
     /// the exact path only because its accumulator keeps the carry above bit
     /// 128 explicitly.
@@ -303,15 +303,15 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
         let state_zero = &self.low_states[low_zero];
         let state_one = &self.low_states[low_one];
 
-        if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        if !E::SUM_IS_EXACT {
             return (
                 self.eval_state_at_suffix(state_zero, suffix_index),
                 self.eval_state_at_suffix(state_one, suffix_index),
             );
         }
 
-        let mut accum_zero = E::ProductAccum::zero();
-        let mut accum_one = E::ProductAccum::zero();
+        let mut accum_zero = E::Product::zero();
+        let mut accum_one = E::Product::zero();
         for ((table, &coeff_zero), &coeff_one) in self
             .suffix_tables
             .iter()
@@ -319,13 +319,10 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
             .zip(state_one.iter())
         {
             let column = table[suffix_index];
-            accum_zero += coeff_zero.mul_to_product_accum(column);
-            accum_one += coeff_one.mul_to_product_accum(column);
+            accum_zero += coeff_zero.mul_unreduced(column);
+            accum_one += coeff_one.mul_unreduced(column);
         }
-        (
-            E::reduce_product_accum(accum_zero),
-            E::reduce_product_accum(accum_one),
-        )
+        (E::reduce_product(accum_zero), E::reduce_product(accum_one))
     }
 }
 
@@ -335,7 +332,7 @@ impl<E: FieldCore + HasUnreducedOps> TensorEqualityFactor<E> {
 /// so it lives inside the sparse case rather than as a standalone factor. This
 /// is what makes the `(dense witness, tensor factor)` combination unrepresentable.
 #[derive(Debug, Clone)]
-pub(in crate::protocol::extension_opening_reduction) enum SparseFactor<E: FieldCore> {
+pub(in crate::protocol::extension_opening_reduction) enum SparseFactor<E: Field> {
     Dense(Vec<E>),
     Tensor(TensorEqualityFactor<E>),
 }

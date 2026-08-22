@@ -10,7 +10,6 @@
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
 use akita_config::CommitmentConfig;
 use akita_error::checked;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -19,6 +18,7 @@ use akita_types::{
     AkitaSetupDescriptor, AkitaVerifierSetup, CommittedGroup, FlatMatrix, OpeningScheduleSelection,
     SetupPrefixVerifierRegistry, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::sync::Arc;
 
 #[cfg(any(
@@ -89,7 +89,7 @@ pub fn read_blob_case(bytes: &[u8]) -> Result<AkitaJoltCase, SerializationError>
     AkitaJoltCase::from_tag(payload[0])
 }
 
-impl<F: FieldCore, const D: usize, E: FieldCore> AkitaJoltInputs<F, D, E> {
+impl<F: Field, const D: usize, E: Field> AkitaJoltInputs<F, D, E> {
     fn validate_blob_header_bounds(
         transcript_domain_len: usize,
         num_vars: usize,
@@ -118,8 +118,8 @@ impl<F: FieldCore, const D: usize, E: FieldCore> AkitaJoltInputs<F, D, E> {
 
 impl<F, const D: usize, E> AkitaJoltInputs<F, D, E>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize + Valid,
-    E: FieldCore + AkitaSerialize + Valid,
+    F: Field + CanonicalEncoding + AkitaSerialize + Valid,
+    E: Field + AkitaSerialize + Valid,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -270,13 +270,8 @@ where
 
 impl<F, const D: usize, E> AkitaJoltInputs<F, D, E>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>
-        + Valid,
-    E: FieldCore + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: Field + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    E: ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -320,7 +315,7 @@ where
         Ok(())
     }
 
-    fn encoded_field_payload_len<T: FieldCore + AkitaSerialize>(
+    fn encoded_field_payload_len<T: Field + AkitaSerialize>(
         field_elements: usize,
     ) -> Result<usize, SerializationError> {
         let field_size = T::zero().serialized_size(BLOB_COMPRESS);
@@ -648,7 +643,7 @@ where
             .opening_layout()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         let expected_shape =
-            canonical_proof_shape(resolved.schedule(), &root_opening_layout, E::EXT_DEGREE)
+            canonical_proof_shape(resolved.schedule(), &root_opening_layout, E::DEGREE)
                 .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if *proof_shape != expected_shape {
             return Err(SerializationError::InvalidData(
@@ -661,14 +656,8 @@ where
 
 impl<F, const D: usize, E> AkitaJoltInputs<F, D, E>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + RandomSampling
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>
-        + Valid,
-    E: FieldCore + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: Field + CanonicalEncoding + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    E: ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],

@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
-use akita_field::Fp64;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::Fp64;
 
 type F = Fp64<4294967197>;
 

@@ -6,12 +6,6 @@ use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::Zero;
-use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -25,6 +19,9 @@ use akita_types::{
     OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
+use jolt_field::{One, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -63,23 +60,23 @@ fn init_rayon_pool() {
     });
 }
 
-fn random_point<FField: CanonicalField>(nv: usize) -> Vec<FField> {
+fn random_point<FField: CanonicalEncoding>(nv: usize) -> Vec<FField> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
 fn random_claim_point<FField, E>(nv: usize) -> Vec<E>
 where
-    FField: CanonicalField,
+    FField: CanonicalEncoding + Field,
     E: ExtField<FField>,
 {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -88,7 +85,7 @@ where
 
 fn dense_lagrange_opening_from_evals<FField, E>(evals: &[FField], point: &[E]) -> E
 where
-    FField: FieldCore,
+    FField: Field,
     E: ExtField<FField>,
 {
     let weights = lagrange_weights(point).expect("valid opening point");
@@ -180,25 +177,27 @@ fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FFie
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, Cfg::ExtField, D>
 where
-    FField: CanonicalField
+    FField: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + HasWide
-        + RandomSampling
-        + FromPrimitiveInt
+        + CanonicalEncoding
+        + Unreduced
+        + Field
+        + Ring
         + 'static
-        + HalvingField
-        + PseudoMersenneField
-        + Valid,
-    Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
-    <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
+        + Field
+        + PseudoMersenne
+        + Valid
+        + AkitaDeserialize<Context = ()>
+        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FField> + Unreduced + Fold,
+    <FField as Unreduced>::Wide: From<FField>,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect();
 
     let poly = DensePoly::<FField>::from_field_evals(nv, &evals).unwrap();
@@ -301,7 +300,7 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>) {
+fn bump_flat_ring_vec<FField: Field>(flat: &mut akita_types::RingVec<FField>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
         .first_mut()
@@ -310,13 +309,11 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
     *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
-fn mutate_terminal_e_hat_digit<FField: FieldCore>(
-    witness: &mut akita_types::TerminalResponse<FField>,
-) {
+fn mutate_terminal_e_hat_digit<FField: Field>(witness: &mut akita_types::TerminalResponse<FField>) {
     bump_flat_ring_vec(&mut witness.e_fields);
 }
 
-fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
+fn terminal_witness_mut<FField: Field, E: Field>(
     proof: &mut AkitaBatchedProof<FField, E>,
 ) -> &mut akita_types::TerminalResponse<FField> {
     proof.terminal.terminal_response_mut()
@@ -622,7 +619,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         .unwrap();
 
         let mut malformed = proof.clone();
-        malformed.root.stage1.range_image_evaluation += F::from_canonical_u128_reduced(1);
+        malformed.root.stage1.range_image_evaluation += F::from_u128_reduced(1);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");

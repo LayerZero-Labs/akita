@@ -2,17 +2,17 @@ use std::ops::Range;
 
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{FieldCore, MulBaseUnreduced};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, MulBaseUnreduced};
 
 /// One family of setup-matrix rows read as per-column ring slices borrowed
 /// from the materialized store.
-pub(super) struct SetupRows<'a, F: FieldCore> {
+pub(super) struct SetupRows<'a, F: Field> {
     pub(super) rows: Vec<&'a [F]>,
     pub(super) ring_d: usize,
 }
 
-impl<F: FieldCore> SetupRows<'_, F> {
+impl<F: Field> SetupRows<'_, F> {
     pub(super) fn ring_slice(&self, row: usize, col: usize) -> Result<&[F], AkitaError> {
         self.rows
             .get(row)
@@ -29,8 +29,8 @@ pub(super) fn evaluate_setup_columns<F, E>(
     alpha_powers: &[E],
 ) -> Result<SetupColumnEvaluations<E>, AkitaError>
 where
-    F: FieldCore,
-    E: FieldCore + MulBaseUnreduced<F>,
+    F: Field,
+    E: Field + MulBaseUnreduced<F>,
 {
     if batch_count == 0
         || row_weights

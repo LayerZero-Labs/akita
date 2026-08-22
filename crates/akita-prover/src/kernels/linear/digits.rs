@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn mat_vec_mul_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -15,7 +15,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -29,7 +29,7 @@ pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -195,7 +195,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
 /// can push coefficients past the balanced range `[-2^(log_basis-1),
 /// 2^(log_basis-1))`. Degree-one fields keep the faster balanced-digit kernel.
 pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

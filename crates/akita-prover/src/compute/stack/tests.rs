@@ -3,8 +3,8 @@ use crate::compute::CompressionComputeBackend;
 use crate::AkitaProverSetup;
 use crate::CpuBackend;
 use akita_error::AkitaError;
-use akita_field::Fp64;
 use akita_types::SetupMatrixCapacity;
+use jolt_field::Fp64;
 
 type F = Fp64<4294967197>;
 fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {

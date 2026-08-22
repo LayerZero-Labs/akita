@@ -1413,8 +1413,8 @@ This follow-up should implement the cutover in dependency order without compatib
 wrappers.
 
 1. Add flat public matrix identity, paged derivation, golden vectors, and exact
-   prefix storage in `akita-types`; strengthen `akita-field::RandomSampling`
-   and cut all prime fields to the canonical rejection helper.
+   prefix storage in `akita-types`; use `jolt-field`'s canonical field sampling
+   helper for every prime field.
 2. Cut checked matrix views and canonical field-capacity scans to the new
    storage. Remove whole-envelope ring reinterpretation.
 3. Change descriptor identity and version, then update prover/verifier

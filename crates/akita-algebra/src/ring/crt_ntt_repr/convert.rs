@@ -221,9 +221,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         scalar: &F,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let half_q = q / 2;
-        let canonical = scalar.to_canonical_u128();
+        let canonical = scalar
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
         let centered: i128 = if canonical > half_q {
             -((q - canonical) as i128)
         } else {

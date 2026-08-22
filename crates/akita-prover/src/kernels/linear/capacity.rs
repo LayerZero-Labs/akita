@@ -23,7 +23,7 @@ fn require_safe_width<F, W, const K: usize, const D: usize>(
     role: &str,
 ) -> Result<usize, AkitaError>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     params
@@ -42,7 +42,7 @@ fn capacity_profile_from_params<F, W, const K: usize, const D: usize>(
     limb_bits: u32,
 ) -> Result<CrtI8CapacityProfile, AkitaError>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     Ok(CrtI8CapacityProfile {
@@ -79,7 +79,7 @@ where
 /// balanced digit (`log_basis = 8`) and raw signed-i8 roles for the selected
 /// profile. Generated-table tests separately prove committed schedules stay
 /// within these universal bounds.
-pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize>(
+pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<CrtI8CapacityProfile, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
         ProtocolCrtNttParams::Q32(params) => {
@@ -95,7 +95,7 @@ pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize
 }
 
 pub(super) fn safe_crt_chunk_width<
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -120,7 +120,7 @@ mod tests {
     use akita_algebra::ntt::tables::{
         q128_primes, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES, Q64_PRIMES,
     };
-    use akita_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn q128_digit_capacity_matches_expected_scale() {

@@ -11,15 +11,15 @@ use crate::protocol::ring_relation_witness::{
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
-use akita_field::parallel::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
     CommitmentRingDims, CompressionWitnessSpan, PackedNegativeBinary, RingRole, RingVec,
     WitnessLayout,
 };
+use jolt_field::solinas::parallel::*;
 
-pub(crate) struct PreparedRingSwitchGroup<F: FieldCore> {
+pub(crate) struct PreparedRingSwitchGroup<F: Field> {
     pub(crate) params: akita_types::GroupOpenPhaseParams,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) e_hat: DigitBlocks,
@@ -54,7 +54,7 @@ fn emit_packed_negative_binary(
     Ok(())
 }
 
-fn emit_compression_witness<F: FieldCore>(
+fn emit_compression_witness<F: Field>(
     out: &mut [i8],
     layout: &WitnessLayout,
     compression: &CompressionWitnessMaterialization<F>,
@@ -182,7 +182,7 @@ fn trace_witness_source_moments(witness: &[i8], layout: &WitnessLayout, lp: &Com
 }
 
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
-fn emit_group_witness_segments<F: CanonicalField>(
+fn emit_group_witness_segments<F: Field + CanonicalEncoding + AkitaSerialize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -237,7 +237,10 @@ fn emit_group_witness_segments<F: CanonicalField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
+fn emit_group_native_a_segments<
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    const D_GROUP: usize,
+>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -317,12 +320,7 @@ pub fn ring_switch_build_w<F, B>(
     lp: &CommittedGroupParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
@@ -604,7 +602,7 @@ fn decompose_z_folded_planes<const D: usize>(
     Ok(all_planes)
 }
 
-fn emit_r_rows<F: CanonicalField>(
+fn emit_r_rows<F: Field + CanonicalEncoding + AkitaSerialize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     r: &RelationQuotientOutput<F>,
@@ -614,7 +612,10 @@ fn emit_r_rows<F: CanonicalField>(
     if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
         return Err(AkitaError::InvalidProof);
     }
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     for (row_index, row) in r.rows().iter().enumerate() {
         let row_layout = layout

@@ -8,7 +8,7 @@ license = "Apache-2.0 OR MIT"
 publish = false
 
 [package.metadata.cargo-machete]
-ignored = ["akita-field"]
+ignored = ["jolt-field"]
 
 [features]
 # `--features guest` is the flag the `jolt` build CLI passes when building
@@ -35,7 +35,7 @@ trusted-benchmark-artifact = ["akita-recursion-glue/trusted-benchmark-artifact"]
 akita-error = { path = "../../../crates/akita-error" }
 # Aliased as `jolt` so `#[jolt::provable]` and `jolt::start_cycle_tracking`
 # resolve the same way as in the upstream Jolt examples.
-jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "c4207de4b9c7011ae5481a20229314036c250bbd", default-features = false }
+jolt = { package = "jolt-sdk", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
   "schedules-fp32-onehot",
@@ -43,7 +43,9 @@ akita-config = { path = "../../../crates/akita-config", default-features = false
   "schedules-fp128-onehot",
   "schedules-fp128-onehot-recursive",
 ] }
-akita-field = { path = "../../../crates/akita-field", default-features = false }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
+  "solinas",
+] }
 akita-serialization = { path = "../../../crates/akita-serialization" }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }

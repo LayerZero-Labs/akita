@@ -1,9 +1,9 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
 use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
-use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
+use jolt_field::{Fp32, FpExt2, TwoNr};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
@@ -18,7 +18,7 @@ fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     ));
     assert!(!super::fold::extension_opening_reduction_enabled(
         packing,
-        <E as ExtField<F>>::EXT_DEGREE > 1,
+        <E as ExtField<F>>::DEGREE > 1,
     ));
     assert!(super::fold::extension_opening_reduction_enabled(
         akita_types::OpeningMethod::EvaluationTrace,
@@ -62,7 +62,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     assert_eq!(
         proved.reduction.proof.partials.len(),
-        <E as ExtField<F>>::EXT_DEGREE
+        <E as ExtField<F>>::DEGREE
     );
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
 }

@@ -1,6 +1,5 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{PreparedCrtNttProfile, PreparedNttCacheMetric};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
@@ -13,6 +12,7 @@ use akita_types::{
     PolynomialGroupLayout, SetupSumcheckProof, SisModulusProfileId,
     SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
@@ -26,8 +26,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     schedule: &FoldSchedule,
     field_bits: u32,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field,
 {
     let final_w = proof.terminal_response();
     let tail_bytes = final_w.serialized_size(Compress::No);
@@ -35,7 +35,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
 
     {
         let segment = final_w;
-        let field_sz = field_bytes(FF::modulus_bits());
+        let field_sz = field_bytes(FF::MODULUS_BITS);
         let ring_dim = segment.layout.ring_dimension;
         let z_golomb_bytes = segment.z_payloads.iter().map(Vec::len).sum::<usize>();
         let z_field_elems = segment.layout.z_coords();
@@ -156,7 +156,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
     }
 }
 
-fn terminal_response_z_fold_stats<FF: FieldCore>(
+fn terminal_response_z_fold_stats<FF: Field>(
     witness: &akita_types::TerminalResponse<FF>,
     schedule: &FoldSchedule,
     field_bits: u32,
@@ -998,7 +998,7 @@ fn ring_elem_count(coeff_len: usize, d: usize) -> usize {
     coeff_len / d
 }
 
-fn extension_opening_reduction_sizes<E: FieldCore + AkitaSerialize>(
+fn extension_opening_reduction_sizes<E: Field + AkitaSerialize>(
     reduction: Option<&akita_types::ExtensionOpeningReductionProof<E>>,
 ) -> (usize, usize, usize) {
     reduction.map_or((0, 0, 0), |reduction| {
@@ -1017,9 +1017,7 @@ fn extension_opening_reduction_sizes<E: FieldCore + AkitaSerialize>(
     })
 }
 
-fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
-    proof: Option<&SetupSumcheckProof<E>>,
-) -> usize {
+fn stage3_sumcheck_size<E: Field + AkitaSerialize>(proof: Option<&SetupSumcheckProof<E>>) -> usize {
     proof.map_or(0, |proof| {
         proof.claim.serialized_size(Compress::No)
             + proof.setup_prefix_eval.serialized_size(Compress::No)
@@ -1035,8 +1033,8 @@ fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
 /// stage-3 proof and contribute zero.
 pub(crate) fn observed_stage3_setup_product_bytes<FF, E>(proof: &AkitaBatchedProof<FF, E>) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let root_bytes = stage3_sumcheck_size(proof.root.stage3_sumcheck_proof.as_ref());
     let step_bytes: usize = proof
@@ -1062,8 +1060,8 @@ fn print_akita_level_breakdown<FF, E>(
     ring_d: usize,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let (
         extension_opening_partials_size,
@@ -1188,8 +1186,8 @@ fn print_terminal_level_breakdown<FF, E>(
     ring_d: usize,
 ) -> usize
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let (
         extension_opening_partials_size,
@@ -1275,8 +1273,8 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     proof: &AkitaBatchedProof<FF, E>,
     schedule: Option<&FoldSchedule>,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let root_total = proof.root.serialized_size(Compress::No);
     let recursive_steps_total: usize = proof

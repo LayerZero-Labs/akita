@@ -4,9 +4,9 @@ use akita_challenges::{
     fold_challenge_sample_label, sample_sparse_challenges, FoldDraw, LiveFoldDraw, SparseChallenge,
     SparseChallengeConfig,
 };
-use akita_field::{CanonicalField, FieldCore, Fp64};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, DOMAIN_AKITA_PROTOCOL};
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::{CanonicalEncoding, Field, Fp64, One, Ring};
 
 type F = Fp64<4294967197>;
 
@@ -39,7 +39,7 @@ fn l1_norm(c: &SparseChallenge) -> u64 {
 }
 
 /// Local helper: convert to dense ring coefficients for layout/validation tests.
-fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
+fn sparse_challenge_to_dense<F: Field + CanonicalEncoding, const D: usize>(
     c: &SparseChallenge,
 ) -> Result<[F; D], &'static str> {
     if c.positions.len() != c.coeffs.len() {
@@ -64,7 +64,7 @@ fn sparse_challenge_to_dense<F: FieldCore + CanonicalField, const D: usize>(
     Ok(out)
 }
 
-fn dense_hamming_weight<F: FieldCore, const D: usize>(coeffs: &[F; D]) -> usize {
+fn dense_hamming_weight<F: Field, const D: usize>(coeffs: &[F; D]) -> usize {
     coeffs
         .iter()
         .filter(|coefficient| !coefficient.is_zero())

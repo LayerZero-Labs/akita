@@ -29,13 +29,8 @@ pub(super) fn verify_root<F, E, T>(
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     if proof.extension_opening_reduction().is_some()
@@ -89,8 +84,7 @@ where
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(root_lp, opening_batch, E::EXT_DEGREE)?;
+    let relation_geometry = RelationWitnessGeometry::for_level(root_lp, opening_batch, E::DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
@@ -166,13 +160,8 @@ fn verify_root_inner<F, E, T>(
     next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
@@ -192,7 +181,7 @@ where
         commitment_payloads.push(commitment.rows().clone());
     }
 
-    let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::EXT_DEGREE)?;
+    let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::DEGREE)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let opening_payload = proof.opening_payload.clone();
     let prefix = bind_opening_payload_and_finalize_claims(

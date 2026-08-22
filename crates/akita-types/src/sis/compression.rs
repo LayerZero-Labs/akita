@@ -90,7 +90,7 @@ pub fn min_compression_secure_rank(
 mod tests {
     use super::*;
     use crate::ntt_cache_requires_i16_tail;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn coverage_is_exactly_the_six_rank_one_compression_cells() {

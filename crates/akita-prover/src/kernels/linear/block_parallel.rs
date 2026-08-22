@@ -6,7 +6,7 @@ use super::*;
 /// With many blocks but few matrix rows, the old tile-based approach had limited
 /// parallelism (few tiles) while this path gives num_live_blocks-way parallelism.
 pub(super) fn mat_vec_mul_digits_i8_block_parallel<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -47,7 +47,7 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel<
 }
 
 pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -97,7 +97,7 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
 }
 
 pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -112,7 +112,10 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let n_a = ntt_mat.len();
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
@@ -150,7 +153,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
 }
 
 pub(super) fn mat_vec_mul_i8_block_parallel_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -168,7 +171,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params<
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -237,7 +240,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
 }
 
 pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -263,7 +266,7 @@ pub(super) fn mat_vec_mul_i8_dense_block_parallel_with_params<
 }
 
 pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -295,7 +298,10 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
         .expect("single i8 CRT term must fit supported parameters");
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let mat_row = &ntt_mat[0];
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     if inner_width <= safe_width && inner_width == max_data_width {
@@ -392,7 +398,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
 
 #[allow(clippy::too_many_arguments)]
 fn mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

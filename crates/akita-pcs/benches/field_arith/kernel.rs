@@ -1,6 +1,6 @@
-use akita_field::packed::PackedField;
-use akita_field::{CanonicalField, FieldCore, Prime128Offset275, RandomSampling};
 use criterion::{black_box, Criterion, Throughput};
+use jolt_field::Packed;
+use jolt_field::{CanonicalEncoding, Field, Prime128Offset275, Ring, Zero};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 use super::cases::*;
@@ -18,7 +18,7 @@ fn bench_packed_sumcheck_mix(c: &mut Criterion) {
     let mut group = c.benchmark_group("field_arith/kernel/packed_macc");
     group.throughput(Throughput::Elements(n));
 
-    use akita_field::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
+    use jolt_field::{Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime64Offset59};
 
     sumcheck_bench::<Prime31Offset19, P31O19>(&mut group, PRIME31_OFFSET19, &mut rng, n);
     sumcheck_bench::<Mersenne31, PackedMersenne31>(&mut group, MERSENNE31, &mut rng, n);
@@ -36,8 +36,8 @@ fn sumcheck_bench<F, PF>(
     rng: &mut StdRng,
     n: u64,
 ) where
-    F: FieldCore + RandomSampling + 'static,
-    PF: PackedField<Scalar = F> + Copy + 'static,
+    F: Field + 'static,
+    PF: Packed<Scalar = F> + Copy + 'static,
 {
     let eq: Vec<F> = (0..n).map(|_| F::random(rng)).collect();
     let poly: Vec<F> = (0..n).map(|_| F::random(rng)).collect();
@@ -62,11 +62,11 @@ fn bench_fp128_accumulator_pattern(c: &mut Criterion) {
 
     let mut rng = StdRng::seed_from_u64(0xacc0_1a70_0002);
     let inputs_a: Vec<F> = (0..256)
-        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .map(|_| F::from_u128_reduced(rand_u128(&mut rng)))
         .collect();
     let inputs_b_u64: Vec<u64> = (0..256).map(|_| rng.next_u64()).collect();
     let inputs_b_f: Vec<F> = (0..256)
-        .map(|_| F::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .map(|_| F::from_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let mut group = c.benchmark_group("field_arith/kernel/fp128_accumulator");
