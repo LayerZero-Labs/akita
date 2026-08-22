@@ -72,7 +72,6 @@ struct ChildEdge<'a> {
     diagnostics: Option<&'a crate::diagnostics::PlannerDiagnostics>,
     opening_layout: &'a OpeningClaimsLayout,
     level: u32,
-    include_evaluation_batch: bool,
     candidate_params: Arc<CommittedGroupParams>,
     current_witness_len: usize,
     next_witness_len: usize,
@@ -313,7 +312,6 @@ fn edge_grinding_nonce_bits(
             .is_none()
             .then_some(suffix.terminal.as_ref()),
         edge.level,
-        edge.include_evaluation_batch,
     )
 }
 
@@ -527,7 +525,6 @@ fn price_level_candidate_with_children(
         opening_layout,
         level: u32::try_from(state.level)
             .map_err(|_| AkitaError::InvalidSetup("grinding level exceeds u32".into()))?,
-        include_evaluation_batch: ctx.level_zero_is_root && state.level == 0,
         candidate_params: Arc::new(candidate_params.clone()),
         current_witness_len: state.current_witness_len,
         next_witness_len,

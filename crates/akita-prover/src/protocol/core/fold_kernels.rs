@@ -182,7 +182,7 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
 {
     if prepared_points.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSize {
@@ -232,6 +232,10 @@ where
     if reduction.is_none() {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     }
+    transcript.grind_query(
+        akita_types::GrindingSite::EvaluationBatch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+    )?;
     let row_coefficients = sample_row_coefficients::<F, E, T>(
         opening_batch,
         akita_transcript::labels::CHALLENGE_EVAL_BATCH,
@@ -332,7 +336,7 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -340,6 +344,10 @@ where
             actual: openings.len(),
         });
     }
+    transcript.grind_query(
+        akita_types::GrindingSite::EvaluationBatch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+    )?;
     let row_coefficients = sample_row_coefficients::<F, E, T>(
         opening_batch,
         akita_transcript::labels::CHALLENGE_EVAL_BATCH,

@@ -116,14 +116,25 @@ fn nonce_stream_is_little_endian_and_crosses_byte_boundaries() {
 }
 
 #[test]
-fn inactive_entries_are_canonical_zero_and_fold_width_is_checked() {
+fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
     let plan = stream_test_plan();
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+    assert!(writer
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .is_err());
+
+    let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     writer
-        .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .write(GrindingSite::RingSwitchAlpha { level: 0 }, 0)
+        .unwrap();
+    writer
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .unwrap();
+    writer
+        .write(GrindingSite::Tau0Point { level: 0 }, 0)
         .unwrap();
     assert!(writer
-        .write_next_fold_response(
+        .write_fold_response(
             GrindingSite::FoldResponse { level: 1 },
             FOLD_RESPONSE_ATTEMPTS,
         )
@@ -131,35 +142,48 @@ fn inactive_entries_are_canonical_zero_and_fold_width_is_checked() {
 
     let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
     writer
-        .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .write(GrindingSite::RingSwitchAlpha { level: 0 }, 0)
         .unwrap();
     writer
-        .write_next_fold_response(GrindingSite::FoldResponse { level: 1 }, 23)
+        .write_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
+        .unwrap();
+    writer
+        .write(GrindingSite::Tau0Point { level: 0 }, 0)
+        .unwrap();
+    writer
+        .write_fold_response(GrindingSite::FoldResponse { level: 1 }, 23)
         .unwrap();
     let stream = writer.finish().unwrap();
+
+    let mut reader = stream.reader(&plan).unwrap();
+    assert!(reader
+        .read_fold_response(GrindingSite::FoldResponse { level: 0 })
+        .is_err());
+
     let mut reader = stream.reader(&plan).unwrap();
     assert_eq!(
         reader
-            .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
+            .read(GrindingSite::RingSwitchAlpha { level: 0 })
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        reader
+            .read_fold_response(GrindingSite::FoldResponse { level: 0 })
             .unwrap(),
         17
     );
     assert_eq!(
+        reader.read(GrindingSite::Tau0Point { level: 0 }).unwrap(),
+        0
+    );
+    assert_eq!(
         reader
-            .read_next_fold_response(GrindingSite::FoldResponse { level: 1 })
+            .read_fold_response(GrindingSite::FoldResponse { level: 1 })
             .unwrap(),
         23
     );
     reader.finish().unwrap();
-
-    let mut malleable = stream.as_bytes().to_vec();
-    malleable[0] |= 1;
-    let malleable = TranscriptNonceStream::from_bytes(malleable, stream.bit_len()).unwrap();
-    assert!(malleable
-        .reader(&plan)
-        .unwrap()
-        .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
-        .is_err());
 }
 
 #[test]

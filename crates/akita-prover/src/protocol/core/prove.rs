@@ -237,11 +237,13 @@ where
         },
     );
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
+    let mut grinding_transcript =
+        akita_types::ProverGrindingTranscript::<Cfg::Field, T>::new(transcript, grinding_plan)?;
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         claims,
         &schedule.root,
         next_params,
@@ -250,7 +252,6 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("root prove failed: {err:?}")))?;
     let next_state = root.next_state;
-    let root_nonce = root.fold_response_nonce;
     let root = root.level_proof;
 
     // Prepared NTT state belongs to the supplied stack selector. Shared owners
@@ -258,27 +259,16 @@ where
     // at this exact root/suffix boundary through the lifecycle hook.
     stacks.after_root_fold()?;
 
-    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
+    let suffix = crate::prove_suffix::<Cfg, _, C, O, TS, R>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         next_state,
         schedule,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
-    let mut nonce_writer = akita_types::TranscriptNonceWriter::new(grinding_plan)?;
-    nonce_writer.write_next_fold_response(
-        akita_types::GrindingSite::FoldResponse { level: 0 },
-        root_nonce,
-    )?;
-    for (offset, &nonce) in suffix.fold_response_nonces.iter().enumerate() {
-        let level = u32::try_from(offset + 1)
-            .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
-        nonce_writer
-            .write_next_fold_response(akita_types::GrindingSite::FoldResponse { level }, nonce)?;
-    }
-    let nonce_stream = nonce_writer.finish()?;
+    let nonce_stream = grinding_transcript.finish()?;
     Ok((
         AkitaBatchedProof {
             nonce_stream,

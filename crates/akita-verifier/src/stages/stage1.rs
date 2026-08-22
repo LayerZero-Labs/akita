@@ -45,6 +45,7 @@ pub(crate) struct RangeLeafVerifierInput<E: Field> {
 /// Returns an error if the group layout is malformed or challenge sampling fails.
 pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
     transcript: &mut T,
+    level: u32,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
@@ -52,19 +53,28 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, E, T>(
 where
     F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
-        let drawn = draw_group_fold_challenges::<F, E, _>(
-            &mut LiveFoldDraw::<F, T>::new(transcript),
-            &group_lp,
-            group_index,
-            k_g,
-            grind_nonce,
-        )?;
+        let drawn = {
+            let mut live = LiveFoldDraw::<F, T>::new(transcript);
+            draw_group_fold_challenges::<F, E, _>(
+                &mut live,
+                &group_lp,
+                group_index,
+                k_g,
+                grind_nonce,
+            )?
+        };
+        let group = u32::try_from(group_index).map_err(|_| AkitaError::InvalidProof)?;
+        let coordinate_count = group_lp
+            .num_live_blocks()
+            .checked_mul(k_g)
+            .ok_or(AkitaError::InvalidProof)?;
+        transcript.record_fold_challenges(level, group, coordinate_count)?;
         group_challenges.push(drawn);
     }
     Ok(group_challenges)
@@ -177,11 +187,12 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         &self,
         product_stage_proofs: &[akita_types::AkitaStage1StageProof<E>],
         transcript: &mut T,
+        level: u32,
     ) -> Result<RangeLeafVerifierInput<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
-        T: Transcript<F>,
+        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
     {
         let product_stage_arities = self.plan.product_stage_arities();
         if product_stage_proofs.len() != product_stage_arities.len() {
@@ -212,9 +223,10 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         let mut current_equality_point = self.equality_point.coordinates().to_vec();
         let mut current_claim = E::zero();
         let mut current_weights = vec![E::one()];
-        for (&arity, stage_proof) in product_stage_arities
+        for (stage_index, (&arity, stage_proof)) in product_stage_arities
             .iter()
             .zip(product_stage_proofs.iter())
+            .enumerate()
         {
             let product_verifier = ProductSubcheckVerifier {
                 equality_point: current_equality_point,
@@ -223,12 +235,29 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 batch_weights: current_weights,
                 arity,
             };
+            let stage = u32::try_from(stage_index).map_err(|_| AkitaError::InvalidProof)?;
+            let mut round = 0u32;
             current_equality_point = product_verifier.verify::<F, T, _>(
                 &stage_proof.sumcheck_proof,
                 transcript,
-                |tr| sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND),
+                |tr| {
+                    let challenge =
+                        crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+                            tr,
+                            akita_types::SumcheckProtocol::Stage1,
+                            level,
+                            stage,
+                            round,
+                        )?;
+                    round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                    Ok(challenge)
+                },
             )?;
             append_digit_range_child_claims::<F, E, T>(&stage_proof.child_claims, transcript);
+            transcript.grind_query(
+                akita_types::GrindingSite::Stage1InterstageBatch { level, stage },
+                labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
+            )?;
             let gamma = sample_ext_challenge::<F, E, T>(
                 transcript,
                 labels::CHALLENGE_SUMCHECK_INTERSTAGE_BATCH,
@@ -259,11 +288,12 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
         &self,
         proof: &AkitaStage1Proof<E>,
         transcript: &mut T,
+        level: u32,
     ) -> Result<DigitRangeVerifyOutput<E>, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
-        T: Transcript<F>,
+        T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
     {
         self.plan
             .validate_proof_shape(proof, self.equality_point.coordinates().len())?;
@@ -273,7 +303,7 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             return Err(AkitaError::InvalidProof);
         };
         debug_assert_eq!(product_stage_proofs.len(), product_stage_arities.len());
-        let leaf = self.verify_product_prefix::<F, T>(product_stage_proofs, transcript)?;
+        let leaf = self.verify_product_prefix::<F, T>(product_stage_proofs, transcript, level)?;
         let leaf_verifier = RangePolynomialLeafVerifier {
             plan: self.plan,
             equality_point: leaf.equality_point,
@@ -281,8 +311,19 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
             poly_coeffs: leaf.polynomial_coefficients,
             range_image_evaluation: proof.range_image_evaluation,
         };
+        let stage =
+            u32::try_from(product_stage_proofs.len()).map_err(|_| AkitaError::InvalidProof)?;
+        let mut round = 0u32;
         leaf_verifier.verify::<F, T, _>(&leaf_stage_proof.sumcheck_proof, transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, labels::CHALLENGE_SUMCHECK_ROUND)
+            let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::Stage1,
+                level,
+                stage,
+                round,
+            )?;
+            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+            Ok(challenge)
         })
     }
 }

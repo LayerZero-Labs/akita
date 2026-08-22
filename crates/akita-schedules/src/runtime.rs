@@ -530,7 +530,6 @@ pub fn candidate_edge_grinding_nonce_bits(
     recursive_successor: Option<&CandidateFoldStep>,
     terminal_successor: Option<&CandidateTerminalResponse>,
     level: u32,
-    include_evaluation_batch: bool,
 ) -> Result<usize, AkitaError> {
     akita_types::transcript_grinding_nonce_bits_for_planner_edge(
         fold.params.as_ref(),
@@ -541,7 +540,6 @@ pub fn candidate_edge_grinding_nonce_bits(
         policy.decomposition.field_bits(),
         policy.claim_ext_degree,
         level,
-        include_evaluation_batch,
     )
 }
 

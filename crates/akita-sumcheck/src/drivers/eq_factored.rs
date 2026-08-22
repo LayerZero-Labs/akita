@@ -62,7 +62,7 @@ where
         F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         let degree_bound = self.degree_bound();
@@ -84,7 +84,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             let (l_at_0, l_at_1) = self.current_linear_factor_evals();
             (scaled_claim, claim_scale) =
                 advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
@@ -141,7 +141,7 @@ where
         F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         if proof.round_polys.len() != num_rounds {
@@ -169,7 +169,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             let (l_at_0, l_at_1) = round_state.current_linear_factor_evals();
             (scaled_claim, claim_scale) =
                 advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);

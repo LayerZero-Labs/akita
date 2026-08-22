@@ -253,10 +253,6 @@ where
     F: Field + CanonicalEncoding + CanonicalBytes + 'static,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
-    fn new(domain_label: &[u8]) -> Self {
-        Self::new_prover(domain_label, b"akita/default-instance")
-    }
-
     fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
         AkitaTranscript::bind_instance_bytes(self, instance_bytes);
     }
@@ -287,6 +283,16 @@ where
 
     fn challenge_block(&mut self, _label: &[u8]) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
         self.squeeze_block(crate::label!("compat_squeeze_block"))
+    }
+}
+
+impl<F, S> crate::TranscriptFactory<F> for AkitaTranscript<F, S>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self::new_prover(domain_label, b"akita/default-instance")
     }
 }
 

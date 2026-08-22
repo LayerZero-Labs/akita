@@ -8,8 +8,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup, GrindingPlan, GrindingSite,
-    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
+    AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup, GrindingPlan, FOLD_RESPONSE_NONCE_BITS,
 };
 use common::*;
 
@@ -107,20 +106,10 @@ fn fold_linf_grind_onehot_e2e_prove_verify() {
             fixture.proof.nonce_stream.bit_len()
                 >= fixture.proof.num_fold_levels() * FOLD_RESPONSE_NONCE_BITS as usize
         );
-        let mut reader = fixture
-            .proof
-            .nonce_stream
-            .reader(&fixture.grinding_plan)
-            .expect("plan-shaped stream");
-        for level in 0..fixture.proof.num_fold_levels() {
-            let nonce = reader
-                .read_next_fold_response(GrindingSite::FoldResponse {
-                    level: u32::try_from(level).unwrap(),
-                })
-                .expect("fold-response entry");
-            assert!(nonce < FOLD_RESPONSE_ATTEMPTS);
-        }
-        reader.finish().expect("exact stream completion");
+        assert_eq!(
+            fixture.proof.nonce_stream.bit_len(),
+            fixture.grinding_plan.total_nonce_bits()
+        );
     });
 }
 
@@ -167,8 +156,8 @@ fn packed_nonce_stream_roundtrips_and_tampering_rejects() {
         .expect_err("mutated packed nonce stream must be rejected");
         assert!(
             matches!(err, AkitaError::InvalidProof)
-                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
-            "oversized grind nonce returned {err:?}"
+                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("transcript grinding predicate rejected")),
+            "tampered grind nonce returned {err:?}"
         );
     });
 }

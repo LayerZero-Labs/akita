@@ -24,7 +24,7 @@ use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY,
-    CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_for_field;
@@ -46,6 +46,33 @@ use akita_types::{
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
+
+pub(crate) fn sample_grinded_sumcheck_challenge<F, E, T>(
+    transcript: &mut T,
+    protocol: akita_types::SumcheckProtocol,
+    level: u32,
+    stage: u32,
+    round: u32,
+) -> Result<E, AkitaError>
+where
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: ExtField<F>,
+    T: Transcript<F> + akita_types::ProverTranscriptGrinding<F>,
+{
+    transcript.grind_query(
+        akita_types::GrindingSite::SumcheckRound {
+            protocol,
+            level,
+            stage,
+            round,
+        },
+        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
+    )?;
+    Ok(sample_ext_challenge::<F, E, T>(
+        transcript,
+        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
+    ))
+}
 use std::sync::Arc;
 
 pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: Field> {
@@ -85,8 +112,6 @@ pub use suffix::{prove_suffix, SuffixProverState};
 pub struct ProveLevelOutput<F: Field, E: Field> {
     /// Fold proof produced at this level.
     pub level_proof: FoldLevelProof<F, E>,
-    /// Accepted fold-response search nonce for proof-level stream assembly.
-    pub fold_response_nonce: u32,
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E>,
 }
@@ -97,8 +122,6 @@ pub struct RecursiveSuffixOutcome<F: Field, E: Field> {
     pub recursive_folds: Vec<FoldLevelProof<F, E>>,
     /// Required terminal fold.
     pub terminal: TerminalLevelProof<F, E>,
-    /// Fold-response nonces for recursive levels followed by the terminal level.
-    pub fold_response_nonces: Vec<u32>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
     pub num_levels: usize,
