@@ -3,7 +3,7 @@
 These proofs check the standalone AArch64 addition and subtraction objects for
 `Prime128OffsetA7F7`. Each proof contains the expected instruction words and
 loads them with `define_assert_from_elf`. The proof fails if the object bytes
-change.
+change. Production A7F7 subtraction includes the same raw instruction words.
 
 Start with the Akita Book chapter
 [Formal verification of arithmetic kernels](../../book/src/how/formal-verification.md)
@@ -18,51 +18,29 @@ field inputs and prove the canonical result modulo
 
 ## Requirements
 
-You need an AArch64 host, an OCaml environment that can build HOL Light proofs,
-and local checkouts of HOL Light and `s2n-bignum`.
+You need an AArch64 host, `llvm-objdump`, an OCaml environment that can build
+HOL Light proofs, and local checkouts of HOL Light and `s2n-bignum`.
 
-## Build fresh objects
+The CI workflow pins these revisions:
 
-Use a fresh Cargo target directory so the selected objects cannot come from an
-older build.
+- HOL Light commit `433477862bb90b328a593e012e09390e99b2439b`
+- `s2n-bignum` commit `ac31a43db30953037abd1b64b540e65cf31f4c67`
 
-```sh
-AKITA_PROOF_TARGET="$(mktemp -d)"
-CARGO_TARGET_DIR="$AKITA_PROOF_TARGET" \
-  cargo build -p akita-field --release --features fp128-asm-experiment
+## Run every check
 
-AKITA_ADD_OBJECT="$(find "$AKITA_PROOF_TARGET/release/build" \
-  -path '*/out/fp128_add.o' -print -quit)"
-AKITA_SUB_OBJECT="$(find "$AKITA_PROOF_TARGET/release/build" \
-  -path '*/out/fp128_sub.o' -print -quit)"
-```
-
-## Build and run the proofs
-
-Set these paths for your local checkouts, then run the `s2n-bignum` proof
-builder from its `arm` directory.
+Set the paths to module built HOL Light and `s2n-bignum` checkouts. Then run the
+same repository command used by CI.
 
 ```sh
-AKITA_DIR="$(pwd)"
-HOL_LIGHT_DIR=/path/to/hol-light
-S2N_BIGNUM_DIR=/path/to/s2n-bignum
-
-cd "$S2N_BIGNUM_DIR/arm"
-opam exec -- ../tools/build-proof.sh \
-  "$AKITA_DIR/proofs/hol-light/fp128_add_correct.ml" \
-  "$HOL_LIGHT_DIR/hol.sh" \
-  "$AKITA_DIR/target/fp128_add_correct.native"
-opam exec -- ../tools/build-proof.sh \
-  "$AKITA_DIR/proofs/hol-light/fp128_sub_correct.ml" \
-  "$HOL_LIGHT_DIR/hol.sh" \
-  "$AKITA_DIR/target/fp128_sub_correct.native"
-
-cd "$AKITA_DIR"
-AKITA_FP128_ADD_OBJECT="$AKITA_ADD_OBJECT" \
-  ./target/fp128_add_correct.native
-AKITA_FP128_SUB_OBJECT="$AKITA_SUB_OBJECT" \
-  ./target/fp128_sub_correct.native
+HOL_LIGHT_DIR=/path/to/hol-light \
+S2N_BIGNUM_DIR=/path/to/s2n-bignum \
+  ./proofs/hol-light/check.sh
 ```
+
+The script uses a new temporary Cargo target directory. It requires one fresh
+addition object and one fresh subtraction object. It also builds an optimized
+production subtraction witness through the public field operation. The script
+checks all subtraction words, rebuilds both native proof executables, runs both
+theorems, and removes its temporary files when it exits.
 
 Multiplication uses the same object linkage and benchmark path, but its HOL
-Light correctness proof is not part of this experiment yet.
