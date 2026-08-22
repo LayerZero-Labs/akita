@@ -7,6 +7,7 @@ mod aarch64;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::{iter::FusedIterator, ops::Range};
 
@@ -102,11 +103,21 @@ impl PackedSignedDigits {
         let storage_len = checked::sum([encoded_len, VECTOR_LOAD_PADDING]).ok_or_else(|| {
             AkitaError::InvalidInput("packed signed-digit storage length overflow".into())
         })?;
-        let mut storage = vec![0u8; storage_len];
-        encode_digits(&digits, bit_width, &mut storage[..encoded_len]);
+        let mut storage = Arc::<[u8]>::new_uninit_slice(storage_len);
+        Arc::get_mut(&mut storage)
+            .expect("fresh packed storage is uniquely owned")
+            .fill(MaybeUninit::new(0));
+        // SAFETY: every slot was initialized immediately above.
+        let mut storage = unsafe { storage.assume_init() };
+        encode_digits(
+            &digits,
+            bit_width,
+            &mut Arc::get_mut(&mut storage).expect("fresh packed storage is uniquely owned")
+                [..encoded_len],
+        );
 
         Ok(Self {
-            storage: storage.into(),
+            storage,
             encoded_len,
             len: digits.len(),
             bit_width,

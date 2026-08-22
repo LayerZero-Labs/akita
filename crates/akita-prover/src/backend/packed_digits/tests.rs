@@ -83,6 +83,18 @@ fn records_exact_bounds_during_the_pack() {
 }
 
 #[test]
+fn vector_load_padding_is_zero_initialized() {
+    let packed = PackedSignedDigits::from_i8_digits(vec![-2, -1, 0, 1], 2).unwrap();
+    assert_eq!(
+        packed.storage.len(),
+        packed.encoded_len + VECTOR_LOAD_PADDING
+    );
+    assert!(packed.storage[packed.encoded_len..]
+        .iter()
+        .all(|&byte| byte == 0));
+}
+
+#[test]
 fn automatic_width_is_the_smallest_exact_signed_width() {
     for (digits, expected_width) in [
         (vec![0], 1),
