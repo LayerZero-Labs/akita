@@ -63,24 +63,31 @@ pub(super) fn single_group_roundtrip<Cfg>(
         + AkitaSerialize,
     <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
 {
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).expect("setup");
+    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(nv, 1)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =
         UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = AkitaCommitmentScheme::<Cfg>::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit");
+    } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
     let poly_refs = [poly];
 
     let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -90,23 +97,22 @@ pub(super) fn single_group_roundtrip<Cfg>(
     )
     .expect("prover group")])
     .expect("prover claims");
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("trusted schedule catalog");
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         prover_claims,
         vec![hint],
         vec![&poly_refs[..]],
+        &schedules,
     )
     .expect("prover data");
     let selection = prover_data.selection();
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
-    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
-        &setup,
-        prover_data,
-        &stack,
-        &mut pt,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
+    let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove::<_, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
+        .expect("prove");
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -125,14 +131,16 @@ pub(super) fn single_group_roundtrip<Cfg>(
     .expect("verifier group")])
     .expect("verifier claims");
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut vt,
-        GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-        BasisMode::Lagrange,
-    )
-    .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
+    AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut vt,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
 }
 
 /// Shared tail of the two-group (precommit + final) cells: serialize the
@@ -206,12 +214,14 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     .expect("verifier claims");
 
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::batched_verify(
-        &decoded,
-        verifier_setup,
-        &mut vt,
-        GroupBatchStatement::new(selection, verify_claims).expect("statement"),
-        BasisMode::Lagrange,
-    )
-    .unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &decoded,
+            verifier_setup,
+            &mut vt,
+            GroupBatchStatement::new(selection, verify_claims).expect("statement"),
+            BasisMode::Lagrange,
+        )
+        .unwrap_or_else(|e| panic!("{what}: {e:?}"));
 }

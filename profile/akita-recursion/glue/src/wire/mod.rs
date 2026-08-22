@@ -8,7 +8,7 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
@@ -517,6 +517,7 @@ where
 
     fn decode_from_bytes_with_setup<Cfg>(
         bytes: &[u8],
+        schedules: &TrustedScheduleCatalog,
         decode_setup: impl FnOnce(
             &mut &[u8],
             usize,
@@ -601,6 +602,7 @@ where
             schedule_selection,
             &proof_shape,
             rest.len(),
+            schedules,
         )?;
         let proof = AkitaBatchedProof::<F, E>::deserialize_with_mode(
             &mut rest,
@@ -632,6 +634,7 @@ where
         schedule_selection: OpeningScheduleSelection,
         proof_shape: &AkitaBatchedProofShape,
         proof_bytes_available: usize,
+        schedules: &TrustedScheduleCatalog,
     ) -> Result<(), SerializationError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
@@ -641,7 +644,10 @@ where
             F::zero().serialized_size(BLOB_COMPRESS),
             E::zero().serialized_size(BLOB_COMPRESS),
         )?;
-        let resolved = Cfg::resolve_schedule_selection(schedule_selection)
+        akita_config::validate_trusted_schedule_catalog::<Cfg>(schedules)
+            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let resolved = schedules
+            .resolve_selection(schedule_selection)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         let root_opening_layout = resolved
             .profiles()
@@ -700,11 +706,18 @@ where
     /// This path rederives the public setup matrix from its seed and rejects
     /// stale or corrupted cached matrix bytes. Host-side artifact checks should
     /// use this path.
-    pub fn read_from_bytes<Cfg>(bytes: &[u8]) -> Result<Self, SerializationError>
+    pub fn read_from_bytes<Cfg>(
+        bytes: &[u8],
+        schedules: &TrustedScheduleCatalog,
+    ) -> Result<Self, SerializationError>
     where
         Cfg: CommitmentConfig<Field = F, ExtField = E>,
     {
-        Self::decode_from_bytes_with_setup::<Cfg>(bytes, Self::deserialize_strict_host_setup)
+        Self::decode_from_bytes_with_setup::<Cfg>(
+            bytes,
+            schedules,
+            Self::deserialize_strict_host_setup,
+        )
     }
 }
 

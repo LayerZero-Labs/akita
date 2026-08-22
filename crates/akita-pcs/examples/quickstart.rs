@@ -28,12 +28,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let evaluation = evaluate_multilinear(&evaluations, &point);
 
-    let setup = AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1)?;
+    let scheme = AkitaCommitmentScheme::<Config>::from_embedded_schedule_catalog()?;
+    let setup = scheme.setup_prover(NUM_VARS, 1)?;
     let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(&setup)?;
     let stack = UniformProverStack::uniform(&backend, &prepared, setup.expanded.as_ref())?;
 
-    let commit_output = AkitaCommitmentScheme::<Config>::commit(
+    let commit_output = scheme.commit(
         &setup,
         std::slice::from_ref(&polynomial),
         &stack,
@@ -50,11 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         prover_claims,
         vec![commit_output.hint],
         vec![&polynomial_group],
+        scheme.schedules(),
     )?;
     let selection = prover_data.selection();
 
     let mut prover_transcript = AkitaTranscript::<F>::unbound_prover(TRANSCRIPT_DOMAIN);
-    let proof = AkitaCommitmentScheme::<Config>::batched_prove(
+    let proof = scheme.batched_prove(
         &setup,
         prover_data,
         &stack,
@@ -70,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &proof_shape,
     )?;
 
-    let verifier_setup = AkitaCommitmentScheme::<Config>::setup_verifier(&setup)?;
+    let verifier_setup = scheme.setup_verifier(&setup)?;
     let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point,
         vec![evaluation],
@@ -78,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?])?;
     let statement = GroupBatchStatement::new(selection, verifier_claims)?;
     let mut verifier_transcript = AkitaTranscript::<F>::unbound_verifier(TRANSCRIPT_DOMAIN);
-    akita_verifier::batched_verify::<Config, _>(
+    scheme.batched_verify(
         &decoded_proof,
         &verifier_setup,
         &mut verifier_transcript,

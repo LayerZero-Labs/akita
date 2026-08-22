@@ -9,6 +9,7 @@ use crate::compute::{
 use crate::SelectedProverOpeningData;
 use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
+    TrustedScheduleCatalog,
 };
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
@@ -16,8 +17,8 @@ use akita_field::{AdditiveGroup, CanonicalField};
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
 /// This owns the full top-level prover work: validate/flatten public prover
-/// claims, select the folded schedule from `Cfg`, bind the transcript instance
-/// descriptor, and run the folded prover.
+/// claims, select the folded schedule from the trusted catalog, bind the
+/// transcript instance descriptor, and run the folded prover.
 ///
 /// # Errors
 ///
@@ -27,6 +28,7 @@ use akita_field::{AdditiveGroup, CanonicalField};
 pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
     prefix_slots: &SetupPrefixProverRegistry<Cfg::Field>,
+    schedules: &TrustedScheduleCatalog,
     stacks: &'a impl LevelProveStacks<
         'a,
         Cfg::Field,
@@ -89,7 +91,7 @@ where
     let opening_claims = claims.opening_claims();
     let opening_batch = claims.opening_layout()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
-    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    let resolved = schedules.resolve_selection(selection)?;
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
     schedule.validate_nonterminal_opening_execution(Cfg::EXT_DEGREE)?;

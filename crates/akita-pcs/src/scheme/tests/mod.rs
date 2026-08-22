@@ -36,6 +36,49 @@ const ONEHOT_D: usize = 256;
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 
+#[test]
+fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
+    let embedded = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("embedded schedule catalog");
+    let artifact = embedded.to_artifact_bytes().expect("schedule artifact");
+    let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
+
+    assert_eq!(
+        scheme.schedules().catalog_digest(),
+        embedded.catalog_digest()
+    );
+    let key =
+        akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(14, 1));
+    assert_eq!(
+        scheme
+            .schedules()
+            .resolve_key(&key)
+            .expect("artifact row")
+            .selection(),
+        embedded
+            .resolve_key(&key)
+            .expect("embedded row")
+            .selection()
+    );
+
+    let expected_capacity =
+        akita_config::trusted_setup_matrix_capacity::<Cfg>(scheme.schedules(), 14, 1)
+            .expect("catalog setup capacity");
+    let setup = scheme.setup_prover(14, 1).expect("catalog-backed setup");
+    assert!(
+        setup.expanded.shared_matrix().num_field_elements() >= expected_capacity.num_field_elements,
+        "setup must cover the exact catalog-derived matrix requirement"
+    );
+}
+
+#[test]
+fn scheme_rejects_a_catalog_bound_to_another_config() {
+    let dense = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("dense schedule catalog");
+    let error = OneHotScheme::new(dense).expect_err("one-hot scheme must reject dense catalog");
+    assert!(error.to_string().contains("family"));
+}
+
 type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
@@ -63,7 +106,8 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials)
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<C>()?;
+    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials, &schedules)
 }
 
 fn selected_statement<'a, C>(
@@ -161,7 +205,10 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
+    let setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(full_num_vars, 1)
+        .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -169,17 +216,22 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .unwrap();
+    } = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .unwrap();
 
     let opening_point: Vec<F> = (0..full_num_vars)
         .map(|i| F::from_u64((i + 2) as u64))
@@ -194,14 +246,16 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .unwrap();
+    let proof = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove::<_, _, _>(
+            &setup,
+            prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .unwrap();
 
     let [commitment] = commitments;
     (

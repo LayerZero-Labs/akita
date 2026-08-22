@@ -20,6 +20,7 @@ dependencies = [
  "akita-error",
  "akita-field",
  "akita-transcript",
+ "serde",
  "sha3 0.10.9",
  "smallvec",
  "tracing",
@@ -97,6 +98,7 @@ dependencies = [
  "blake2 0.10.6",
  "num-traits",
  "rand_core 0.6.4",
+ "serde",
  "sha3 0.10.9",
  "tracing",
 ]

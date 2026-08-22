@@ -24,7 +24,19 @@ pub const COMPRESSION_TARGET_BYTES: usize = 128;
 pub const COMPRESSION_MAP_COUNT: usize = 2;
 
 /// Schedule-bound encoding of one fold level's public B/D images.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum CommitmentPayloadMode {
     /// Prove the two-map compression relation and transmit its 128-byte terminal payload.
     #[default]

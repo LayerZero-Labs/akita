@@ -15,7 +15,7 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 
 /// Per-group opening geometry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PolynomialGroupLayout {
     num_vars: usize,
     num_polynomials: usize,

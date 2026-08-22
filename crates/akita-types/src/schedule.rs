@@ -32,7 +32,7 @@ pub struct AkitaScheduleInputs {
 /// This is schedule-owned because the same intermediate proof body may either
 /// recurse through an outer commitment or hand its witness to the final
 /// suffix fold as a public inner `t` state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NextWitnessBindingPolicy {
     /// Bind the terminal compressed commitment payload and recurse.
     OuterPayload,
@@ -61,7 +61,7 @@ pub enum NextWitnessBindingPolicy {
 /// identical fields. What separates them stays a validated constraint, as it
 /// already was: `FoldSchedule` names the three positions, so no role is inferred
 /// from an array index.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldParams {
     /// This fold's own parameters, including its final/new group, its
     /// precommitted groups, the shared D matrix, and any incoming setup prefix.
@@ -116,7 +116,7 @@ impl FoldParams {
 /// commitment matrix. It also retains the terminal fold basis and digit count
 /// needed to audit a calibrated L2 route. It has no outer/open commitment
 /// matrix and no outer/open response decomposition.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TerminalFoldParams {
     /// Exact `(N, M, B)` block split of the terminal source.
     pub blocks: crate::BlockGeometry,
@@ -310,7 +310,7 @@ impl TerminalFoldParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
     pub root: FoldParams,
     pub recursive_folds: Vec<FoldParams>,

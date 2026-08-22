@@ -13,7 +13,10 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(NV, GROUP_SIZE)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -26,13 +29,15 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::commit(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("precommit");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("precommit");
     let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
@@ -71,7 +76,10 @@ fn with_precommit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = OneHotScheme::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(max_num_vars, max_num_polys)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -109,23 +117,27 @@ fn profile_native_commit_group_allows_independent_groups() {
         let akita_prover::CommitOutput {
             committed_group: pre_a_commitment,
             hint: _pre_a_hint,
-        } = OneHotScheme::commit(
-            setup,
-            &pre_a_polys,
-            stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("precommit A");
+        } = OneHotScheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                setup,
+                &pre_a_polys,
+                stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("precommit A");
         let akita_prover::CommitOutput {
             committed_group: pre_b_commitment,
             hint: _pre_b_hint,
-        } = OneHotScheme::commit(
-            setup,
-            &pre_b_polys,
-            stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("precommit B");
+        } = OneHotScheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit(
+                setup,
+                &pre_b_polys,
+                stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("precommit B");
         let pre_a_frozen = pre_a_commitment.profile;
         let pre_b_frozen = pre_b_commitment.profile;
 
@@ -222,7 +234,10 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         0x0bee_fcaf_9a77_6001,
     )];
 
-    let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE).expect("protocol setup");
+    let setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
+        .expect("protocol setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
@@ -235,23 +250,27 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let akita_prover::CommitOutput {
         committed_group: pre_a_commitment,
         hint: _pre_a_hint,
-    } = OneHotScheme::commit::<_, _>(
-        &setup,
-        &pre_a_polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("precommit A");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            &pre_a_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("precommit A");
     let akita_prover::CommitOutput {
         committed_group: pre_b_commitment,
         hint: _pre_b_hint,
-    } = OneHotScheme::commit::<_, _>(
-        &setup,
-        &pre_b_polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("precommit B");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            &pre_b_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("precommit B");
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
@@ -278,20 +297,27 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let akita_prover::CommitOutput {
         committed_group: final_commitment,
         hint: final_hint,
-    } = OneHotScheme::commit(
-        &setup,
-        &final_polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-    )
-    .expect("final multi-group commitment");
-    let explicit_output = OneHotScheme::commit(
-        &setup,
-        &final_polys,
-        &stack,
-        akita_prover::GroupContext::explicit_with_precommitted_groups(&precommitteds, main_params),
-    )
-    .expect("explicit final multi-group commitment");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final multi-group commitment");
+    let explicit_output = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::explicit_with_precommitted_groups(
+                &precommitteds,
+                main_params,
+            ),
+        )
+        .expect("explicit final multi-group commitment");
 
     assert_eq!(explicit_output.committed_group, final_commitment);
     assert_eq!(explicit_output.hint, final_hint);
@@ -299,16 +325,18 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let missing_precommitted_groups =
         akita_types::PrecommittedGroupProfiles::from_profiles(vec![pre_a_commitment.profile])
             .expect("nonempty precommitted groups");
-    let error = OneHotScheme::commit(
-        &setup,
-        &final_polys,
-        &stack,
-        akita_prover::GroupContext::explicit_with_precommitted_groups(
-            &missing_precommitted_groups,
-            main_params,
-        ),
-    )
-    .expect_err("explicit grouped params must bind precommitted profile count");
+    let error = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::explicit_with_precommitted_groups(
+                &missing_precommitted_groups,
+                main_params,
+            ),
+        )
+        .expect_err("explicit grouped params must bind precommitted profile count");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
 
     assert_eq!(
@@ -356,7 +384,10 @@ fn commit_group_returns_frozen_exact_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(NV, GROUP_SIZE)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -369,13 +400,15 @@ fn commit_group_returns_frozen_exact_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::commit(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit group");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit group");
     let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
@@ -421,9 +454,51 @@ where
 {
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
     let opening_num_vars = pre_num_vars.max(final_num_vars);
+    let pre_layouts = pre_sizes
+        .iter()
+        .map(|&num_polynomials| {
+            ProtocolCfg::profile_without_precommitted_groups(
+                akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
+            )
+            .expect("independent profile")
+        })
+        .collect::<Vec<_>>();
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
+        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
+        precommitteds: pre_layouts.clone(),
+    };
+    let requested_row = ProtocolCfg::resolve_catalog_row_for_key(&multi_group_key)
+        .expect("multi-group runtime schedule");
+    let multi_group_schedule = requested_row.schedule().clone();
 
-    let setup =
-        AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
+    // Synthetic test configs may generate a row that is intentionally absent
+    // from the shipped table. Install that row into one trusted catalog before
+    // exercising setup, commitment, proving, and verification.
+    let embedded = akita_config::trusted_schedule_catalog_from_embedded::<ProtocolCfg>()
+        .expect("embedded schedule catalog");
+    let requested_is_embedded = embedded
+        .rows()
+        .any(|row| row.selection() == requested_row.selection());
+    let mut rows = embedded
+        .rows()
+        .map(|row| (row.profiles().clone(), row.schedule().clone()))
+        .collect::<Vec<_>>();
+    if !requested_is_embedded {
+        rows.push((
+            requested_row.profiles().clone(),
+            requested_row.schedule().clone(),
+        ));
+    }
+    let schedules = akita_config::TrustedScheduleCatalog::try_new(
+        ProtocolCfg::schedule_family_name(),
+        rows,
+        &akita_config::policy_of::<ProtocolCfg>(),
+        ProtocolCfg::ring_challenge_config,
+    )
+    .expect("test schedule catalog");
+    let scheme = AkitaCommitmentScheme::<ProtocolCfg>::new(schedules).expect("test scheme");
+
+    let setup = scheme.setup_prover(opening_num_vars, total).expect("setup");
     let cached_backend = CpuBackend::with_resource_limits(
         max_cached_ring_switch_elements,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
@@ -440,16 +515,12 @@ where
     .expect("stack");
     // Commit every precommitted group from its exact generated profile; keep the
     // polynomials alive so the prover/verifier can borrow references.
-    let mut pre_keys = Vec::new();
-    let mut pre_frozen = Vec::new();
     let mut pre_commitments = Vec::new();
     let mut pre_hints = Vec::new();
-    let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
-    for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
-        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
-        let profile =
-            ProtocolCfg::profile_without_precommitted_groups(key).expect("independent profile");
+    for (group_idx, (&num_polynomials, profile)) in
+        pre_sizes.iter().zip(pre_layouts.iter()).enumerate()
+    {
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
             .map(|poly_idx| {
                 debug_make_onehot_poly(
@@ -462,31 +533,23 @@ where
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<ProtocolCfg>::commit(
-            &setup,
-            &polys,
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("precommit");
-        pre_frozen.push(commitment.profile);
-        pre_keys.push(key);
+        } = scheme
+            .commit(
+                &setup,
+                &polys,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("precommit");
+        assert_eq!(commitment.profile, *profile);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
-        pre_layouts.push(profile);
         pre_polys_by_group.push(polys);
     }
 
-    let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
-        precommitteds: pre_frozen,
-    };
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group opening layout");
-    let multi_group_schedule = ProtocolCfg::resolve_catalog_row_for_key(&multi_group_key)
-        .expect("multi-group runtime schedule")
-        .into_schedule();
     let main_params = multi_group_root_params(&multi_group_schedule);
     assert_eq!(
         multi_group_schedule
@@ -542,13 +605,14 @@ where
     let akita_prover::CommitOutput {
         committed_group: final_commitment,
         hint: final_hint,
-    } = AkitaCommitmentScheme::<ProtocolCfg>::commit(
-        &setup,
-        &final_polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-    )
-    .expect("final multi-group commitment");
+    } = scheme
+        .commit(
+            &setup,
+            &final_polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
+        )
+        .expect("final multi-group commitment");
 
     let mut pre_point = debug_random_point(pre_num_vars);
     pre_point[0] += OneHotF::one();
@@ -618,23 +682,25 @@ where
     let mut prover_hints = pre_hints;
     prover_hints.push(final_hint);
 
-    let prover_claims = selected_prover_data::<ProtocolCfg, _>(
+    let prover_claims = SelectedProverOpeningData::from_committed_claims::<ProtocolCfg>(
         OpeningClaims::from_groups(prover_groups).expect("prover claims"),
         prover_hints,
         prover_polys,
+        scheme.schedules(),
     )
     .expect("multi-group prover data");
     let selection = prover_claims.selection();
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
-    let proof = AkitaCommitmentScheme::<ProtocolCfg>::batched_prove(
-        &setup,
-        prover_claims,
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group prove");
+    let proof = scheme
+        .batched_prove(
+            &setup,
+            prover_claims,
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("multi-group prove");
     assert!(proof.num_fold_levels() >= 2);
     let planned_stage3 = multi_group_schedule
         .recursive_folds
@@ -662,8 +728,7 @@ where
     .expect("deserialize multi-group proof");
     assert_eq!(decoded, proof);
 
-    let verifier_setup =
-        AkitaCommitmentScheme::<ProtocolCfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let mut verifier_groups = Vec::new();
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
@@ -686,14 +751,15 @@ where
     let verify_claims =
         OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
-    AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
-        BasisMode::Lagrange,
-    )
-    .expect("multi-group verify");
+    scheme
+        .batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
+            BasisMode::Lagrange,
+        )
+        .expect("multi-group verify");
 
     if check_group_binding {
         assert_eq!(pre_commitments.len(), 1, "binding fixture uses two groups");
@@ -714,15 +780,16 @@ where
         .expect("swapped verifier claims");
         let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
-            AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
-                &decoded,
-                &verifier_setup,
-                &mut swapped_transcript,
-                GroupBatchStatement::new(selection, swapped_claims)
-                    .expect("swapped-group statement"),
-                BasisMode::Lagrange,
-            )
-            .is_err(),
+            scheme
+                .batched_verify(
+                    &decoded,
+                    &verifier_setup,
+                    &mut swapped_transcript,
+                    GroupBatchStatement::new(selection, swapped_claims)
+                        .expect("swapped-group statement"),
+                    BasisMode::Lagrange,
+                )
+                .is_err(),
             "swapped group commitments must reject"
         );
 
@@ -737,15 +804,16 @@ where
         .expect("tampered verifier claims");
         let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
-            AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
-                &decoded,
-                &verifier_setup,
-                &mut tampered_transcript,
-                GroupBatchStatement::new(selection, tampered_claims)
-                    .expect("tampered-opening statement"),
-                BasisMode::Lagrange,
-            )
-            .is_err(),
+            scheme
+                .batched_verify(
+                    &decoded,
+                    &verifier_setup,
+                    &mut tampered_transcript,
+                    GroupBatchStatement::new(selection, tampered_claims)
+                        .expect("tampered-opening statement"),
+                    BasisMode::Lagrange,
+                )
+                .is_err(),
             "tampered group opening must reject"
         );
     }
@@ -834,7 +902,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         })
         .collect();
 
-    let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
+    let setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(NV, BATCH_SIZE)
+        .unwrap();
     let cached_backend = CpuBackend::with_resource_limits(
         usize::MAX,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
@@ -847,17 +918,22 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = OneHotScheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = OneHotScheme::commit::<_, _>(
-        &setup,
-        &polys,
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("batched onehot commit");
+    } = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            &polys,
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("batched onehot commit");
     let commitments = [commitment];
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
     let prover_group = PolynomialGroupClaims::new(
@@ -866,19 +942,22 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         commitments[0].clone(),
     )
     .expect("valid one-hot prover group");
-    let proof = OneHotScheme::batched_prove::<_, _, _>(
-        &setup,
-        selected_prover_data::<OneHotCfg, _>(
-            OpeningClaims::from_groups(vec![prover_group]).expect("valid one-hot prover claims"),
-            vec![hint],
-            vec![&poly_refs[..]],
+    let proof = OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove::<_, _, _>(
+            &setup,
+            selected_prover_data::<OneHotCfg, _>(
+                OpeningClaims::from_groups(vec![prover_group])
+                    .expect("valid one-hot prover claims"),
+                vec![hint],
+                vec![&poly_refs[..]],
+            )
+            .expect("valid one-hot prover opening data"),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
         )
-        .expect("valid one-hot prover opening data"),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("batched onehot prove");
+        .expect("batched onehot prove");
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
@@ -920,23 +999,25 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(decoded, proof);
 
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    OneHotScheme::batched_verify(
-        &decoded,
-        &verifier_setup,
-        &mut verifier_transcript,
-        selected_statement::<OneHotCfg>(
-            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                point,
-                openings,
-                &commitments[0],
+    OneHotScheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &decoded,
+            &verifier_setup,
+            &mut verifier_transcript,
+            selected_statement::<OneHotCfg>(
+                OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                    point,
+                    openings,
+                    &commitments[0],
+                )
+                .expect("valid one-hot verifier group")])
+                .expect("valid one-hot verifier claims"),
             )
-            .expect("valid one-hot verifier group")])
-            .expect("valid one-hot verifier claims"),
+            .expect("valid one-hot verifier statement"),
+            BasisMode::Lagrange,
         )
-        .expect("valid one-hot verifier statement"),
-        BasisMode::Lagrange,
-    )
-    .expect("batched onehot verify");
+        .expect("batched onehot verify");
 }
 
 #[path = "onehot/selective_l2.rs"]

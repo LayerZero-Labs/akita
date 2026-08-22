@@ -7,6 +7,7 @@ Groth = "Groth"
 evn = "evn"
 thm = "thm"
 Thm = "Thm"
+aks = "aks"
 
 [files]
 extend-exclude = ["book/mermaid.min.js"]

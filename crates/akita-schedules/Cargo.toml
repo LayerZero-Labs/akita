@@ -11,7 +11,7 @@ authors = [
   "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
 ]
 license = "Apache-2.0 OR MIT"
-description = "Feature-gated generated schedule tables for the Akita polynomial commitment scheme"
+description = "Trusted runtime schedule artifacts and catalogs for the Akita polynomial commitment scheme"
 repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
@@ -62,6 +62,8 @@ fp64-onehot = []
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lints]
 workspace = true

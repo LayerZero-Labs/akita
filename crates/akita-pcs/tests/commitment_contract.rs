@@ -198,6 +198,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
+    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("embedded schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
@@ -221,6 +223,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let contract_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
+        &schedules,
         &contract_stack,
         GroupContext::explicit_without_precommitted_groups(&params),
     )
@@ -234,6 +237,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let dense_output = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
         std::slice::from_ref(&dense),
         expanded,
+        &schedules,
         &cpu_stack,
         GroupContext::explicit_without_precommitted_groups(&params),
     )
@@ -256,6 +260,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
+        &schedules,
         &contract_stack,
         GroupContext::explicit_without_precommitted_groups(&malformed_params),
     )

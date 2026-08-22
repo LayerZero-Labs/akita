@@ -34,6 +34,11 @@ macro_rules! impl_multi_chunk_companion {
         impl $crate::CommitmentConfig for $cfg {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
+            fn schedule_family_name() -> &'static str {
+                stringify!($table)
+                    .strip_suffix("_table")
+                    .unwrap_or(stringify!($table))
+            }
             const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
                 <$base as $crate::CommitmentConfig>::RING_DIMENSION_SCHEDULE_MODE;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
@@ -95,13 +100,29 @@ pub mod test_support;
 mod transcript_binding;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
+pub use akita_schedules::TrustedScheduleCatalog;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
-pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
+pub use setup_prefix_slots::{
+    setup_prefix_slot_ids_for_capacity, setup_prefix_slot_ids_from_catalog,
+};
+
+/// Size setup from the exact rows in a trusted catalog.
+pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    proof_optimized::trusted_setup_matrix_capacity::<Cfg>(
+        catalog,
+        max_num_vars,
+        max_num_batched_polys,
+    )
+}
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
 /// Derive the runtime schedule policy from a preset.
@@ -133,6 +154,48 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
+}
+
+/// Decode and validate a trusted schedule artifact for one concrete config.
+///
+/// This is an application or preprocessing boundary. Proof parsing never
+/// calls it and no proof field contains these artifact bytes.
+pub fn trusted_schedule_catalog_from_bytes<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+) -> Result<TrustedScheduleCatalog, AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    TrustedScheduleCatalog::from_artifact_bytes(
+        bytes,
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+}
+
+/// Materialize the feature gated generated table through the same owned
+/// catalog contract used by external artifacts.
+///
+/// This exists only as a migration source while checked in Rust schedule
+/// tables are replaced by published artifact files.
+pub fn trusted_schedule_catalog_from_embedded<Cfg: CommitmentConfig>(
+) -> Result<TrustedScheduleCatalog, AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    let table = Cfg::schedule_catalog().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule("embedded schedule catalog is not enabled".to_string())
+    })?;
+    akita_schedules::trusted_catalog_from_generated(
+        table,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
+}
+
+/// Check that an already validated catalog belongs to one concrete config.
+pub fn validate_trusted_schedule_catalog<Cfg: CommitmentConfig>(
+    catalog: &TrustedScheduleCatalog,
+) -> Result<(), AkitaError> {
+    validate_config_policy::<Cfg>()?;
+    catalog.validate_binding(Cfg::schedule_family_name(), &policy_of::<Cfg>())
 }
 
 /// Validate a config's schedule policy and concrete extension-field tower.
@@ -313,6 +376,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
             Self::recursive_setup_planning(),
             Self::RING_DIMENSION_SCHEDULE_MODE,
         )
+    }
+
+    /// Stable trusted schedule family identity for external artifact loading.
+    fn schedule_family_name() -> &'static str {
+        std::any::type_name::<Self>()
     }
 
     /// Optional generated schedule catalog for this preset.

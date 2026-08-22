@@ -14,6 +14,11 @@ type TestF = fp128::Field;
 const TEST_D: usize = 256;
 const PREFIX_D: usize = 64;
 
+fn schedules<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog {
+    akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+        .expect("embedded trusted schedule catalog")
+}
+
 fn blob_prefix() -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&BLOB_MAGIC);
@@ -80,8 +85,11 @@ fn trailing_blob_bytes_are_rejected() {
 fn previous_blob_version_is_rejected_at_the_magic_boundary() {
     let mut bytes = blob_prefix();
     bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv4");
-    let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes)
-        .expect_err("v4 blob must not reach payload decoding");
+    let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .expect_err("v4 blob must not reach payload decoding");
     assert!(error.to_string().contains("magic mismatch"));
 }
 
@@ -127,7 +135,11 @@ fn transcript_domain_len_is_capped_before_allocation() {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("length"));
 }
 
@@ -141,7 +153,11 @@ fn num_vars_is_capped_before_opening_point_allocation() {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("length"));
 }
 
@@ -154,7 +170,11 @@ fn opening_point_len_must_match_num_vars_before_allocation() {
     2u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
     3u64.serialize_with_mode(&mut bytes, BLOB_COMPRESS).unwrap();
 
-    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(&bytes).unwrap_err();
+    let err = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes::<TestCfg>(
+        &bytes,
+        &schedules::<TestCfg>(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("opening-point arity 3"));
 }
 
@@ -247,7 +267,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
     huge.root.opening_payload_coeffs = usize::MAX;
     let budget_error = AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<
         TestCfg,
-    >(row.selection(), &huge, 0)
+    >(row.selection(), &huge, 0, &schedules::<TestCfg>())
     .expect_err("huge shape must fail against remaining bytes");
     let budget_message = budget_error.to_string();
     assert!(
@@ -262,6 +282,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
+            &schedules::<TestCfg>(),
         )
         .expect_err("noncanonical shape must fail before proof decoding");
     assert!(identity_error.to_string().contains("canonical schedule"));
@@ -294,6 +315,7 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
+            &schedules::<ExtCfg>(),
         )
         .expect_err("noncanonical extension shape must fail before proof decoding");
     assert!(error.to_string().contains("canonical schedule"));

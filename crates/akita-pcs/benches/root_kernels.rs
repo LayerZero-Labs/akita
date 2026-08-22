@@ -46,7 +46,10 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     .root
     .params
     .clone();
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(NV, 1)
+        .unwrap();
     let total = setup.expanded.shared_matrix.num_field_elements() / D;
     let ntt_shared = prepare_ntt_cache(
         setup

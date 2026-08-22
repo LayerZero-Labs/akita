@@ -12,7 +12,7 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
-- `akita-schedules` stores the tracked generated schedule tables. Cargo features select which tables a build includes.
+- `akita-schedules` owns versioned schedule artifacts, validated owned catalogs, and the tracked generated tables used during migration.
 - `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`resolve_catalog_row_for_key` delegates to strict generated-catalog resolution).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
 - `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches generated schedule expansion transitively.
@@ -42,6 +42,35 @@ verifier contract, CI timing). `specs/` holds design records (lifecycle in
 comments) are in [`docs/documentation.md`](docs/documentation.md).
 
 ## Generated Schedules
+
+The runtime schedule contract is `TrustedScheduleCatalog`. A versioned JSON
+artifact stores complete expanded rows. The application loads that artifact as
+a trusted parameter for both proving and verification. A proof contains only
+the 32 byte `OpeningScheduleSelection` row digest. It cannot provide or replace
+schedule content.
+
+Artifact loading checks the expected family, protocol epoch, config policy,
+runtime challenge hooks, every expanded schedule invariant, every committed
+profile, and every row digest. Honest prover key selection and verifier digest
+selection then use the same owned catalog.
+
+The checked in Rust tables below remain a migration source. An
+`AkitaCommitmentScheme<Cfg>` instance owns one validated catalog and uses it
+for setup, commitment, proving, and verification. Direct verifier and prover
+orchestration accept `&TrustedScheduleCatalog`, so an integration can load an
+external trusted artifact without compiling its rows into Akita.
+
+Export one currently compiled migration catalog with:
+
+```bash
+cargo run -p akita-config --example export_schedule_artifact -- \
+  fp128_onehot ./fp128_onehot.aks
+```
+
+Load those bytes with
+`akita_config::trusted_schedule_catalog_from_bytes::<Cfg>()`. The application
+is responsible for distributing the artifact through its trusted setup or
+parameter channel.
 
 Builds that use schedules read generated family modules from
 `crates/akita-schedules/src/generated/`. Git tracks these deterministic planner

@@ -45,7 +45,10 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
 
-    let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+    let setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_prover(num_vars, 1)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepare setup");
@@ -55,37 +58,46 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .setup_verifier(&setup)
+        .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::commit::<_, _>(
-        &setup,
-        std::slice::from_ref(&poly),
-        &stack,
-        akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-    )
-    .expect("commit");
+    } = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .commit::<_, _>(
+            &setup,
+            std::slice::from_ref(&poly),
+            &stack,
+            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+        )
+        .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    let proof = Scheme::batched_prove::<_, _, _>(
-        &setup,
-        prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
-        &stack,
-        &mut prover_transcript,
-        BasisMode::Lagrange,
-    )
-    .expect("prove");
+    let proof = Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_prove::<_, _, _>(
+            &setup,
+            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
+            &stack,
+            &mut prover_transcript,
+            BasisMode::Lagrange,
+        )
+        .expect("prove");
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    Scheme::batched_verify(
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-        verify_input::<OneHotCfg>(&point, &[opening], &commitment),
-        BasisMode::Lagrange,
-    )
-    .expect("verify");
+    Scheme::from_embedded_schedule_catalog()
+        .expect("embedded schedule catalog")
+        .batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verify_input::<OneHotCfg>(&point, &[opening], &commitment),
+            BasisMode::Lagrange,
+        )
+        .expect("verify");
 
     FoldLinfGrindFixture {
         proof,
@@ -126,27 +138,31 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        Scheme::batched_verify(
-            &roundtrip,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("deserialized proof must verify");
+        Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &roundtrip,
+                &fixture.verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
+                BasisMode::Lagrange,
+            )
+            .expect("deserialized proof must verify");
 
         roundtrip.root.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
         roundtrip.terminal.fold_grind_nonce = MAX_FOLD_GRIND_ATTEMPTS;
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let err = Scheme::batched_verify(
-            &roundtrip,
-            &fixture.verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
-            BasisMode::Lagrange,
-        )
-        .expect_err("oversized grind nonce must be rejected");
+        let err = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &roundtrip,
+                &fixture.verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
+                BasisMode::Lagrange,
+            )
+            .expect_err("oversized grind nonce must be rejected");
         assert!(
             matches!(err, AkitaError::InvalidProof)
                 || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
@@ -175,7 +191,10 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_prover(num_vars, 1)
+            .expect("setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepare setup");
@@ -185,41 +204,50 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
+        let verifier_setup = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .setup_verifier(&setup)
+            .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::commit::<_, _>(
-            &setup,
-            std::slice::from_ref(&poly),
-            &stack,
-            akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-        )
-        .expect("commit");
+        } = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .commit::<_, _>(
+                &setup,
+                std::slice::from_ref(&poly),
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
+            .expect("commit");
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
-        let proof = Scheme::batched_prove::<_, _, _>(
-            &setup,
-            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
-            &stack,
-            &mut prover_transcript,
-            BasisMode::Lagrange,
-        )
-        .expect("prove");
+        let proof = Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_prove::<_, _, _>(
+                &setup,
+                prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
+                &stack,
+                &mut prover_transcript,
+                BasisMode::Lagrange,
+            )
+            .expect("prove");
 
         let mut verifier_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input::<OneHotCfg>(&point, &[opening], &commitment),
-            BasisMode::Lagrange,
-        )
-        .expect("verify");
+        Scheme::from_embedded_schedule_catalog()
+            .expect("embedded schedule catalog")
+            .batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verify_input::<OneHotCfg>(&point, &[opening], &commitment),
+                BasisMode::Lagrange,
+            )
+            .expect("verify");
 
         let prover_public = public_transcript_events(prover_transcript.events());
         let verifier_public = public_transcript_events(verifier_transcript.events());

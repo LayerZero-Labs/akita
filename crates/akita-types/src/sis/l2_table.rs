@@ -9,7 +9,9 @@ use super::generated_l2_sis_table::{sis_max_widths as generated_l2_sis_max_width
 /// This identity is distinct from [`super::ajtai_key::SisTableDigest`]. An L2-selected schedule
 /// binds both its squared collision bucket and this digest without changing the
 /// coefficient-L∞ fallback table identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SisL2TableDigest(pub [u8; 32]);
 
 impl Default for SisL2TableDigest {
@@ -27,7 +29,9 @@ impl SisL2TableDigest {
 }
 
 /// Canonical key for one generated Euclidean SIS floor row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SisL2TableKey {
     pub policy: SisSecurityPolicyId,
     pub table_digest: SisL2TableDigest,

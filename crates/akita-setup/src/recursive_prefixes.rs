@@ -1,4 +1,4 @@
-use akita_config::CommitmentConfig;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{
@@ -85,6 +85,7 @@ pub(crate) fn validate_prefix_registry_complete<F: FieldCore>(
 
 pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
     setup: &mut AkitaProverSetup<F>,
+    schedules: &TrustedScheduleCatalog,
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
@@ -95,7 +96,8 @@ where
     if !Cfg::recursive_setup_planning() {
         return Ok(());
     }
-    let required_ids = akita_config::setup_prefix_slot_ids_for_capacity::<Cfg>(
+    let required_ids = akita_config::setup_prefix_slot_ids_from_catalog::<Cfg>(
+        schedules,
         max_num_vars,
         max_num_batched_polys,
     )?;
