@@ -464,16 +464,16 @@ pub(crate) static STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64;
 
 #[inline]
 pub(crate) fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+    pos: &mut [E::SmallMulAccum; N],
+    neg: &mut [E::SmallMulAccum; N],
     coeff: E,
     values: &[i64; N],
 ) {
     for (idx, &value) in values.iter().enumerate() {
         if value > 0 {
-            pos[idx] += coeff.mul_u64_unreduced(value as u64);
+            pos[idx] += coeff.mul_small_unreduced(value as u64);
         } else if value < 0 {
-            neg[idx] += coeff.mul_u64_unreduced(value.unsigned_abs());
+            neg[idx] += coeff.mul_small_unreduced(value.unsigned_abs());
         }
     }
 }
@@ -484,8 +484,8 @@ pub(crate) fn accum_lookup_vector_signed_selected<
     const N: usize,
     const M: usize,
 >(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+    pos: &mut [E::SmallMulAccum; N],
+    neg: &mut [E::SmallMulAccum; N],
     coeff: E,
     values: &[i64; M],
     selected_indices: &[usize; N],
@@ -493,25 +493,25 @@ pub(crate) fn accum_lookup_vector_signed_selected<
     for (dst_idx, &src_idx) in selected_indices.iter().enumerate() {
         let value = values[src_idx];
         if value > 0 {
-            pos[dst_idx] += coeff.mul_u64_unreduced(value as u64);
+            pos[dst_idx] += coeff.mul_small_unreduced(value as u64);
         } else if value < 0 {
-            neg[dst_idx] += coeff.mul_u64_unreduced(value.unsigned_abs());
+            neg[dst_idx] += coeff.mul_small_unreduced(value.unsigned_abs());
         }
     }
 }
 
 #[inline]
 pub(crate) fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+    pos: &mut [E::SmallMulAccum; N],
+    neg: &mut [E::SmallMulAccum; N],
     coeffs: &[E; N],
     weights: &[i64; N],
 ) {
     for (idx, (&coeff, &weight)) in coeffs.iter().zip(weights.iter()).enumerate() {
         if weight > 0 {
-            pos[idx] += coeff.mul_u64_unreduced(weight as u64);
+            pos[idx] += coeff.mul_small_unreduced(weight as u64);
         } else if weight < 0 {
-            neg[idx] += coeff.mul_u64_unreduced(weight.unsigned_abs());
+            neg[idx] += coeff.mul_small_unreduced(weight.unsigned_abs());
         }
     }
 }

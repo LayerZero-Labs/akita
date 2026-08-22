@@ -1,8 +1,9 @@
 //! Delayed-reduction product accumulators.
 //!
-//! Each accumulator widens field products into `u128` limbs so a batch of
-//! products can be summed without intermediate modular reduction, then
-//! reduced once via the owning field's `HasUnreducedOps` impl.
+//! Full-product accumulators widen field products into `u128` limbs. The fp32
+//! small-scalar accumulator instead uses `u64` slots and folds only on carry.
+//! Both representations avoid per-product modular reduction in their target
+//! workloads.
 
 use super::*;
 
@@ -75,6 +76,56 @@ impl Neg for Fp32ProductAccum {
     #[inline]
     fn neg(self) -> Self {
         Self([self.0[0].wrapping_neg(), self.0[1].wrapping_neg()])
+    }
+}
+
+/// Narrow accumulator for `FpExt4<Fp32> × u64` products.
+///
+/// Each extension coefficient is accumulated in one `u64` slot. Small
+/// balanced-digit products stay exact in that slot. If an addition carries
+/// past 64 bits, the slot is folded modulo `P` before accumulation continues,
+/// so correctness does not depend on a problem-size bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FpExt4Fp32SmallMulAccum<const P: u32>(pub [u64; 4]);
+
+impl<const P: u32> FpExt4Fp32SmallMulAccum<P> {
+    /// Additive identity accumulator.
+    pub const ZERO: Self = Self([0; 4]);
+
+    #[inline(always)]
+    fn add_slot(left: u64, right: u64) -> u64 {
+        let (sum, carry) = left.overflowing_add(right);
+        if carry {
+            let carry_value = Fp32::<P>::from_canonical_u32(Fp32::<P>::SHIFT64_MOD_P);
+            (Fp32::<P>::from_u64(sum) + carry_value).to_limbs() as u64
+        } else {
+            sum
+        }
+    }
+
+    /// Reduce accumulated coefficients to a canonical extension-field value.
+    #[inline]
+    pub fn reduce(self) -> [Fp32<P>; 4] {
+        self.0.map(Fp32::<P>::from_u64)
+    }
+}
+
+impl<const P: u32> Add for FpExt4Fp32SmallMulAccum<P> {
+    type Output = Self;
+
+    #[inline]
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl<const P: u32> AddAssign for FpExt4Fp32SmallMulAccum<P> {
+    #[inline]
+    fn add_assign(&mut self, rhs: Self) {
+        for (left, right) in self.0.iter_mut().zip(rhs.0) {
+            *left = Self::add_slot(*left, right);
+        }
     }
 }
 

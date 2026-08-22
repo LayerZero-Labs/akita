@@ -227,8 +227,8 @@ impl RangePolynomialPrecomputation {
 
 #[inline]
 fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+    pos_accum: &mut [E::SmallMulAccum],
+    neg_accum: &mut [E::SmallMulAccum],
     slot: usize,
     e_in: E,
     coeff: &CompactCoeffEntry,
@@ -236,7 +236,7 @@ fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
     if coeff.abs_coeff == 0 {
         return;
     }
-    let prod = e_in.mul_u64_unreduced(coeff.abs_coeff);
+    let prod = e_in.mul_small_unreduced(coeff.abs_coeff);
     if coeff.is_neg {
         neg_accum[slot] += prod;
     } else {
@@ -246,8 +246,8 @@ fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
 
 #[inline]
 fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+    pos_accum: &mut [E::SmallMulAccum],
+    neg_accum: &mut [E::SmallMulAccum],
     e_in: E,
     coeffs: &[CompactCoeffEntry],
 ) {
@@ -261,10 +261,10 @@ fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
 
 #[inline]
 fn reduce_small_coeff_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
+    pos: E::SmallMulAccum,
+    neg: E::SmallMulAccum,
 ) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
+    E::reduce_small_accum(pos) - E::reduce_small_accum(neg)
 }
 
 #[inline]
@@ -449,8 +449,8 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
         || vec![E::ProductAccum::zero(); num_coeffs_q],
         |mut outer_accum, j_high| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-            let mut inner_pos = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-            let mut inner_neg = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut inner_pos = [E::SmallMulAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut inner_neg = [E::SmallMulAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let j = j_high * num_first + j_low;
                 let (left_range_image_integer, right_range_image_integer) = range_image_pair(j);

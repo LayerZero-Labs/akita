@@ -27,7 +27,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_lane_count,
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallMulAccum::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
@@ -45,7 +45,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             current_coefficient_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                        let mut inner_virt = [E::SmallMulAccum::zero(); 2];
 
                         for coefficient_pair in blk..blk_end {
                             let j_low =
@@ -60,11 +60,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let q0 = w0_i64 * (w0_i64 + 1);
                             if q0 != 0 {
-                                inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                                inner_virt[0] += e_in.mul_small_unreduced(q0 as u64);
                             }
                             let q2 = dw_i64 * dw_i64;
                             if q2 != 0 {
-                                inner_virt[1] += e_in.mul_u64_unreduced(q2 as u64);
+                                inner_virt[1] += e_in.mul_small_unreduced(q2 as u64);
                             }
 
                             let p0 = common_alpha_factor[left] * lane_weight;
@@ -106,7 +106,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..self.live_lane_count,
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallMulAccum::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
@@ -124,7 +124,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             block_size,
                             current_coefficient_half,
                         );
-                        let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                        let mut inner_virt = [E::SmallMulAccum::zero(); 4];
 
                         for coefficient_pair in blk..blk_end {
                             let j_low =
@@ -139,13 +139,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
 
                             let q0 = w0_i64 * (w0_i64 + 1);
                             if q0 != 0 {
-                                inner_virt[0] += e_in.mul_u64_unreduced(q0 as u64);
+                                inner_virt[0] += e_in.mul_small_unreduced(q0 as u64);
                             }
                             let q1 = dw_i64 * (2 * w0_i64 + 1);
                             accum_small_signed::<E>(&mut inner_virt, 1, e_in, q1);
                             let q2 = dw_i64 * dw_i64;
                             if q2 != 0 {
-                                inner_virt[3] += e_in.mul_u64_unreduced(q2 as u64);
+                                inner_virt[3] += e_in.mul_small_unreduced(q2 as u64);
                             }
 
                             let p0 = common_alpha_factor[left] * lane_weight;

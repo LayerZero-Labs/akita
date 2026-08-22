@@ -112,9 +112,9 @@ enum NormRoundTerms<E: FieldCore> {
     SkipLinear([E; 2]),
 }
 
-type CompactVirtAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 4];
-type CompactVirtSkipLinearAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 2];
-type CompactRelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
+type CompactVirtAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 4];
+type CompactVirtSkipLinearAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 2];
+type CompactRelAccum<E> = [<E as HasUnreducedOps>::SmallMulAccum; 6];
 
 #[inline]
 fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
@@ -132,7 +132,7 @@ fn fold_two_round_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: 
 
 #[inline]
 fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
-    accum: &mut [E::MulU64Accum],
+    accum: &mut [E::SmallMulAccum],
     pos_idx: usize,
     coeff: E,
     signed: i64,
@@ -140,7 +140,7 @@ fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
     if signed == 0 {
         return;
     }
-    let prod = coeff.mul_u64_unreduced(signed.unsigned_abs());
+    let prod = coeff.mul_small_unreduced(signed.unsigned_abs());
     if signed < 0 {
         accum[pos_idx + 1] += prod;
     } else {
@@ -151,9 +151,9 @@ fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
 #[inline]
 fn reduce_compact_virt<E: FieldCore + HasUnreducedOps>(virt: CompactVirtAccum<E>) -> [E; 3] {
     [
-        E::reduce_mul_u64_accum(virt[0]),
+        E::reduce_small_accum(virt[0]),
         reduce_signed_accum::<E>(virt[1], virt[2]),
-        E::reduce_mul_u64_accum(virt[3]),
+        E::reduce_small_accum(virt[3]),
     ]
 }
 
@@ -162,8 +162,8 @@ fn reduce_compact_virt_skip_linear<E: FieldCore + HasUnreducedOps>(
     virt: CompactVirtSkipLinearAccum<E>,
 ) -> [E; 2] {
     [
-        E::reduce_mul_u64_accum(virt[0]),
-        E::reduce_mul_u64_accum(virt[1]),
+        E::reduce_small_accum(virt[0]),
+        E::reduce_small_accum(virt[1]),
     ]
 }
 
@@ -209,7 +209,7 @@ pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
 
 #[inline]
 pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
-    rel: &mut [E::MulU64Accum; 6],
+    rel: &mut [E::SmallMulAccum; 6],
     w0: i64,
     dw: i64,
     p0: E,
@@ -302,7 +302,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
-        rel: &mut [E::MulU64Accum; 6],
+        rel: &mut [E::SmallMulAccum; 6],
         w0: i64,
         dw: i64,
         witness_idx0: usize,

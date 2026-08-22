@@ -280,19 +280,19 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
         0..live_x_cols,
         || {
             (
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
                 [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
             )
         },
         |(mut norm_pos, mut norm_neg, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
             let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_pos = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::SmallMulAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
                 let lookup_idx = lookup_index_fn([

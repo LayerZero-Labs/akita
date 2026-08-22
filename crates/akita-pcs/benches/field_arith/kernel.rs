@@ -37,15 +37,15 @@ fn bench_fp32_ext4_small_accum(c: &mut Criterion) {
                 black_box(acc)
             })
         });
-        group.bench_function(format!("unreduced_{n}"), |bench| {
+        group.bench_function(format!("small_accum_{n}"), |bench| {
             bench.iter(|| {
                 let values = black_box(&values[..n as usize]);
                 let smalls = black_box(&smalls[..n as usize]);
-                let mut acc = <E as HasUnreducedOps>::MulU64Accum::zero();
+                let mut acc = <E as HasUnreducedOps>::SmallMulAccum::zero();
                 for (&value, &small) in values.iter().zip(smalls) {
-                    acc += value.mul_u64_unreduced(small);
+                    acc += value.mul_small_unreduced(small);
                 }
-                black_box(E::reduce_mul_u64_accum(acc))
+                black_box(E::reduce_small_accum(acc))
             })
         });
     }

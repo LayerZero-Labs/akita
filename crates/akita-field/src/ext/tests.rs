@@ -440,11 +440,11 @@ fn fp_ext4_fp32_small_accum_matches_direct_sum() {
         sum + value * E::from_u64(small)
     });
     let accumulated = pairs.iter().fold(
-        <E as HasUnreducedOps>::MulU64Accum::zero(),
-        |sum, &(value, small)| sum + value.mul_u64_unreduced(small),
+        <E as HasUnreducedOps>::SmallMulAccum::zero(),
+        |sum, &(value, small)| sum + value.mul_small_unreduced(small),
     );
 
-    assert_eq!(direct, E::reduce_mul_u64_accum(accumulated));
+    assert_eq!(direct, E::reduce_small_accum(accumulated));
 }
 
 #[test]
