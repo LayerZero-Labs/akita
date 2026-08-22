@@ -1034,11 +1034,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         log = "\n".join(
             [
-                "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=104 "
-                "accounted_bytes=104 akita_fold_bytes=100 nonce_stream_bytes=4 tail_bytes=0",
+                "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=107 "
+                "accounted_bytes=107 akita_fold_bytes=100 nonce_stream_bytes=7 tail_bytes=0",
                 "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
-                "total_nonce_bits=26 nonce_stream_bytes=4 padding_bits=6 run_count=3 "
-                "expanded_query_count=10",
+                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=5 "
+                "expanded_query_count=12",
                 "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
                 "component=fold_response query=response_search protocol=none stage=None "
                 "round=None group=None kind=fold_response loss_factor=0 grind_bits=0 "
@@ -1048,6 +1048,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                 "round=Some(2) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
                 "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
                 "INFO grinding plan run label=onehot_fp128 run_index=2 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(3) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=3 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(4) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=4 level=0 "
                 "component=fold_challenge query=challenge_coordinates protocol=none "
                 "stage=None round=None group=Some(1) kind=fold_challenge_coordinates "
                 "loss_factor=0 grind_bits=0 nonce_bits=0 multiplicity=8 run_nonce_bits=0",
@@ -1058,11 +1066,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         summary = extract_summary(log, "onehot_fp128", 24, 1)
         plan = summary["grinding_plan"]
 
-        self.assertEqual(summary["nonce_stream_bits"], 26)
-        self.assertEqual(summary["nonce_stream_padding_bits"], 6)
+        self.assertEqual(summary["nonce_stream_bits"], 54)
+        self.assertEqual(summary["nonce_stream_padding_bits"], 2)
         self.assertEqual(plan["runs"][1]["stage"], 0)
         self.assertEqual(plan["runs"][1]["round"], 2)
-        self.assertEqual(plan["runs"][2]["group"], 1)
+        self.assertEqual(plan["runs"][4]["group"], 1)
 
         baseline_proof = [{"level": 0, "fold_grind_nonce_bytes": 4}]
         output = io.StringIO()
@@ -1081,14 +1089,47 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertIn("Transcript grinding bits", report)
         self.assertIn("Proof-global packed nonce stream", report)
-        self.assertIn("26<br><sub>Merge base</sub><br>12", report)
-        self.assertIn("6<br><sub>Merge base</sub><br>20", report)
-        self.assertIn("Stage 1 | sumcheck stage 0, round 2 | 4 | 3 | 14", report)
-        self.assertIn("challenge coordinates group 1", report)
+        self.assertIn("54<br><sub>Merge base</sub><br>12", report)
+        self.assertIn("2<br><sub>Merge base</sub><br>20", report)
+        self.assertIn(
+            "Stage 1 | sumcheck stage 0, rounds 2 to 4 | 4 | 3 | 14 | 3 | 42",
+            report,
+        )
+        self.assertEqual(report.count("Stage 1 | sumcheck stage 0"), 1)
+        self.assertNotIn("challenge coordinates group 1", report)
+        self.assertIn("8 plan queries across 1 entry", report)
+        self.assertIn("because they require no nonce bits", report)
         self.assertIn("**L0 subtotal**", report)
-        self.assertIn("rounded to bytes once for the whole proof", report)
-        self.assertIn("legacy 32-bit field", report)
-        self.assertIn("12-bit fold-response entry", report)
+        self.assertIn("rounds are shown as ranges", report)
+        self.assertIn("rounds the stream to bytes once", report)
+        self.assertIn("stored in a 32 bit field", report)
+        self.assertIn("12 bit fold response", report)
+
+    def test_grinding_round_groups_split_when_security_terms_change(self) -> None:
+        from scripts.profile_bench_fold_details import aggregate_grinding_runs
+
+        common = {
+            "level": 0,
+            "component": "stage1",
+            "query": "sumcheck_round",
+            "protocol": "stage1",
+            "stage": 0,
+            "group": None,
+            "kind": "proof_of_work",
+            "loss_factor": 4,
+            "nonce_bits": 14,
+            "multiplicity": 1,
+            "run_nonce_bits": 14,
+        }
+        runs = [
+            {**common, "round": 0, "grind_bits": 3},
+            {**common, "round": 1, "grind_bits": 4},
+        ]
+
+        grouped = aggregate_grinding_runs(runs)
+
+        self.assertEqual(len(grouped), 2)
+        self.assertEqual([run["grind_bits"] for run in grouped], [3, 4])
 
     def test_l2_grinding_observations_survive_sample_aggregation(self) -> None:
         from scripts.profile_bench_report import (

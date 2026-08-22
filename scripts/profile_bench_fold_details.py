@@ -607,19 +607,81 @@ LEGACY_FOLD_RESPONSE_NONCE_BITS = 12
 def grinding_run_key(run: dict[str, object]) -> tuple[object, ...]:
     return tuple(
         run.get(field)
-        for field in ("level", "component", "query", "protocol", "stage", "round", "group")
+        for field in (
+            "level",
+            "component",
+            "query",
+            "protocol",
+            "stage",
+            "round_start",
+            "round_end",
+            "group",
+        )
     )
 
 
 def grinding_query_label(run: dict[str, object]) -> str:
     if run.get("query") == "sumcheck_round":
-        return f"sumcheck stage {run.get('stage', 0)}, round {run.get('round', 0)}"
+        start = int(run.get("round_start", run.get("round", 0)))
+        end = int(run.get("round_end", start))
+        rounds = f"round {start}" if start == end else f"rounds {start} to {end}"
+        return f"sumcheck stage {run.get('stage', 0)}, {rounds}"
     label = GRINDING_QUERY_LABELS.get(str(run.get("query")), str(run.get("query")))
     if run.get("group") is not None:
         label += f" group {run['group']}"
     if run.get("stage") is not None:
         label += f" stage {run['stage']}"
     return label
+
+
+def aggregate_grinding_runs(
+    runs: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Combine consecutive runs that have identical storage and security terms."""
+    grouped: list[dict[str, object]] = []
+    identity_fields = (
+        "level",
+        "component",
+        "query",
+        "protocol",
+        "stage",
+        "group",
+        "kind",
+        "loss_factor",
+        "grind_bits",
+        "nonce_bits",
+    )
+    for run in runs:
+        if int(run["nonce_bits"]) == 0:
+            continue
+        current = dict(run)
+        current["round_start"] = run.get("round")
+        current["round_end"] = run.get("round")
+        current["run_count"] = 1
+        previous = grouped[-1] if grouped else None
+        same_identity = previous is not None and all(
+            previous.get(field) == current.get(field) for field in identity_fields
+        )
+        if same_identity and run.get("query") == "sumcheck_round":
+            previous_round = previous.get("round_end")
+            current_round = current.get("round_start")
+            same_identity = (
+                previous_round is not None
+                and current_round is not None
+                and int(current_round) == int(previous_round) + 1
+            )
+        if same_identity:
+            previous["round_end"] = current.get("round_end")
+            previous["run_count"] = int(previous["run_count"]) + 1
+            previous["multiplicity"] = int(previous["multiplicity"]) + int(
+                current["multiplicity"]
+            )
+            previous["run_nonce_bits"] = int(previous["run_nonce_bits"]) + int(
+                current["run_nonce_bits"]
+            )
+        else:
+            grouped.append(current)
+    return grouped
 
 
 def grinding_int_choice(current: object, baseline: object | None) -> str:
@@ -673,7 +735,9 @@ def render_grinding_plan_details(
         if isinstance(baseline_runs_value, list)
         else []
     )
-    baseline_by_key = {grinding_run_key(run): run for run in baseline_runs}
+    displayed_runs = aggregate_grinding_runs(current_runs)
+    displayed_baseline_runs = aggregate_grinding_runs(baseline_runs)
+    baseline_by_key = {grinding_run_key(run): run for run in displayed_baseline_runs}
     current_wire_bytes = int(grinding_plan["nonce_stream_bytes"])
     if baseline_grinding_plan is not None:
         baseline_wire_bytes = int(baseline_grinding_plan["nonce_stream_bytes"])
@@ -691,7 +755,7 @@ def render_grinding_plan_details(
     print()
     print("#### Transcript grinding bits")
     print()
-    print("| Storage | Meaningful bits | Wire bytes | Unused wire bits | Queries |")
+    print("| Storage | Meaningful bits | Wire bytes | Unused wire bits | Plan queries |")
     print("| --- | ---: | ---: | ---: | ---: |")
     print(
         "| Proof-global packed nonce stream | "
@@ -720,12 +784,12 @@ def render_grinding_plan_details(
     print()
     print("| Fold | Component | Query | Loss factor | Required zero bits | Stored bits/query | Count | Packed bits |")
     print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
-    levels = sorted({int(run["level"]) for run in current_runs})
+    levels = sorted({int(run["level"]) for run in displayed_runs})
     baseline_proof = {
         int(level["level"]): level for level in (baseline_proof_levels or [])
     }
     for level in levels:
-        fold_runs = [run for run in current_runs if int(run["level"]) == level]
+        fold_runs = [run for run in displayed_runs if int(run["level"]) == level]
         for run in fold_runs:
             baseline_run = baseline_by_key.get(grinding_run_key(run))
             loss = "—" if int(run["loss_factor"]) == 0 else grinding_int_choice(
@@ -782,14 +846,21 @@ def render_grinding_plan_details(
             f"**{grinding_int_choice(fold_bits, baseline_fold_bits)}** |"
         )
     print()
+    zero_width_runs = [run for run in current_runs if int(run["nonce_bits"]) == 0]
+    if zero_width_runs:
+        zero_width_queries = sum(int(run["multiplicity"]) for run in zero_width_runs)
+        entry_word = "entry" if len(zero_width_runs) == 1 else "entries"
+        print(
+            f"The table omits {zero_width_queries:,} plan queries across "
+            f"{len(zero_width_runs):,} {entry_word} because they require no nonce bits."
+        )
+        print()
     print(
-        "Fold subtotals are attribution in bits, not separately rounded storage. All nonce "
-        "values are packed consecutively and rounded to bytes once for the whole proof. "
-        "For the merge base, unused wire bits are the gap between each 12-bit response "
-        "nonce and its legacy 32-bit field. "
-        "Required zero bits are per public proof-of-work query and must not be added as a "
-        "security claim. The 12-bit fold-response entry is bounded response search, not "
-        "proof of work. Zero-width fold challenge rows are schedule audit records and add no bytes."
+        "Consecutive queries with identical parameters are grouped, and sumcheck rounds are "
+        "shown as ranges. Counts and packed bit totals remain exact. The proof rounds the "
+        "stream to bytes once, not per row or fold. Required zero bits are per proof of work "
+        "query. The 12 bit fold response is bounded search, not proof of work. For a legacy "
+        "merge base, unused bits measure each 12 bit response stored in a 32 bit field."
     )
 
 
