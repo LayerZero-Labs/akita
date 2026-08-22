@@ -35,7 +35,7 @@ per-shift win as `#99`'s base-field `Mul`.
 An AVX2 / AVX-512 NTT module was prototyped alongside this work but
 **reverted** before landing — see §Non-Goals. `#99` independently
 reached the same conclusion on their NEON / x86 split ("Kept x86
-AVX2/AVX512 conservative after leopard measurements: only C = 1 is
+AVX2/AVX512 conservative after Zen 5 x86 measurements: only C = 1 is
 special-cased there, since AVX2 shift-add for C = 19 regressed"),
 which corroborates the structural argument for the AVX NTT revert.
 
@@ -157,7 +157,7 @@ runtime dispatch, no new public API).
 - [ ] **End-to-end (x86):** re-measurement on `taghi/perf/avx-simd-port`
       after rebase onto `#99`. Pre-rebase (Fix-A proxy) numbers in
       §Performance show −14% prove / −39% verify on AVX-512 for
-      `onehot_fp32_d64`. Pending re-run on leopard.
+      `onehot_fp32_d64`. Pending rerun on a Zen 5 x86 host.
 - [x] **Correctness:** all PR #99 `packed_*_fp4_*_edge_lanes` tests
       (12 cases × Prime31 / Mersenne31 / Generic31 /
       LargeGeneric30 / LargeGeneric31 field families) pass with

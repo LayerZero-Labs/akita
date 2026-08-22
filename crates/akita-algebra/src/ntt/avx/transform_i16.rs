@@ -38,6 +38,64 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
         i += 1;
     }
 
+    // SAFETY: inherited AVX2 target feature and valid transform inputs.
+    unsafe { forward_ntt_i16_from_twisted(a, prime, tw) };
+}
+
+/// AVX2 signed-i8 conversion and forward negacyclic NTT for one i16 CRT limb.
+///
+/// The conversion factor contains `psi^i * R^2`, so one Montgomery product
+/// both enters Montgomery form and applies the negacyclic twist.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn forward_ntt_i8_i16<const D: usize>(
+    a: &mut [MontCoeff<i16>; D],
+    digits: &[i8; D],
+    prime: NttPrime<i16>,
+    tw: &NttTwiddles<i16, D>,
+) {
+    let p = _mm256_set1_epi16(prime.p);
+    let pinv = _mm256_set1_epi16(prime.pinv);
+    let ptr = a.as_mut_ptr() as *mut i16;
+    let psi_r2_ptr = tw.psi_pows_r2.as_ptr();
+    let mut i = 0usize;
+    while i + 16 <= D {
+        // SAFETY: both arrays contain D elements and this loop processes sixteen.
+        unsafe {
+            let packed = _mm_loadu_si128(digits.as_ptr().add(i).cast());
+            let values = _mm256_cvtepi8_epi16(packed);
+            let psi_r2 = _mm256_loadu_si256(psi_r2_ptr.add(i).cast());
+            _mm256_storeu_si256(
+                ptr.add(i).cast(),
+                mont_mul_16x_i16_avx2(values, psi_r2, p, pinv),
+            );
+        }
+        i += 16;
+    }
+    while i < D {
+        a[i] = MontCoeff::from_raw(prime.mont_mul_raw(i16::from(digits[i]), tw.psi_pows_r2[i]));
+        i += 1;
+    }
+
+    // SAFETY: inherited AVX2 target feature and valid transform inputs.
+    unsafe { forward_ntt_i16_from_twisted(a, prime, tw) };
+}
+
+/// Forward DIF stages for an already twisted i16 limb.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn forward_ntt_i16_from_twisted<const D: usize>(
+    a: &mut [MontCoeff<i16>; D],
+    prime: NttPrime<i16>,
+    tw: &NttTwiddles<i16, D>,
+) {
+    let p = _mm256_set1_epi16(prime.p);
+    let pinv = _mm256_set1_epi16(prime.pinv);
+    let ptr = a.as_mut_ptr() as *mut i16;
+
     let mut len = D / 2;
     while len >= 16 {
         let twiddle_base = len - 1;

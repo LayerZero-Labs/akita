@@ -1,7 +1,11 @@
 use super::*;
 
 pub(super) fn ifma52_cache_enabled<const D: usize>() -> bool {
-    (64..=512).contains(&D) && ifma52_enabled()
+    ifma52_cache_enabled_for_ring_dimension(D)
+}
+
+pub(super) fn ifma52_cache_enabled_for_ring_dimension(ring_dimension: usize) -> bool {
+    (64..=512).contains(&ring_dimension) && ifma52_enabled()
 }
 
 fn ifma52_tail_requirement<F: CanonicalField, const K: usize, const D: usize>(
