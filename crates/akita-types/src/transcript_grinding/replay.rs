@@ -820,7 +820,7 @@ fn write_bits(bytes: &mut [u8], offset: usize, width: u8, value: u32) {
 }
 
 fn read_bits(bytes: &[u8], offset: usize, width: u8) -> u32 {
-    let mut value = 0u32;
+    let mut value = u32::default();
     for bit in 0..usize::from(width) {
         let stream_bit = offset + bit;
         value |= u32::from((bytes[stream_bit / 8] >> (stream_bit % 8)) & 1) << bit;
