@@ -9,10 +9,54 @@ use akita_prover::DigitRangeProver;
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::multilinear_eval;
 use akita_transcript::{labels, AkitaTranscript};
-use akita_types::{AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain};
+use akita_types::{
+    AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain, GrindingPlan,
+    GrindingRun, GrindingSite, ProverGrindingTranscript, SumcheckProtocol, TranscriptNonceStream,
+    VerifierGrindingTranscript,
+};
 use akita_verifier::AkitaStage1Verifier;
 
 type F = Prime128Offset275;
+
+fn stage1_grinding_plan(plan: DigitRangePlan, rounds: usize) -> GrindingPlan {
+    let product_stages = plan.product_stage_arities().len();
+    let mut runs = Vec::new();
+    for stage in 0..=product_stages {
+        for round in 0..rounds {
+            runs.push(
+                GrindingRun::proof_of_work(
+                    GrindingSite::SumcheckRound {
+                        protocol: SumcheckProtocol::Stage1,
+                        level: 0,
+                        stage: u32::try_from(stage).unwrap(),
+                        round: u32::try_from(round).unwrap(),
+                    },
+                    1,
+                    128,
+                )
+                .unwrap(),
+            );
+        }
+        if stage < product_stages {
+            runs.push(
+                GrindingRun::proof_of_work(
+                    GrindingSite::Stage1InterstageBatch {
+                        level: 0,
+                        stage: u32::try_from(stage).unwrap(),
+                    },
+                    1,
+                    128,
+                )
+                .unwrap(),
+            );
+        }
+    }
+    GrindingPlan::new(runs, 128).unwrap()
+}
+
+fn empty_nonce_stream() -> TranscriptNonceStream {
+    TranscriptNonceStream::from_bytes(Vec::new(), 0).unwrap()
+}
 
 fn sample_stage1_witness(b: usize, live_x_cols: usize, ring_bits: usize) -> Vec<i8> {
     let half = (b / 2) as i16;
@@ -47,9 +91,13 @@ fn prove_stage1_case(
     )
     .expect("stage1 prover should build");
     let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let grinding_plan = stage1_grinding_plan(DigitRangePlan::new(b).unwrap(), tau0.len());
+    let mut grinding =
+        ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
     let (proof, stage1_point) = prover
-        .prove(&mut prover_transcript, None)
+        .prove(&mut grinding, None, 0)
         .expect("stage1 proof should succeed");
+    grinding.finish().unwrap();
     (proof, stage1_point, equality_point)
 }
 
@@ -61,11 +109,18 @@ fn assert_stage1_roundtrip(
 ) {
     let (proof, stage1_point, equality_point) = prove_stage1_case(b, live_x_cols, tau0);
 
-    let verifier = AkitaStage1Verifier::new(equality_point, DigitRangePlan::new(b).unwrap());
+    let rounds = equality_point.coordinates().len();
+    let plan = DigitRangePlan::new(b).unwrap();
+    let verifier = AkitaStage1Verifier::new(equality_point, plan);
     let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let grinding_plan = stage1_grinding_plan(plan, rounds);
+    let stream = empty_nonce_stream();
+    let mut grinding =
+        VerifierGrindingTranscript::new(&mut verifier_transcript, &stream, &grinding_plan).unwrap();
     let verified_point = verifier
-        .verify(&proof, &mut verifier_transcript)
+        .verify(&proof, &mut grinding, 0)
         .expect("stage1 verification should succeed");
+    grinding.finish().unwrap();
 
     assert_eq!(stage1_point, verified_point);
     assert_eq!(proof.stages.len(), expected_child_claim_counts.len());
@@ -79,9 +134,14 @@ fn assert_stage1_rejected(
     equality_point: DigitRangeEqualityPoint<F>,
     plan: DigitRangePlan,
 ) {
+    let rounds = equality_point.coordinates().len();
     let verifier = AkitaStage1Verifier::new(equality_point, plan);
     let mut transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert!(verifier.verify(proof, &mut transcript).is_err());
+    let grinding_plan = stage1_grinding_plan(plan, rounds);
+    let stream = empty_nonce_stream();
+    let mut grinding =
+        VerifierGrindingTranscript::new(&mut transcript, &stream, &grinding_plan).unwrap();
+    assert!(verifier.verify(proof, &mut grinding, 0).is_err());
 }
 
 #[test]
@@ -106,15 +166,24 @@ fn streaming_high_basis_handles_odd_live_prefix_without_materializing_padding() 
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
+        let grinding_plan = stage1_grinding_plan(plan, point.len());
+        let mut grinding =
+            ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
+        let (proof, expected_point) = prover.prove(&mut grinding, None, 0).unwrap();
+        grinding.finish().unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let stream = empty_nonce_stream();
+        let mut grinding =
+            VerifierGrindingTranscript::new(&mut verifier_transcript, &stream, &grinding_plan)
+                .unwrap();
         assert_eq!(
-            verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+            verifier.verify(&proof, &mut grinding, 0).unwrap(),
             expected_point,
             "basis {basis}"
         );
+        grinding.finish().unwrap();
     }
 }
 
@@ -150,15 +219,24 @@ where
         )
         .unwrap();
         let mut prover_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
-        let (proof, expected_point) = prover.prove(&mut prover_transcript, None).unwrap();
+        let grinding_plan = stage1_grinding_plan(plan, raw_challenges.len());
+        let mut grinding =
+            ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
+        let (proof, expected_point) = prover.prove(&mut grinding, None, 0).unwrap();
+        grinding.finish().unwrap();
 
         let verifier = AkitaStage1Verifier::new(equality_point, plan);
         let mut verifier_transcript = AkitaTranscript::<Base>::new(labels::DOMAIN_AKITA_PROTOCOL);
+        let stream = empty_nonce_stream();
+        let mut grinding =
+            VerifierGrindingTranscript::new(&mut verifier_transcript, &stream, &grinding_plan)
+                .unwrap();
         assert_eq!(
-            verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+            verifier.verify(&proof, &mut grinding, 0).unwrap(),
             expected_point,
             "basis {basis}"
         );
+        grinding.finish().unwrap();
     }
 }
 
@@ -197,14 +275,23 @@ fn high_basis_final_range_image_matches_dense_padding_oracle_at_every_prefix() {
             )
             .unwrap();
             let mut prover_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-            let (proof, stage1_point) = prover.prove(&mut prover_transcript, None).unwrap();
+            let grinding_plan = stage1_grinding_plan(plan, raw_challenges.len());
+            let mut grinding =
+                ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
+            let (proof, stage1_point) = prover.prove(&mut grinding, None, 0).unwrap();
+            grinding.finish().unwrap();
 
             let verifier = AkitaStage1Verifier::new(equality_point, plan);
             let mut verifier_transcript = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
+            let stream = empty_nonce_stream();
+            let mut grinding =
+                VerifierGrindingTranscript::new(&mut verifier_transcript, &stream, &grinding_plan)
+                    .unwrap();
             assert_eq!(
-                verifier.verify(&proof, &mut verifier_transcript).unwrap(),
+                verifier.verify(&proof, &mut grinding, 0).unwrap(),
                 stage1_point
             );
+            grinding.finish().unwrap();
 
             let mut dense_range_image = witness
                 .iter()

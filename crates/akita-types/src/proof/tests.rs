@@ -386,10 +386,13 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     .expect("grinding plan");
     let mut nonce_writer = crate::TranscriptNonceWriter::new(&grinding_plan).unwrap();
     nonce_writer
-        .write_next_fold_response(crate::GrindingSite::FoldResponse { level: 0 }, 3)
+        .write(crate::GrindingSite::EvaluationBatch, 0)
         .unwrap();
     nonce_writer
-        .write_next_fold_response(crate::GrindingSite::FoldResponse { level: 1 }, 7)
+        .write_fold_response(crate::GrindingSite::FoldResponse { level: 0 }, 3)
+        .unwrap();
+    nonce_writer
+        .write_fold_response(crate::GrindingSite::FoldResponse { level: 1 }, 7)
         .unwrap();
     let batched = AkitaBatchedProof {
         nonce_stream: nonce_writer.finish().unwrap(),

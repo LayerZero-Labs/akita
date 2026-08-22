@@ -332,7 +332,6 @@ where
     )?;
     let RingRelationWitness {
         groups,
-        fold_grind_nonce: _,
         d_quotients,
         compression,
     } = witness;

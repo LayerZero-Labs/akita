@@ -457,13 +457,14 @@ impl RingRelationProver {
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         lp: CommittedGroupParams,
         transcript: &mut T,
+        level: u32,
         bind_claims_after_payload: BindClaims,
     ) -> Result<(PreparedRingRelation<F, PointF>, BoundClaims), AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
-        T: Transcript<F> + ProverTranscriptGrind<F>,
+        T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
         PointF: akita_types::FpExtEncoding<F>
             + akita_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
@@ -838,10 +839,11 @@ impl RingRelationProver {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let _grind_span = tracing::info_span!("fold_grind_sample").entered();
-        let (grind_outputs, fold_grind_nonce) =
+        let grind_outputs =
             fold_grind::sample_multi_group_fold_decompose_witnesses::<F, PointF, _, OB, T>(
                 opening_ctx,
                 transcript,
+                level,
                 &lp,
                 &opening_batch,
                 &grind_groups,
@@ -963,12 +965,7 @@ impl RingRelationProver {
         drop(instance_span);
 
         let witness_span = tracing::info_span!("ring_relation_build_witness").entered();
-        let witness = RingRelationWitness::from_groups(
-            fold_grind_nonce,
-            group_witnesses,
-            d_quotients,
-            compression,
-        );
+        let witness = RingRelationWitness::from_groups(group_witnesses, d_quotients, compression);
         validate_prepared_relation_groups(
             &prepared_relation_groups,
             &lp,

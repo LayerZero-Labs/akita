@@ -51,7 +51,6 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     modulus_bits: u32,
     extension_degree: usize,
     level: u32,
-    include_evaluation_batch: bool,
 ) -> Result<usize, AkitaError> {
     if recursive_successor.is_some() == terminal_successor.is_some() {
         return Err(AkitaError::InvalidSetup(
@@ -66,13 +65,6 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     }
     let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
-    if include_evaluation_batch {
-        runs.push(GrindingRun::proof_of_work(
-            GrindingSite::EvaluationBatch,
-            1,
-            capacity,
-        )?);
-    }
     append_nonterminal(
         &mut runs,
         capacity,
@@ -113,11 +105,7 @@ fn derive_transcript_grinding_plan(
         ));
     }
     let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
-    let mut runs = vec![GrindingRun::proof_of_work(
-        GrindingSite::EvaluationBatch,
-        1,
-        capacity,
-    )?];
+    let mut runs = Vec::new();
 
     let mut predecessor = &schedule.root;
     append_nonterminal(
@@ -190,6 +178,12 @@ fn append_nonterminal(
     if opening_method.requires_extension_opening_reduction(extension_degree) {
         append_eor(runs, capacity, extension_degree, level, layout)?;
     }
+
+    runs.push(GrindingRun::proof_of_work(
+        GrindingSite::EvaluationBatch,
+        1,
+        capacity,
+    )?);
 
     runs.push(GrindingRun::fold_response(level));
     append_fold_queries(runs, level, params, layout)?;
@@ -335,6 +329,11 @@ fn append_terminal(
     if extension_degree > 1 {
         append_eor(runs, capacity, extension_degree, level, &layout)?;
     }
+    runs.push(GrindingRun::proof_of_work(
+        GrindingSite::EvaluationBatch,
+        1,
+        capacity,
+    )?);
     runs.push(GrindingRun::fold_response(level));
     runs.push(GrindingRun::fold_challenge_root(level, 0));
     runs.push(GrindingRun::fold_challenge_coordinates(

@@ -86,7 +86,9 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field>
+        + ProverTranscriptGrind<Cfg::Field>
+        + akita_types::ProverTranscriptGrinding<Cfg::Field>,
     C: RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
         + ComputeBackendSetup<Cfg::Field>
         + 'stack,
@@ -120,7 +122,6 @@ where
         ));
     }
     let mut intermediate_levels = Vec::new();
-    let mut fold_response_nonces = Vec::new();
     let mut current_state = starting_state;
     let mut level = 1usize;
 
@@ -185,7 +186,6 @@ where
             ))
         })?;
         intermediate_levels.push(out.level_proof);
-        fold_response_nonces.push(out.fold_response_nonce);
         current_state = out.next_state;
         level += 1;
     }
@@ -197,19 +197,17 @@ where
             current_witness_len,
         )));
     }
-    let (terminal, terminal_nonce) =
-        prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
-            stacks.prove_stack_at_level(level),
-            transcript,
-            current_state,
-            &schedule.terminal,
-        )?;
-    fold_response_nonces.push(terminal_nonce);
+    let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
+        stacks.prove_stack_at_level(level),
+        transcript,
+        level,
+        current_state,
+        &schedule.terminal,
+    )?;
 
     Ok(RecursiveSuffixOutcome {
         recursive_folds: intermediate_levels,
         terminal,
-        fold_response_nonces,
         num_levels: planned_num_levels,
     })
 }
@@ -218,9 +216,10 @@ where
 fn prove_terminal_suffix<F, E, T, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
+    level: usize,
     current_state: SuffixProverState<F, E>,
     scheduled: &TerminalFoldParams,
-) -> Result<(TerminalLevelProof<F, E>, u32), AkitaError>
+) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -237,7 +236,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
     O: SuffixOpeningProveBackend<F>
         + DigitRowsComputeBackend<F>
         + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
@@ -307,6 +306,8 @@ where
             Some(stack.tensor().prepared()),
             &eor_inputs,
             transcript,
+            u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
             "terminal",
         )?;
         (
@@ -371,6 +372,8 @@ where
                 stack.opening().backend(),
                 Some(stack.opening().prepared()),
                 transcript,
+                u32::try_from(level)
+                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
                 params,
                 &scheduled.fold_challenge_config,
                 &witness_source,
@@ -392,13 +395,10 @@ where
     )?;
     let transcript_parts = terminal_response.terminal_transcript_parts()?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &transcript_parts.response);
-    Ok((
-        TerminalLevelProof {
-            extension_opening_reduction,
-            terminal_response,
-        },
-        fold_output.nonce,
-    ))
+    Ok(TerminalLevelProof {
+        extension_opening_reduction,
+        terminal_response,
+    })
 }
 /// Prove one recursive fold level using already-selected current and next
 /// level parameters.
@@ -421,7 +421,7 @@ pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     prefix_slots: &SetupPrefixProverRegistry<F>,
     transcript: &mut T,
     current_state: SuffixProverState<F, E>,
-    _level: usize,
+    level: usize,
     level_params: &CommittedGroupParams,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -442,7 +442,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
     TS: RuntimeTensorBackendFor<F, RecursiveWitnessFlat, E>
         + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, E>,
     O: DigitRowsComputeBackend<F>
@@ -538,6 +538,8 @@ where
             block_claims,
             true,
             transcript,
+            u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
             || Ok(()),
             level_params,
             BasisMode::Lagrange,
@@ -550,6 +552,8 @@ where
             ExtensionOpeningSource::Logical(&logical_groups),
             true,
             transcript,
+            u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
             || Ok(()),
             level_params,
             BasisMode::Lagrange,
@@ -567,6 +571,19 @@ mod tests {
 
     type TestF = Fp32<251>;
 
+    fn evaluation_batch_plan() -> akita_types::GrindingPlan {
+        akita_types::GrindingPlan::new(
+            vec![akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::EvaluationBatch,
+                1,
+                128,
+            )
+            .unwrap()],
+            128,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn non_zk_eor_mismatch_is_rejected() {
         let openings = [TestF::zero()];
@@ -583,6 +600,9 @@ mod tests {
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
+        let plan = evaluation_batch_plan();
+        let mut transcript =
+            akita_types::ProverGrindingTranscript::<TestF, _>::new(&mut transcript, &plan).unwrap();
         let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,
@@ -618,6 +638,9 @@ mod tests {
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("two-claim opening batch");
         let mut transcript =
             AkitaTranscript::<TestF>::new(b"test/suffix-independent-late-eor-batch");
+        let plan = evaluation_batch_plan();
+        let mut transcript =
+            akita_types::ProverGrindingTranscript::<TestF, _>::new(&mut transcript, &plan).unwrap();
         let result = prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
             &openings,

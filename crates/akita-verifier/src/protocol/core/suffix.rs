@@ -76,7 +76,6 @@ where
 
 struct FoldReplayPayload<'a, F: FieldCore, E: FieldCore> {
     extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<E>>,
-    fold_grind_nonce: u32,
     kind: FoldReplayKind<'a, F, E>,
 }
 
@@ -107,7 +106,6 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     schedule: &FoldSchedule,
-    nonce_reader: &mut akita_types::TranscriptNonceReader<'_>,
     mut current_state: SuffixVerifierState<'a, F, E>,
 ) -> Result<(), AkitaError>
 where
@@ -118,7 +116,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     for (offset, fold) in recursive_folds.iter().enumerate() {
         let level_index = offset + 1;
@@ -177,11 +175,6 @@ where
         let prepared = prepare_fold_replay::<F, E, T>(
             FoldReplayPayload {
                 extension_opening_reduction: fold.extension_opening_reduction(),
-                fold_grind_nonce: nonce_reader.read_next_fold_response(
-                    akita_types::GrindingSite::FoldResponse {
-                        level: u32::try_from(level_index).map_err(|_| AkitaError::InvalidProof)?,
-                    },
-                )?,
                 kind: FoldReplayKind::Recursive {
                     v: &fold.opening_payload,
                     stage1: &fold.stage1,
@@ -193,6 +186,7 @@ where
             },
             setup,
             transcript,
+            u32::try_from(level_index).map_err(|_| AkitaError::InvalidProof)?,
             &current_state,
             current_lp,
             step.output_witness_len,
@@ -234,11 +228,9 @@ where
     }
     verify_terminal_suffix::<F, E, T>(
         terminal,
-        nonce_reader.read_next_fold_response(akita_types::GrindingSite::FoldResponse {
-            level: u32::try_from(terminal_level).map_err(|_| AkitaError::InvalidProof)?,
-        })?,
         setup,
         transcript,
+        u32::try_from(terminal_level).map_err(|_| AkitaError::InvalidProof)?,
         &current_state,
         &schedule.terminal,
     )
@@ -251,9 +243,9 @@ where
 
 fn verify_terminal_suffix<F, E, T>(
     proof: &TerminalLevelProof<F, E>,
-    fold_response_nonce: u32,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
+    level: u32,
     current_state: &SuffixVerifierState<'_, F, E>,
     scheduled: &TerminalFoldParams,
 ) -> Result<(), AkitaError>
@@ -265,7 +257,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     let params = &scheduled;
     let t_state = match &current_state.witness {
@@ -290,8 +282,6 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    TranscriptGrindingBinding::validate_fold_response_nonce(fold_response_nonce)?;
-
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
@@ -322,6 +312,7 @@ where
             current_state.basis,
             params,
             transcript,
+            level,
         )?;
         (
             replay
@@ -332,11 +323,18 @@ where
             replay.final_relation,
         )
     };
+    transcript.grind_query(
+        akita_types::GrindingSite::EvaluationBatch,
+        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+    )?;
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
         proof.terminal_response(),
         scheduled.response_shape.logical_num_elems(),
     )?;
+    let fold_response_nonce =
+        transcript.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
+    TranscriptGrindingBinding::validate_fold_response_nonce(fold_response_nonce)?;
     let operator_rejection = if params.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
@@ -358,6 +356,7 @@ where
         fold_response_nonce,
         operator_rejection,
     )?;
+    transcript.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
     super::terminal_direct::verify_terminal_ring_relations(
         setup,
@@ -394,6 +393,7 @@ fn prepare_fold_replay<'a, F, E, T>(
     proof: FoldReplayPayload<'a, F, E>,
     setup: &'a AkitaVerifierSetup<F>,
     transcript: &mut T,
+    level: u32,
     current_state: &'a SuffixVerifierState<'a, F, E>,
     lp: &'a CommittedGroupParams,
     output_witness_len: usize,
@@ -406,7 +406,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     let role_dims = lp.role_dims();
     let commit_d = lp.outer_payload_geometry()?.transcript_ring_dimension();
@@ -510,11 +510,11 @@ where
             current_state.basis,
             lp,
             transcript,
+            level,
         )?
     };
 
     let witness_len = output_witness_len;
-    let fold_grind_nonce = proof.fold_grind_nonce;
     let (opening_payload, payload) = match proof.kind {
         FoldReplayKind::Recursive {
             v,
@@ -557,7 +557,7 @@ where
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, current_commitment)?;
     Ok(PreparedFoldReplay {
         lp,
-        fold_grind_nonce,
+        level,
         opening_payload,
         opening_shape: opening_batch,
         commitment_payloads,

@@ -106,7 +106,7 @@ where
         F: CanonicalField,
         E: AkitaSerialize,
         T: Transcript<F>,
-        SampleRound: FnMut(&mut T) -> E,
+        SampleRound: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let (sumcheck, setup_prefix_point, _final_claim) = <Self as SumcheckInstanceProverExt<
             E,

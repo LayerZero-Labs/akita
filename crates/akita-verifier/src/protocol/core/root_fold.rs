@@ -18,7 +18,6 @@ use akita_types::Commitment;
 #[inline(never)]
 pub(super) fn verify_root<F, E, T>(
     proof: &FoldLevelProof<F, E>,
-    fold_response_nonce: u32,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
@@ -37,7 +36,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     if proof.extension_opening_reduction().is_some()
         || root_lp.source_encoding
@@ -119,7 +118,6 @@ where
     // collapse into a synthetic single group.
     verify_root_inner::<F, E, T>(
         proof,
-        fold_response_nonce,
         setup,
         transcript,
         claims,
@@ -155,7 +153,6 @@ where
 #[allow(clippy::too_many_arguments)]
 fn verify_root_inner<F, E, T>(
     proof: &FoldLevelProof<F, E>,
-    fold_response_nonce: u32,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
@@ -176,7 +173,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
         claims,
@@ -208,7 +205,7 @@ where
         akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        fold_grind_nonce: fold_response_nonce,
+        level: 0,
         opening_payload,
         opening_shape: opening_batch.clone(),
         commitment_payloads,

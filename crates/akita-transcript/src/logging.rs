@@ -259,10 +259,6 @@ where
     F: FieldCore + CanonicalField + CanonicalBytes,
     T: Transcript<F>,
 {
-    fn new(domain_label: &[u8]) -> Self {
-        Self::wrap(T::new(domain_label))
-    }
-
     fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
         self.record(TranscriptEvent::Preamble {
             bytes_digest: digest32(instance_bytes),
@@ -359,6 +355,16 @@ where
             });
         }
         predicate
+    }
+}
+
+impl<F, T> crate::TranscriptFactory<F> for LoggingTranscript<T>
+where
+    F: FieldCore + CanonicalField + CanonicalBytes,
+    T: crate::TranscriptFactory<F>,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self::wrap(T::new(domain_label))
     }
 }
 

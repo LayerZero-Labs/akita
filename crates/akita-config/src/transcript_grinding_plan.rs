@@ -50,6 +50,13 @@ mod tests {
             plan.runs().first().unwrap().site(),
             GrindingSite::EvaluationBatch
         );
+        assert_eq!(
+            plan.runs()
+                .iter()
+                .filter(|run| run.site() == GrindingSite::EvaluationBatch)
+                .count(),
+            row.schedule().num_fold_levels()
+        );
         for run in plan.runs() {
             if run.kind() == GrindingQueryKind::ProofOfWork {
                 assert!(u128::from(run.loss_factor()) <= (1u128 << run.grind_bits()));
@@ -71,12 +78,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                46,
-                51,
+                47,
+                52,
                 383,
                 [
-                    234, 57, 166, 60, 97, 187, 84, 2, 93, 68, 213, 213, 240, 179, 12, 87, 61, 208,
-                    204, 145, 252, 125, 105, 31, 128, 142, 39, 5, 232, 130, 162, 78,
+                    129, 121, 3, 136, 87, 61, 70, 145, 64, 228, 166, 194, 149, 28, 185, 42, 45,
+                    162, 230, 31, 23, 46, 23, 165, 200, 122, 176, 56, 67, 213, 137, 195,
                 ],
             )
         );
@@ -155,6 +162,13 @@ mod tests {
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(
                     count(GrindingQueryKind::FoldResponse),
+                    row.schedule().num_fold_levels()
+                );
+                assert_eq!(
+                    plan.runs()
+                        .iter()
+                        .filter(|run| run.site() == GrindingSite::EvaluationBatch)
+                        .count(),
                     row.schedule().num_fold_levels()
                 );
                 assert_eq!(

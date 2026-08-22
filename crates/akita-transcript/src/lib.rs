@@ -42,9 +42,6 @@ pub trait Transcript<F>: Send
 where
     F: FieldCore + CanonicalField,
 {
-    /// Construct a new transcript under a domain label.
-    fn new(domain_label: &[u8]) -> Self;
-
     /// Bind canonical instance-descriptor bytes before replaying a proof.
     ///
     /// Implementations must absorb these bytes with transcript-specific domain
@@ -114,6 +111,18 @@ where
         self.append_bytes(labels::ABSORB_TRANSCRIPT_GRINDING, &payload);
         Some(self.challenge_block(labels::CHALLENGE_GRINDING_PREDICATE))
     }
+}
+
+/// Construction contract for owned transcript implementations.
+///
+/// Keeping construction separate from replay lets protocol adapters borrow an
+/// existing transcript while still implementing [`Transcript`].
+pub trait TranscriptFactory<F>: Transcript<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Construct a new transcript under a domain label.
+    fn new(domain_label: &[u8]) -> Self;
 }
 
 /// Byte length of one native transcript squeeze block.

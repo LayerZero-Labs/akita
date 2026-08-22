@@ -141,7 +141,6 @@ pub(crate) fn verify<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     schedule: &FoldSchedule,
-    nonce_reader: &mut akita_types::TranscriptNonceReader<'_>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -151,7 +150,7 @@ where
         + FromPrimitiveInt
         + AkitaSerialize
         + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: Transcript<F> + akita_types::VerifierTranscriptGrinding<F>,
 {
     let root_step = schedule.root_fold();
     let first_recursive_params = schedule.recursive_folds.first();
@@ -165,11 +164,8 @@ where
     } else {
         None
     };
-    let root_nonce = nonce_reader
-        .read_next_fold_response(akita_types::GrindingSite::FoldResponse { level: 0 })?;
     let (root_challenges, setup_prefix_opening) = verify_root::<F, E, T>(
         &proof.root,
-        root_nonce,
         setup,
         transcript,
         &claims,
@@ -196,7 +192,6 @@ where
         setup,
         transcript,
         schedule,
-        nonce_reader,
         SuffixVerifierState {
             opening_point: root_challenges,
             opening: proof.root.next_w_eval(),
@@ -352,7 +347,11 @@ where
             transcript,
         )?
     };
-    let mut nonce_reader = proof.nonce_stream.reader(&grinding_plan)?;
+    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<Cfg::Field, T>::new(
+        transcript,
+        &proof.nonce_stream,
+        &grinding_plan,
+    )?;
 
     let raw_groups = claims
         .groups()
@@ -368,17 +367,16 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, T>(
+    verify::<Cfg::Field, Cfg::ExtField, _>(
         proof,
         setup,
-        transcript,
+        &mut grinding_transcript,
         raw_claims,
         &opening_batch,
         basis,
         schedule,
-        &mut nonce_reader,
     )
-    .and_then(|()| nonce_reader.finish())
+    .and_then(|()| grinding_transcript.finish())
     .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 

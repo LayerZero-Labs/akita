@@ -54,14 +54,16 @@ a fixed `u16` or `u32` slot.
 
 ## Current state
 
-Slices 1 through 4 are implemented on PR #417. Akita now derives sparse fold
+Slices 1 through 5 are implemented on PR #417, with final Slice 5 validation
+still in progress. Akita now derives sparse fold
 challenge coordinates from independent indexed SHAKE256 queries, derives one
 public `GrindingPlan`, binds its policy and digest in
 `TranscriptGrindingBinding`, and stores fold-response values in one packed
-proof-level nonce stream. The transcript crate also implements the exact
-32-byte proof-of-work predicate and prover preview transition. Slice 5 has not
-started: live protocol challenge queries do not yet consume proof-of-work plan
-entries.
+proof-level nonce stream. Plan-owning prover and verifier transcript adapters
+now consume that stream at each live query boundary. The transcript crate
+implements the exact 32-byte proof-of-work predicate and prover preview
+transition. A final cursor check rejects an omitted, duplicated, reordered, or
+trailing query.
 
 The existing fold-response search remains in
 `crates/akita-prover/src/protocol/fold_grind.rs`. For each fold, the prover
@@ -78,14 +80,14 @@ adversarial nonce trial is already another random-oracle query. The current
 accounting is described in
 [`book/src/foundations/pcs-and-binding.md`](../book/src/foundations/pcs-and-binding.md).
 
-Akita does not yet apply transcript proof-of-work to live protocol queries.
-Sumcheck rounds, ring-switch
-checks, multilinear points, and power batching draw from a nominal 128-bit
-extension challenge field, but some checks have a bad set larger than one
-field element. A degree `d` polynomial check, for example, has conditional
-error at most `d / |E|`. The goal of this feature is to charge about
-`2^ceil(log2(d))` work before that challenge, so finding an accepted bad challenge again
-costs about `2^128` classical random-oracle trials.
+Akita now applies transcript proof-of-work to the live protocol queries priced
+by the public plan. Sumcheck rounds, ring-switch checks, multilinear points,
+and power batching draw from a nominal 128-bit extension challenge field, but
+some checks have a bad set larger than one field element. A degree `d`
+polynomial check, for example, has conditional error at most `d / |E|`. The
+feature charges about `2^ceil(log2(d))` work before that challenge, so finding
+an accepted bad challenge again costs about `2^128` classical random-oracle
+trials in the stated bounded online-query model.
 
 Before Slice 1, the sparse fold path had a separate security mismatch. For each commitment
 group, `FoldDraw::draw_folding_challenges_with_rejection` absorbs the group
@@ -493,11 +495,13 @@ with a nonce width consume stream bits. Runs avoid allocating one plan object
 per sparse coordinate while still expanding to one deterministic audit event
 per coordinate.
 
-The current protocol order is:
+The current protocol order for each fold level is:
 
-1. Opening claim and evaluation batching.
-2. Optional extension-opening reduction point, claim batching, and per-round
-   sumcheck challenges.
+1. Optional extension-opening reduction point, claim batching, and per-round
+   sumcheck challenges. The coefficient-packing root omits this reduction.
+2. Opening claim and evaluation batching after the opening payload is bound.
+   The terminal singleton batch still consumes its zero-bit audit entry and
+   does not draw a coefficient.
 3. One fold-response entry for the fold, then one group-root entry and one
    claim-major coordinate run for each commitment group.
 4. Ring-switch `alpha`, then the `tau0` and `tau1` point sites that
@@ -508,8 +512,8 @@ The current protocol order is:
 7. Optional virtual-evaluation powers batching and compression query.
 8. Stage 2 linear batching and per-round sumcheck challenges.
 9. Optional Stage 3 setup-product sumcheck rounds.
-10. The same sequence for each recursive fold and the terminal paths selected
-    by the schedule.
+10. Repeat the same scheduled sequence for the root, recursive folds, and
+    terminal fold.
 
 The current diagnostic labels map to catalog rules as follows. A label may
 appear in more than one protocol context, so the plan site and public shape,
@@ -1333,22 +1337,29 @@ decode, and check one proof-of-work entry without protocol integration.
 
 ### Slice 5: Protocol query integration
 
-Status: next. No live protocol query consumes a proof-of-work entry yet.
+Status: implemented on PR #417. Final repository validation is in progress.
 
-Integrate in dependency order so lower-level drivers are exercised before full
-fold replay:
+The implementation order was:
 
-1. sumcheck round closures;
-2. powers batching and independent coefficient vectors;
-3. extension-opening reduction points and rounds;
-4. ring-switch `alpha`, `tau0`, and `tau1`;
-5. Stage 1 and physical L2 queries;
-6. Stage 2 and compression queries;
-7. Stage 3 setup-product rounds;
-8. root, recursive, and terminal top-level cursor ownership.
+1. Add borrowed prover and verifier transcript adapters that own the exact
+   plan and packed-bit cursors. Split transcript construction into the
+   `TranscriptFactory` trait so a borrowed adapter does not need a fake
+   constructor.
+2. Make sumcheck round challenge callbacks fallible, so cursor and predicate
+   failures propagate as `AkitaError`.
+3. Integrate extension-opening reduction points, claim batching, and rounds,
+   then each level's evaluation batching query.
+4. Integrate the fold-response entry and audit the live fold root and indexed
+   coordinates immediately after each group draw.
+5. Integrate ring-switch `alpha`, `tau0`, and `tau1`, Stage 1 and physical L2
+   queries, virtual L2 batching, compression, Stage 2, and Stage 3.
+6. Give the root prover and batched verifier top-level cursor ownership and
+   require exact exhaustion after the terminal fold.
 
-At each step, add the prover and verifier mirror together. Do not land a slice
-that consumes a stream entry on only one side.
+Prover and verifier mirrors consume every entry at the same logical boundary.
+Integration exposed and corrected one older plan mismatch: evaluation batching
+is per fold level and occurs after any extension-opening reduction, not once at
+the global root before all folds. Planner pricing now uses the same order.
 
 Exit condition: every live challenge draw is catalogued, all nonzero sites
 check proof-of-work, every zero site is a transcript no-op, and the final plan

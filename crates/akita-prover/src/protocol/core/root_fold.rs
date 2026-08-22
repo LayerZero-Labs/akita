@@ -61,7 +61,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
@@ -88,6 +88,7 @@ where
         claims,
         false,
         transcript,
+        0,
         || validate_packing_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
         basis,
@@ -142,7 +143,7 @@ where
         + FromPrimitiveInt
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: Transcript<F> + ProverTranscriptGrind<F> + akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
