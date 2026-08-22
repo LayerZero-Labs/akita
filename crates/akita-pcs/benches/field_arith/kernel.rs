@@ -1,5 +1,8 @@
 use akita_field::packed::PackedField;
-use akita_field::{CanonicalField, FieldCore, Prime128Offset275, RandomSampling};
+use akita_field::unreduced::HasUnreducedOps;
+use akita_field::{
+    CanonicalField, FieldCore, FpExt4, Prime128Offset275, Prime32Offset99, RandomSampling, Zero,
+};
 use criterion::{black_box, Criterion, Throughput};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -8,7 +11,46 @@ use super::data::rand_u128;
 
 pub(crate) fn bench_kernel_patterns(c: &mut Criterion) {
     bench_packed_sumcheck_mix(c);
+    bench_fp32_ext4_small_accum(c);
     bench_fp128_accumulator_pattern(c);
+}
+
+fn bench_fp32_ext4_small_accum(c: &mut Criterion) {
+    type E = FpExt4<Prime32Offset99>;
+
+    let mut rng = StdRng::seed_from_u64(0xf032_acc0);
+    let values: Vec<E> = (0..256).map(|_| E::random(&mut rng)).collect();
+    let smalls: Vec<u64> = (0..256).map(|_| rng.next_u64() & 0x0fff).collect();
+    let mut group = c.benchmark_group("field_arith/kernel/fp32_ext4_small_accum");
+
+    for &n in &[16u64, 64, 256] {
+        group.throughput(Throughput::Elements(n));
+        group.bench_function(format!("reduced_per_product_{n}"), |bench| {
+            bench.iter(|| {
+                let values = black_box(&values[..n as usize]);
+                let smalls = black_box(&smalls[..n as usize]);
+                let mut acc = E::zero();
+                for (&value, &small) in values.iter().zip(smalls) {
+                    let small = Prime32Offset99::from_u64(small);
+                    acc += E::new(value.coeffs.map(|coefficient| coefficient * small));
+                }
+                black_box(acc)
+            })
+        });
+        group.bench_function(format!("unreduced_{n}"), |bench| {
+            bench.iter(|| {
+                let values = black_box(&values[..n as usize]);
+                let smalls = black_box(&smalls[..n as usize]);
+                let mut acc = <E as HasUnreducedOps>::MulU64Accum::zero();
+                for (&value, &small) in values.iter().zip(smalls) {
+                    acc += value.mul_u64_unreduced(small);
+                }
+                black_box(E::reduce_mul_u64_accum(acc))
+            })
+        });
+    }
+
+    group.finish();
 }
 
 fn bench_packed_sumcheck_mix(c: &mut Criterion) {

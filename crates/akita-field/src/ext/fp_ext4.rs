@@ -562,7 +562,7 @@ impl<F: FieldCore + FromPrimitiveInt + Valid> FromPrimitiveInt for FpExt4<F> {
 impl<F: FieldCore + BalancedDigitLookup + Valid> BalancedDigitLookup for FpExt4<F> {}
 
 impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
-    type MulU64Accum = Self;
+    type MulU64Accum = FpExt4Fp32ProductAccum;
     type ProductAccum = FpExt4Fp32ProductAccum;
 
     // `fp_ext4_mul_to_accum_fp32` widens each Fp32 limb product
@@ -573,8 +573,11 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
 
     #[inline]
     fn mul_u64_unreduced(self, small: u64) -> Self::MulU64Accum {
-        let small = Fp32::<P>::from_u64(small);
-        Self::new(self.coeffs.map(|coeff| coeff * small))
+        let small = Fp32::<P>::from_u64(small).to_limbs() as u128;
+        FpExt4Fp32ProductAccum(
+            self.coeffs
+                .map(|coefficient| coefficient.to_limbs() as u128 * small),
+        )
     }
 
     #[inline]
@@ -584,7 +587,7 @@ impl<const P: u32> HasUnreducedOps for FpExt4<Fp32<P>> {
 
     #[inline]
     fn reduce_mul_u64_accum(accum: Self::MulU64Accum) -> Self {
-        accum
+        Self::new(accum.reduce::<P>())
     }
 
     #[inline]
