@@ -165,12 +165,33 @@ mod tests {
                     count(GrindingQueryKind::FoldResponse),
                     row.schedule().num_fold_levels()
                 );
+                let expected_evaluation_batch_levels =
+                    std::iter::once(layout.requires_row_batch_challenge().then_some(0))
+                        .flatten()
+                        .chain(
+                            row.schedule()
+                                .recursive_folds
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, step)| {
+                                    step.params.setup_prefix().map(|_| {
+                                        u32::try_from(index + 1)
+                                            .expect("recursive fold level fits u32")
+                                    })
+                                }),
+                        )
+                        .collect::<Vec<_>>();
+                let evaluation_batch_levels = plan
+                    .runs()
+                    .iter()
+                    .filter_map(|run| match run.site() {
+                        GrindingSite::EvaluationBatch { level } => Some(level),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
                 assert_eq!(
-                    plan.runs()
-                        .iter()
-                        .filter(|run| matches!(run.site(), GrindingSite::EvaluationBatch { .. }))
-                        .count(),
-                    row.schedule().num_fold_levels()
+                    evaluation_batch_levels, expected_evaluation_batch_levels,
+                    "evaluation batching belongs only to nonterminal multi-polynomial layouts"
                 );
                 assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
