@@ -347,6 +347,8 @@ where
                 BasisMode::Lagrange,
                 &opening_batch,
                 transcript,
+                u32::try_from(level)
+                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
             )?;
             // The EOR proof binds the carried extension-field opening to its
             // reduced final claim. `compute_trace_target` separately binds that
@@ -572,7 +574,7 @@ mod tests {
     fn evaluation_batch_plan() -> akita_types::GrindingPlan {
         akita_types::GrindingPlan::new(
             vec![akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::EvaluationBatch,
+                akita_types::GrindingSite::EvaluationBatch { level: 0 },
                 1,
                 128,
             )
@@ -606,6 +608,7 @@ mod tests {
             &openings,
             &opening_batch,
             &mut transcript,
+            0,
         ) {
             Ok(_) => panic!("non-zk EOR mismatch should reject"),
             Err(err) => err,
@@ -644,6 +647,7 @@ mod tests {
             &openings,
             &opening_batch,
             &mut transcript,
+            0,
         );
 
         assert!(matches!(result, Err(AkitaError::InvalidProof)));

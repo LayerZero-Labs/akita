@@ -53,6 +53,7 @@ pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, 
     opening_payload: &RingVec<F>,
     material: FoldClaimMaterial<F, E>,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -75,11 +76,10 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_shape,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
-        |transcript| transcript.grind_query(akita_types::GrindingSite::EvaluationBatch),
     )?;
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
         || Ok(row_coefficients.clone()),
@@ -314,7 +314,7 @@ where
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         stage2_verifier.verify::<F, T, _>(&stage2.sumcheck_proof, transcript, |tr| {
-            let challenge = super::sample_grinded_sumcheck_challenge::<F, E, T>(
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 tr,
                 akita_types::SumcheckProtocol::Stage2,
                 level,
@@ -423,9 +423,7 @@ where
         })?;
     {
         let _span = tracing::info_span!("fold_validate_inputs").entered();
-        prepared
-            .lp
-            .validate_fold_grind_nonce(&opening_shape, fold_grind_nonce)?;
+        prepared.lp.validate_opening_batch(&opening_shape)?;
         if prefix.prepared_points.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }

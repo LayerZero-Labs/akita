@@ -243,6 +243,7 @@ where
                 &scalar_openings,
                 trace_opening_batch,
                 transcript,
+                level,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))

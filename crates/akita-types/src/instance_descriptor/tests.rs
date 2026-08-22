@@ -60,7 +60,7 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
     let grinding_plan = GrindingPlan::new(
         vec![
-            GrindingRun::proof_of_work(GrindingSite::EvaluationBatch, 1, 128)
+            GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 1, 128)
                 .expect("sample grinding run"),
         ],
         128,

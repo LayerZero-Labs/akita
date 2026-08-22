@@ -383,8 +383,12 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     root.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
     let grinding_plan = crate::GrindingPlan::new(
         vec![
-            crate::GrindingRun::proof_of_work(crate::GrindingSite::EvaluationBatch, 3, 128)
-                .expect("grinding run"),
+            crate::GrindingRun::proof_of_work(
+                crate::GrindingSite::EvaluationBatch { level: 0 },
+                3,
+                128,
+            )
+            .expect("grinding run"),
             crate::GrindingRun::fold_response(0),
             crate::GrindingRun::fold_response(1),
         ],
@@ -395,14 +399,15 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let second_fold_site = crate::GrindingSite::FoldResponse { level: 1 };
     let first_fold_nonce = test_fold_response_nonce(first_fold_site);
     let second_fold_nonce = test_fold_response_nonce(second_fold_site);
-    let evaluation_batch_nonce = crate::GrindingSite::EvaluationBatch
+    let evaluation_batch_site = crate::GrindingSite::EvaluationBatch { level: 0 };
+    let evaluation_batch_nonce = evaluation_batch_site
         .canonical_bytes()
         .into_iter()
         .fold(u32::default(), |value, byte| value ^ u32::from(byte))
         & ((1 << 9) - 1);
     let mut nonce_writer = crate::TranscriptNonceWriter::new(&grinding_plan).unwrap();
     nonce_writer
-        .write(crate::GrindingSite::EvaluationBatch, evaluation_batch_nonce)
+        .write(evaluation_batch_site, evaluation_batch_nonce)
         .unwrap();
     nonce_writer
         .write_fold_response(first_fold_site, first_fold_nonce)

@@ -315,12 +315,12 @@ fn nonce_slack_provisions_exactly_128_expected_trials() {
 fn plan_encoding_covers_every_discriminator() {
     let capacity = 128;
     let sites = [
-        GrindingSite::EvaluationBatch,
-        GrindingSite::ExtensionOpeningPoint,
-        GrindingSite::ExtensionOpeningClaimBatch,
+        GrindingSite::EvaluationBatch { level: 0 },
+        GrindingSite::ExtensionOpeningPoint { level: 0 },
+        GrindingSite::ExtensionOpeningClaimBatch { level: 0 },
         GrindingSite::SumcheckRound {
             protocol: SumcheckProtocol::ExtensionOpeningReduction,
-            level: u32::MAX,
+            level: 0,
             stage: 1,
             round: 2,
         },
@@ -363,8 +363,7 @@ fn plan_encoding_covers_every_discriminator() {
         .map(|site| GrindingRun::proof_of_work(site, 3, capacity).unwrap())
         .collect::<Vec<_>>();
     runs.push(GrindingRun::fold_response(2));
-    runs.push(GrindingRun::fold_challenge_root(2, 3));
-    runs.push(GrindingRun::fold_challenge_coordinates(2, 3, 4));
+    runs.push(GrindingRun::fold_challenge_group(2, 3, 4).unwrap());
     let plan = GrindingPlan::new(runs, capacity).unwrap();
     let bytes = plan.canonical_bytes().unwrap();
     assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
@@ -373,8 +372,8 @@ fn plan_encoding_covers_every_discriminator() {
     assert_eq!(
         plan.digest().unwrap(),
         [
-            201, 71, 193, 56, 131, 65, 105, 160, 79, 152, 66, 44, 189, 232, 205, 168, 168, 208, 84,
-            23, 96, 48, 174, 168, 14, 112, 165, 199, 177, 190, 157, 156,
+            39, 122, 171, 62, 218, 90, 138, 181, 88, 68, 8, 137, 172, 57, 59, 185, 161, 221, 184,
+            197, 193, 194, 6, 57, 56, 205, 203, 0, 209, 126, 16, 38,
         ]
     );
 }

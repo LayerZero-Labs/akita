@@ -135,7 +135,7 @@ where
     if claim_offset != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint)?;
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
     let eta = (0..shape.split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -143,11 +143,10 @@ where
     if input_claims.len() != num_claims || reduction.final_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let claim_coefficients = sample_row_coefficients::<F, E, T>(
+    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        CHALLENGE_EOR_CLAIM_BATCH,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
         transcript,
-        |transcript| transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningClaimBatch),
     )?;
     let batched_input_claim = input_claims
         .iter()
@@ -155,7 +154,6 @@ where
         .fold(E::zero(), |acc, (&claim, &coefficient)| {
             acc + coefficient * claim
         });
-    let encoded_level = if level == 0 { u32::MAX } else { level };
     let mut round = 0u32;
     let (batched_final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
         batched_input_claim,
@@ -163,10 +161,10 @@ where
         &reduction.sumcheck,
         transcript,
         |tr| {
-            let challenge = super::sample_grinded_sumcheck_challenge::<F, E, T>(
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
                 tr,
                 akita_types::SumcheckProtocol::ExtensionOpeningReduction,
-                encoded_level,
+                level,
                 0,
                 round,
             )?;
@@ -524,12 +522,12 @@ mod tests {
         let mut runs = Vec::new();
         if reduction.is_some() == requires_reduction && requires_reduction {
             runs.push(akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningPoint,
+                akita_types::GrindingSite::ExtensionOpeningPoint { level },
                 1,
                 128,
             )?);
             runs.push(akita_types::GrindingRun::proof_of_work(
-                akita_types::GrindingSite::ExtensionOpeningClaimBatch,
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
                 1,
                 128,
             )?);

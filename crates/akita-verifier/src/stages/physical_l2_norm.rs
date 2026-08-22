@@ -272,7 +272,7 @@ where
     };
     let mut round = 0u32;
     let point = verifier.verify::<F, T, _>(&proof.sumcheck, transcript, |tr| {
-        let challenge = crate::protocol::core::sample_grinded_sumcheck_challenge::<F, E, T>(
+        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
             tr,
             akita_types::SumcheckProtocol::PhysicalL2,
             level,

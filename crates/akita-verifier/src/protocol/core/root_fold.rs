@@ -200,6 +200,7 @@ where
         &opening_payload,
         claim_material,
         transcript,
+        0,
     )?;
     let committed_witness_len =
         akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;

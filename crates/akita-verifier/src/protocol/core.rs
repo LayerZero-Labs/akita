@@ -25,7 +25,7 @@ use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_OPENING_PAYLOAD, ABSORB_RANGE_IMAGE_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH,
+    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -34,38 +34,15 @@ use akita_types::{
     canonical_extension_opening_reduction_shape, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::relation_row_weight, raw_field_segment_bytes,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    sample_row_coefficients, tensor_equality_factor_eval_at_point, AkitaStage1Proof,
-    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding,
-    InnerCommitSecurityRoute, OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan,
-    PolynomialGroupClaims, PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry,
-    RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams,
-    TerminalLevelProof, TerminalResponse, TerminalWitnessTranscriptParts,
+    tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
+    PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    TerminalResponse, TerminalWitnessTranscriptParts,
 };
 
-pub(crate) fn sample_grinded_sumcheck_challenge<F, E, T>(
-    transcript: &mut T,
-    protocol: akita_types::SumcheckProtocol,
-    level: u32,
-    stage: u32,
-    round: u32,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F>,
-    T: akita_types::VerifierTranscriptGrinding<F>,
-{
-    transcript.grind_query(akita_types::GrindingSite::SumcheckRound {
-        protocol,
-        level,
-        stage,
-        round,
-    })?;
-    Ok(sample_ext_challenge::<F, E, T>(
-        transcript,
-        akita_transcript::labels::CHALLENGE_SUMCHECK_ROUND,
-    ))
-}
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };

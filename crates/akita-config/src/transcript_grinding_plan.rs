@@ -53,7 +53,7 @@ mod tests {
         assert_eq!(
             plan.runs()
                 .iter()
-                .filter(|run| run.site() == GrindingSite::EvaluationBatch)
+                .filter(|run| matches!(run.site(), GrindingSite::EvaluationBatch { .. }))
                 .count(),
             0,
             "singleton row batching draws no challenge and has no plan entry"
@@ -79,12 +79,12 @@ mod tests {
                 plan.digest().unwrap(),
             ),
             (
-                45,
+                43,
                 50,
                 383,
                 [
-                    103, 131, 192, 98, 157, 109, 64, 62, 14, 155, 185, 76, 246, 243, 109, 151, 102,
-                    231, 187, 147, 37, 181, 63, 178, 130, 31, 215, 33, 184, 212, 149, 223,
+                    236, 232, 157, 232, 43, 58, 62, 68, 118, 58, 218, 127, 36, 83, 166, 123, 31,
+                    133, 157, 222, 197, 92, 67, 6, 62, 148, 191, 98, 57, 29, 78, 210,
                 ],
             )
         );
@@ -168,14 +168,11 @@ mod tests {
                 assert_eq!(
                     plan.runs()
                         .iter()
-                        .filter(|run| run.site() == GrindingSite::EvaluationBatch)
+                        .filter(|run| matches!(run.site(), GrindingSite::EvaluationBatch { .. }))
                         .count(),
                     row.schedule().num_fold_levels()
                 );
-                assert_eq!(
-                    count(GrindingQueryKind::FoldChallengeRoot),
-                    count(GrindingQueryKind::FoldChallengeCoordinates)
-                );
+                assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
             }
         }

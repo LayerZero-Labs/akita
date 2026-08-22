@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao, Codex |
 | Created | 2026-05-22 |
-| Status | proposed |
+| Status | active |
 | PR | [#417](https://github.com/LayerZero-Labs/akita/pull/417) |
 | Supersedes | Unmerged transcript grinding design at `5057456` |
 | Superseded-by | |
@@ -54,11 +54,10 @@ a fixed `u16` or `u32` slot.
 
 ## Current state
 
-Slices 1 through 5 are implemented on PR #417, with final Slice 5 validation
-still in progress. Akita now derives sparse fold
+Slices 1 through 6 are implemented on PR #417. Akita now derives sparse fold
 challenge coordinates from independent indexed SHAKE256 queries, derives one
-public `GrindingPlan`, binds its policy and digest in
-`TranscriptGrindingBinding`, and stores fold-response values in one packed
+public `GrindingPlan`, binds its digest in `TranscriptGrindingBinding`, and
+stores fold-response values in one packed
 proof-level nonce stream. Plan-owning prover and verifier transcript adapters
 now consume that stream at each live query boundary. The transcript crate
 implements the exact 32-byte proof-of-work predicate and prover preview
@@ -68,11 +67,11 @@ trailing query.
 The existing fold-response search remains in
 `crates/akita-prover/src/protocol/fold_grind.rs`. For each fold, the prover
 tries sequential values until the sparse challenge produces a folded response
-accepted by the scheduled representation and norm checks. The verifier checks
-the value against the exclusive bound of 4096, absorbs its four-byte numeric
+accepted by the scheduled representation and norm checks. The verifier reads
+exactly 12 bits, expands the value to `u32`, absorbs its four-byte numeric
 encoding into each sparse challenge context, and checks the resulting response.
-The proof stores the value in 12 packed bits. `TranscriptGrindingBinding` binds
-the attempt cap and packed width.
+The 12-bit decoder makes values at or above the exclusive bound of 4096
+unrepresentable. The plan digest binds the attempt cap and packed width.
 
 That mechanism is honest-prover rejection sampling. It does not repair a small
 Fiat-Shamir challenge space and it does not add 12 bits of soundness. Every
@@ -489,8 +488,8 @@ reason to double every current grind target without a theorem.
 ## Query catalog and order
 
 `GrindingPlan` is an ordered replay program, not just a total bit count. It
-contains every conditional challenge site, including zero-bit sites, and a
-compact run for every group-root and fold-coordinate derivation. Only entries
+contains every conditional challenge site, including zero-bit sites, and one
+compact run for each fold challenge group. Only entries
 with a nonce width consume stream bits. Runs avoid allocating one plan object
 or logging event per sparse coordinate; one checked range event records the
 group index and exact coordinate count at the live sampler boundary.
@@ -501,8 +500,9 @@ The current protocol order for each fold level is:
    sumcheck challenges. The coefficient-packing root omits this reduction.
 2. Opening claim and evaluation batching after the opening payload is bound.
    A singleton batch returns coefficient one and has no plan entry or draw.
-3. One fold-response entry for the fold, then one group-root entry and one
-   claim-major coordinate run for each commitment group.
+3. One fold-response entry for the fold, then one group run for each
+   commitment group. Its multiplicity covers the root and all claim-major
+   coordinates.
 4. Ring-switch `alpha`, then the `tau0` and `tau1` point sites that
    exist for that fold shape.
 5. Stage 1 tree sumcheck rounds. Each tree stage is followed by its powers-of
@@ -525,8 +525,7 @@ not the byte label alone, select the rule.
 | `CHALLENGE_SUMCHECK_BATCH` | Stage 2 relation merge | one linear merge, `g = 0` |
 | `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients when there is more than one claim | independent coefficient vector, `g = 0`; a singleton has no query |
 | `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | full verifier-checked round degree from the canonical shape; Stage 1 uses `q_degree + 1` for the equality-factored product |
-| `CHALLENGE_SPARSE_CHALLENGE` | one sparse group root | zero-bit group-root entry after the fold-response entry |
-| indexed fold-coordinate query | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
+| `CHALLENGE_SPARSE_CHALLENGE` and indexed fold-coordinate queries | one sparse root followed by its claim-major block coordinates | one zero-bit group run after the fold-response entry; multiplicity is one plus the certified coordinate count |
 | `CHALLENGE_RING_SWITCH` | ring-relation evaluation at `alpha` | relation degree bound |
 | `CHALLENGE_TAU0` | Stage 1 multilinear point | number of point coordinates |
 | `CHALLENGE_TAU1` | relation multilinear point | number of point coordinates |
@@ -555,10 +554,9 @@ The plan MUST mirror the actual branch structure. In particular:
    absorbed before the next challenge.
 6. The fold-response entry appears once per fold exactly where the existing
    shared nonce is selected. It precedes all group roots for that fold.
-7. Each live group contributes one root entry and one coordinate run with
-   multiplicity `num_claims * num_live_blocks`. Group and coordinate indices
-   use checked `u32` and `u64` canonical encodings even when Rust call sites use
-   `usize`.
+7. Each live group contributes one run with multiplicity
+   `1 + num_claims * num_live_blocks`. Group and coordinate counts use checked
+   `u32` and `u64` canonical encodings even when Rust call sites use `usize`.
 8. A Stage 1 round checks the equality-factor interpolation polynomial times
    the Stage 1 round polynomial. If the stored Stage 1 shape gives the latter
    degree as `d`, the conditional bad-set bound is therefore `d + 1`. The plan
@@ -567,7 +565,7 @@ The plan MUST mirror the actual branch structure. In particular:
    capacity.
 9. `EvaluationBatch` and `ExtensionOpeningClaimBatch` exist only when the
    shared row-coefficient sampler draws a challenge. The sampler owns the
-   `m > 1` gate and invokes a fallible pre-draw hook, so the plan and both
+   `m > 1` gate and the grind-then-draw transition, so the plan and both
    protocol directions cannot disagree about singleton behavior.
 
 The first implementation MUST include an audit test that records every
@@ -606,7 +604,7 @@ factors or query order.
 The semantic model is:
 
 ```rust
-pub const TRANSCRIPT_SECURITY_BITS: u8 = 128;
+pub const TRANSCRIPT_SECURITY_BITS: u16 = 128;
 pub const GRINDING_NONCE_SLACK_BITS: u8 = 7;
 pub const MAX_GRINDING_BITS: u8 = 25;
 pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
@@ -614,32 +612,30 @@ pub const FOLD_RESPONSE_NONCE_BITS: u8 = 12;
 pub enum GrindingQueryKind {
     ProofOfWork,
     FoldResponse,
-    FoldChallengeRoot,
-    FoldChallengeCoordinates,
+    FoldChallengeGroup,
 }
 
 pub enum GrindingSite {
-    EvaluationBatch,
-    ExtensionOpeningPoint,
-    ExtensionOpeningClaimBatch,
+    EvaluationBatch { level: u32 },
+    ExtensionOpeningPoint { level: u32 },
+    ExtensionOpeningClaimBatch { level: u32 },
     SumcheckRound {
         protocol: SumcheckProtocol,
-        level: usize,
-        stage: usize,
-        round: usize,
+        level: u32,
+        stage: u32,
+        round: u32,
     },
-    FoldResponse { level: usize },
-    FoldChallengeRoot { level: usize, group: usize },
-    FoldChallengeCoordinates { level: usize, group: usize },
-    RingSwitchAlpha { level: usize },
-    Tau0Point { level: usize },
-    Tau1Point { level: usize },
-    Stage1InterstageBatch { level: usize, stage: usize },
-    L2SubclaimBatch { level: usize },
-    L2NormMerge { level: usize },
-    L2VirtualBatch { level: usize },
-    CompressionBinary { level: usize },
-    Stage2Batch { level: usize },
+    FoldResponse { level: u32 },
+    FoldChallengeGroup { level: u32, group: u32 },
+    RingSwitchAlpha { level: u32 },
+    Tau0Point { level: u32 },
+    Tau1Point { level: u32 },
+    Stage1InterstageBatch { level: u32, stage: u32 },
+    L2SubclaimBatch { level: u32 },
+    L2NormMerge { level: u32 },
+    L2VirtualBatch { level: u32 },
+    CompressionBinary { level: u32 },
+    Stage2Batch { level: u32 },
 }
 
 pub struct GrindingRun {
@@ -676,12 +672,13 @@ schedule + normalized opening layout + field/config metadata
 Zero-bit proof-of-work entries have `nonce_bits = 0`. Nonzero proof-of-work
 entries have `nonce_bits = grind_bits + 7`. Fold-response entries have
 `grind_bits = 0` and `nonce_bits = 12`. This makes the shared storage explicit
-without confusing the security meanings. Fold root and coordinate runs have
-zero loss, grind, and nonce fields. Their multiplicities affect the expanded
-audit schedule but not the stream size.
+without confusing the security meanings. A fold challenge group run has zero
+loss, grind, and nonce fields. Its multiplicity affects the expanded audit
+schedule but not the stream size.
 
-Proof-of-work, fold-response, and group-root runs have multiplicity one. A fold
-coordinate run has multiplicity `num_claims * num_live_blocks`. The plan checks
+Proof-of-work and fold-response runs have multiplicity one. A fold challenge
+group run has multiplicity `1 + num_claims * num_live_blocks`: one root draw
+followed by its independently indexed coordinates. The plan checks
 
 ```text
 total_nonce_bits = sum(run.nonce_bits * run.multiplicity)
@@ -689,14 +686,26 @@ total_nonce_bits = sum(run.nonce_bits * run.multiplicity)
 
 with checked arithmetic, even though every current nonzero-width run has
 multiplicity one. Only proof-of-work runs may have `loss_factor >= 1`.
-Fold-response, group-root, and coordinate runs encode `loss_factor = 0`.
+Fold-response and fold challenge group runs encode `loss_factor = 0`.
 
 ### Descriptor binding
 
-`FoldLinfProtocolBinding` will be replaced by a protocol-wide
-`TranscriptGrindingBinding`. `AkitaInstanceDescriptor` gains this dedicated
+`FoldLinfProtocolBinding` is replaced by the protocol-wide
+`TranscriptGrindingBinding`. `AkitaInstanceDescriptor` stores this dedicated
 field immediately after `plan`; `SetupSection.fold_linf` is removed. The
-binding contains exactly:
+binding contains exactly one field:
+
+```text
+plan digest                       = 32 raw Blake2b-256 bytes
+```
+
+The descriptor serializes these 32 bytes with no length prefix or padding. The
+plan digest is recomputed from public call data and compared at the protocol
+boundary.
+
+The canonical plan digest input starts with
+`b"akita/grinding-plan/v1"`, followed once by the active policy fields below,
+then `run_count_as_le_u32`, then every run in replay order.
 
 ```text
 encoding version                 = le_u16(1)
@@ -709,22 +718,14 @@ fold-response attempt bits       = u8(12)
 fold-response attempts           = le_u32(4096)
 query-policy revision            = le_u16(1)
 fold-coordinate oracle revision  = le_u16(1)
-plan digest                       = 32 raw Blake2b-256 bytes
 ```
 
-The descriptor serializes these fields in the displayed order with no length
-prefix or padding. Validation requires exact equality with the active policy,
-except that the plan digest is recomputed from the public call data and compared
-in constant length.
-
-The canonical plan digest input starts with
-`b"akita/grinding-plan/v1"`, followed by the policy fields above except the
-digest, then `run_count_as_le_u32`, then every run in replay order. Each run is
+These fixed constants are not duplicated as independently mutable descriptor
+state. They are committed once through the digest. Each run is
 encoded as
 
 ```text
-kind_tag_as_u8
-|| site_tag_as_u8
+site_tag_as_u8
 || site_payload
 || loss_factor_as_le_u64
 || grind_bits_as_u8
@@ -732,34 +733,33 @@ kind_tag_as_u8
 || multiplicity_as_le_u64.
 ```
 
-Kind tags are `0` proof-of-work, `1` fold response, `2` fold challenge root,
-and `3` fold challenge coordinates. Site tags and payloads are fixed as follows.
+The query kind is derived from the site and is not encoded a second time. Site
+tags and payloads are fixed as follows.
 
 | Tag | Site | Payload fields, all little-endian `u32` |
 |---:|---|---|
-| 0 | `EvaluationBatch` | none |
-| 1 | `ExtensionOpeningPoint` | none |
-| 2 | `ExtensionOpeningClaimBatch` | none |
+| 0 | `EvaluationBatch` | level |
+| 1 | `ExtensionOpeningPoint` | level |
+| 2 | `ExtensionOpeningClaimBatch` | level |
 | 3 | `SumcheckRound` | protocol, level, stage, round |
 | 4 | `FoldResponse` | level |
-| 5 | `FoldChallengeRoot` | level, group |
-| 6 | `FoldChallengeCoordinates` | level, group |
-| 7 | `RingSwitchAlpha` | level |
-| 8 | `Tau0Point` | level |
-| 9 | `Tau1Point` | level |
-| 10 | `Stage1InterstageBatch` | level, stage |
-| 11 | `L2SubclaimBatch` | level |
-| 12 | `L2NormMerge` | level |
-| 13 | `L2VirtualBatch` | level |
-| 14 | `CompressionBinary` | level |
-| 15 | `Stage2Batch` | level |
+| 5 | `FoldChallengeGroup` | level, group |
+| 6 | `RingSwitchAlpha` | level |
+| 7 | `Tau0Point` | level |
+| 8 | `Tau1Point` | level |
+| 9 | `Stage1InterstageBatch` | level, stage |
+| 10 | `L2SubclaimBatch` | level |
+| 11 | `L2NormMerge` | level |
+| 12 | `L2VirtualBatch` | level |
+| 13 | `CompressionBinary` | level |
+| 14 | `Stage2Batch` | level |
 
 Sumcheck protocol tags are `0` extension-opening reduction, `1` Stage 1, `2`
 physical L2, `3` Stage 2, and `4` Stage 3. A site payload contains only the
-listed fields in the listed order. A level value of `u32::MAX` identifies the
-root-global extension-opening path; no other sentinel is allowed. Rust
-`usize`, enum memory layout, generic sequence encodings, and debug strings MUST
-NOT enter these bytes. Blake2b-256 uses the existing
+listed fields in the listed order. Root queries use level zero. `u32::MAX` is
+reserved and rejected for every site field. Rust `usize`, enum memory layout,
+generic sequence encodings, and debug strings MUST NOT enter these bytes.
+Blake2b-256 uses the existing
 `digest_descriptor_bytes` primitive.
 
 The plan itself is not serialized in the proof. Prover and verifier derive it
@@ -920,7 +920,7 @@ prefix. The indexed sampler intentionally changes the vector derived from that
 root, so old sparse challenge vectors and accepted nonce values are not
 compatibility fixtures.
 
-The new `TranscriptGrindingBinding` owns the 12-bit and 4096-attempt constants.
+The canonical grinding policy owns the 12-bit and 4096-attempt constants.
 `FoldLinfProtocolBinding` and its fixed four-byte field are removed. The
 fold-l∞ spec and Book text will be updated in the implementation slice so they
 describe the shared stream while preserving their current soundness argument.
@@ -1009,9 +1009,10 @@ generated output.
       one matching logical plan entry. Zero-bit entries remain visible to the
       audit but consume no stream bits and make no transcript change.
 - [x] `TranscriptGrindingBinding` replaces `FoldLinfProtocolBinding` in the
-      dedicated descriptor field after `PlanSection` and binds the exact policy
-      constants, oracle revision, and Blake2b-256 plan digest specified above.
-      Golden bytes cover every kind, site, and sumcheck protocol discriminator.
+      dedicated descriptor field after `PlanSection`. It serializes only the
+      Blake2b-256 plan digest. That digest commits the exact policy constants,
+      oracle revision, and runs specified above. Golden bytes cover every site
+      and sumcheck protocol discriminator.
 - [x] `AkitaBatchedProof` carries one leading `TranscriptNonceStream`.
       `FoldLevelProof` and `TerminalLevelProof` no longer carry individual
       `u32` nonce fields.
@@ -1311,7 +1312,7 @@ Status: complete on PR #417.
 3. Derive the complete ordered plan in `akita-config` from schedule, normalized
    opening layout, and field metadata. Keep basis in its existing call binding;
    it does not affect the grinding plan.
-4. Expand fold root and coordinate runs in query coverage snapshots for all
+4. Expand each fold challenge group run in query coverage snapshots for all
    generated production schedules.
 5. Replace `FoldLinfProtocolBinding` with the dedicated
    `TranscriptGrindingBinding`, bind the canonical plan digest in
@@ -1376,9 +1377,9 @@ The implementation order was:
 7. Derive the diagnostic label from `GrindingSite` inside the adapter. Call
    sites supply no independent raw label that could disagree with the public
    plan.
-8. Omit singleton coefficient-batching sites through the shared fallible
-   pre-draw hook, and add the feature-gated actual-challenge audit described
-   above.
+8. Omit singleton coefficient-batching sites through the shared row sampler,
+   which owns the grind-then-draw boundary, and add the feature-gated
+   actual-challenge audit described above.
 
 Prover and verifier mirrors consume every entry at the same logical boundary.
 Integration exposed and corrected one older plan mismatch: evaluation batching
@@ -1391,8 +1392,7 @@ and stream cursors are exactly exhausted.
 
 ### Slice 6: Planner, generated schedules, and reporting
 
-Status: implemented on PR #417. Generated-table validation remains part of
-the final CI pass.
+Status: complete on PR #417.
 
 1. Add exact stream bytes and expected predicate work to candidate pricing.
 2. Add plan revision to schedule and catalog identity.
@@ -1408,6 +1408,8 @@ Exit condition: generated catalog drift checks pass and serialized proof sizes
 match planner estimates for every production profile fixture.
 
 ### Slice 7: End-to-end hardening and documentation
+
+Status: in progress on PR #417.
 
 1. Add bit-level tamper tests, malformed shape tests, and no-panic verifier
    tests.
@@ -1437,7 +1439,7 @@ The expected primary surfaces are:
 | proof objects and shapes | `crates/akita-types/src/proof/levels.rs`, `shapes.rs` | top-level stream and exact bit shape |
 | plan and policy types | new focused module under `crates/akita-types/src/` | validated runs, canonical bytes, stream length |
 | plan derivation | `crates/akita-types/src/transcript_grinding_plan.rs`, typed adapter in `crates/akita-config/src/transcript_grinding_plan.rs` | single schedule and call-data constructor shared with exact sizing |
-| descriptor | `crates/akita-types/src/instance_descriptor/` | dedicated policy and plan digest binding |
+| descriptor | `crates/akita-types/src/instance_descriptor/` | digest-only binding for the canonical policy and plan |
 | fold response search | `crates/akita-prover/src/protocol/fold_grind.rs` | 12-bit stream writer |
 | sparse fold draw | `crates/akita-challenges/src/fold_draw.rs` | one root per group and indexed coordinates |
 | sparse sampling | `crates/akita-challenges/src/sampler/mod.rs`, `xof.rs` | fresh cursor per coordinate for both rejection modes |
@@ -1453,7 +1455,7 @@ No new crate dependency is expected. If implementation changes that, update
 
 ## Documentation
 
-While this spec is proposed and active, it is the normative design record.
+While this spec is active, it is the normative design record.
 After implementation stabilizes, durable behavior belongs in:
 
 1. `book/src/how/transcript.md` for the predicate transition, stream replay,

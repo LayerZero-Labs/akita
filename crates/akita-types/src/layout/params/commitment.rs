@@ -35,20 +35,6 @@ impl CommittedGroupParams {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)
     }
 
-    /// Validate the shared fold nonce against the protocol-wide attempt cap.
-    ///
-    /// This verifier boundary deliberately does not reconstruct an honest
-    /// source model or an honest folded-response cap. Those values guide the
-    /// prover's search only.
-    pub fn validate_fold_grind_nonce(
-        &self,
-        opening_batch: &OpeningClaimsLayout,
-        fold_grind_nonce: u32,
-    ) -> Result<(), AkitaError> {
-        self.validate_opening_batch(opening_batch)?;
-        crate::TranscriptGrindingBinding::validate_fold_response_nonce(fold_grind_nonce)
-    }
-
     /// Exact scheduled gadget decomposition depth for the folded witness.
     #[inline]
     pub fn num_digits_fold(&self) -> usize {
