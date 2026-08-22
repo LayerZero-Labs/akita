@@ -416,7 +416,7 @@ mod tests {
         ));
 
         assert_eq!(base.len(), 68);
-        assert_eq!(head.len(), 75);
+        assert_eq!(head.len(), 81);
         assert!(base
             .iter()
             .all(|row| row.first_direct_setup_capacity.is_some()));
@@ -425,7 +425,7 @@ mod tests {
             .all(|row| row.first_direct_setup_capacity.is_some()));
         let comparison = compare_snapshots(base, head).expect("compare checked snapshots");
         assert_eq!(comparison.report, checked_comparison);
-        assert_eq!(comparison.added_rows, 8);
+        assert_eq!(comparison.added_rows, 14);
         assert_eq!(comparison.removed_rows, 1);
         assert_eq!(comparison.changed_rows, 67);
         assert_eq!(comparison.equal_rows, 0);
