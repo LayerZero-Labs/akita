@@ -6,24 +6,24 @@ verification answers a stronger question. It proves what the exact machine
 instructions do for every input covered by the theorem.
 
 This chapter explains the HOL Light proofs for the AArch64 `Fp128` addition and
-subtraction kernels. It also explains how the proved subtraction body enters
-the production `Prime128OffsetA7F7` path. It assumes no experience with HOL
-Light. Readers who use Lean will find a short syntax guide near the end.
+subtraction kernels. It also explains how both proved bodies enter the
+production `Prime128OffsetA7F7` path. It assumes no experience with HOL Light.
+Readers who use Lean will find a short syntax guide near the end.
 
 ## Current scope
 
 The formalization covers standalone AArch64 addition and subtraction objects
-for `Prime128OffsetA7F7`. Production A7F7 subtraction includes the exact five
-instruction words from the proved subtraction body.
+for `Prime128OffsetA7F7`. Production A7F7 arithmetic includes the exact words
+from both proved bodies.
 
-| Operation | Object theorem | Production uses proved body | Production witness check |
-| --- | --- | --- | --- |
-| Addition | Complete | No | No |
-| Subtraction | Complete | Yes, for A7F7 on AArch64 | Complete |
-| Multiplication | Not yet written | No | No |
+| Operation | Machine theorem | Production body | Witness check | Profile scan |
+| --- | --- | --- | --- | --- |
+| Addition | Complete | Proved body | Complete | Complete |
+| Subtraction | Complete | Proved body | Complete | Complete |
+| Multiplication | Not written | Experimental body | None | None |
 
-Addition and multiplication remain experiments. Other moduli, x86 kernels,
-and packed SIMD kernels are also outside this production proof connection.
+Multiplication remains an experiment. Other moduli, x86 kernels, and packed
+SIMD kernels are also outside this production proof connection.
 
 ## What the proof connects
 
@@ -46,21 +46,22 @@ different instructions. The middle connection describes each instruction in
 the formal AArch64 model. The top connection states the field operation that
 the resulting register values must represent.
 
-Subtraction has one shared instruction source and two consumers.
+Addition and subtraction each have one shared instruction source and two
+consumers.
 
 ```text
-                         fp128_sub_body.inc
+                      fp128_{add,sub}_body.inc
                                   |
                     +-------------+-------------+
                     |                           |
                     v                           v
-        production Rust asm! block         fp128_sub.S
-                    |                           |
-                    v                           v
-       optimized witness disassembly       fp128_sub.o
-                    |                           |
-                    v                           v
-          exact seven word check        HOL Light theorem
+        production Rust asm! block    fp128_{add,sub}.S
+              |              |                  |
+              v              v                  v
+     optimized witness  release profile  fp128_{add,sub}.o
+              |              |                  |
+              v              v                  v
+       exact word check  verifier scan    HOL Light theorem
 ```
 
 The `.inc` file contains raw `.inst` directives. Each directive supplies one
@@ -69,10 +70,15 @@ production inline assembly. The `.S` file includes the same words, gives the
 standalone function a symbol, and adds `ret`. HOL Light loads that object and
 proves its behavior.
 
-The production witness calls the public A7F7 subtraction operation. The byte
-checker requires its complete optimized function to contain one instruction
-that loads `C`, the five proved words, and `ret`. This checks that dispatch,
-register setup, and the shared body meet in an actual optimized Rust artifact.
+The production witness calls the public A7F7 addition and subtraction
+operations. For each function, the byte checker requires one instruction that
+loads `C`, the proved arithmetic body, and `ret`. This check covers dispatch,
+register setup, and the shared body in an optimized Rust artifact.
+
+The same workflow builds the narrow release `onehot_fp128` profile. It scans
+the disassembly and requires both proved sequences, including the load of `C`,
+inside symbols from the `akita-verifier` crate. This connects the theorem to an
+actual verifier executable after Rust and LLVM finish optimization and linking.
 
 ## Field and register representation
 
@@ -341,44 +347,76 @@ A theorem name such as `AKITA_FP128_ADD_CORRECT` is an OCaml value whose type is
 rules. Lean instead checks an elaborated proof term. In both systems, a tactic
 cannot produce a theorem without passing through the trusted kernel.
 
-## What the current proofs and production check establish
+## Exact claim and trust boundary
+
+The result has three layers. HOL Light proves the machine instructions. The
+artifact checks connect those instructions to production code. Several parts
+of the surrounding system remain trusted.
+
+### What HOL Light proves
 
 The addition and subtraction object proofs establish these facts:
 
 - The selected objects contain the exact listed instructions.
-- The instructions have the stated effect under the formal AArch64 model.
-- Every canonical pair produces the correct field result.
+- Under the formal AArch64 model, the instructions produce the correct field
+  result for every canonical input pair.
 - The callable functions return through `x30`.
-- The functions respect the AArch64 register change policy.
+- The functions change only the registers, flags, and events listed in their
+  frame conditions.
 
-The production subtraction check adds these facts for A7F7 on AArch64:
+The field result is conditional on both inputs being smaller than `p`. The
+theorems do not check this condition at runtime. They assume it in the machine
+state before execution.
 
-- Production dispatch selects the shared fixed register body.
-- The optimized witness loads the expected A7F7 correction into `w4`.
-- The next five words equal the proved arithmetic body.
-- The witness returns immediately after that body.
+### What the production checks establish
+
+The production check adds these facts for A7F7 on AArch64:
+
+- Rust and the standalone proof objects include the same raw instruction files.
+- Each optimized public operation witness consists of the expected load of `C`,
+  the proved body, and `ret`.
+- The canonical release profile contains the expected load of `C` followed by
+  each proved body inside a symbol from the `akita-verifier` crate.
+- The check fails if an object or witness word changes, or if either verifier
+  sequence is absent.
 
 The formal verification workflow builds all artifacts in a new Cargo target
-directory. It then checks the production bytes, rebuilds both native HOL Light
-proofs, and runs both theorem executables. HOL Light and `s2n-bignum` are pinned
-to exact commits in the workflow.
+directory. It checks the witness and verifier profile bytes. It then rebuilds
+both native HOL Light proofs and runs both theorem executables. HOL Light and
+`s2n-bignum` are pinned to exact commits in the workflow.
 
-## What remains outside the theorem
+The release profile uses inline arithmetic. It therefore contains the proved
+body without the standalone function's final `ret`. The body theorem covers
+these instructions. The subroutine theorem covers the standalone object and
+its return through `x30`.
+
+### What remains trusted
+
+| Boundary | What the current work assumes |
+| --- | --- |
+| Rust field representation | Every addition and subtraction call receives canonical values smaller than `p`. |
+| Rust and LLVM | The compiler honors the inline assembly operands and the AArch64 calling convention. The byte checks inspect the result, but they do not prove the compiler. |
+| Verifier reachability | The scan proves that each sequence occurs inside a verifier symbol. It does not prove that every verifier execution reaches that sequence. |
+| Build coverage | CI scans the narrow `onehot_fp128` release profile. Other feature sets and final application binaries are not scanned. |
+| Formal tools | The result trusts the HOL Light kernel and the AArch64 model from `s2n-bignum`. |
+| Physical processor | The result assumes that the formal AArch64 model matches the processor that runs the code. |
+
+### Claims this work does not make
 
 The current checks do not establish these facts:
 
+- The whole Akita verifier is formally verified.
+- Rust source code or LLVM optimization is formally verified.
 - The multiplication object is correct.
-- Every Rust caller supplies canonical inputs. This remains a field
-  representation invariant and a theorem assumption.
-- Production addition uses the proved addition body.
-- Every final release binary has been inspected. CI checks one optimized
-  production witness built through the public subtraction path.
+- Other moduli, x86 kernels, or packed SIMD kernels are correct.
 - The code has a particular execution time on physical hardware.
 - The processor has no microarchitectural side channel.
 
-The formal result relies on the HOL Light kernel and the AArch64 model used by
-`s2n-bignum`. As with any instruction semantics proof, the result also relies on
-that model matching the behavior of the physical processor.
+The strongest current statement is therefore narrow. For canonical A7F7 field
+values on AArch64, the exact addition and subtraction bodies implement the
+specified field operations under the `s2n-bignum` machine model. Akita's public
+production paths use those bodies, and the canonical verifier profile contains
+the checked sequences.
 
 ## Source and review guide
 
@@ -387,7 +425,7 @@ Read the implementation and proofs in this order:
 1. Read the shared [assembly instruction bodies](https://github.com/LayerZero-Labs/akita/tree/main/crates/akita-field/asm/aarch64).
 2. Read the [build script](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-field/build.rs)
    that produces the objects.
-3. Read the production [subtraction dispatch and register contract](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-field/src/prime/fp128/add_sub.rs).
+3. Read the production [addition and subtraction dispatch and register contracts](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-field/src/prime/fp128/add_sub.rs).
 4. Read the [production artifact checker](https://github.com/LayerZero-Labs/akita/blob/main/scripts/check_fp128_proof_artifacts.py).
 5. Read the [addition proof](https://github.com/LayerZero-Labs/akita/blob/main/proofs/hol-light/fp128_add_correct.ml).
 6. Read the [subtraction proof](https://github.com/LayerZero-Labs/akita/blob/main/proofs/hol-light/fp128_sub_correct.ml).

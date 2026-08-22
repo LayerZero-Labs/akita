@@ -15,7 +15,12 @@ trap cleanup EXIT
 CARGO_TARGET_DIR="$PROOF_TARGET/cargo" \
   cargo build --locked -p akita-field --release \
     --features fp128-asm-experiment \
-    --example fp128_sub_production_witness
+    --example fp128_add_sub_production_witness
+
+CARGO_TARGET_DIR="$PROOF_TARGET/cargo" \
+  cargo build --locked --release -p akita-pcs --example profile \
+    --no-default-features \
+    --features parallel,profile-onehot-fp128,transcript-blake2b
 
 find_one_object() {
   local name=$1
@@ -32,11 +37,14 @@ find_one_object() {
 
 ADD_OBJECT=$(find_one_object fp128_add.o)
 SUB_OBJECT=$(find_one_object fp128_sub.o)
-PRODUCTION_WITNESS="$PROOF_TARGET/cargo/release/examples/fp128_sub_production_witness"
+PRODUCTION_WITNESS="$PROOF_TARGET/cargo/release/examples/fp128_add_sub_production_witness"
+PROFILE_BINARY="$PROOF_TARGET/cargo/release/examples/profile"
 
 python3 "$REPO_ROOT/scripts/check_fp128_proof_artifacts.py" \
+  --add-object "$ADD_OBJECT" \
   --sub-object "$SUB_OBJECT" \
-  --production-witness "$PRODUCTION_WITNESS"
+  --production-witness "$PRODUCTION_WITNESS" \
+  --profile-binary "$PROFILE_BINARY"
 
 relative_to_s2n_arm() {
   python3 - "$S2N_BIGNUM_DIR/arm" "$1" <<'PY'
@@ -98,4 +106,4 @@ run_proof \
   AKITA_FP128_SUB_OBJECT "$SUB_OBJECT" "$SUB_NATIVE" \
   AKITA_FP128_SUB_SUBROUTINE_CORRECT "$PROOF_TARGET/sub.log"
 
-echo "Fp128 addition and production-linked subtraction proofs passed."
+echo "Fp128 production-linked addition and subtraction proofs passed."

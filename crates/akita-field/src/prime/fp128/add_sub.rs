@@ -63,8 +63,47 @@ impl<const P: u128> Fp128<P> {
             275 => Self::add_raw_aarch64_imm::<275>(a, b),
             159 => Self::add_raw_aarch64_imm::<159>(a, b),
             2355 => Self::add_raw_aarch64_imm::<2355>(a, b),
+            0xffff_a7f7 => Self::add_raw_aarch64_a7f7(a, b),
             _ => Self::add_raw_aarch64_reg(a, b, Self::C_LO),
         }
+    }
+
+    /// A7F7 addition through the exact instruction body proved in HOL Light.
+    ///
+    /// Register contract for `fp128_add_body.inc`:
+    ///
+    /// - `x0:x1` starts with `a` and finishes with the result.
+    /// - `x2:x3` contains `b` and is not changed.
+    /// - `x4` contains `C = 2^128 - P = 0xffff_a7f7` and is not changed.
+    /// - `x5:x9` and the condition flags are temporary state.
+    /// - The body does not access memory or the stack.
+    ///
+    /// The field representation contract requires canonical inputs, which is
+    /// also the range assumption in the machine theorem. This function adds no
+    /// runtime range check. The formal verification workflow checks the exact
+    /// words and runs the proof.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    fn add_raw_aarch64_a7f7(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+        let [mut out_lo, mut out_hi] = a;
+        let [b_lo, b_hi] = b;
+        unsafe {
+            asm!(
+                include_str!("../../../asm/aarch64/fp128_add_body.inc"),
+                inout("x0") out_lo,
+                inout("x1") out_hi,
+                in("x2") b_lo,
+                in("x3") b_hi,
+                in("x4") Self::C_LO,
+                out("x5") _,
+                out("x6") _,
+                out("x7") _,
+                out("x8") _,
+                out("x9") _,
+                options(pure, nomem, nostack),
+            );
+        }
+        pack(out_lo, out_hi)
     }
 
     #[cfg(target_arch = "aarch64")]

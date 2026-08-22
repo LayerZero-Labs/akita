@@ -3,7 +3,8 @@
 These proofs check the standalone AArch64 addition and subtraction objects for
 `Prime128OffsetA7F7`. Each proof contains the expected instruction words and
 loads them with `define_assert_from_elf`. The proof fails if the object bytes
-change. Production A7F7 subtraction includes the same raw instruction words.
+change. Production A7F7 addition and subtraction include the same raw
+instruction words.
 
 Start with the Akita Book chapter
 [Formal verification of arithmetic kernels](../../book/src/how/formal-verification.md)
@@ -15,6 +16,13 @@ The final theorems cover the callable functions, including the `ret`
 instruction and the AArch64 procedure call convention. They assume canonical
 field inputs and prove the canonical result modulo
 `0xffffffffffffffffffffffff00005809`.
+
+These are machine code theorems, not a proof of the whole Rust verifier. The
+production checks confirm that the proved bodies occur in optimized public
+operation witnesses and in the canonical verifier profile. The checks still
+trust the Rust field invariant, the compiler, the formal AArch64 model, and the
+physical processor. See [Exact claim and trust boundary](../../book/src/how/formal-verification.md#exact-claim-and-trust-boundary)
+for the full boundary.
 
 ## Requirements
 
@@ -38,9 +46,11 @@ S2N_BIGNUM_DIR=/path/to/s2n-bignum \
 ```
 
 The script uses a new temporary Cargo target directory. It requires one fresh
-addition object and one fresh subtraction object. It also builds an optimized
-production subtraction witness through the public field operation. The script
-checks all subtraction words, rebuilds both native proof executables, runs both
-theorems, and removes its temporary files when it exits.
+addition object and one fresh subtraction object. It also builds optimized
+production witnesses through the public field operations. The script checks
+all addition and subtraction words. It builds the narrow release
+`onehot_fp128` profile and requires both proved sequences inside verifier
+symbols. It then rebuilds both native proof executables, runs both theorems,
+and removes its temporary files when it exits.
 
 Multiplication uses the same object linkage and benchmark path, but its HOL
