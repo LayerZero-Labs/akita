@@ -399,7 +399,7 @@ where
 /// input is not whole head-slices, or if a packed coefficient would overflow
 /// `i8`.
 pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
-    digits: &[i8],
+    digits: impl ExactSizeIterator<Item = i8>,
     extension_degree: usize,
     width: usize,
 ) -> Result<Vec<i8>, AkitaError> {
@@ -414,12 +414,13 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                 "degree-one tensor pack must have width 1".to_string(),
             ));
         }
-        return Ok(digits.to_vec());
+        return Ok(digits.collect());
     }
-    if !digits.len().is_multiple_of(width) {
+    let digit_count = digits.len();
+    if !digit_count.is_multiple_of(width) {
         return Err(AkitaError::InvalidSize {
             expected: width,
-            actual: digits.len(),
+            actual: digit_count,
         });
     }
 
@@ -429,8 +430,9 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
             let packed_len = D / $k;
             let half = D / (2 * $k);
             let step = D / (2 * $k);
-            let tail_len = digits.len() / width;
+            let tail_len = digit_count / width;
             let mut out = Vec::with_capacity(tail_len.div_ceil(packed_len) * D);
+            let mut digits = digits;
 
             for tail_start in (0..tail_len).step_by(packed_len) {
                 let mut packed = [0i16; D];
@@ -439,14 +441,18 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                     if tail >= tail_len {
                         break;
                     }
+                    let mut coordinates = [0i8; $k];
+                    for coordinate in coordinates.iter_mut().take(width) {
+                        *coordinate = digits.next().ok_or(AkitaError::InvalidProof)?;
+                    }
                     if idx < half {
                         let shift = idx;
-                        let coord0 = digits[tail * width] as i16;
+                        let coord0 = i16::from(coordinates[0]);
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
                             AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
-                            let cj = digits[tail * width + j] as i16;
+                            let cj = i16::from(coordinates[j]);
                             let pos_offset = j * step;
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
@@ -464,12 +470,12 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                         }
                     } else {
                         let shift = idx - half + D / 2;
-                        let coord0 = digits[tail * width] as i16;
+                        let coord0 = i16::from(coordinates[0]);
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
                             AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
-                            let cj = digits[tail * width + j] as i16;
+                            let cj = i16::from(coordinates[j]);
                             let pos_offset = j * step;
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {

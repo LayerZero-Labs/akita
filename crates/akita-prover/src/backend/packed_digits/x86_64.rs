@@ -1,4 +1,4 @@
-//! BMI2 extraction with AVX2 byte-wise sign extension.
+//! BMI2 extraction with AVX2 signed-byte extension.
 
 use core::arch::x86_64::*;
 

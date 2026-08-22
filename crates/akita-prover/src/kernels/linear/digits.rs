@@ -203,6 +203,97 @@ pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     )
 }
 
+/// Block-streamed predecomposed mat-vec for a compact physical digit source.
+///
+/// `decode_block` materializes at most one commitment block per worker. The
+/// shared digit LUT and matrix stay outside that decode boundary, preserving
+/// the block-parallel kernel without retaining the full byte witness.
+pub(super) fn mat_vec_mul_packed_digits_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    Decode,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    num_live_blocks: usize,
+    row_width: usize,
+    decode_block: &Decode,
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
+    if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
+        return cfg_into_iter!(0..num_live_blocks)
+            .map(|block_index| {
+                let block = decode_block(block_index)?;
+                let mut rows = mat_vec_mul_digits_i8_with_params(
+                    ntt_mat,
+                    &[block.as_slice()],
+                    log_basis,
+                    params,
+                );
+                rows.pop().ok_or(AkitaError::InvalidProof)
+            })
+            .collect();
+    }
+
+    let n_a = ntt_mat.len();
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let inner_width = mat_width.min(row_width);
+    if inner_width == 0 || n_a == 0 {
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            num_live_blocks
+        ]);
+    }
+    let digit_bound = balanced_digit_abs_bound(log_basis);
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, digit_bound)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "packed recursive digits exceed the CRT lift range for these parameters".into(),
+            )
+        })?;
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+
+    cfg_into_iter!(0..num_live_blocks)
+        .map(|block_index| {
+            let block = decode_block(block_index)?;
+            if block.len() > row_width {
+                return Err(AkitaError::InvalidSetup(
+                    "packed recursive commitment block exceeds its row width".into(),
+                ));
+            }
+            debug_assert!(digit_rows_within_digit_bound(
+                &block,
+                inner_width.min(block.len()),
+                digit_bound,
+            ));
+            let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
+            let mut scratch = I8ColumnScratch::new();
+            for chunk_start in (0..block.len().min(inner_width)).step_by(safe_width) {
+                let chunk_end = (chunk_start + safe_width).min(block.len().min(inner_width));
+                let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+                accumulate_i8_columns::<W, K, D, true>(
+                    &mut accs,
+                    ntt_mat,
+                    chunk_start,
+                    &block[chunk_start..chunk_end],
+                    params,
+                    &lut,
+                    &mut scratch,
+                );
+                for (dst, acc) in out.iter_mut().zip(accs) {
+                    *dst += acc.to_ring(params);
+                }
+            }
+            Ok(out)
+        })
+        .collect()
+}
+
 /// Fold-major (block) raw signed-i8 ring mat-vec for `num_digits_inner == 1`.
 ///
 /// Mirrors [`mat_vec_mul_digits_i8_with_params`] exactly in block/column layout
@@ -284,4 +375,81 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
             }
         },
     ))
+}
+
+/// Raw signed-i8 counterpart of
+/// [`mat_vec_mul_packed_digits_i8_with_params`].
+pub(super) fn mat_vec_mul_packed_raw_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    Decode,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    num_live_blocks: usize,
+    row_width: usize,
+    rhs_bound: u64,
+    decode_block: &Decode,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
+    if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
+        return cfg_into_iter!(0..num_live_blocks)
+            .map(|block_index| {
+                let block = decode_block(block_index)?;
+                let mut rows =
+                    mat_vec_mul_raw_digits_i8_with_params(ntt_mat, &[block.as_slice()], params)?;
+                rows.pop().ok_or(AkitaError::InvalidProof)
+            })
+            .collect();
+    }
+
+    let n_a = ntt_mat.len();
+    let mat_width = ntt_mat.first().map_or(0, |row| row.len());
+    let inner_width = mat_width.min(row_width);
+    if inner_width == 0 || n_a == 0 {
+        return Ok(vec![
+            vec![CyclotomicRing::<F, D>::zero(); n_a];
+            num_live_blocks
+        ]);
+    }
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, inner_width, rhs_bound)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "raw packed recursive digits exceed the CRT lift range for these parameters".into(),
+            )
+        })?;
+
+    cfg_into_iter!(0..num_live_blocks)
+        .map(|block_index| {
+            let block = decode_block(block_index)?;
+            if block.len() > row_width {
+                return Err(AkitaError::InvalidSetup(
+                    "raw packed recursive commitment block exceeds its row width".into(),
+                ));
+            }
+            let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
+            for chunk_start in (0..block.len().min(inner_width)).step_by(safe_width) {
+                let chunk_end = (chunk_start + safe_width).min(block.len().min(inner_width));
+                let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
+                for (offset, coefficients) in block[chunk_start..chunk_end].iter().enumerate() {
+                    if is_zero_plane(coefficients) {
+                        continue;
+                    }
+                    let column = chunk_start + offset;
+                    let rhs = CyclotomicCrtNtt::from_i8_with_params(coefficients, params);
+                    for (acc, matrix_row) in accs.iter_mut().zip(ntt_mat) {
+                        accumulate_pointwise_product_into(acc, &matrix_row[column], &rhs, params);
+                    }
+                }
+                for (dst, acc) in out.iter_mut().zip(accs) {
+                    *dst += acc.to_ring(params);
+                }
+            }
+            Ok(out)
+        })
+        .collect()
 }

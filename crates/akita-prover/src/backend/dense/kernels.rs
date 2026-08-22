@@ -138,7 +138,7 @@ where
                         actual: rings.len(),
                     });
                 }
-                let coordinates = partials_from_position_source::<F, E, F, D>(
+                let coordinates = partials_from_position_source::<F, E, _, D>(
                     plan,
                     RootPolyMeta::<F>::num_vars(*poly),
                     |position| {
@@ -147,7 +147,7 @@ where
                             .map(|ring| ring.coefficients())
                             .ok_or(AkitaError::InvalidProof)
                     },
-                    |_, _, coefficient| coefficient,
+                    |_, coefficient, source| source[coefficient],
                 )?;
                 SubringCoefficientPackingPartials::new(
                     plan.point.geometry(),

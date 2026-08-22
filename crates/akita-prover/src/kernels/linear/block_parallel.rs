@@ -1,12 +1,12 @@
 use super::*;
 
-struct I8ColumnScratch<W: PrimeWidth, const K: usize, const D: usize> {
+pub(super) struct I8ColumnScratch<W: PrimeWidth, const K: usize, const D: usize> {
     rhs: [[MontCoeff<W>; D]; K],
     lazy_dot: [[MontCoeff<W>; D]; I32_LAZY_DOT_BATCH],
 }
 
 impl<W: PrimeWidth, const K: usize, const D: usize> I8ColumnScratch<W, K, D> {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             rhs: [[MontCoeff::from_raw(W::default()); D]; K],
             lazy_dot: [[MontCoeff::from_raw(W::default()); D]; I32_LAZY_DOT_BATCH],
@@ -14,7 +14,12 @@ impl<W: PrimeWidth, const K: usize, const D: usize> I8ColumnScratch<W, K, D> {
     }
 }
 
-fn accumulate_i8_columns<W: PrimeWidth, const K: usize, const D: usize, const CHECK_ZERO: bool>(
+pub(super) fn accumulate_i8_columns<
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+    const CHECK_ZERO: bool,
+>(
     accs: &mut [CyclotomicCrtNtt<W, K, D>],
     ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
     column_start: usize,
