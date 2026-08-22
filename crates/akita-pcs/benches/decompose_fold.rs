@@ -5,9 +5,10 @@ use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_prover::backend::poly_helpers::{
-    balanced_ring_decompose_fold_partitioned, balanced_tight_digit_fold_partitioned,
-    DecomposeParams,
+    balanced_ring_decompose_fold_partitioned, DecomposeParams,
 };
+use akita_prover::compute::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel};
+use akita_prover::RecursiveWitnessFlat;
 use akita_types::sis::compute_num_digits_field_width;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
@@ -88,28 +89,34 @@ fn dense_case<F: CanonicalField, const D: usize>(
 }
 
 fn suffix_case<const D: usize>(c: &mut Criterion) {
-    let rings: Vec<[i8; D]> = (0..FIELD_COEFFICIENTS / D)
-        .map(|ring| {
-            std::array::from_fn(|coefficient| {
-                (((ring * D + coefficient) * 11 + ring * 3) % 7) as i8 - 3
-            })
+    let digits = (0..FIELD_COEFFICIENTS / D)
+        .flat_map(|ring| {
+            (0..D)
+                .map(move |coefficient| (((ring * D + coefficient) * 11 + ring * 3) % 7) as i8 - 3)
         })
         .collect::<Vec<_>>();
-    let blocks = rings.len().div_ceil(POSITIONS_PER_BLOCK);
+    let witness = RecursiveWitnessFlat::from_i8_digits(digits);
+    let view = witness
+        .view::<Prime128OffsetA7F7, D>()
+        .expect("packed suffix view");
+    let blocks = view.num_ring_elems().div_ceil(POSITIONS_PER_BLOCK);
     let challenges = (0..blocks).map(challenge::<D>).collect::<Vec<_>>();
 
     let mut group = c.benchmark_group("decompose_fold/tight_suffix");
     group.throughput(Throughput::Elements(FIELD_COEFFICIENTS as u64));
     group.bench_function(format!("d{D}"), |b| {
         b.iter(|| {
-            black_box(
-                balanced_tight_digit_fold_partitioned::<Prime128OffsetA7F7, D>(
-                    black_box(&rings),
-                    black_box(&challenges),
-                    POSITIONS_PER_BLOCK,
-                    Some(3),
-                ),
-            )
+            black_box(OpeningFoldKernel::decompose_fold(
+                black_box(&CpuBackend::DEFAULT),
+                None,
+                black_box(view),
+                DecomposeFoldPlan {
+                    challenges: black_box(&challenges),
+                    num_positions_per_block: POSITIONS_PER_BLOCK,
+                    num_digits: 1,
+                    log_basis: 3,
+                },
+            ))
         });
     });
     group.finish();
