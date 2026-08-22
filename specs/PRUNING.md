@@ -101,6 +101,12 @@ All 18 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 
+The planner architecture owns two supporting files under
+`specs/certified-planner/`: `pruning-proofs.md` and `aerie-workload.md`. They
+inherit the root specification's lifecycle and do not count as separate live
+specifications. The default dead-symbol scan includes them because their
+contracts are normative while the parent is live.
+
 ## Cadence
 
 | When | What |
