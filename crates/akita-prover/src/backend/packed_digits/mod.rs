@@ -11,9 +11,16 @@ use std::sync::Arc;
 use std::{iter::FusedIterator, ops::Range};
 
 use akita_error::{checked, AkitaError};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 const DIGITS_PER_BLOCK: usize = 64;
 const VECTOR_LOAD_PADDING: usize = 16;
+/// Avoid Rayon scheduling for the small recursive tails where serial packing
+/// is cheaper. Large ring-switch outputs cross this threshold by orders of
+/// magnitude and encode independent 64-digit blocks in parallel.
+#[cfg(feature = "parallel")]
+const PARALLEL_ENCODE_THRESHOLD: usize = 1 << 16;
 
 /// Exact signed extrema observed while packing a digit buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,40 +75,33 @@ impl From<Arc<[i8]>> for PackedSignedDigits {
 
 impl PackedSignedDigits {
     pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
-        let bit_width = minimum_signed_bit_width(&digits);
-        Self::from_i8_digits(digits, bit_width)
-            .expect("the derived signed width represents every source digit")
+        let bounds = signed_digit_bounds(&digits);
+        let bit_width = minimum_signed_bit_width(bounds);
+        Self::pack(digits, bit_width, bounds)
+            .expect("the derived signed width and storage length are valid")
     }
 
     pub(crate) fn from_i8_digits(digits: Vec<i8>, bit_width: u8) -> Result<Self, AkitaError> {
         validate_bit_width(bit_width)?;
+        let bounds = signed_digit_bounds(&digits);
+        validate_bounds(bounds, bit_width)?;
+        Self::pack(digits, bit_width, bounds)
+    }
+
+    fn pack(digits: Vec<i8>, bit_width: u8, bounds: SignedDigitBounds) -> Result<Self, AkitaError> {
         let encoded_len = encoded_byte_len(digits.len(), bit_width)?;
         let storage_len = checked::sum([encoded_len, VECTOR_LOAD_PADDING]).ok_or_else(|| {
             AkitaError::InvalidInput("packed signed-digit storage length overflow".into())
         })?;
         let mut storage = vec![0u8; storage_len];
-        let mut negative_abs_max = 0u8;
-        let mut positive_max = 0u8;
-
-        for (index, &digit) in digits.iter().enumerate() {
-            validate_digit(digit, bit_width)?;
-            if digit < 0 {
-                negative_abs_max = negative_abs_max.max(digit.unsigned_abs());
-            } else {
-                positive_max = positive_max.max(digit as u8);
-            }
-            scalar::encode_at(&mut storage, index, bit_width, digit);
-        }
+        encode_digits(&digits, bit_width, &mut storage[..encoded_len]);
 
         Ok(Self {
             storage: storage.into(),
             encoded_len,
             len: digits.len(),
             bit_width,
-            bounds: SignedDigitBounds {
-                negative_abs_max,
-                positive_max,
-            },
+            bounds,
         })
     }
 
@@ -326,22 +326,7 @@ impl<'a> PackedSignedDigitView<'a> {
             });
         }
 
-        output.fill(0);
-        let logical_end = self.digits.len.min(self.start + self.len);
-        let start = self.start + start;
-        if start >= logical_end {
-            return Ok(0);
-        }
-        let live = (logical_end - start).min(DIGITS_PER_BLOCK);
-        if live == DIGITS_PER_BLOCK {
-            decode_full_block(self.digits, start / DIGITS_PER_BLOCK, output);
-        } else {
-            for (offset, slot) in output.iter_mut().take(live).enumerate() {
-                *slot =
-                    scalar::decode_at(&self.digits.storage, start + offset, self.digits.bit_width);
-            }
-        }
-        Ok(live)
+        self.decode_range(start, output)
     }
 }
 
@@ -483,18 +468,18 @@ fn validate_bit_width(bit_width: u8) -> Result<(), AkitaError> {
     Ok(())
 }
 
-fn validate_digit(digit: i8, bit_width: u8) -> Result<(), AkitaError> {
+fn validate_bounds(bounds: SignedDigitBounds, bit_width: u8) -> Result<(), AkitaError> {
     let half = 1i16 << (bit_width - 1);
-    let digit = i16::from(digit);
-    if (-half..half).contains(&digit) {
+    if i16::from(bounds.negative_abs_max) <= half && i16::from(bounds.positive_max) < half {
         return Ok(());
     }
     Err(AkitaError::InvalidInput(format!(
-        "digit {digit} does not fit signed {bit_width}-bit storage"
+        "digit bounds [-{}, {}] do not fit signed {bit_width}-bit storage",
+        bounds.negative_abs_max, bounds.positive_max,
     )))
 }
 
-fn minimum_signed_bit_width(digits: &[i8]) -> u8 {
+fn signed_digit_bounds(digits: &[i8]) -> SignedDigitBounds {
     let mut negative_abs_max = 0u8;
     let mut positive_max = 0u8;
     for &digit in digits {
@@ -504,12 +489,41 @@ fn minimum_signed_bit_width(digits: &[i8]) -> u8 {
             positive_max = positive_max.max(digit as u8);
         }
     }
+    SignedDigitBounds {
+        negative_abs_max,
+        positive_max,
+    }
+}
+
+fn minimum_signed_bit_width(bounds: SignedDigitBounds) -> u8 {
     (1..=8)
         .find(|&bit_width| {
             let half = 1u16 << (bit_width - 1);
-            u16::from(negative_abs_max) <= half && u16::from(positive_max) < half
+            u16::from(bounds.negative_abs_max) <= half && u16::from(bounds.positive_max) < half
         })
         .expect("every i8 value fits signed eight-bit storage")
+}
+
+fn encode_digits(digits: &[i8], bit_width: u8, output: &mut [u8]) {
+    debug_assert_eq!(
+        output.len(),
+        encoded_byte_len(digits.len(), bit_width).expect("validated packed length")
+    );
+    let block_bytes = usize::from(bit_width) * 8;
+
+    #[cfg(feature = "parallel")]
+    if digits.len() >= PARALLEL_ENCODE_THRESHOLD {
+        output
+            .par_chunks_mut(block_bytes)
+            .zip(digits.par_chunks(DIGITS_PER_BLOCK))
+            .for_each(|(encoded, source)| scalar::encode_block(source, bit_width, encoded));
+        return;
+    }
+
+    output
+        .chunks_mut(block_bytes)
+        .zip(digits.chunks(DIGITS_PER_BLOCK))
+        .for_each(|(encoded, source)| scalar::encode_block(source, bit_width, encoded));
 }
 
 #[cfg(test)]

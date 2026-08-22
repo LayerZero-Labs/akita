@@ -60,11 +60,8 @@ impl RecursiveWitnessFlat {
                 actual: digits.len(),
             });
         }
-        let bit_width = u8::try_from(log_basis).map_err(|_| {
-            AkitaError::InvalidInput("recursive witness digit basis exceeds eight bits".into())
-        })?;
         Ok(Self {
-            digits: PackedSignedDigits::from_i8_digits(digits, bit_width)?,
+            digits: PackedSignedDigits::from_i8_digits_auto(digits),
             live_coeff_len: expected,
             committed_coeff_len: None,
             commitment_ring_dim: None,

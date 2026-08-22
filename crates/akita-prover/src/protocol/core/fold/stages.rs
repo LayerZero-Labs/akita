@@ -31,7 +31,7 @@ where
         digit_range_equality_col_bits,
         rs.digit_range_equality_low_variable_count,
     )?;
-    let stage1_prover = DigitRangeProver::new(
+    let stage1_prover = DigitRangeProver::from_packed_digits(
         rs.w_evals_compact.clone(),
         plan.digit_range_plan(),
         domain,
