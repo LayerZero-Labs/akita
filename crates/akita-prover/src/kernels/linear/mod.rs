@@ -1,7 +1,6 @@
 //! Linear algebra helpers for ring commitment.
 
-use akita_algebra::ntt::MontCoeff;
-use akita_algebra::ntt::PrimeWidth;
+use akita_algebra::ntt::{MontCoeff, PrimeWidth, I32_LAZY_DOT_BATCH};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     cyclic_ntt_with_i16_tail_to_ring, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttParamSet,

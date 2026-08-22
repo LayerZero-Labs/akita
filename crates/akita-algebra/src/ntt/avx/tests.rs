@@ -1,7 +1,7 @@
 use super::*;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime, I32_LAZY_DOT_BATCH};
-use crate::ntt::tables::Q128_RAW_PRIMES;
+use crate::ntt::tables::{I16_TAIL_PRIME, Q128_RAW_PRIMES};
 
 const AVX2_ONLY: AvxCpuFeatures = AvxCpuFeatures { avx2: true };
 
@@ -465,6 +465,31 @@ fn avx2_ntt_i32_transforms_match_scalar() {
     assert_avx2_ntt_i32_transforms_match_scalar::<512>();
 }
 
+fn assert_avx2_fused_i8_ntt_i32_matches_scalar<const D: usize>() {
+    let digits: [i8; D] =
+        std::array::from_fn(|index| [i8::MIN, -17, -1, 0, 1, 13, 63, i8::MAX][index % 8]);
+    for raw_prime in Q128_RAW_PRIMES {
+        let prime = NttPrime::compute(raw_prime);
+        let tw = NttTwiddles::<i32, D>::compute(prime);
+        let mut actual = [MontCoeff::from_raw(0_i32); D];
+        // SAFETY: the caller checks AVX2 support.
+        unsafe { forward_ntt_i8_i32(&mut actual, &digits, prime, &tw) };
+
+        let mut expected = digits.map(|digit| prime.from_canonical(i32::from(digit)));
+        scalar_forward_ntt_i32(&mut expected, prime, &tw);
+        assert_eq!(actual, expected, "prime={raw_prime}, D={D}");
+    }
+}
+
+#[test]
+fn avx2_fused_i8_ntt_i32_matches_scalar() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    assert_avx2_fused_i8_ntt_i32_matches_scalar::<64>();
+    assert_avx2_fused_i8_ntt_i32_matches_scalar::<256>();
+}
+
 fn assert_avx2_ntt_i16_transforms_match_scalar<const D: usize>() {
     let prime = NttPrime::compute(12289_i16);
     let tw = NttTwiddles::<i16, D>::compute(prime);
@@ -496,6 +521,29 @@ fn avx2_ntt_i16_transforms_match_scalar() {
     assert_avx2_ntt_i16_transforms_match_scalar::<128>();
     assert_avx2_ntt_i16_transforms_match_scalar::<256>();
     assert_avx2_ntt_i16_transforms_match_scalar::<512>();
+}
+
+fn assert_avx2_fused_i8_ntt_i16_matches_scalar<const D: usize>() {
+    let prime = I16_TAIL_PRIME;
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let digits: [i8; D] =
+        std::array::from_fn(|index| [i8::MIN, -17, -1, 0, 1, 13, 63, i8::MAX][index % 8]);
+    let mut actual = [MontCoeff::from_raw(0_i16); D];
+    // SAFETY: the caller checks AVX2 support.
+    unsafe { forward_ntt_i8_i16(&mut actual, &digits, prime, &tw) };
+
+    let mut expected = digits.map(|digit| prime.from_canonical(i16::from(digit)));
+    scalar_forward_ntt_i16(&mut expected, prime, &tw);
+    assert_i16_mont_arrays_eq_mod(&actual, &expected, prime, "fused i8 forward");
+}
+
+#[test]
+fn avx2_fused_i8_ntt_i16_matches_scalar() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    assert_avx2_fused_i8_ntt_i16_matches_scalar::<64>();
+    assert_avx2_fused_i8_ntt_i16_matches_scalar::<256>();
 }
 
 #[test]

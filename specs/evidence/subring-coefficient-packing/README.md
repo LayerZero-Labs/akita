@@ -8,9 +8,11 @@ coefficient packing branch.
   the exact base commit with a reporting-only backport of the snapshot schema
   and the base revision's canonical proof, setup, EOR, digest, and
   first-direct-capacity functions.
-- `head.tsv` is the 71-row merged snapshot. It removes the unsupported fp128
-  dense nv44 stress row and adds three bounded-dense scalar rows plus one
-  grouped row with a bounded-dense precommit.
+- `head.tsv` is the 81-row merged snapshot. It removes the unsupported fp128
+  dense nv44 stress row, adds three bounded-dense scalar rows plus one grouped
+  row with a bounded-dense precommit, and keeps the extra profile-bench keys
+  (bit-equal dense nv30/nv29/nv28, one-hot nv34/nv35/nv36, unchunked
+  multi-group finals at nv34, and the nv28 dense rows from main).
 - `comparison.tsv` is the complete logical-key union. It reports exact lookup
   and schedule digests, first-direct padded capacity, total setup fields, proof
   bytes, fold counts, successor witness lengths, per-level EOR bytes, opening

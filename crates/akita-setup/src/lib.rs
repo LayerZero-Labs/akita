@@ -1140,14 +1140,16 @@ mod tests {
                     let mut slice_digits =
                         digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
                     slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
-                    CpuBackend::DEFAULT
+                    let mut batches = CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer().matrix.output_rank(),
-                            &slice_digits,
+                            &[slice_digits.as_slice()],
                             lp.outer().digits.log_basis,
                         )
-                        .unwrap()
+                        .unwrap();
+                    assert_eq!(batches.len(), 1);
+                    batches.pop().unwrap()
                 };
 
                 let fresh_u = commit_u(&fresh_setup);

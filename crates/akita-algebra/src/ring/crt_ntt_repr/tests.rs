@@ -60,3 +60,26 @@ fn centered_mont_lut_matches_centered_residue_boundary() {
         Some(prime.from_canonical(past_boundary))
     );
 }
+
+#[test]
+#[should_panic(expected = "lazy pointwise dot requires an i32 SIMD parameter set")]
+fn lazy_pointwise_dot_rejects_non_i32_parameter_sets() {
+    const D: usize = 64;
+    let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());
+    let lut = DigitMontLut::new_with_digit_bound(&params, 2);
+    let mut accs = [CyclotomicCrtNtt::zero()];
+    let matrix_row = [CyclotomicCrtNtt::zero()];
+    let ntt_mat = [matrix_row.as_slice()];
+    let digits = [[0i8; D]];
+    let mut scratch = [[MontCoeff::from_raw(0i16); D]; I32_LAZY_DOT_BATCH];
+
+    CyclotomicCrtNtt::add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
+        &mut accs,
+        &ntt_mat,
+        0,
+        &digits,
+        &params,
+        &lut,
+        &mut scratch,
+    );
+}

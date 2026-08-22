@@ -76,8 +76,9 @@ Production runtime dispatch does not select this wide i32 transform. It is
 kept for direct architecture tests and benchmark experiments because the
 measured AVX2 transform is faster on the target workloads.
 
-The second path is AVX-512IFMA. It is used for exact signed `i16` NTT caches.
-The selector enables it only when all of the following hold:
+The second path is AVX-512IFMA. It is used for exact signed NTT caches,
+including selected dense q128 commitments whose digits fit in `i8`. The
+selector enables it only when all of the following hold:
 
 - the process has `avx512f`, `avx512dq`, and `avx512ifma`;
 - `AKITA_SCALAR_NTT` is not set to `1`;
@@ -116,6 +117,14 @@ This representation is used by `ExactNegacyclic` cache requests. Ordinary
 profile. The exact selector uses the field modulus, ring degree, matrix width,
 and signed RHS bound. It does not select IFMA merely because the host has
 AVX-512.
+
+Dense q128 commitments add one further performance rule. If the complete row
+exceeds the three-prime IFMA capacity but fits after adding 12289, an eligible
+AVX-512IFMA host accumulates the row exactly. This avoids repeatedly
+transforming and reconstructing many small chunks. Scalar, AVX2, and NEON
+hosts keep the chunked `i8` path, which is faster and uses less prepared-cache
+memory on those architectures. The rule depends on CPU capability and the
+capacity bound, not on a machine name or a fixed problem size.
 
 The IFMA matrix stores one transformed negacyclic matrix for each selected
 50 bit prime. When a tail is needed, the cache stores a shorter prefix of the

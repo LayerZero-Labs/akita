@@ -55,11 +55,10 @@ pub(super) const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 // Row-count ceiling for the block-parallel matvec. Commitments up to `n_a == 7`
 // still parallelize over blocks through the generic accumulator loop instead of
 // falling back to the column-tiled path, which has too few tiles to scale at
-// high nv. The block-parallel and column-tiled paths produce identical ring
-// output (per-step `reduce_range` accumulation + canonicalizing `to_ring`), so
-// raising the cap is a pure performance change.
-pub(super) const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
-pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
+// high nv. The paths produce identical ring output, so this is only a workload
+// dispatch threshold.
+pub(super) const DENSE_I8_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
+pub(super) const DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 
 #[inline]
 pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {

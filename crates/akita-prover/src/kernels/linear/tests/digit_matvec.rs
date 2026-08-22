@@ -485,7 +485,7 @@ fn mat_vec_mul_digits_i8_three_rows_match_schoolbook_on_block_parallel_path() {
 // Block-parallel and column-tiled matvec must produce byte-identical ring output for
 // wide rows (n_a 5..=7) across EVERY CRT+NTT parameter family the commit path can
 // select: Q32 (<= 32-bit moduli), Q64 (64-bit), and Q128 (fp128). Raising
-// `SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS` only changes which path runs, never the result,
+// `DENSE_I8_BLOCK_PARALLEL_MAX_ROWS` only changes which path runs, never the result,
 // so this guards that invariant for all field families, not just fp32. One `#[test]`
 // per family pinpoints a regression to the offending CRT family.
 macro_rules! block_parallel_matches_column_tiled_wide_rows_test {

@@ -1389,7 +1389,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         summary = normalize_case_summary(
             {
                 "mode": "onehot_fp128_multi_group_recursive",
-                "num_vars": 32,
+                "num_vars": 34,
                 "num_polys": 4,
                 "setup_contribution_mode": "recursive",
                 "exit_code": 0,
@@ -1409,7 +1409,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                             },
                             {
                                 "group_role": "final",
-                                "public_num_vars": 32,
+                                "public_num_vars": 34,
                                 "public_num_polynomials": 2,
                             },
                         ],
@@ -1420,11 +1420,11 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         statement = public_opening_statement(summary)
         name = benchmark_name(
-            "onehot_fp128_multi_group_recursive", 32, 4, "recursive"
+            "onehot_fp128_multi_group_recursive", 34, 4, "recursive"
         )
         self.assertIn("one 16 variable polynomial", statement)
         self.assertIn("at its own point", statement)
-        self.assertIn("2 32 variable polynomials", statement)
+        self.assertIn("2 34 variable polynomials", statement)
         self.assertEqual(
             name,
             "fp128 multi-group opening with 4 polynomials (recursive setup contribution)",
@@ -1438,14 +1438,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             normalize_case_summary(
                 {
                     "mode": "dense_fp32",
-                    "num_vars": 26,
-                    "num_polys": 1,
-                    "benchmark_shard": "1-fp32-base",
-                }
-            ),
-            normalize_case_summary(
-                {
-                    "mode": "onehot_fp32",
                     "num_vars": 30,
                     "num_polys": 1,
                     "benchmark_shard": "1-fp32-base",
@@ -1453,8 +1445,16 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             ),
             normalize_case_summary(
                 {
+                    "mode": "onehot_fp32",
+                    "num_vars": 34,
+                    "num_polys": 1,
+                    "benchmark_shard": "1-fp32-base",
+                }
+            ),
+            normalize_case_summary(
+                {
                     "mode": "dense_fp64",
-                    "num_vars": 26,
+                    "num_vars": 29,
                     "num_polys": 1,
                     "benchmark_shard": "2-fp64-base",
                 }
@@ -1469,24 +1469,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         shard_section, statement_section = report.split("### Public opening statements")
         self.assertIn("### Benchmark shards", shard_section)
         self.assertIn(
-            "| <code>1-fp32-base</code> | Fp32 dense nv26, direct setup check<br>Fp32 one\\-hot nv30, direct setup check |",
+            "| <code>1-fp32-base</code> | Fp32 dense nv30, direct setup check<br>Fp32 one\\-hot nv34, direct setup check |",
             shard_section,
         )
         self.assertIn(
-            "| <code>2-fp64-base</code> | Fp64 dense nv26, direct setup check |",
+            "| <code>2-fp64-base</code> | Fp64 dense nv29, direct setup check |",
             shard_section,
         )
         self.assertIn("Over Fp32", statement_section)
-        self.assertIn("Fp32 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp32 dense nv30, direct setup check", statement_section)
         self.assertIn("Over Fp64", statement_section)
-        self.assertIn("Fp64 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp64 dense nv29, direct setup check", statement_section)
 
     def test_partial_merge_base_coverage_is_explicit(self) -> None:
         from scripts.profile_bench_report import render_report
 
         case = {
             "mode": "dense_fp32",
-            "num_vars": 26,
+            "num_vars": 30,
             "num_polys": 1,
             "benchmark_shard": "1-fp32-base",
             "exit_code": 1,
@@ -1892,7 +1892,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             write_aggregate_summaries,
         )
 
-        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
+        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=30, num_polys=1)
         summary = {
             "case_id": case.case_id,
             "exit_code": 0,

@@ -91,10 +91,10 @@ macro_rules! delegate_digit_rows {
                 &self,
                 prepared: &Self::PreparedSetup,
                 row_len: usize,
-                digits: &[[i8; D]],
+                digit_vectors: &[&[[i8; D]]],
                 log_basis: u32,
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
+            ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+                CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
             }
         }
     };

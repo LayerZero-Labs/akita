@@ -1,5 +1,93 @@
 use super::*;
 
+struct I8ColumnScratch<W: PrimeWidth, const K: usize, const D: usize> {
+    rhs: [[MontCoeff<W>; D]; K],
+    lazy_dot: [[MontCoeff<W>; D]; I32_LAZY_DOT_BATCH],
+}
+
+impl<W: PrimeWidth, const K: usize, const D: usize> I8ColumnScratch<W, K, D> {
+    fn new() -> Self {
+        Self {
+            rhs: [[MontCoeff::from_raw(W::default()); D]; K],
+            lazy_dot: [[MontCoeff::from_raw(W::default()); D]; I32_LAZY_DOT_BATCH],
+        }
+    }
+}
+
+fn accumulate_i8_columns<W: PrimeWidth, const K: usize, const D: usize, const CHECK_ZERO: bool>(
+    accs: &mut [CyclotomicCrtNtt<W, K, D>],
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    column_start: usize,
+    digits: &[[i8; D]],
+    params: &CrtNttParamSet<W, K, D>,
+    lut: &DigitMontLut<W, K>,
+    scratch: &mut I8ColumnScratch<W, K, D>,
+) {
+    let batch_size = params.pointwise_dot_batch_size();
+    if batch_size == 1 {
+        for (offset, digit) in digits.iter().enumerate() {
+            if CHECK_ZERO && is_zero_plane(digit) {
+                continue;
+            }
+            CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
+                accs,
+                ntt_mat,
+                column_start + offset,
+                digit,
+                params,
+                lut,
+                &mut scratch.rhs,
+            );
+        }
+        return;
+    }
+
+    for batch_start in (0..digits.len()).step_by(batch_size) {
+        let batch_end = (batch_start + batch_size).min(digits.len());
+        let batch = &digits[batch_start..batch_end];
+        if CHECK_ZERO && batch.iter().any(is_zero_plane) {
+            for (offset, digit) in batch.iter().enumerate() {
+                if is_zero_plane(digit) {
+                    continue;
+                }
+                CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
+                    accs,
+                    ntt_mat,
+                    column_start + batch_start + offset,
+                    digit,
+                    params,
+                    lut,
+                    &mut scratch.rhs,
+                );
+            }
+            continue;
+        }
+
+        if batch.len() == 1 {
+            CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
+                accs,
+                ntt_mat,
+                column_start + batch_start,
+                &batch[0],
+                params,
+                lut,
+                &mut scratch.rhs,
+            );
+            continue;
+        }
+
+        CyclotomicCrtNtt::add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
+            accs,
+            ntt_mat,
+            column_start + batch_start,
+            batch,
+            params,
+            lut,
+            &mut scratch.lazy_dot,
+        );
+    }
+}
+
 /// Block-parallel fast path for small `n_a` and many blocks.
 ///
 /// Parallelizes over blocks (high fanout) instead of column tiles (low fanout).
@@ -24,22 +112,17 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel<
         .map(|block| {
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
-            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut scratch = I8ColumnScratch::new();
 
-            for (j, digit) in block.iter().enumerate() {
-                if CHECK_ZERO && is_zero_plane(digit) {
-                    continue;
-                }
-                CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
-                    &mut accs,
-                    ntt_mat,
-                    j,
-                    digit,
-                    params,
-                    &lut,
-                    &mut rhs_scratch,
-                );
-            }
+            accumulate_i8_columns::<W, K, D, CHECK_ZERO>(
+                &mut accs,
+                ntt_mat,
+                0,
+                block,
+                params,
+                &lut,
+                &mut scratch,
+            );
 
             accs.into_iter().map(|acc| acc.to_ring(params)).collect()
         })
@@ -68,25 +151,19 @@ pub(super) fn mat_vec_mul_digits_i8_block_parallel_chunked<
         .map(|block| {
             let live_width = block.len().min(inner_width);
             let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
-            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut scratch = I8ColumnScratch::new();
             for chunk_start in (0..live_width).step_by(chunk_width) {
                 let chunk_end = (chunk_start + chunk_width).min(live_width);
                 let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
-                for (j, digit) in block[chunk_start..chunk_end].iter().enumerate() {
-                    if CHECK_ZERO && is_zero_plane(digit) {
-                        continue;
-                    }
-                    let mat_col = chunk_start + j;
-                    CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
-                        &mut accs,
-                        ntt_mat,
-                        mat_col,
-                        digit,
-                        params,
-                        &lut,
-                        &mut rhs_scratch,
-                    );
-                }
+                accumulate_i8_columns::<W, K, D, CHECK_ZERO>(
+                    &mut accs,
+                    ntt_mat,
+                    chunk_start,
+                    &block[chunk_start..chunk_end],
+                    params,
+                    &lut,
+                    &mut scratch,
+                );
                 for (dst, acc) in out.iter_mut().zip(accs) {
                     *dst += acc.to_ring(params);
                 }
@@ -120,28 +197,22 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
             let mut accs: Vec<CyclotomicCrtNtt<W, K, D>> =
                 vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
             let mut digit_buf = vec![[0i8; D]; num_digits];
-            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut scratch = I8ColumnScratch::new();
             let mut col = 0usize;
 
             for coeff_vec in block.iter() {
                 coeff_vec
                     .balanced_decompose_pow2_i8_into_with_params(&mut digit_buf, &decompose_params);
-                for digit in &digit_buf {
-                    if CHECK_ZERO && is_zero_plane(digit) {
-                        col += 1;
-                        continue;
-                    }
-                    CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
-                        &mut accs,
-                        ntt_mat,
-                        col,
-                        digit,
-                        params,
-                        &lut,
-                        &mut rhs_scratch,
-                    );
-                    col += 1;
-                }
+                accumulate_i8_columns::<W, K, D, CHECK_ZERO>(
+                    &mut accs,
+                    ntt_mat,
+                    col,
+                    &digit_buf,
+                    params,
+                    &lut,
+                    &mut scratch,
+                );
+                col += digit_buf.len();
             }
 
             accs.into_iter().map(|acc| acc.to_ring(params)).collect()
@@ -191,7 +262,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
     cfg_into_iter!(blocks)
         .map(|block| {
             let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
-            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut scratch = I8ColumnScratch::new();
             for chunk_start in (0..inner_width).step_by(chunk_width) {
                 let chunk_end = (chunk_start + chunk_width).min(inner_width);
                 let ring_start = chunk_start / num_digits;
@@ -208,24 +279,15 @@ pub(super) fn mat_vec_mul_i8_block_parallel_chunked_with_params<
                 let n = tile_len.min(available);
                 let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
 
-                for (j, digit) in all_digits[digit_offset..digit_offset + n]
-                    .iter()
-                    .enumerate()
-                {
-                    if CHECK_ZERO && is_zero_plane(digit) {
-                        continue;
-                    }
-                    let mat_col = chunk_start + j;
-                    CyclotomicCrtNtt::add_assign_col_pointwise_mul_i8_multi_with_lut_scratch(
-                        &mut accs,
-                        ntt_mat,
-                        mat_col,
-                        digit,
-                        params,
-                        &lut,
-                        &mut rhs_scratch,
-                    );
-                }
+                accumulate_i8_columns::<W, K, D, CHECK_ZERO>(
+                    &mut accs,
+                    ntt_mat,
+                    chunk_start,
+                    &all_digits[digit_offset..digit_offset + n],
+                    params,
+                    &lut,
+                    &mut scratch,
+                );
 
                 for (dst, acc) in out.iter_mut().zip(accs) {
                     *dst += acc.to_ring(params);
@@ -303,7 +365,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
             .map(|block| {
                 let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
                 let mut digit_buf = vec![[0i8; D]; num_digits];
-                let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+                let mut scratch = I8ColumnScratch::new();
                 let mut col = 0usize;
 
                 for coeff_vec in block.iter() {
@@ -311,16 +373,16 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
                         &mut digit_buf,
                         &decompose_params,
                     );
-                    for digit in &digit_buf {
-                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                            &mat_row[col],
-                            digit,
-                            params,
-                            &lut,
-                            &mut rhs_scratch,
-                        );
-                        col += 1;
-                    }
+                    accumulate_i8_columns::<W, K, D, false>(
+                        std::slice::from_mut(&mut acc),
+                        ntt_mat,
+                        col,
+                        &digit_buf,
+                        params,
+                        &lut,
+                        &mut scratch,
+                    );
+                    col += digit_buf.len();
                 }
 
                 acc.to_ring(params)
@@ -333,7 +395,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     // chunk-parallel work so long CRT splits do not serialize.
     let chunk_width = capacity_safe_i8_chunk_width(safe_width, inner_width, num_digits);
     let num_chunks = inner_width.div_ceil(chunk_width);
-    if num_live_blocks < SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS {
+    if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
         return mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params(
             mat_row,
             blocks,
@@ -349,7 +411,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     cfg_into_iter!(blocks)
         .map(|block| {
             let mut out = CyclotomicRing::<F, D>::zero();
-            let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+            let mut scratch = I8ColumnScratch::new();
 
             for chunk_idx in 0..num_chunks {
                 let tile_start = chunk_idx * chunk_width;
@@ -369,18 +431,15 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
                 let n = tile_len.min(available);
                 let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
 
-                for (j, digit) in all_digits[digit_offset..digit_offset + n]
-                    .iter()
-                    .enumerate()
-                {
-                    acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                        &mat_row[tile_start + j],
-                        digit,
-                        params,
-                        &lut,
-                        &mut rhs_scratch,
-                    );
-                }
+                accumulate_i8_columns::<W, K, D, false>(
+                    std::slice::from_mut(&mut acc),
+                    ntt_mat,
+                    tile_start,
+                    &all_digits[digit_offset..digit_offset + n],
+                    params,
+                    &lut,
+                    &mut scratch,
+                );
 
                 out += acc.to_ring(params);
             }
@@ -429,20 +488,17 @@ fn mat_vec_mul_i8_dense_single_row_chunk_parallel_with_params<
                     let available = all_digits.len().saturating_sub(digit_offset);
                     let n = tile_len.min(available);
                     let mut acc = CyclotomicCrtNtt::<W, K, D>::zero();
-                    let mut rhs_scratch = [[MontCoeff::from_raw(W::default()); D]; K];
+                    let mut scratch = I8ColumnScratch::new();
 
-                    for (j, digit) in all_digits[digit_offset..digit_offset + n]
-                        .iter()
-                        .enumerate()
-                    {
-                        acc.add_assign_pointwise_mul_i8_with_lut_scratch(
-                            &mat_row[tile_start + j],
-                            digit,
-                            params,
-                            lut,
-                            &mut rhs_scratch,
-                        );
-                    }
+                    accumulate_i8_columns::<W, K, D, false>(
+                        std::slice::from_mut(&mut acc),
+                        &[mat_row],
+                        tile_start,
+                        &all_digits[digit_offset..digit_offset + n],
+                        params,
+                        lut,
+                        &mut scratch,
+                    );
 
                     out += acc.to_ring(params);
                     out
