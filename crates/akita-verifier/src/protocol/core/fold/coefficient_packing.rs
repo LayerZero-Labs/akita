@@ -1,7 +1,8 @@
 //! Coefficient-packing fold verifier prefix.
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
@@ -14,7 +15,7 @@ fn prepare_group<E: FieldCore>(
     point: &[E],
     basis: BasisMode,
     source_num_vars: usize,
-    group_params: &(impl akita_types::LevelParamsLike + ?Sized),
+    group_params: &akita_types::GroupOpenPhaseParams,
     extension_degree: usize,
 ) -> Result<PreparedSubringCoefficientPackingPoint<E>, AkitaError> {
     let akita_types::OpeningMethod::SubringCoefficientPacking {
@@ -60,7 +61,7 @@ fn prepare_prefix_points<F: FieldCore, E: ExtField<F>, C>(
                 claims.group_point(group_index)?,
                 basis,
                 layout.num_vars(),
-                group_params,
+                &group_params,
                 E::EXT_DEGREE,
             )?,
         ));

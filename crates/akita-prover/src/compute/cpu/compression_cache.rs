@@ -1,7 +1,8 @@
 //! Exact-prefix paired NTT cache used by compressed commitments.
 
 use super::prepared::ErasedCpuNttCache;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{prepare_compression_ntt_cache, AkitaExpandedSetup, PreparedNttCache};
 use std::any::Any;
 use std::collections::HashMap;

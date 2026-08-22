@@ -3,8 +3,9 @@
 use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
+use akita_error::AkitaError;
 use akita_field::Fp64;
-use akita_field::{AkitaError, FieldCore, RandomSampling};
+use akita_field::{FieldCore, RandomSampling};
 use akita_sumcheck::{
     CompressedUniPoly, SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
     SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,

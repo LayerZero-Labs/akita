@@ -3,9 +3,9 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
+use akita_error::AkitaError;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
-    RandomSampling,
+    CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced, RandomSampling,
 };
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
@@ -271,7 +271,7 @@ where
         tau0,
         tau1,
         b: 1usize
-            .checked_shl(lp.log_basis_open)
+            .checked_shl(lp.open().digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     }
@@ -315,7 +315,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
-    if lp.has_precommitted_groups() {
+    if lp.has_preceding_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E>(
             replay,
             alpha,
@@ -487,7 +487,7 @@ where
     Ok(RelationMatrixEvaluator {
         relation_address_geometry,
         groups,
-        log_basis: lp.log_basis_open,
+        log_basis: lp.open().digits.log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -551,13 +551,13 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis_inner = lp.log_basis_inner;
-    let log_basis_outer = lp.log_basis_outer;
-    let log_basis_open = lp.log_basis_open;
+    let log_basis_inner = lp.inner().digits.log_basis;
+    let log_basis_outer = lp.outer().digits.log_basis;
+    let log_basis_open = lp.open().digits.log_basis;
     validate_log_basis(log_basis_inner)?;
     validate_log_basis(log_basis_outer)?;
     validate_log_basis(log_basis_open)?;
-    let num_live_blocks = lp.num_live_blocks;
+    let num_live_blocks = lp.blocks().live_blocks;
     let total_blocks = num_live_blocks
         .checked_mul(num_claims)
         .ok_or_else(|| AkitaError::InvalidSetup("batched block count overflow".to_string()))?;
@@ -567,11 +567,15 @@ where
             actual: challenges.len(),
         });
     }
-    let num_positions_per_block = lp.num_positions_per_block;
-    let n_a = lp.inner_commit_matrix.output_rank();
+    let num_positions_per_block = lp.blocks().positions_per_block;
+    let n_a = lp.inner().matrix.output_rank();
 
-    let c_alphas =
-        prepare_challenge_evals::<F, E>(challenges, &alpha_pows, num_claims, lp.num_live_blocks)?;
+    let c_alphas = prepare_challenge_evals::<F, E>(
+        challenges,
+        &alpha_pows,
+        num_claims,
+        lp.blocks().live_blocks,
+    )?;
     let opening_a_evals = match ring_multiplier_point {
         Some(point) => (0..num_positions_per_block)
             .map(|idx| point.eval_position_at::<E>(idx, &alpha_pows))

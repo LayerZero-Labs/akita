@@ -183,7 +183,7 @@ group offsets follow checked relation-group prefix sums.
 does not maintain a parallel setup-column layout.
 
 The active
-[`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md)
+[`role-native-projected-digit-layout`](../../../../specs/role-native-projected-digit-layout.md)
 spec defines the E and T verifier cutover. Its target physical order is:
 
 ```text

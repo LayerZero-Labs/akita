@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
     active_setup_field_len, terminal_response_planner_bytes, AkitaScheduleLookupKey,
     CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -129,7 +129,11 @@ type LevelCandidate = (
     Option<crate::response_model::SourceMomentEstimate>,
 );
 
-type GuidedLevelCandidate = (CompleteObjectiveBound, Option<usize>, LevelCandidate);
+struct GuidedLevelCandidate {
+    lower_bound: CompleteObjectiveBound,
+    natural_len: Option<usize>,
+    candidate: LevelCandidate,
+}
 
 enum CandidateTraversal {
     Plain(std::vec::IntoIter<LevelCandidate>),
@@ -169,9 +173,14 @@ impl Iterator for CandidateTraversal {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Plain(candidates) => candidates.next().map(|candidate| (None, candidate)),
-            Self::Guided(candidates) => candidates
-                .next()
-                .map(|(bound, natural_len, candidate)| (Some((bound, natural_len)), candidate)),
+            Self::Guided(candidates) => candidates.next().map(
+                |GuidedLevelCandidate {
+                     lower_bound,
+                     natural_len,
+                     candidate,
+                     ..
+                 }| { (Some((lower_bound, natural_len)), candidate) },
+            ),
         }
     }
 }
@@ -313,12 +322,12 @@ fn complete_root_bound_is_strictly_worse(
         crate::SelectionPolicyId::MinEstimatedProofPayload => frontier
             .by_parent_cost
             .values()
-            .flat_map(frontier::ObjectiveChoices::payload_candidates)
+            .flat_map(frontier::ProjectedObjectiveChoices::payload_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => frontier
             .by_parent_cost
             .values()
-            .flat_map(frontier::ObjectiveChoices::setup_candidates)
+            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
     }
 }
@@ -372,12 +381,26 @@ fn candidate_traversal(
                 candidate.1,
                 natural_len.unwrap_or_default(),
             )?;
-            Ok((lower_bound, natural_len, candidate))
+            Ok(GuidedLevelCandidate {
+                lower_bound,
+                natural_len,
+                candidate,
+            })
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    guided.sort_by_key(|(lower_bound, _, (_, next_witness_len, _, _))| {
-        (*lower_bound, *next_witness_len)
-    });
+    guided.sort_by_cached_key(
+        |GuidedLevelCandidate {
+             lower_bound,
+             candidate: (params, next_witness_len, _, _),
+             ..
+         }| {
+            (
+                *lower_bound,
+                *next_witness_len,
+                params.canonical_descriptor_bytes(),
+            )
+        },
+    );
     Ok(CandidateTraversal::Guided(guided.into_iter()))
 }
 
@@ -398,7 +421,7 @@ fn price_terminal_candidate(
         };
     if (ctx.level_zero_is_root && state.level == 0)
         || state.incoming_setup_prefix.is_some()
-        || candidate_params.has_precommitted_groups()
+        || candidate_params.has_preceding_groups()
     {
         return Ok(());
     }
@@ -832,7 +855,7 @@ pub(crate) fn derive_selected_suffix_schedule(
     }
     for (key, choices) in frontiers.projected.by_parent_cost {
         if retains_setup_projection {
-            setup_and_payload.insert(key, choices);
+            setup_and_payload.insert(key, choices.into_objective_choices());
         } else {
             let candidates = choices.into_payload_candidates();
             if !candidates.is_empty() {

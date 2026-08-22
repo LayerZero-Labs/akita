@@ -1034,7 +1034,7 @@ transcript still bind one method tag. Generated levels 0 and 1 use
 later folds use `EvaluationTrace`. The planner MUST NOT enumerate both methods
 as separate candidates at one level merely because this overlap exists.
 
-The intended ownership split is equivalent to the following shape.
+The implementation expresses this ownership split with the following shape.
 
 ```rust
 struct GroupOpeningPlan {
@@ -1045,16 +1045,16 @@ struct GroupOpeningPlan {
     num_digits_fold: usize,
 }
 
-struct ScheduledGroupOpening {
-    commitment: CommittedGroupProfile,
+struct GroupOpenPhaseParams {
+    profile: GroupCommitPhaseParams,
     opening: GroupOpeningPlan,
+    setup_natural_len: Option<usize>,
 }
 ```
 
-Equivalent types are acceptable. There must still be one canonical owner for
-each field. The implementation should split the current
-`PrecommittedLevelParams` fields along this boundary instead of adding a second
-copy of them.
+There is one canonical owner for each field. `GroupCommitPhaseParams` owns the
+frozen commit phase identity. `GroupOpeningPlan` owns the consuming fold's
+opening policy.
 
 The opening method and challenge subring dimension are protocol data. Runtime
 schedules, generated rows, canonical descriptors, catalog identity, proof size
@@ -1067,7 +1067,7 @@ per group in `OpeningClaimsLayout::root_group_order`. All level 0 entries use
 The planner does not pad them to one level wide `s`.
 
 The consuming fold owns this plan. The commitment profile does not. A
-`CommittedGroupProfile` or setup prefix commitment fixes the physical source
+`GroupCommitPhaseParams` or setup prefix commitment fixes the physical source
 encoding, the source polynomial layout, the A and B matrices, and the
 commitment bytes. It does not fix whether a later fold uses `EvaluationTrace`
 or `SubringCoefficientPacking` when that opening method supports the frozen
@@ -1583,7 +1583,7 @@ open review blockers are resolved.
 
 - [Lyubashevsky and Seiler, EUROCRYPT 2018](https://doi.org/10.1007/978-3-319-78381-9_8),
   Corollary 1.2 for partial splitting and short invertibility.
-- [B commitment slicing](commitment-slicing.md), PR 388 baseline and B planner
+- [B commitment slicing](archive/2026-Q3/commitment-slicing.md), PR 388 baseline and B planner
   interaction.
 - [Selective L2 fold sizing](https://github.com/LayerZero-Labs/akita/pull/369),
   planner objective, response sizing, and operator norm certificates.

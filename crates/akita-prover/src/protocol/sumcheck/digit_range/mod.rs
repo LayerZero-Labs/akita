@@ -25,8 +25,9 @@ mod round_accumulation;
 
 pub use direct_range_leaf::LowBasisRangeCheckProver;
 
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_transcript::labels;

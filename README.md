@@ -7,7 +7,8 @@ The codebase is being decomposed into a focused `akita-*` crate family rather th
 
 The current workspace exposes the main ownership boundaries under `crates/`:
 
-- `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
+- `akita-error` owns the shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges.
+- `akita-field`, `akita-serialization`, and `akita-algebra` own foundational field arithmetic, encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
 - `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
@@ -63,7 +64,7 @@ rejects any byte difference from the tracked files.
 ## Lineage
 
 Akita keeps the earlier implementation lineage explicit while giving the improved scheme its own name.
-This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation, smaller large-field proofs via modulus switching and field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
+This is also the line where planned protocol improvements over the original design live: faster verifier-oriented reductions via matrix-claim delegation, smaller large-field proofs via field-size lowering, and efficient zero-knowledge techniques under the Whiteout design direction.
 
 ## Contributing
 

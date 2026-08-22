@@ -38,10 +38,10 @@ mod physical_l2;
 
 pub use ajtai_key::{
     ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
-    sis_table_key_for_linf_bound, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
-    SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY,
-    SUPPORTED_SIS_SECURITY_POLICIES,
+    sis_table_key_for_linf_bound, InnerCommitMatrixParams, LinfCommitMatrix, LinfMatrixRole, Open,
+    OpenCommitMatrixParams, Outer, OuterCommitMatrixParams, ScalarCutoff, SisMatrixRole,
+    SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS,
+    DEFAULT_SIS_SECURITY_POLICY, SUPPORTED_SIS_SECURITY_POLICIES,
 };
 pub use committed_source::{CommittedSourceClass, CommittedSourceContract};
 pub use coverage::{
@@ -66,11 +66,12 @@ pub use l2_table::{
 #[cfg(test)]
 pub(crate) use norm_bound::fold_witness_beta_inf;
 pub use norm_bound::{
-    checked_centered_l2_sq, fold_witness_linf_cap, max_response_linf_for_role_a_collision,
-    rademacher_proxy_variance, role_a_collision_inf_norm_for_response_bound,
-    role_a_collision_l2_sq_for_response_bound, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN,
-    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM, MAX_FOLD_GRIND_ATTEMPTS,
+    certified_terminal_response_linf_cap, checked_centered_l2_sq, fold_witness_linf_cap,
+    max_response_linf_for_role_a_collision, rademacher_proxy_variance,
+    role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
+    MAX_FOLD_GRIND_ATTEMPTS, TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
 };
 pub use physical_l2::{InnerCommitSecurityRoute, LimbGramLayout, PhysicalL2NormProofShape};

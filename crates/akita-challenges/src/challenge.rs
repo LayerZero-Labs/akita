@@ -13,7 +13,9 @@
 //! This module deliberately depends only on `akita-field`; it does not pull in
 //! the transcript layer or the sampler.
 
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBase};
+use akita_error::AkitaError;
+
+use akita_field::{FieldCore, FromPrimitiveInt, MulBase};
 use smallvec::SmallVec;
 
 use crate::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};

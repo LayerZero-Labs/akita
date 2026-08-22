@@ -9,12 +9,14 @@ use akita_algebra::ntt::tables::{
 };
 use akita_algebra::{
     CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, I16TailParams, Ifma52NttMatrix, Ifma52Params,
+    MontCoeff,
 };
+use akita_error::AkitaError;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
-    cfg_iter, AkitaError, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355,
-    Prime128OffsetA7F7, PseudoMersenneField,
+    cfg_iter, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7,
+    PseudoMersenneField,
 };
 use std::any::Any;
 use std::collections::HashMap;
@@ -28,11 +30,18 @@ use crate::{
 };
 
 mod exact;
+mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
 pub use exact::ntt_cache_requires_i16_tail;
-use exact::{exact_cache_plan, prepare_exact_ntt_cache};
+use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
+pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
+pub use prepared_artifact::{
+    build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
+    PreparedVerifierNttCacheBinding, PreparedVerifierNttCacheMetadata,
+    PREPARED_VERIFIER_NTT_CACHE_MAX_BYTES,
+};
 
 /// Transform representation stored by one exact-prefix NTT cache entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -299,6 +308,44 @@ pub fn centered_quotient_requires_i16_tail(
     Err(AkitaError::InvalidSetup(format!(
         "centered quotient term exceeds base plus i16-tail capacity for D={ring_dimension}, rhs_abs_bound={rhs_abs_bound}"
     )))
+}
+
+fn dense_i8_exact_ifma52_is_profitable(
+    field_modulus: u128,
+    ring_dimension: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+    ifma52_cache_enabled: bool,
+) -> bool {
+    if field_modulus <= Q64_MODULUS as u128 || !ifma52_cache_enabled {
+        return false;
+    }
+    let capacity = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from));
+    !capacity.supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
+        && capacity
+            .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+            .supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
+}
+
+/// Whether a dense signed-i8 commitment should use one exact AVX-512 IFMA52
+/// accumulation instead of bounded portable CRT chunks.
+///
+/// This selects only q128 rows that need the 14-bit tail for a complete IFMA52
+/// accumulation. AVX2, NEON, scalar execution, and rows that fit the base
+/// IFMA52 product retain the chunked i8 kernel.
+pub fn dense_i8_commit_prefers_exact_ifma52(
+    field_modulus: u128,
+    ring_dimension: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> bool {
+    dense_i8_exact_ifma52_is_profitable(
+        field_modulus,
+        ring_dimension,
+        width,
+        rhs_abs_bound,
+        ifma52_cache_enabled_for_ring_dimension(ring_dimension),
+    )
 }
 
 /// Field-typed form of [`centered_quotient_requires_i16_tail`] used by the
@@ -1138,6 +1185,40 @@ impl VerifierNttCache {
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
         Ok(slots.values().map(|slot| slot.cache_bytes).sum())
+    }
+
+    pub(crate) fn install_trusted<const D: usize>(
+        &self,
+        metadata: PreparedVerifierNttCacheMetadata,
+        prepared: PreparedNttCache<D>,
+    ) -> Result<(), AkitaError> {
+        if metadata.ring_dimension != D
+            || !prepared.has_negacyclic()
+            || prepared.has_cyclic()
+            || prepared.has_i16_tail() != (metadata.tail_prefix_len > 0)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "trusted prepared verifier cache has inconsistent geometry".into(),
+            ));
+        }
+        let key = VerifierNttCacheKey {
+            ring_d: D,
+            width: metadata.width,
+            rhs_abs_bound: metadata.rhs_abs_bound,
+        };
+        let prepared = Arc::new(prepared);
+        let built = Arc::new(ErasedVerifierNttCache {
+            ring_d: D,
+            base_prefix_len: metadata.base_prefix_len,
+            tail_prefix_len: metadata.tail_prefix_len,
+            cache_bytes: prepared.cache_bytes(),
+            cache: prepared,
+        });
+        self.slots
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?
+            .insert(key, built);
+        Ok(())
     }
 
     /// Build, erase, and atomically install an entry when needed.

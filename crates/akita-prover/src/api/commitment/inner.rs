@@ -4,8 +4,9 @@ use crate::compute::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::CommitInnerWitness;
 use akita_algebra::ring::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{DigitBlocks, RingVec};
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
@@ -97,19 +98,23 @@ where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    let mut stacked = Vec::with_capacity(geometry.logical_output_rows(n_b)?);
     let polynomial_planes = validate_outer_slice_digits::<D_B>(polynomial_digits, geometry)?;
+    let mut inputs = Vec::with_capacity(geometry.slice_count().get());
     for_each_outer_slice_input::<D_B>(polynomial_planes, geometry, |input| {
-        let rows = backend.digit_rows::<D_B>(prepared, n_b, input, log_basis)?;
-        if rows.len() != n_b {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {} B commitment rows, expected {n_b}",
-                rows.len(),
-            )));
-        }
-        stacked.extend(rows);
+        inputs.push(input.to_vec());
         Ok(())
     })?;
+    let input_refs = inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let row_batches = backend.digit_rows::<D_B>(prepared, n_b, &input_refs, log_basis)?;
+    if row_batches.len() != input_refs.len() || row_batches.iter().any(|rows| rows.len() != n_b) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "backend returned B commitment row shape {:?}, expected {} batches of {n_b} rows",
+            row_batches.iter().map(Vec::len).collect::<Vec<_>>(),
+            input_refs.len(),
+        )));
+    }
+    let mut stacked = Vec::with_capacity(geometry.logical_output_rows(n_b)?);
+    stacked.extend(row_batches.into_iter().flatten());
     Ok(stacked)
 }
 

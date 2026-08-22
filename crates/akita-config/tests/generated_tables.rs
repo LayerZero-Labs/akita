@@ -37,14 +37,14 @@
 
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::CommitmentConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, GenerationPreplans, GroupedGenerationRequest,
     ALL_GENERATED_FAMILIES,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 use std::sync::OnceLock;
 
@@ -102,11 +102,8 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
                             .unwrap_or_else(|error| {
                                 panic!("{} S-row lookup failed: {error}", family.module_name)
                             });
-                    CommittedGroupProfile::try_from_params(
-                        group,
-                        &schedule.root.params.final_group.commitment,
-                    )
-                    .expect("valid generated profile")
+                    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
+                        .expect("valid generated profile")
                 })
         })
         .collect::<Vec<_>>();
@@ -117,10 +114,10 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
         for entry in catalog.entries {
             for group in entry.root.precommitted_groups {
                 assert!(
-                    produced.contains(&group.descriptor),
+                    produced.contains(&group.group.profile),
                     "family {} embeds a grouped precommitted descriptor without an exact generated S producer: {:?}",
                     family.module_name,
-                    group.descriptor.group
+                    group.group.profile.group
                 );
             }
         }
@@ -180,13 +177,8 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 #[cfg(feature = "all-schedules")]
 #[test]
 fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
-    use akita_schedules::GeneratedWitnessPartition;
     use std::collections::BTreeSet;
 
-    let chunks = |partition: GeneratedWitnessPartition| match partition {
-        GeneratedWitnessPartition::Single => 1,
-        GeneratedWitnessPartition::Distributed { num_chunks } => num_chunks,
-    };
     let catalogs = [
         fp128::OneHot::schedule_catalog().expect("W1 catalog"),
         fp128::OneHotMultiChunkW2R2::schedule_catalog().expect("W2 catalog"),
@@ -198,14 +190,11 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
     for catalog in catalogs {
         for entry in catalog.entries {
             observed.insert((
-                entry.root.final_group.commitment.outer_slice_count,
-                chunks(entry.root.witness_partition),
+                entry.root.core.group.outer_slice_count,
+                entry.root.core.witness_chunks,
             ));
             for fold in entry.recursive_folds.iter().take(2) {
-                observed.insert((
-                    fold.witness.outer_slice_count,
-                    chunks(fold.witness_partition),
-                ));
+                observed.insert((fold.core.group.outer_slice_count, fold.core.witness_chunks));
             }
         }
     }
@@ -216,6 +205,42 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
             "generated schedules must retain S/W={expected:?}; observed {observed:?}"
         );
     }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_expansion_rejects_zero_witness_chunks() {
+    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let policy = policy_of::<fp128::Dense>();
+    let original = *catalog
+        .entries
+        .iter()
+        .find(|entry| !entry.recursive_folds.is_empty())
+        .expect("recursive generated row");
+
+    let mut root_zero = original;
+    root_zero.root.core.witness_chunks = 0;
+    let error = schedule_from_entry(
+        &root_zero,
+        &root_zero.to_runtime_lookup_key(),
+        &policy,
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect_err("zero root chunk count must reject");
+    assert!(error.to_string().contains("chunk count must be nonzero"));
+
+    let mut recursive_zero = original;
+    let folds = Box::leak(recursive_zero.recursive_folds.to_vec().into_boxed_slice());
+    folds[0].core.witness_chunks = 0;
+    recursive_zero.recursive_folds = folds;
+    let error = schedule_from_entry(
+        &recursive_zero,
+        &recursive_zero.to_runtime_lookup_key(),
+        &policy,
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect_err("zero recursive chunk count must reject");
+    assert!(error.to_string().contains("chunk count must be nonzero"));
 }
 
 #[cfg(feature = "all-schedules")]
@@ -250,6 +275,60 @@ fn catalog_identity_rejects_planner_policy_changes() {
     mutated.identity.selective_l2_response_model =
         akita_schedules::SelectiveL2ResponseModelId::Disabled;
     assert_rejected("selective L2 response model", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_binds_every_role_specific_execution_field() {
+    let policy = policy_of::<fp128::Dense>();
+    let catalog = fp128::Dense::schedule_catalog().expect("fp128 dense catalog");
+    let original = *catalog
+        .entries
+        .iter()
+        .find(|entry| !entry.recursive_folds.is_empty())
+        .expect("recursive generated row");
+    let identity = akita_schedules::expected_catalog_identity(
+        catalog.identity.family_name,
+        &policy,
+        std::slice::from_ref(&original),
+        fp128::Dense::ring_challenge_config,
+    )
+    .expect("single-row identity");
+    let assert_rejected = |entry, label| {
+        let mutated = akita_schedules::GeneratedScheduleTable {
+            entries: Box::leak(vec![entry].into_boxed_slice()),
+            identity,
+        };
+        let error =
+            validate_catalog_identity(&mutated, &policy, fp128::Dense::ring_challenge_config)
+                .expect_err("executed generated field mutation must invalidate catalog identity");
+        assert!(
+            error.to_string().contains("catalog identity mismatch"),
+            "{label} mutation returned the wrong error: {error}"
+        );
+    };
+
+    let mut root_digits = original;
+    root_digits.root.num_digits_inner += 1;
+    assert_rejected(root_digits, "root inner digits");
+
+    let mut recursive_payload = original;
+    let folds = Box::leak(
+        recursive_payload
+            .recursive_folds
+            .to_vec()
+            .into_boxed_slice(),
+    );
+    folds[0].payload_mode = match folds[0].payload_mode {
+        akita_types::CommitmentPayloadMode::Compressed => akita_types::CommitmentPayloadMode::Raw,
+        akita_types::CommitmentPayloadMode::Raw => akita_types::CommitmentPayloadMode::Compressed,
+    };
+    recursive_payload.recursive_folds = folds;
+    assert_rejected(recursive_payload, "recursive payload mode");
+
+    let mut terminal_payload = original;
+    terminal_payload.terminal.z_payload_bytes += 1;
+    assert_rejected(terminal_payload, "terminal payload bytes");
 }
 
 #[cfg(feature = "all-schedules")]
@@ -310,17 +389,12 @@ fn adaptive_catalog_identity_rejects_terminal_dimension_growth() {
     if !entry.recursive_folds.is_empty() {
         let mut folds = entry.recursive_folds.to_vec();
         let last = folds.last_mut().expect("copied recursive fold");
-        last.witness.inner_commit_matrix.ring_dimension = 64;
-        last.witness.outer_commit_matrix.ring_dimension = 64;
-        last.open_commit_matrix.ring_dimension = 64;
+        last.core.group.inner_commit_matrix.ring_dimension = 64;
+        last.core.group.outer_commit_matrix.ring_dimension = 64;
+        last.core.open_commit_matrix.ring_dimension = 64;
         entry.recursive_folds = Box::leak(folds.into_boxed_slice());
     } else {
-        entry
-            .root
-            .final_group
-            .commitment
-            .inner_commit_matrix
-            .ring_dimension = 64;
+        entry.root.core.group.inner_commit_matrix.ring_dimension = 64;
     }
     entry.terminal.inner_commit_matrix.ring_dimension = 128;
 
@@ -350,7 +424,7 @@ fn recursive_companion_catalogs_contain_only_offloaded_schedules() {
             catalog.entries.iter().all(|entry| entry
                 .recursive_folds
                 .iter()
-                .any(|fold| fold.incoming_setup_prefix.is_some())),
+                .any(|fold| fold.setup_prefix.is_some())),
             "recursive companion family {} contains a schedule without setup offloading",
             family.module_name
         );
@@ -434,7 +508,7 @@ fn table_backed_expanded(
     family: &GeneratedFamily,
     catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
-) -> Result<FoldSchedule, akita_field::AkitaError> {
+) -> Result<FoldSchedule, akita_error::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
     let entry = table_entry(catalog, &lookup_key).ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(

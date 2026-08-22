@@ -7,7 +7,7 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommitmentSliceCount, CommittedGroupProfile, CompressionChainPlan,
+    detect_field_modulus, CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams,
     PolynomialGroupLayout,
 };
 
@@ -21,7 +21,8 @@ type MatrixFields = (
     usize,
 );
 use akita_algebra::ring::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -170,14 +171,14 @@ impl<F: FieldCore> Commitment<F> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroup<F: FieldCore> {
     /// Exact public algebraic profile and commitment geometry.
-    pub profile: CommittedGroupProfile,
+    pub profile: GroupCommitPhaseParams,
     /// Terminal compressed `p_F` payload.
     pub commitment: Commitment<F>,
 }
 
 impl<F: FieldCore> CommittedGroup<F> {
     /// Build a self-describing group commitment.
-    pub fn new(profile: CommittedGroupProfile, commitment: Commitment<F>) -> Self {
+    pub fn new(profile: GroupCommitPhaseParams, commitment: Commitment<F>) -> Self {
         Self {
             profile,
             commitment,
@@ -185,7 +186,7 @@ impl<F: FieldCore> CommittedGroup<F> {
     }
 
     /// Borrow the exact frozen commitment profile.
-    pub fn profile(&self) -> &CommittedGroupProfile {
+    pub fn profile(&self) -> &GroupCommitPhaseParams {
         &self.profile
     }
 
@@ -211,15 +212,12 @@ impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
             .profile
             .outer_slice_count
             .complete_source_coefficients(
-                self.profile.outer_commit_matrix.output_rank(),
-                self.profile.outer_commit_matrix.ring_dimension(),
+                self.profile.outer.matrix.output_rank(),
+                self.profile.outer.matrix.ring_dimension(),
             )
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let expected_coeffs = CompressionChainPlan::for_complete_source(
-            self.profile
-                .outer_commit_matrix
-                .sis_table_key()
-                .modulus_profile,
+            self.profile.outer.matrix.sis_table_key().modulus_profile,
             source_coefficients,
         )
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?
@@ -257,23 +255,25 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
         write_usize(&mut writer, profile.group.num_vars())?;
         write_usize(&mut writer, profile.group.num_polynomials())?;
         for value in [
-            profile.num_live_ring_elements_per_claim,
-            profile.num_positions_per_block,
-            profile.num_live_blocks,
+            profile.blocks.live_ring_elements_per_claim,
+            profile.blocks.positions_per_block,
+            profile.blocks.live_blocks,
         ] {
             write_usize(&mut writer, value)?;
         }
         write_usize(&mut writer, profile.outer_slice_count.get())?;
         profile
-            .log_basis_inner
+            .inner
+            .digits
+            .log_basis
             .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, profile.num_digits_inner)?;
-        let inner_table_key = profile.inner_commit_matrix.sis_table_key().ok_or_else(|| {
+        write_usize(&mut writer, profile.inner.digits.num_digits)?;
+        let inner_table_key = profile.inner.matrix.sis_table_key().ok_or_else(|| {
             SerializationError::InvalidData(
                 "precommitted group cannot use an L2 A security route".into(),
             )
         })?;
-        for matrix in [inner_table_key, profile.outer_commit_matrix.sis_table_key()] {
+        for matrix in [inner_table_key, profile.outer.matrix.sis_table_key()] {
             matrix
                 .modulus_profile
                 .tag()
@@ -292,13 +292,13 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
                 .serialize_with_mode(&mut writer, Compress::No)?;
             let params = if matrix.role == SisMatrixRole::Inner {
                 (
-                    profile.inner_commit_matrix.output_rank(),
-                    profile.inner_commit_matrix.input_width(),
+                    profile.inner.matrix.output_rank(),
+                    profile.inner.matrix.input_width(),
                 )
             } else {
                 (
-                    profile.outer_commit_matrix.output_rank(),
-                    profile.outer_commit_matrix.input_width(),
+                    profile.outer.matrix.output_rank(),
+                    profile.outer.matrix.input_width(),
                 )
             };
             write_usize(&mut writer, params.0)?;
@@ -308,9 +308,11 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
                 .serialize_with_mode(&mut writer, Compress::No)?;
             if matrix.role == SisMatrixRole::Inner {
                 profile
-                    .log_basis_outer
+                    .outer
+                    .digits
+                    .log_basis
                     .serialize_with_mode(&mut writer, Compress::No)?;
-                write_usize(&mut writer, profile.num_digits_outer)?;
+                write_usize(&mut writer, profile.outer.digits.num_digits)?;
             }
         }
         self.commitment.serialize_with_mode(&mut writer, compress)
@@ -396,7 +398,7 @@ where
         }
 
         let version = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        if version != CommittedGroupProfile::VERSION {
+        if version != GroupCommitPhaseParams::VERSION {
             return Err(SerializationError::InvalidData(format!(
                 "unknown committed-group profile version {version}"
             )));
@@ -440,19 +442,25 @@ where
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
 
-        let descriptor = CommittedGroupProfile {
+        let descriptor = GroupCommitPhaseParams {
             version,
             group,
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
+
+            blocks: crate::BlockGeometry::new(
+                num_live_ring_elements_per_claim,
+                num_positions_per_block,
+                num_live_blocks,
+            ),
+
             outer_slice_count,
-            log_basis_inner,
-            num_digits_inner,
-            inner_commit_matrix,
-            log_basis_outer,
-            num_digits_outer,
-            outer_commit_matrix,
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                inner_commit_matrix,
+            ),
+            outer: crate::RoleParams::new(
+                crate::GadgetDigits::new(log_basis_outer, num_digits_outer),
+                outer_commit_matrix,
+            ),
         };
         let field_bits = 128 - (detect_field_modulus::<F>() - 1).leading_zeros();
         descriptor
@@ -461,15 +469,12 @@ where
         let source_coefficients = descriptor
             .outer_slice_count
             .complete_source_coefficients(
-                descriptor.outer_commit_matrix.output_rank(),
-                descriptor.outer_commit_matrix.ring_dimension(),
+                descriptor.outer.matrix.output_rank(),
+                descriptor.outer.matrix.ring_dimension(),
             )
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let num_coeffs = CompressionChainPlan::for_complete_source(
-            descriptor
-                .outer_commit_matrix
-                .sis_table_key()
-                .modulus_profile,
+            descriptor.outer.matrix.sis_table_key().modulus_profile,
             source_coefficients,
         )
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?
@@ -558,19 +563,13 @@ mod committed_group_tests {
             outer_width,
         )
         .expect("audited B profile");
-        let profile = CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+        let profile = GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(11, 1),
-            num_live_ring_elements_per_claim: 32,
-            num_positions_per_block: 32,
-            num_live_blocks: 1,
+            blocks: crate::BlockGeometry::new(32, 32, 1),
             outer_slice_count: CommitmentSliceCount::ONE,
-            log_basis_inner: 1,
-            num_digits_inner: 1,
-            inner_commit_matrix,
-            log_basis_outer: 1,
-            num_digits_outer: 1,
-            outer_commit_matrix,
+            inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
+            outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
         };
         let source_coefficients = outer_commit_matrix.output_rank() * 64;
         let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
@@ -603,7 +602,7 @@ mod committed_group_tests {
         assert_eq!(decoded, group);
 
         let mut unknown_version = bytes.clone();
-        unknown_version[0] = CommittedGroupProfile::VERSION + 1;
+        unknown_version[0] = GroupCommitPhaseParams::VERSION + 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             unknown_version.as_slice(),
             Compress::Yes,
@@ -613,7 +612,7 @@ mod committed_group_tests {
         .is_err());
 
         let mut previous_version = bytes.clone();
-        previous_version[0] = CommittedGroupProfile::VERSION - 1;
+        previous_version[0] = GroupCommitPhaseParams::VERSION - 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             previous_version.as_slice(),
             Compress::Yes,
@@ -658,7 +657,7 @@ mod committed_group_tests {
     #[test]
     fn committed_group_rejects_slicing_geometry_mutations_without_panicking() {
         let baseline = group();
-        let outer = baseline.profile.outer_commit_matrix;
+        let outer = baseline.profile.outer.matrix;
         let mut malformed = Vec::new();
 
         let mut wrong_count = baseline.clone();
@@ -670,7 +669,7 @@ mod committed_group_tests {
         malformed.push(wrong_polynomial_count);
 
         let mut wrong_physical_width = baseline.clone();
-        wrong_physical_width.profile.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        wrong_physical_width.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -691,7 +690,7 @@ mod committed_group_tests {
     #[test]
     fn committed_group_reaudits_unchecked_sis_descriptors() {
         let baseline = group();
-        let inner = baseline.profile.inner_commit_matrix;
+        let inner = baseline.profile.inner.matrix;
         let malformed = [
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
@@ -730,7 +729,7 @@ mod committed_group_tests {
 
         for matrix in malformed {
             let mut candidate = baseline.clone();
-            candidate.profile.inner_commit_matrix = matrix;
+            candidate.profile.inner.matrix = matrix;
             assert!(candidate.check().is_err());
             assert!(candidate
                 .serialize_with_mode(Vec::new(), Compress::Yes)

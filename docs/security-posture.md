@@ -17,7 +17,7 @@ Unchecked deserialization is reserved for internal buffers whose producer and sh
 ## Verifier No-Panic Boundary
 
 Verifier-facing execution must be panic-free for malformed public inputs.
-Public proofs, setup artifacts, schedules, `LevelParams`, opening points, commitments, claim incidence summaries, direct witnesses, and transcript data must be rejected with `AkitaError` or `SerializationError` rather than `panic!`, assertions, unchecked indexing, arithmetic overflow, or unbounded allocation.
+Public proofs, setup artifacts, schedules, fold parameters, opening points, commitments, claim incidence summaries, direct witnesses, and transcript data must be rejected with `AkitaError` or `SerializationError` rather than `panic!`, assertions, unchecked indexing, arithmetic overflow, or unbounded allocation.
 
 Verifier-reachable helpers may remain infallible only when a prior boundary has established the required invariant.
 That validation should live at deserialization, setup validation, schedule selection, verifier API entry, or prepared-state construction.

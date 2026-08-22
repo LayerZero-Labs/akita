@@ -1,10 +1,11 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, LevelParamsLike,
-    OpeningClaimsLayout, SetupProjectionGeometry, WitnessLayout,
+    CommitmentRingDims, CommitmentSliceGeometry, CommittedGroupParams, OpeningClaimsLayout,
+    SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+use akita_field::FieldCore;
 use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]
@@ -101,11 +102,11 @@ fn validate_group_witness_layout(
 }
 
 impl SetupContributionGroupInputs {
-    fn group_params_for<'a>(
+    fn group_params_for(
         &self,
-        level_params: &'a CommittedGroupParams,
-        opening_batch: &'a OpeningClaimsLayout,
-    ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
+        level_params: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<crate::GroupOpenPhaseParams, AkitaError> {
         level_params.group_params(opening_batch, self.group_id)
     }
 

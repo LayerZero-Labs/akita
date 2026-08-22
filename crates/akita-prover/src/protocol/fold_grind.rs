@@ -5,15 +5,16 @@ use crate::compute::{
     RuntimeOpeningSource,
 };
 use akita_challenges::{Challenges, FoldDraw, LiveFoldDraw, PreviewFoldDraw};
+use akita_error::AkitaError;
 use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 pub(crate) use akita_types::GroupFoldChallenges;
 use akita_types::{
     draw_group_fold_challenges, dyadic_block_ranges, golomb_rice_total_wire_bits,
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, CommittedGroupParams,
-    FoldLinfProtocolBinding, InnerCommitSecurityRoute, LevelParamsLike, OpeningClaimsLayout,
-    TerminalCommittedGroupParams, TerminalResponseShape,
+    FoldLinfProtocolBinding, InnerCommitSecurityRoute, OpeningClaimsLayout, TerminalFoldParams,
+    TerminalResponseShape,
 };
 #[cfg(test)]
 use akita_types::{OpeningFamily, OpeningMethod};
@@ -128,15 +129,15 @@ fn accepts_fold_witness_flat<F: CanonicalField>(
         .then_some(Some(response_l2_sq))
 }
 
-pub(crate) struct FoldGrindGroup<'params, 'group, G> {
+pub(crate) struct FoldGrindGroup<'group, G> {
     pub(crate) group_index: usize,
     pub(crate) group: &'group G,
-    pub(crate) params: &'params dyn LevelParamsLike,
+    pub(crate) params: akita_types::GroupOpenPhaseParams,
 }
 
-impl<G> Copy for FoldGrindGroup<'_, '_, G> {}
+impl<G> Copy for FoldGrindGroup<'_, G> {}
 
-impl<G> Clone for FoldGrindGroup<'_, '_, G> {
+impl<G> Clone for FoldGrindGroup<'_, G> {
     fn clone(&self) -> Self {
         *self
     }
@@ -160,7 +161,7 @@ pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     sparse: &akita_challenges::SparseChallengeConfig,
     poly: &P,
     shape: &TerminalResponseShape,
@@ -188,7 +189,7 @@ where
         ));
     }
     let linf_cap = expected_group.z_linf_cap;
-    params.validate_terminal_linf_cap(sparse, linf_cap)?;
+    params.validate_terminal_linf_cap(linf_cap)?;
     let response_l2_sq_cap = params.response_l2_sq_cap();
     let operator_rejection = if response_l2_sq_cap.is_some() {
         Some(
@@ -210,7 +211,7 @@ where
                 akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
                 params.d_a(),
                 0,
-                params.num_live_blocks,
+                params.blocks.live_blocks,
                 1,
                 sparse,
                 nonce,
@@ -227,9 +228,9 @@ where
                         &challenges,
                         &polys,
                         &point_indices,
-                        params.num_positions_per_block,
-                        params.num_digits_inner,
-                        params.log_basis_inner,
+                        params.blocks.positions_per_block,
+                        params.inner.digits.num_digits,
+                        params.inner.digits.log_basis,
                     )
                 }
             )?;
@@ -262,7 +263,7 @@ where
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         1,
         sparse,
         nonce,
@@ -286,11 +287,11 @@ where
             nonce,
             attempts = nonce + 1,
             ring_dimension = params.d_a(),
-            num_live_blocks = params.num_live_blocks,
-            num_positions_per_block = params.num_positions_per_block,
+            num_live_blocks = params.blocks.live_blocks,
+            num_positions_per_block = params.blocks.positions_per_block,
             response_coeffs = witness.centered_coeffs_flat().len(),
-            log_basis_inner = params.log_basis_inner,
-            num_digits_inner = params.num_digits_inner,
+            log_basis_inner = params.inner.digits.log_basis,
+            num_digits_inner = params.inner.digits.num_digits,
             challenge_weight = sparse.weight(),
             challenge_l1 = sparse.l1_norm(),
             challenge_l2_sq = sparse.challenge_l2_sq_max(),
@@ -305,8 +306,8 @@ where
     Ok(TerminalFoldGrindOutput { witness, nonce })
 }
 
-struct PreparedFoldGrindGroup<'params, 'group, G> {
-    input: FoldGrindGroup<'params, 'group, G>,
+struct PreparedFoldGrindGroup<'group, G> {
+    input: FoldGrindGroup<'group, G>,
     acceptance: FoldGrindAcceptanceCtx,
 }
 
@@ -327,7 +328,7 @@ pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     polys: &[&P],
     point_indices: &[usize],
     root_lp: &CommittedGroupParams,
-    params: &(impl LevelParamsLike + ?Sized),
+    params: &akita_types::GroupOpenPhaseParams,
 ) -> Result<(DecomposeFoldWitness<F>, FoldChunkCoefficients), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -398,7 +399,7 @@ fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
     opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
-    groups: &[PreparedFoldGrindGroup<'_, '_, G>],
+    groups: &[PreparedFoldGrindGroup<'_, G>],
     max_grind_attempts: u32,
 ) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where
@@ -425,7 +426,7 @@ where
                     let group = &prepared_group.input;
                     let challenges = draw_group_fold_challenges::<F, E, _>(
                         &mut preview,
-                        group.params,
+                        &group.params,
                         group.group_index,
                         group.group.num_polynomials(),
                         nonce,
@@ -433,7 +434,7 @@ where
                     let output =
                         group
                             .group
-                            .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
+                            .probe_fold(opening_ctx, &challenges, root_lp, &group.params)?;
                     let observed_l2_sq = {
                         let _span = tracing::info_span!("fold_grind_acceptance_check").entered();
                         accepts_fold_witness_flat(
@@ -462,7 +463,7 @@ where
             let challenge_config = group.params.fold_challenge_config();
             let challenges = draw_group_fold_challenges::<F, E, _>(
                 &mut live,
-                group.params,
+                &group.params,
                 group.group_index,
                 group.group.num_polynomials(),
                 nonce,
@@ -538,7 +539,7 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    groups: &[FoldGrindGroup<'_, '_, G>],
+    groups: &[FoldGrindGroup<'_, G>],
     _tail_t_vectors: Option<usize>,
 ) -> Result<(Vec<FoldProbeOutput<F>>, u32), AkitaError>
 where
@@ -641,14 +642,16 @@ mod tests {
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        params.own_group_mut().opening.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
 
         let mut draw = FixedDraw::default();
         let challenges =
-            draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 3, 2, 7).unwrap();
+            draw_group_fold_challenges::<F, F, _>(&mut draw, &params.final_group(), 3, 2, 7)
+                .unwrap();
         assert_eq!(draw.draws, 1);
         let OpeningFamily::SubringCoefficientPacking(challenges) = challenges else {
             panic!("expected coefficient-packing challenges");
@@ -685,7 +688,7 @@ mod tests {
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
 
@@ -693,9 +696,16 @@ mod tests {
             SparseChallengeConfig::pm1_only(0),
             SparseChallengeConfig::pm1_only(1),
         ] {
-            params.fold_challenge_config = config;
+            params.own_group_mut().opening.fold_challenge_config = config;
             let mut draw = FixedDraw::default();
-            assert!(draw_group_fold_challenges::<F, F, _>(&mut draw, &params, 0, 1, 0).is_err());
+            assert!(draw_group_fold_challenges::<F, F, _>(
+                &mut draw,
+                &params.final_group(),
+                0,
+                1,
+                0
+            )
+            .is_err());
             assert_eq!(draw.draws, 0);
         }
     }

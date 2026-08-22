@@ -10,8 +10,9 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
 use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,

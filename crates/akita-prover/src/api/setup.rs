@@ -1,6 +1,8 @@
 //! Prover setup artifact and config-free setup expansion helpers.
 
-use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
+use akita_error::AkitaError;
+
+use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
@@ -242,13 +244,15 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
-            CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
-            OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
-            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+            scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
+            CompressionChainWitness, GroupCommitPhaseParams, GroupOpenPhaseParams,
+            InnerCommitMatrixParams, OuterCommitMatrixParams, PackedNegativeBinary,
+            PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
             DEFAULT_SIS_SECURITY_POLICY,
         };
+
+        const PREFIX_D: usize = 64;
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
             8,
@@ -257,14 +261,14 @@ mod tests {
         )
         .expect("generate setup");
         let decomposed =
-            RingVec::from_coeffs_with_ring_dim(Vec::new(), 64).expect("empty A-native hint");
+            RingVec::from_coeffs_with_ring_dim(Vec::new(), PREFIX_D).expect("empty A-native hint");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                 role: SisMatrixRole::Inner,
-                ring_dimension: 64,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
                 coeff_linf_bound: 32_767,
             },
             1,
@@ -276,7 +280,7 @@ mod tests {
                 table_digest: SisTableDigest::CURRENT,
                 modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                 role: SisMatrixRole::Outer,
-                ring_dimension: 64,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
                 coeff_linf_bound: 3,
             },
             inner_commit_matrix.output_rank(),
@@ -285,7 +289,7 @@ mod tests {
         let commitment_rows = outer_commit_matrix.output_rank();
         let compression_plan = CompressionChainPlan::for_complete_source(
             SisModulusProfileId::Q128OffsetA7F7,
-            commitment_rows * 64,
+            commitment_rows * PREFIX_D,
         )
         .expect("prefix compression plan");
         let compression_stages = compression_plan
@@ -314,20 +318,21 @@ mod tests {
             &compression_quotients,
         )
         .expect("compression-valid A-native hint");
-        let commitment_params = PrecommittedLevelParams {
-            layout: CommittedGroupProfile {
-                version: CommittedGroupProfile::VERSION,
-                group: PolynomialGroupLayout::singleton(6),
-                num_live_ring_elements_per_claim: 1,
-                num_positions_per_block: 1,
-                num_live_blocks: 1,
+        let commitment_params = GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: GroupCommitPhaseParams {
+                version: GroupCommitPhaseParams::VERSION,
+                group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
+                blocks: akita_types::BlockGeometry::new(1, 1, 1),
                 outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                log_basis_inner: 1,
-                num_digits_inner: 1,
-                inner_commit_matrix,
-                log_basis_outer: 1,
-                num_digits_outer: 1,
-                outer_commit_matrix,
+                inner: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(1, 1),
+                    inner_commit_matrix,
+                ),
+                outer: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(1, 1),
+                    outer_commit_matrix,
+                ),
             },
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
@@ -339,10 +344,12 @@ mod tests {
         let err = setup
             .prefix_slots
             .insert(SetupPrefixSlot {
-                id: scheduled_setup_prefix(1, commitment_params).slot_id(),
+                id: scheduled_setup_prefix(PREFIX_D, commitment_params)
+                    .slot_id()
+                    .expect("setup prefix group"),
                 commitment: SetupPrefixPublicCommitment {
                     rows: vec![
-                        RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);
+                        RingVec::from_coeffs(vec![Prime128Offset275::default(); PREFIX_D]);
                         commitment_rows
                     ],
                 },

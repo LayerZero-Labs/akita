@@ -7,7 +7,8 @@
 
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_challenges::LiveFoldDraw;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{EqFactoredSumcheckInstanceVerifier, EqFactoredSumcheckInstanceVerifierExt};
 use akita_transcript::labels;
@@ -37,7 +38,7 @@ pub(crate) struct RangeLeafVerifierInput<E: FieldCore> {
 /// each group's native fold-challenge config and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
 /// [`akita_challenges::Challenges`] set with
-/// `lp.num_live_blocks`/`num_total_polynomials`.
+/// `lp.blocks.live_blocks`/`num_total_polynomials`.
 ///
 /// # Errors
 ///
@@ -59,7 +60,7 @@ where
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         let drawn = draw_group_fold_challenges::<F, E, _>(
             &mut LiveFoldDraw::<F, T>::new(transcript),
-            group_lp,
+            &group_lp,
             group_index,
             k_g,
             grind_nonce,

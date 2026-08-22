@@ -15,7 +15,9 @@ The planner can also generate schedule values when a preset wants a table-backed
 
 ## What The Planner Optimizes
 
-Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
+Akita proofs fold the witness at the root, may fold it through more recursive
+levels, and then send the terminal witness directly. The planner chooses the
+best complete schedule under the configured selection policy.
 
 The complete schedule orders are:
 
@@ -48,7 +50,7 @@ leave `precommitteds` empty:
   opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
+`GroupCommitPhaseParams` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.
@@ -121,7 +123,10 @@ At the root, the planner iterates over the configured `log_basis` range and over
 
 Batching is folded directly into the root B and D widths. A batched root does not first plan a singleton layout and scale it later; the matrix widths are sized for the actual `num_polynomials` count.
 
-The planner fails with `UnsupportedSchedule` when no candidate contains at least two folds. Degenerate inputs are rejected instead of producing a separate proof topology.
+Root contraction is only a search ordering hint. The planner admits contractive
+and noncontractive root candidates into one suffix search and selects a complete
+schedule only with `SelectionPolicyId`. It returns `UnsupportedSchedule` only
+when no valid complete schedule exists in the audited fold domain.
 
 ## Recursive Suffix Search
 
@@ -155,9 +160,9 @@ terminal binds inner `t` and contributes no duplicate `u` bytes. This is a
 schedule property, not a proof-derived layout guess.
 
 The search is capped by `MAX_RECURSION_DEPTH`. Beyond that cap, the suffix may
-terminate only if doing so still produces the required root-plus-suffix folded
-topology. In the supported parameter ranges, schedules do not need deeper
-recursion, and the cap keeps verifier-reachable fallback work bounded.
+terminate only when the current state can feed the terminal directly. In the
+supported parameter ranges, offline schedule generation does not need deeper
+recursion. Runtime verification never invokes this search.
 
 ## Proof-Size Accounting
 
@@ -221,15 +226,16 @@ alone.
 
 ## Generated Tables
 
-The planner owns the generated schedule-table representation and expansion
+The planner owns the generated schedule table representation and expansion
 logic. Deterministic generated table data is tracked in the `akita-schedules`
 crate. Compact entries mirror the protocol topology:
 
-- `GeneratedRootFold` records the root-only challenge form, exact fold digits
-  and cap, ordered precommitted groups, final-group commitment, open matrix,
-  and witness partition.
-- `GeneratedRecursiveFold` records the recursive witness commitment, open
-  matrix, optional incoming setup prefix, and witness partition.
+- `GeneratedFoldCore` stores the new group, shared opening matrix, and witness
+  chunk count used by every nonterminal fold.
+- `GeneratedRootFold` adds the root inner digit depth and ordered frozen
+  precommitted groups.
+- `GeneratedRecursiveFold` adds the optional setup prefix, payload mode, and
+  optional L2 response cap.
 - `GeneratedTerminalFold` records only source geometry and the inner matrix
   choice; terminal B/D matrices and outer/open digit bases do not exist.
 

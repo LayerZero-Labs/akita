@@ -1,6 +1,6 @@
 //! Offline interpretation of catalog-bound planner policy data.
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::{ChunkedWitnessCfg, DecompositionParams, PlannerPolicy, SelectionPolicyId};
 use akita_types::MAX_I16_LOG_BASIS;
 

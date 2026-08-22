@@ -64,6 +64,12 @@ children if compilation is unexpectedly broad or long.
 Canonical policy: [`docs/documentation.md`](docs/documentation.md).
 Narrative docs live in the [Akita Book](book/README.md); design records in `specs/` until folded ([`specs/PRUNING.md`](specs/PRUNING.md)).
 
+The Book must not cite, mention, or depend on the unpublished Akita paper.
+Explain every needed idea in the Book itself. Use current code, live
+specifications, and tests as sources. Do not describe a design that exists only
+in the draft as current or planned behavior. This restriction stays in force
+until maintainers explicitly mark the paper as published and stable.
+
 - **Hard (CI):** dead symbols in live specs/docs, `Book-chapter:` paths, `mdbook build` — [`scripts/check-doc-guardrails.sh`](scripts/check-doc-guardrails.sh).
 - **Soft (PR comment):** blast-radius advisory — [`docs/doc-blast-radius.json`](docs/doc-blast-radius.json).
 
@@ -81,6 +87,7 @@ Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **o
 - Type methods may assemble `self` into arguments, but the logic lives in one place, not duplicated across siblings.
 - If `A` needs the output of `B`, call `B` (or extend `B`); do not introduce `C` that forwards to `B`.
 - Security and sizing contracts must use the same primitives the verifier enforces. No split-brain where certification and MSIS pricing read different bounds.
+- Generic checked `usize` formulas live in `akita_error::checked`. Use those primitives directly and do not redefine local product, sum, fixed-arity multiplication, range, alignment, division, or power-of-two helpers.
 - Keep intentional boundaries: traits, arithmetic primitives, domain/security helpers, named test/bench scenarios. Delete single-use indirection.
 
 ## Feature flags

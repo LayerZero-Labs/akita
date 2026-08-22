@@ -2,16 +2,16 @@
 
 use std::time::Instant;
 
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, num_digits_open, rounded_up_collision_inf_norm,
     rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
     OpenCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
-    DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupAdmissionPolicy, PrecommittedLevelParams,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedGroupAdmissionPolicy,
 };
 
 use akita_schedules::planner_support::projected_collision_role_price;
@@ -24,7 +24,7 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
-type PrecommittedGroupSeed = (CommittedGroupProfile, HonestFoldPolicySpec);
+type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
 
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,
@@ -32,20 +32,21 @@ fn materialize_precommitted_group_for_open_basis(
     opening: PlannerOpeningCandidate,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
-) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
-    let ring_dimension = layout.inner_commit_matrix.ring_dimension();
+) -> Result<Option<GroupOpenPhaseParams>, AkitaError> {
+    let ring_dimension = layout.inner.matrix.ring_dimension();
     opening.validate_for(
         0,
         policy.claim_ext_degree,
         CommitmentRingDims {
             inner: ring_dimension,
-            outer: layout.outer_commit_matrix.ring_dimension(),
+            outer: layout.outer.matrix.ring_dimension(),
             opening: shared_opening_ring_dimension,
         },
     )?;
     let num_chunks = policy.chunks_at_level(0);
     let num_fold_coeffs = layout
-        .inner_commit_matrix
+        .inner
+        .matrix
         .input_width()
         .checked_mul(ring_dimension)
         .and_then(|count| count.checked_mul(num_chunks))
@@ -55,13 +56,15 @@ fn materialize_precommitted_group_for_open_basis(
         ring_dimension,
         challenge_dimension: opening.challenge_dimension(ring_dimension),
         num_claims: group_claims,
-        num_live_ring_elements_per_claim: layout.num_live_ring_elements_per_claim,
-        num_live_blocks: layout.num_live_blocks,
-        num_positions_per_block: layout.num_positions_per_block,
+
+        num_live_ring_elements_per_claim: layout.blocks.live_ring_elements_per_claim,
+        num_positions_per_block: layout.blocks.positions_per_block,
+        num_live_blocks: layout.blocks.live_blocks,
+
         num_chunks,
         num_fold_coeffs,
         witness_norms: honest_fold_policy
-            .witness_norms_for_inner_basis(layout.log_basis_inner, ring_dimension)?,
+            .witness_norms_for_inner_basis(layout.inner.digits.log_basis, ring_dimension)?,
         log_basis_response: log_basis_open,
         challenge_config: &opening.challenge_config(),
     })?;
@@ -76,25 +79,25 @@ fn materialize_precommitted_group_for_open_basis(
     ) else {
         return Ok(None);
     };
-    let declared_a_bound = layout
-        .inner_commit_matrix
-        .coeff_linf_bound()
-        .ok_or_else(|| AkitaError::InvalidSetup("precommitted A cannot use an L2 route".into()))?;
+    let declared_a_bound =
+        layout.inner.matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 route".into())
+        })?;
     let Some(required_b_bound) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         SisMatrixRole::Outer,
-        layout.outer_commit_matrix.ring_dimension(),
+        layout.outer.matrix.ring_dimension(),
         log_basis_open,
     ) else {
         return Ok(None);
     };
     if required_a_bound > declared_a_bound
-        || required_b_bound > layout.outer_commit_matrix.coeff_linf_bound()
+        || required_b_bound > layout.outer.matrix.coeff_linf_bound()
     {
         return Ok(None);
     }
-    PrecommittedLevelParams::admit(
+    GroupOpenPhaseParams::admit(
         *layout,
         num_digits_fold,
         PrecommittedGroupAdmissionPolicy {
@@ -126,7 +129,7 @@ struct RootFinalGroupCandidateInput<'a> {
     position_index_bits: usize,
     block_index_bits: usize,
     outer_slice_count: akita_types::CommitmentSliceCount,
-    precommitted_groups: &'a [PrecommittedLevelParams],
+    precommitted_groups: &'a [GroupOpenPhaseParams],
     precommitted_d_width: usize,
 }
 
@@ -136,7 +139,7 @@ fn precommitted_groups_for_open_basis(
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
-) -> Result<Option<(Vec<PrecommittedLevelParams>, usize)>, AkitaError> {
+) -> Result<Option<(Vec<GroupOpenPhaseParams>, usize)>, AkitaError> {
     let mut groups = Vec::with_capacity(seeds.len());
     for (group, opening) in seeds.iter().zip(openings.iter().copied()) {
         let Some(materialized) = materialize_precommitted_group_for_open_basis(
@@ -185,10 +188,8 @@ pub(crate) fn root_level_candidates_for_basis(
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
     precommitted_openings: &[PlannerOpeningCandidate],
-    root_input_witness_len: usize,
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
-    require_witness_contraction: bool,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
@@ -196,10 +197,7 @@ pub(crate) fn root_level_candidates_for_basis(
     let alpha = dimensions.d_a().trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
-        return Err(AkitaError::UnsupportedSchedule(format!(
-            "root batch num_vars={} does not exceed log2(ring_dimension)={alpha}",
-            key.final_group.num_vars()
-        )));
+        return Ok(Vec::new());
     }
 
     if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
@@ -238,9 +236,6 @@ pub(crate) fn root_level_candidates_for_basis(
         ),
     };
     let opening_batch = key.opening_layout()?;
-    let initial_witness_len_bits = root_input_witness_len
-        .checked_mul(field_bits as usize)
-        .ok_or_else(|| AkitaError::InvalidSetup("root batch witness bit length overflow".into()))?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
     let num_ring_elems = 1usize.checked_shl(reduced_vars as u32).ok_or_else(|| {
@@ -337,18 +332,6 @@ pub(crate) fn root_level_candidates_for_basis(
             else {
                 continue;
             };
-            if require_witness_contraction
-                && output_witness_len
-                    .checked_mul(candidate_log_basis_open as usize)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "root batch next witness bit length overflow".into(),
-                        )
-                    })?
-                    >= initial_witness_len_bits
-            {
-                continue;
-            }
             candidates.push((candidate_params, output_witness_len));
         }
     }
@@ -458,37 +441,56 @@ fn root_final_group_level_params_candidate(
         return Ok(None);
     };
 
-    let params = CommittedGroupParams {
-        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-        source_encoding: akita_types::CommittedSourceEncoding::for_producer(
+    let groups = precommitted_groups
+        .iter()
+        .copied()
+        .chain(std::iter::once(akita_types::GroupOpenPhaseParams {
+            profile: akita_types::GroupCommitPhaseParams {
+                version: akita_types::GroupCommitPhaseParams::VERSION,
+                group: akita_types::PolynomialGroupLayout::new(
+                    ctx.final_num_vars,
+                    ctx.main_num_polys,
+                ),
+                blocks: akita_types::BlockGeometry::new(
+                    num_live_ring_elements_per_claim,
+                    num_positions_per_block,
+                    num_live_blocks,
+                ),
+                outer_slice_count,
+                inner: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(log_basis_inner, num_digits_inner),
+                    inner_commit_matrix,
+                ),
+                outer: akita_types::RoleParams::new(
+                    akita_types::GadgetDigits::new(log_basis_open, num_digits_outer),
+                    outer_commit_matrix,
+                ),
+            },
+            opening: akita_types::GroupOpeningPlan {
+                opening_method: ctx.opening.method(),
+                fold_challenge_config: ctx.opening.challenge_config(),
+                log_basis_open,
+                num_digits_open,
+                num_digits_fold,
+            },
+            setup_natural_len: None,
+        }))
+        .collect();
+    let params = CommittedGroupParams::try_new(
+        groups,
+        open_commit_matrix,
+        akita_types::CommitmentPayloadMode::Compressed,
+        akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,
             d_a,
             ctx.final_num_vars,
             true,
         ),
-        opening_method: ctx.opening.method(),
-        log_basis_inner,
-        log_basis_outer: log_basis_open,
-        log_basis_open,
-        inner_commit_matrix,
-        outer_commit_matrix,
-        open_commit_matrix,
-        num_live_ring_elements_per_claim,
-        num_positions_per_block,
-        num_live_blocks,
-        outer_slice_count,
-        fold_challenge_config: ctx.opening.challenge_config(),
-        num_digits_inner,
-        num_digits_outer,
-        num_digits_open,
-        num_digits_fold,
         // Root folds use the ordinary single-chunk precommit path before the
         // schedule-level chunk policy is applied.
-        witness_chunk: akita_types::ChunkedWitnessCfg::default(),
-        precommitted_groups: precommitted_groups.to_vec(),
-        setup_prefix: None,
-    };
+        akita_types::ChunkedWitnessCfg::default(),
+    )?;
 
     Ok(Some(params))
 }
@@ -544,23 +546,19 @@ pub fn find_schedule(
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
     };
-    let mut memo = ScheduleMemo::new();
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
+    let initial_state = SuffixState {
+        level: 0,
+        current_witness_len: root_input_witness_len,
+        current_lb: 0,
+        source_moment: None,
+        incoming_setup_prefix: None,
+        dimension_ceiling,
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+    };
+    let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
-    let suffix = derive_selected_suffix_schedule(
-        &suffix_ctx,
-        &mut memo,
-        SuffixState {
-            level: 0,
-            current_witness_len: root_input_witness_len,
-            current_lb: 0,
-            source_moment: None,
-            incoming_setup_prefix: None,
-            dimension_ceiling,
-            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        },
-        0,
-    );
+    let suffix = derive_selected_suffix_schedule(&suffix_ctx, &mut memo, initial_state, 0);
     if let (Some(diagnostics), Some(started)) = (diagnostics, suffix_started) {
         diagnostics.add_suffix_dp_time(started.elapsed());
         let (hits, misses) = memo.setup_prefix_cache_diagnostics();
@@ -584,13 +582,13 @@ pub fn find_schedule(
             )
         {
             return Err(AkitaError::UnsupportedSchedule(format!(
-                "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
+                "no mixed-D schedule in the audited fold domain for num_vars={}, num_polynomials={}",
                 key.final_group.num_vars(),
                 key.final_group.num_polynomials()
             )));
         }
         return Err(AkitaError::UnsupportedSchedule(format!(
-            "no multi-group schedule with at least two folds for num_vars={}",
+            "no multi-group schedule in the audited fold domain for num_vars={}",
             key.final_group.num_vars()
         )));
     };
@@ -639,3 +637,7 @@ pub fn find_schedule(
     }
     planned
 }
+
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/planner_totality.rs"]
+mod totality_tests;

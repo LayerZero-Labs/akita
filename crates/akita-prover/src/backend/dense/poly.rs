@@ -5,8 +5,9 @@ use crate::kernels::linear::try_centered_i8;
 use crate::validation::is_i8_log_basis;
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use std::borrow::Cow;
 use std::mem::size_of;
@@ -271,6 +272,14 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             return None;
         }
 
+        let _span = tracing::info_span!(
+            "dense_digit_cache_build",
+            cache_bytes,
+            num_rings,
+            num_digits,
+            ring_dimension = D,
+        )
+        .entered();
         let rings = self.ring_coeffs::<D>().ok()?;
         let q = (-F::one()).to_canonical_u128() + 1;
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);

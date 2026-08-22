@@ -7,10 +7,11 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
+use akita_error::{checked, AkitaError};
 use akita_field::parallel::*;
 use akita_field::{
-    canonical_extension_basis, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    LiftBase, MulBase,
+    canonical_extension_basis, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, LiftBase,
+    MulBase,
 };
 
 use super::{
@@ -26,14 +27,6 @@ use crate::{
 
 mod compact;
 mod expanded;
-
-fn checked_product(label: &str, factors: &[usize]) -> Result<usize, AkitaError> {
-    factors.iter().try_fold(1usize, |product, &factor| {
-        product.checked_mul(factor).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("coefficient-packing {label} count overflow"))
-        })
-    })
-}
 
 #[derive(Clone, Copy)]
 struct RelationEventDomain {
@@ -94,7 +87,8 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    if SignedDigitKernel::for_log_basis(level_params.log_basis_open) != Some(SignedDigitKernel::I8)
+    if SignedDigitKernel::for_log_basis(level_params.open().digits.log_basis)
+        != Some(SignedDigitKernel::I8)
     {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing level opening basis requires the i8 digit kernel".into(),
@@ -357,8 +351,8 @@ where
     }
 
     let quotient_gadget = gadget_row_scalars::<F>(
-        r_decomp_levels::<F>(inputs.level_params.log_basis_open),
-        inputs.level_params.log_basis_open,
+        r_decomp_levels::<F>(inputs.level_params.open().digits.log_basis),
+        inputs.level_params.open().digits.log_basis,
     )
     .into_iter()
     .map(E::lift_base)
@@ -457,23 +451,21 @@ where
         physical_field_len,
     };
 
-    let e_event_capacity = checked_product(
-        "E event",
-        &[
-            group_layout.num_polynomials(),
-            group_params.num_live_blocks(),
-            opening_gadget.len(),
-            geometry.extension_degree(),
-            s.div_ceil(d_d),
-        ],
-    )?;
-    let q_event_capacity = checked_product(
-        "quotient event",
-        &[
-            inputs.relation_plan.witness_layout().quotient_depth(),
-            geometry.extension_degree(),
-        ],
-    )?;
+    let e_event_capacity = checked::product([
+        group_layout.num_polynomials(),
+        group_params.num_live_blocks(),
+        opening_gadget.len(),
+        geometry.extension_degree(),
+        s.div_ceil(d_d),
+    ])
+    .ok_or_else(|| AkitaError::InvalidSetup("coefficient-packing E event count overflow".into()))?;
+    let q_event_capacity = checked::product([
+        inputs.relation_plan.witness_layout().quotient_depth(),
+        geometry.extension_degree(),
+    ])
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup("coefficient-packing quotient event count overflow".into())
+    })?;
     let event_capacity = e_event_capacity
         .checked_add(q_event_capacity)
         .ok_or_else(|| AkitaError::InvalidSetup("packing event count overflow".into()))?;
@@ -575,30 +567,30 @@ where
                 .ok_or(AkitaError::InvalidProof)? = packing_weight * alpha_power;
         }
     }
-    let direct_term_capacity = checked_product(
-        "direct-opening term",
-        &[
-            group_layout.num_polynomials(),
-            group_params.num_live_blocks(),
-            opening_gadget.len(),
-        ],
-    )?;
+    let direct_term_capacity = checked::product([
+        group_layout.num_polynomials(),
+        group_params.num_live_blocks(),
+        opening_gadget.len(),
+    ])
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup("coefficient-packing direct-opening term count overflow".into())
+    })?;
     let direct_segment_capacity = direct_term_capacity
         .checked_mul(geometry.partial_base_field_width() / d_d)
         .ok_or_else(|| AkitaError::InvalidSetup("direct-opening segment count overflow".into()))?;
-    let z_term_capacity = checked_product(
-        "packing-Z term",
-        &[
-            inputs
-                .relation_plan
-                .witness_layout()
-                .units_for_group(inputs.group_index)?
-                .count(),
-            group_params.num_positions_per_block(),
-            group_params.num_digits_inner(),
-            group_params.num_digits_fold(),
-        ],
-    )?;
+    let z_term_capacity = checked::product([
+        inputs
+            .relation_plan
+            .witness_layout()
+            .units_for_group(inputs.group_index)?
+            .count(),
+        group_params.num_positions_per_block(),
+        group_params.num_digits_inner(),
+        group_params.num_digits_fold(),
+    ])
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup("coefficient-packing packing-Z term count overflow".into())
+    })?;
     let segment_capacity = direct_segment_capacity
         .checked_add(z_term_capacity)
         .ok_or_else(|| AkitaError::InvalidSetup("packing segment count overflow".into()))?;

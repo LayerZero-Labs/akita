@@ -23,6 +23,20 @@ use crate::{FieldCore, Fp128, Fp32, Fp64, Invertible};
 use core::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use num_traits::Zero;
 
+/// AVX2/AVX-512 additionally multiply fold inputs with 32-bit lane
+/// instructions, so their fused `FpExt2` path needs this narrower bound.
+#[cfg(all(
+    target_arch = "x86_64",
+    any(
+        target_feature = "avx2",
+        all(target_feature = "avx512f", target_feature = "avx512dq")
+    )
+))]
+#[inline(always)]
+pub(crate) const fn fp64_ext2_two_avx_fusion_safe<const P: u64>() -> bool {
+    Fp64::<P>::EXT2_TWO_FUSION_SAFE && 3 * (Fp64::<P>::C as u128) <= u32::MAX as u128
+}
+
 /// Array-like packed values over a scalar type.
 pub trait PackedValue: 'static + Copy + Send + Sync {
     /// Scalar value type carried by each lane.

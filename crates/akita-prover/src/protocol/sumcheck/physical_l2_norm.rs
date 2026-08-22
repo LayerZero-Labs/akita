@@ -3,9 +3,10 @@
 use super::digit_range::class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use super::digit_range::exact_prefix::ExactPrefixTable;
 use akita_algebra::UniPoly;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceProverExt,

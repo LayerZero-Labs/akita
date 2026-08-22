@@ -13,7 +13,7 @@
 //! source-model envelope. The response multiplier then has a distribution-free
 //! Markov interpretation once that envelope bounds the conditional mean.
 
-use akita_field::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::sis::{compute_num_digits_field_width, HonestFoldPolicySpec};
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
@@ -621,9 +621,8 @@ pub(crate) fn tensor_packed_moments(
 }
 
 fn checked_logical_group_len(num_vars: usize, num_polynomials: usize) -> Result<usize, AkitaError> {
-    1usize
-        .checked_shl(num_vars as u32)
-        .and_then(|len| len.checked_mul(num_polynomials))
+    checked::pow2(num_vars)
+        .and_then(|len| checked::product([len, num_polynomials]))
         .ok_or_else(|| AkitaError::InvalidSetup("root source length overflow".into()))
 }
 
@@ -750,7 +749,7 @@ pub(crate) fn next_source_moment(
             "response source moments disagree with the opening groups".into(),
         ));
     }
-    let quotient_depth = compute_num_digits_field_width(field_bits, params.log_basis_open);
+    let quotient_depth = compute_num_digits_field_width(field_bits, params.open().digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
@@ -860,7 +859,7 @@ pub(crate) fn next_source_moment(
             let (energy, peak) = field_digit_moments(
                 scalar_count,
                 field_bits,
-                params.log_basis_open,
+                params.open().digits.log_basis,
                 quotient_depth,
             )?;
             checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;

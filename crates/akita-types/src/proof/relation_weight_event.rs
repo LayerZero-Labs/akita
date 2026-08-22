@@ -1,6 +1,8 @@
 use std::ops::Range;
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::FieldCore;
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

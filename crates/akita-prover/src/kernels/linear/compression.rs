@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 pub(crate) fn validate_compression_batch_shape<const D: usize>(
     digit_vectors: &[&[[i8; D]]],

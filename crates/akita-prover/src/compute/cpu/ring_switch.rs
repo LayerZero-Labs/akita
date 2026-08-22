@@ -10,7 +10,8 @@ use crate::kernels::linear::{
     fused_quotient_matrix_extent, fused_split_eq_quotients_prover_bounds,
     fused_split_eq_quotients_streamed_prover_bounds, DigitRelationRows, FusedQuotientRows,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{centered_quotient_requires_i16_tail_for_field, NttCacheKey, NttTransformDomain};
 
 fn centered_rhs_abs_bound<const D: usize>(rows: &[[i32; D]], claimed: u32) -> u64 {

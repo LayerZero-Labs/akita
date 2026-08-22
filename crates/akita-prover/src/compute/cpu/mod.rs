@@ -46,9 +46,9 @@ impl CpuBackend {
     pub fn with_resource_limits(
         max_cached_ring_switch_elements: usize,
         commit_scratch_bytes_per_worker: usize,
-    ) -> Result<Self, akita_field::AkitaError> {
+    ) -> Result<Self, akita_error::AkitaError> {
         if commit_scratch_bytes_per_worker == 0 {
-            return Err(akita_field::AkitaError::InvalidSetup(
+            return Err(akita_error::AkitaError::InvalidSetup(
                 "CPU commitment scratch bytes per worker must be nonzero".into(),
             ));
         }

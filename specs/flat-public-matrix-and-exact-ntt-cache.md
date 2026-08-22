@@ -4,9 +4,9 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
-| Status        | implemented; setup-prefix zero-padding portions superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`; compact provenance certificates and large-artifact I/O are explicit follow-ups |
+| Status        | implemented |
 | PR            | #341, stacked on #338 |
-| Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
+| Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, the deleted mixed-ring experiment, and `archive/2026-Q3/setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
 | Superseded-by | Setup-prefix offloading content and capacity semantics are superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/usage/commitment-api.md |
 
@@ -1399,11 +1399,12 @@ archived according to `specs/PRUNING.md`.
 
 The scoped revision authority of these live specs must point here:
 
-- `specs/setup-layout-repack.md`: packed overlapping prefixes remain; flat
+- `specs/archive/2026-Q3/setup-layout-repack.md`: packed overlapping prefixes remain; flat
   field derivation and capacity semantics move here;
 - `specs/runtime-ring-cutover.md`: runtime schedule ownership remains;
   generation-D setup and full-envelope NTT phase-1 contracts move here;
-- `specs/mixed-ring-dimension-per-level.md`: planner/mixed-D evidence remains;
+- the deleted mixed-ring experiment: planner and mixed-D evidence is now covered
+  by `specs/role-native-projected-digit-layout.md`;
   setup carrier and cache semantics move here.
 
 ## Execution
@@ -1441,9 +1442,9 @@ or pass-through aliases that recreate the old API.
 
 ## References
 
-- `specs/setup-layout-repack.md`
+- `specs/archive/2026-Q3/setup-layout-repack.md`
 - `specs/runtime-ring-cutover.md`
-- `specs/mixed-ring-dimension-per-level.md`
+- `specs/role-native-projected-digit-layout.md`
 - `specs/setup-offloading-planner.md`
 - `crates/akita-types/src/proof/setup.rs`
 - `crates/akita-types/src/proof/setup_envelope.rs`

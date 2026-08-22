@@ -20,7 +20,8 @@ use super::operation_plans::{
 use super::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, HalvingField};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
@@ -90,10 +91,10 @@ macro_rules! delegate_digit_rows {
                 &self,
                 prepared: &Self::PreparedSetup,
                 row_len: usize,
-                digits: &[[i8; D]],
+                digit_vectors: &[&[[i8; D]]],
                 log_basis: u32,
-            ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
-                CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
+            ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+                CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
             }
         }
     };

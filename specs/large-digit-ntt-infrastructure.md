@@ -4,13 +4,15 @@
 | --- | --- |
 | Author(s) | Quang Dao |
 | Created | 2026-07-21 |
-| Status | active |
+| Status | implemented |
 | Branch | `codex/ntt-architecture` |
 | PR | [#358](https://github.com/LayerZero-Labs/akita/pull/358) |
-| Supersedes | the 2026-07 large-basis extension notes in `crt-ntt-accumulation-safety.md` |
+| Supersedes | the 2026-07 large-basis extension notes in `archive/2026-Q3/crt-ntt-accumulation-safety.md` |
 | Superseded-by | |
 | Book-chapter | book/src/foundations/ntt-crt.md |
 | Compatibility | internal API cutover and stricter terminal-proof validation; no proof or setup wire change |
+
+> **Shipped record.** The implementation landed in PR [#358](https://github.com/LayerZero-Labs/akita/pull/358). The planner search follow-up landed in PR [#355](https://github.com/LayerZero-Labs/akita/pull/355). This record remains in the root because the exact signed-digit and terminal NTT contract is still load-bearing.
 
 ## Summary
 
@@ -24,7 +26,8 @@ Akita's balanced inner commitment decomposition was artificially limited by an
 so `i8` is exact through `L = 8` and `i16` is exact through `L = 16`. This PR
 provides the complete arithmetic and prepared-setup infrastructure needed for
 large inner bases, with bases 10 and 11 as the immediate target. It does not
-change planner policy or generated schedules yet.
+change planner policy or generated schedules in PR #358 itself. The planner
+follow-up landed separately in PR #355 and is recorded below.
 
 The implementation also cuts the terminal verifier's `A * z` relation over to
 one signed-`i16` NTT matvec. Decoded terminal coefficients outside `i16` are
@@ -33,8 +36,11 @@ selected from the actual field, ring degree, matrix width, and signed bound.
 Portable, AVX2, and NEON hosts retain the homogeneous i32 CRT profile and add
 one 14-bit residue modulo 12289 only when required. AVX-512IFMA hosts at D64
 through D512 may instead use the exact homogeneous 50-bit profile selected for
-Q32, Q64, or Q128, again adding the tail only when required. Every form is
-derived, lazy, and non-serialized.
+Q32, Q64, or Q128. The Q32 and Q128 IFMA forms can add the 12289 tail when
+their base product is insufficient. The Q64 IFMA form is selected only when
+its two base residues are sufficient; otherwise selection falls back to the
+ordinary Q64 i32 profile, which can use the tail. Every form is derived, lazy,
+and non-serialized.
 
 The branch implements the arithmetic, terminal cutover, SIMD kernels,
 exactness selection, lazy verifier warming, unified NTT cache, and removal of
@@ -102,9 +108,10 @@ inside `(-P/2, P/2)`, which is the implemented condition
 For balanced base `2^L`, the canonical conservative bound is
 `B = 2^(L-1)`. For the terminal relation, all decoded coefficients are checked
 to fit `i16`, so `B = 2^15 = 32768` (`L = 16`). Capacity arithmetic must be
-overflow-safe and shared by preparation, warming, execution, tests, and any
-future planner capability check. There must not be separate wrapper formulas or
-weaker field/profile-specific approximations.
+overflow-safe and shared by preparation, warming, execution, tests, and cache
+capability checks. The planner shares the signed-digit storage envelope, but it
+does not call the field/ring/width CRT selector. Any future planner capacity
+gate must use that canonical selector rather than a weaker approximation.
 
 The canonical base profiles are:
 
@@ -117,7 +124,11 @@ The canonical base profiles are:
 For exact caches on AVX-512IFMA hosts, the corresponding base residues are
 `1 x u64` for Q32, `2 x u64` for Q64, and `3 x u64` for Q128. They store
 canonical 50-bit residues but share the same capacity and centered-Garner
-contracts as the portable profiles.
+contracts as the portable profiles. The IFMA form is used only for exact
+negacyclic requests. Ordinary cyclic, negacyclic, and paired-transform cache
+requests retain the i32 representation. Q32 and Q128 may attach 12289 as an
+i16 tail. Q64 does not attach a tail to its IFMA form; an insufficient two
+prime product selects the ordinary Q64 profile instead.
 
 `12289 - 1 = 3 * 2^12`, so the tail admits a primitive root for every
 negacyclic ring degree through `D = 2048`. It is coprime to every base profile
@@ -328,8 +339,10 @@ it must preserve the single public cache contract and the exactness selector.
     and descriptor bytes remain unchanged.
 12. Scalar, AVX2, NEON, and AVX-512IFMA implementations are
     differential-equivalent. IFMA52 exact caches are selected only at D64
-    through D512 when the required CPU features are detected. Accelerated
-    kernels are optional; scalar behavior is authoritative.
+    through D512 when the required CPU features are detected. The width-aware
+    AVX-512 i32 transform is retained for direct tests and benchmark
+    experiments, but production x86 i32 transform dispatch selects AVX2.
+    Accelerated kernels are optional; scalar behavior is authoritative.
 13. Verifier-reachable malformed inputs fail with `AkitaError` and do not
     panic.
 14. The cache API has one canonical constructor and one canonical exactness
@@ -343,9 +356,9 @@ it must preserve the single public cache contract and the exactness selector.
 
 ### Non-Goals
 
-1. Enabling planner emission of L10/L11 schedules or regenerating schedule
-   catalogs. That is a follow-up once the planner proves those schedules
-   Pareto-optimal under the canonical capability and security contracts.
+1. Changing planner emission or regenerating schedule catalogs as part of PR
+   #358. That follow-up was completed separately in PR #355; this record keeps
+   the implementation boundary explicit.
 2. Supporting balanced bases above 16 or coefficients wider than `i16` in the
    terminal relation.
 3. Adding the tail unconditionally to Q64/Q128 or to every `i16` operation.
@@ -359,8 +372,9 @@ it must preserve the single public cache contract and the exactness selector.
 7. Requiring AVX-512, AVX2, NEON, Metal, or CUDA for correctness.
 8. Standardizing a GPU buffer layout in this PR. The interface must permit one,
    but the CPU layout remains an implementation detail.
-9. Reworking planner/security pricing beyond exposing the one canonical
-   implementability contract needed by the follow-up planner PR.
+9. Reworking planner/security pricing beyond the basis capability needed by
+   PR #355. Exact field/ring/width CRT selection remains a runtime NTT
+   preparation concern.
 10. Adding a protocol-level benchmark fixture. This PR measures the NTT matvec
     kernel directly so rank, ring degree, accumulation width, digit storage,
     and exactness-tail selection can be varied independently.
@@ -518,18 +532,10 @@ Implementation criteria completed on the current branch:
       and accumulation width across the production i8/L8 path and unified i16
       L8/L10/L11 paths, without a protocol fixture.
 
-Final merge evidence still required:
-
-- [ ] Run complete generated-schedule drift checks and confirm this PR changes
-      capability tests but not catalog policy/output.
-- [x] Run every locally available cheap repository preflight check on the final
-      documentation head; record unavailable tools explicitly.
-- [x] Complete the three CI feature-matrix Clippy configurations on the final
-      implementation tree.
-- [ ] Complete focused, broader, no-panic, and relevant portability checks on
-      the final refactored head.
-- [ ] Update the spec header to the PR number and `implemented` only when every
-      required criterion is complete.
+The implementation and merge-gate evidence are complete. PR #358 passed the
+generated-schedule drift check, focused and full test suites, the no-panic and
+portability checks, the CI feature matrix, and the documentation guardrails.
+The header records the merged implementation as `implemented`.
 
 ### Testing Strategy
 
@@ -676,13 +682,23 @@ footprint: a tail adds exactly `tail_prefix_len * D * 2` bytes, and base-only
 schedules allocate zero tail bytes. Cache construction may grow only in
 proportion to transforms actually requested.
 
-### Completed NEON follow-up and future work
+### Completed commitment follow-up and future work
 
 The AArch64 follow-up implements the production-12289 fused forward tail and
 inverse head, direct signed-`i16` Montgomery ingress for both residue widths,
 and scalar differential coverage at the supported protocol dimensions. Its
 benchmark grid covers Q32/Q64 D64 through D1024, Q128 D64 through D512, and
 ranks 1, 2, 4, and 8.
+
+The commitment-kernel follow-up batches equal-width outer digit rows at the
+compute-backend boundary. Its i32 CRT path transforms and accumulates up to six
+columns before Montgomery reduction on NEON and AVX2. The batch bound is one
+named arithmetic constant, and scalar differential tests cover every count up
+to that bound. Dense q128 `i8` commitments may instead use one exact IFMA52
+accumulation when the host supports IFMA52, the base three-prime product is too
+small for the complete row, and adding the 12289 tail makes it exact. Other
+hosts and shapes retain bounded portable chunks. This policy depends on the
+arithmetic capacity and CPU capability, not a named machine or variable count.
 
 The remaining items are hypotheses to test with component benchmarks before
 changing arithmetic or prepared layout.
@@ -691,7 +707,6 @@ changing arithmetic or prepared layout.
 | --- | --- |
 | isolated component attribution | The broad transform and complete-matvec grid is implemented. Add isolated LUT-conversion and reconstruction measurements, and use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
 | NEON lane scheduling | Unrolling independent four-lane widening operations may hide multiply latency without the D64 regression observed for blanket eight-lane butterflies. Test eight-lane direct arithmetic first on streaming twists and then only on selected wide stages. |
-| batched RHS columns | Preparing and accumulating several columns together may reduce accumulator traffic and expose independent Montgomery chains, especially for rank-1 D512. Measure register pressure and temporary-cache footprint for each field tier. |
 | validated LUT access | `CenteredMontLut` exactly covers the data-derived bound, so an internally unchecked lookup after boundary validation may remove redundant per-coefficient `Option` handling. Preserve verifier rejection at the outer boundary. |
 | AVX2 i32 stages | The pointwise path already has an eight-lane Montgomery primitive. Evaluate eight lanes for transform stages `len >= 8`, four lanes at `len = 4`, and the existing fused tail. |
 | AVX2/AVX-512 i16 | Replace AVX2 scalar stages below `len = 16` with width-aware or fused stages before considering a 32-lane AVX-512BW kernel. AVX-512 frequency effects require machine-specific measurement. |
@@ -701,7 +716,7 @@ No future optimization may bake one common ring degree into the abstraction,
 make the tail unconditional, expose CPU storage through backend traits, or
 weaken the verifier no-panic boundary.
 
-### Validation status
+### Validation record
 
 - Formatting, focused algebra/prover/verifier/config tests, `single_poly_e2e`,
   documentation guardrails, and generated all-schedules drift completed during
@@ -718,8 +733,8 @@ weaken the verifier no-panic boundary.
 - `cargo machete --with-metadata` was attempted but could not run because
   `cargo-machete` is not installed in the local environment.
 - This documentation pass does not rerun the full test suite.
-- Full generated-schedule drift, broader tests, and portability remain
-  merge-gate evidence rather than claims of this documentation pass.
+- The merged PR supplied the full generated-schedule drift, broader test,
+  no-panic, and portability evidence listed above.
 
 All live commands used as final evidence must be polled to a real exit code.
 
@@ -773,7 +788,9 @@ optimization surface without serving a supported schedule.
 
 ## Documentation and Follow-Up
 
-This spec is the canonical in-flight design record for the PR. Before merge:
+This spec is the retained implementation record for the merged PR. The Book is
+the narrative source for readers, while this file keeps the exact arithmetic
+and terminal verification contract used by the implementation.
 
 - keep `book/src/foundations/gadget-decomposition.md` authoritative for the
   digit-width mapping;
@@ -784,15 +801,18 @@ This spec is the canonical in-flight design record for the PR. Before merge:
 - regenerate `docs/crt-ntt-capacity-profile.md` only from
   `scripts/gen_crt_capacity_profile.py`;
 - remove the superseded 2026-07 extension narrative from
-  `specs/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
-- update this header with the PR number and final status; and
-- after the durable content is fully folded into the book, archive this spec
-  according to `specs/PRUNING.md`.
+  `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md`, leaving a pointer to this spec;
+- keep the merged PR and Book references above as the implementation history;
+  and
+- archive this record after the exact contract is no longer needed as a
+  load-bearing reference, according to `specs/PRUNING.md`.
 
-The planner follow-up must consume the same signed interval and exact-capacity
-primitive, remove artificial inner-basis caps, regenerate catalogs from the
-canonical generator, and report the L10/L11 schedule/security/performance
-tradeoff. It must not reproduce the capacity formula in planner-local code.
+The planner follow-up is complete. The proof-optimized configuration now
+searches inner bases through L10 for Q32 and L11 for Q64 and Q128, while the
+planner validates recursive balanced bases through the signed-i16 limit. The
+planner and NTT implementation share the signed-digit storage envelope, while
+the exact field/ring/width CRT selector remains in
+`akita-types::ntt_cache` and is used by prover and verifier preparation.
 
 ## Reviewer Map
 
@@ -811,11 +831,11 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 
 ## References
 
-- `specs/crt-ntt-accumulation-safety.md` — original exact chunking and
+- `specs/archive/2026-Q3/crt-ntt-accumulation-safety.md` — original exact chunking and
   reconstruction contract (PR #134).
 - `book/src/foundations/ntt-crt.md` — production base-prime choices and CRT
   profile history.
-- `specs/terminal-direct-ring-relations-cutover.md` — direct terminal relation
+- `specs/archive/2026-Q3/terminal-direct-ring-relations-cutover.md` — direct terminal relation
   and predecessor-bound `t` semantics.
 - `specs/akita-compute-backend-metal.md` — downstream prepared-layout and
   backend-boundary requirements.

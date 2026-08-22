@@ -19,7 +19,7 @@ use akita_schedules::{
     PlannerCostModelId, PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -49,7 +49,7 @@ fn assert_schedule_eq(
         "{label}: terminal witness lengths diverge"
     );
     assert_eq!(
-        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
+        lhs.terminal.response_shape, rhs.terminal.response_shape,
         "{label}: terminal witness shapes diverge"
     );
 }
@@ -74,7 +74,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let err = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(key))
         .expect_err("resolve_catalog_row_for_key must reject uncataloged keys");
     assert!(
-        matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
+        matches!(err, akita_error::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule for catalog miss, got {err:?}"
     );
 }
@@ -124,7 +124,7 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
             Cfg::ring_challenge_config,
             Some(catalog),
         ),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        Err(akita_error::AkitaError::UnsupportedSchedule(_))
     ));
 }
 
@@ -146,7 +146,7 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
         selected.selection(),
         &policy_of::<Cfg>(),
         |_| {
-            Err(akita_field::AkitaError::InvalidSetup(
+            Err(akita_error::AkitaError::InvalidSetup(
                 "test runtime-hook drift".to_string(),
             ))
         },
@@ -154,7 +154,7 @@ fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
     )
     .expect_err("a cache hit must still execute the supplied runtime hook");
     assert!(
-        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(error, akita_error::AkitaError::InvalidSetup(_)),
         "expected runtime-hook validation failure, got {error:?}"
     );
 }
@@ -173,7 +173,7 @@ fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
     )
     .expect_err("security-invalid row must fail before digest admission");
     assert!(
-        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        matches!(error, akita_error::AkitaError::InvalidSetup(_)),
         "expected InvalidSetup, got {error:?}"
     );
 }
@@ -194,18 +194,8 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     let profiles = selected.profiles().clone();
 
     let mut low_rank_d = selected.schedule().clone();
-    let matrix = &low_rank_d
-        .root
-        .params
-        .final_group
-        .commitment
-        .open_commit_matrix;
-    low_rank_d
-        .root
-        .params
-        .final_group
-        .commitment
-        .open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+    let matrix = low_rank_d.root.params.open_matrix;
+    low_rank_d.root.params.open_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
         matrix.security_policy(),
         matrix.sis_table_key().table_digest,
         matrix.sis_modulus_profile(),
@@ -217,29 +207,20 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_a() {
     assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d);
 
     let mut low_rank_a = selected.schedule().clone();
-    let matrix = &low_rank_a
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix;
+    let matrix = &low_rank_a.root.params.inner().matrix;
     let table_key = matrix
         .sis_table_key()
         .expect("root A matrix must use the L infinity route");
-    low_rank_a
-        .root
-        .params
-        .final_group
-        .commitment
-        .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-        table_key.policy,
-        table_key.table_digest,
-        table_key.modulus_profile,
-        0,
-        matrix.input_width(),
-        table_key.coeff_linf_bound,
-        table_key.ring_dimension as usize,
-    );
+    low_rank_a.root.params.own_group_mut().profile.inner.matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            table_key.policy,
+            table_key.table_digest,
+            table_key.modulus_profile,
+            0,
+            matrix.input_width(),
+            table_key.coeff_linf_bound,
+            table_key.ring_dimension as usize,
+        );
     assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_a);
 }
 
@@ -261,27 +242,22 @@ fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
 
     let mut mutations = Vec::new();
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.ring_dimension += 1;
+    mutated.terminal.response_shape.layout.ring_dimension += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].z_coords += 1;
+    mutated.terminal.response_shape.layout.groups[0].z_coords += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].e_field_elems += 1;
+    mutated.terminal.response_shape.layout.groups[0].e_field_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].t_field_elems += 1;
+    mutated.terminal.response_shape.layout.groups[0].t_field_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated
-        .terminal
-        .params
-        .response_shape
-        .layout
-        .logical_num_elems += 1;
+    mutated.terminal.response_shape.layout.logical_num_elems += 1;
     mutations.push(mutated);
     let mut mutated = schedule.clone();
-    mutated.terminal.params.response_shape.layout.groups[0].z_payload_bytes = 0;
+    mutated.terminal.response_shape.layout.groups[0].z_payload_bytes = 0;
     mutations.push(mutated);
 
     for mutated in mutations {
@@ -308,7 +284,7 @@ fn grouped_recursive_catalog_rejects_without_recursive_feature() {
     };
     assert!(matches!(
         akita_config::RecursiveCommitmentConfig::<fp128::OneHot>::resolve_catalog_row_for_key(&key),
-        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        Err(akita_error::AkitaError::UnsupportedSchedule(_))
     ));
 }
 
@@ -408,13 +384,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         .validate_structure()
         .expect("valid grouped schedule");
     assert_eq!(
-        planned
-            .schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .role_dims(),
+        planned.schedule.root.params.role_dims(),
         CommitmentRingDims {
             inner: 512,
             outer: 64,
@@ -422,7 +392,7 @@ fn adaptive_dense_searches_multi_group_roots_while_preserving_precommits() {
         }
     );
     assert_eq!(
-        planned.schedule.root.params.precommitted_groups[0].descriptor,
+        planned.schedule.root.params.precommitted_groups()[0].profile,
         key.precommitteds[0]
     );
 }
@@ -455,7 +425,7 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 }
 fn committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
-) -> CommittedGroupProfile {
+) -> GroupCommitPhaseParams {
     Cfg::profile_without_precommitted_groups(group).expect("heterogeneous group must resolve")
 }
 
@@ -499,7 +469,7 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
     assert!(
         matches!(
             Cfg::resolve_catalog_row_for_key(&reordered),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_))
+            Err(akita_error::AkitaError::UnsupportedSchedule(_))
         ),
         "an unlisted mixed ordering must reject without runtime planner search"
     );

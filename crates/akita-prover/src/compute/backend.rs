@@ -1,7 +1,8 @@
 use crate::compute::requirements::RoutedNttRequirement;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
@@ -164,14 +165,14 @@ pub trait DigitRowsComputeBackend<F>:
 where
     F: FieldCore + CanonicalField,
 {
-    /// Negacyclic single-input digit mat-vec rows.
+    /// Negacyclic digit mat-vec rows for an equal-width input batch.
     fn digit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
         row_len: usize,
-        digits: &[[i8; D]],
+        digit_vectors: &[&[[i8; D]]],
         log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

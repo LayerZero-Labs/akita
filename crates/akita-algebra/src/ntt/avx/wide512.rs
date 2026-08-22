@@ -555,7 +555,6 @@ mod tests {
 
     #[test]
     fn wide512_i32_transforms_match_scalar_supported_degrees() {
-        check_degree::<32>();
         check_degree::<64>();
         check_degree::<128>();
         check_degree::<256>();

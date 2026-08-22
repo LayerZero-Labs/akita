@@ -25,7 +25,8 @@ use akita_types::{
 type F = fp128::Field;
 
 const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
-const MULTI_GROUP_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 34;
+const MULTI_GROUP_W8R2_FINAL_NUM_VARS: usize = 32;
 const MULTI_GROUP_PRE_GROUPS: usize = 2;
 const MULTI_GROUP_FINAL_POLYS: usize = 2;
 const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
@@ -147,7 +148,7 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         let layout = Cfg::resolve_catalog_row_for_opening(
             &lookup_key.opening_layout().expect("opening layout"),
         )
-        .map(|row| row.schedule().root.params.final_group.commitment.clone())
+        .map(|row| row.schedule().root.params.clone())
         .expect("layout");
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
@@ -377,11 +378,13 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::Dense;
     assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
-    run_dense_mode::<512, Cfg>(
-        "dense_fp128",
-        &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
-        nv,
-    );
+    let title = format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ===");
+    let root_dimension = resolve_layout::<F, Cfg>(PolynomialGroupLayout::singleton(nv)).d_a();
+    match root_dimension {
+        256 => run_dense_mode::<256, Cfg>("dense_fp128", &title, nv),
+        512 => run_dense_mode::<512, Cfg>("dense_fp128", &title, nv),
+        dimension => panic!("dense_fp128 profile does not compile ring dimension D={dimension}"),
+    }
 }
 
 fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
@@ -430,12 +433,12 @@ fn run_profile_onehot_fp128_with_cfg<
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .into_schedule();
-    let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
+    let selected_dims = std::iter::once(schedule.root.params.role_dims())
         .chain(
             schedule
                 .recursive_folds
                 .iter()
-                .map(|fold| fold.params.witness.role_dims()),
+                .map(|fold| fold.params.role_dims()),
         )
         .collect::<Vec<_>>();
     tracing::info!(
@@ -462,23 +465,21 @@ fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtFiel
     layout_note: &str,
     nv: usize,
     num_polys: usize,
+    expected_final_nv: usize,
 ) {
-    assert_eq!(
-        nv, MULTI_GROUP_FINAL_NUM_VARS,
-        "{label} fixes the main-group arity"
-    );
+    assert_eq!(nv, expected_final_nv, "{label} fixes the main-group arity");
     assert_eq!(
         num_polys, MULTI_GROUP_TOTAL_POLYS,
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {expected_final_nv}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(
         label,
         MULTI_GROUP_PRE_NUM_VARS,
-        MULTI_GROUP_FINAL_NUM_VARS,
+        expected_final_nv,
         MULTI_GROUP_FINAL_POLYS,
     );
 }
@@ -495,6 +496,7 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
         "generated per-level dimensions",
         nv,
         num_polys,
+        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -505,6 +507,7 @@ fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
         "adaptive ring dimensions + recursive setup",
         nv,
         num_polys,
+        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -515,6 +518,7 @@ fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, nu
         "adaptive ring dimensions + recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
         num_polys,
+        MULTI_GROUP_W8R2_FINAL_NUM_VARS,
     );
 }
 
@@ -630,8 +634,6 @@ fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(
     .schedule()
     .root
     .params
-    .final_group
-    .commitment
     .clone()
 }
 #[cfg(feature = "profile-onehot-fp128")]

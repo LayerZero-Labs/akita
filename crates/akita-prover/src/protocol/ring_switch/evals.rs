@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///

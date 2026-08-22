@@ -9,7 +9,8 @@
 //! same segment partition.
 
 use crate::{CommittedGroupParams, OpeningClaimsLayout};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::{checked, AkitaError};
+use akita_field::{CanonicalField, FieldCore};
 
 mod geometry;
 mod plan;
@@ -45,7 +46,7 @@ pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
     let _ = opening_batch;
     Some(crate::gadget_row_scalars::<F>(
         max_depth,
-        level_params.log_basis_open,
+        level_params.open().digits.log_basis,
     ))
 }
 
@@ -56,8 +57,7 @@ pub(crate) fn checked_slice<'a, T>(
     len: usize,
     context: &'static str,
 ) -> Result<&'a [T], AkitaError> {
-    let end = start
-        .checked_add(len)
+    let range = checked::range(start, len)
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))?;
-    slice.get(start..end).ok_or(AkitaError::InvalidProof)
+    slice.get(range).ok_or(AkitaError::InvalidProof)
 }

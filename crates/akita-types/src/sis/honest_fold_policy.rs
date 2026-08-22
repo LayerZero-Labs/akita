@@ -4,7 +4,7 @@
 //! are not runtime protocol metadata and are never evaluated by the verifier.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 #[cfg(test)]
 use super::onehot_source::SourceClass;
@@ -462,9 +462,11 @@ mod tests {
             ring_dimension,
             challenge_dimension: ring_dimension,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: blocks * positions_per_block,
-            num_live_blocks: blocks,
             num_positions_per_block: positions_per_block,
+            num_live_blocks: blocks,
+
             num_chunks: 1,
             num_fold_coeffs: positions_per_block * ring_dimension,
             witness_norms: FoldWitnessNorms::new(1, 1),
@@ -594,9 +596,11 @@ mod tests {
             ring_dimension: 64,
             challenge_dimension: 64,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 8,
-            num_live_blocks: 8,
             num_positions_per_block: 1,
+            num_live_blocks: 8,
+
             num_chunks: 2,
             num_fold_coeffs: 2 * 64,
             witness_norms: FoldWitnessNorms::new(1, 1),
@@ -615,9 +619,11 @@ mod tests {
             ring_dimension: 64,
             challenge_dimension: 64,
             num_claims: 1,
+
             num_live_ring_elements_per_claim: 8,
-            num_live_blocks: 3,
             num_positions_per_block: 3,
+            num_live_blocks: 3,
+
             num_chunks: 1,
             num_fold_coeffs: 3 * 64,
             witness_norms: FoldWitnessNorms::new(1, 1),

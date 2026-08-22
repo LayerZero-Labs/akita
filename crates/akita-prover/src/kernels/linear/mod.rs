@@ -1,14 +1,14 @@
 //! Linear algebra helpers for ring commitment.
 
-use akita_algebra::ntt::MontCoeff;
-use akita_algebra::ntt::PrimeWidth;
+use akita_algebra::ntt::{MontCoeff, PrimeWidth, I32_LAZY_DOT_BATCH};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     cyclic_ntt_with_i16_tail_to_ring, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
+use akita_field::{CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 

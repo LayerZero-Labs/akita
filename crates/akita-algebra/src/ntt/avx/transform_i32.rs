@@ -7,7 +7,7 @@ use super::montgomery::{
     forward_dif_tail_i32_avx2, inverse_dit_head_i32_avx2, mont_mul_4x_i32_avx2,
     mont_mul_8x_i32_avx2, reduce_range_4x_i32_avx2, reduce_range_8x_i32_avx2,
 };
-use super::{d32, wide512};
+use super::wide512;
 use crate::ntt::batched_four_point_eligible;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::prime::{MontCoeff, NttPrime};
@@ -244,16 +244,6 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::forward_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -261,8 +251,6 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         }
     }
 
-    let p_d = _mm_set1_epi32(prime.p);
-    let pinv_d = _mm_set1_epi32(prime.pinv);
     let p256 = _mm256_set1_epi32(prime.p);
     let pinv256 = _mm256_set1_epi32(prime.pinv);
     let a_ptr = a.as_mut_ptr() as *mut i32;
@@ -285,6 +273,66 @@ pub(crate) unsafe fn forward_ntt_i32<const D: usize>(
         a[i] = prime.mul(a[i], tw.psi_pows[i]);
         i += 1;
     }
+
+    // SAFETY: inherited AVX2 target feature and valid transform inputs.
+    unsafe { forward_ntt_i32_from_twisted(a, prime, tw) };
+}
+
+/// AVX2 signed-i8 conversion and forward negacyclic NTT for one i32 CRT limb.
+///
+/// The conversion factor contains `psi^i * R^2`, so one Montgomery product
+/// both enters Montgomery form and applies the negacyclic twist.
+///
+/// # Safety
+///
+/// The caller must ensure AVX2 is available.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn forward_ntt_i8_i32<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    digits: &[i8; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
+    let a_ptr = a.as_mut_ptr() as *mut i32;
+    let psi_r2_ptr = tw.psi_pows_r2.as_ptr();
+    let mut i = 0usize;
+    while i + 8 <= D {
+        // SAFETY: both arrays contain D elements and this loop processes eight.
+        unsafe {
+            let packed = _mm_loadl_epi64(digits.as_ptr().add(i).cast());
+            let values = _mm256_cvtepi8_epi32(packed);
+            let psi_r2 = _mm256_loadu_si256(psi_r2_ptr.add(i).cast());
+            _mm256_storeu_si256(
+                a_ptr.add(i).cast(),
+                mont_mul_8x_i32_avx2(values, psi_r2, p256, pinv256),
+            );
+        }
+        i += 8;
+    }
+    while i < D {
+        a[i] = MontCoeff::from_raw(prime.mont_mul_raw(i32::from(digits[i]), tw.psi_pows_r2[i]));
+        i += 1;
+    }
+
+    // SAFETY: inherited AVX2 target feature and valid transform inputs.
+    unsafe { forward_ntt_i32_from_twisted(a, prime, tw) };
+}
+
+/// Forward DIF stages for an already twisted i32 limb.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn forward_ntt_i32_from_twisted<const D: usize>(
+    a: &mut [MontCoeff<i32>; D],
+    prime: NttPrime<i32>,
+    tw: &NttTwiddles<i32, D>,
+) {
+    let p_d = _mm_set1_epi32(prime.p);
+    let pinv_d = _mm_set1_epi32(prime.pinv);
+    let p256 = _mm256_set1_epi32(prime.p);
+    let pinv256 = _mm256_set1_epi32(prime.pinv);
+    let a_ptr = a.as_mut_ptr() as *mut i32;
 
     let mut len = D / 2;
     while len >= 8 {
@@ -396,16 +444,6 @@ pub(crate) unsafe fn inverse_ntt_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::inverse_ntt_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -542,16 +580,6 @@ pub(crate) unsafe fn forward_ntt_cyclic_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::forward_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {
@@ -675,16 +703,6 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i32<const D: usize>(
     tw: &NttTwiddles<i32, D>,
     use_avx512: bool,
 ) {
-    if D == 32 {
-        // SAFETY: the branch proves the concrete array and twiddle degree.
-        unsafe {
-            return d32::inverse_ntt_cyclic_i32(
-                &mut *(a as *mut _ as *mut [MontCoeff<i32>; 32]),
-                prime,
-                &*(tw as *const _ as *const NttTwiddles<i32, 32>),
-            );
-        }
-    }
     if use_avx512 {
         // SAFETY: Avx512 mode is selected only when AVX-512F/DQ/BW were detected.
         unsafe {

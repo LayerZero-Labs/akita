@@ -7,10 +7,10 @@
 //! proof-byte totals.
 
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{
-    extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout,
+    extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, GroupOpenPhaseParams,
+    PlannedFoldSchedule, PolynomialGroupLayout, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalResponseShape,
 };
 
@@ -41,61 +41,52 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = policy.challenge_field_bits()?;
-    let mut root_params = if is_multi_group {
-        let (precommitted_groups, precommitted_d_width) =
-            multi_group_root_precommitted_groups_for_open_basis(
-                key,
-                entry.root.precommitted_groups,
-                policy,
-                ring_challenge_config,
-                entry.root.open_commit_matrix.log_basis,
-                entry.root.open_commit_matrix.ring_dimension as usize,
-            )?;
+    // One expansion, two length sources. A grouped root pins its live length
+    // and carries the frozen precommitted D segments; a scalar root derives its
+    // length from the witness it was planned for.
+    let length_source = if is_multi_group {
+        let precommitted_groups = multi_group_root_precommitted_groups_for_open_basis(
+            key,
+            entry.root.precommitted_groups,
+            policy,
+            ring_challenge_config,
+            entry.root.core.open_commit_matrix.log_basis,
+        )?;
         validate_expanded_precommitted_groups(key, &precommitted_groups)?;
-        entry
-            .root
-            .final_group
-            .commitment
-            .expand_to_multi_group_root_level_params_with_setup(
-                policy,
-                ring_challenge_config,
-                entry.root.final_group.opening_method,
-                key.final_group.num_polynomials(),
-                entry.root.final_group.num_digits_inner,
-                entry.root.final_group.num_digits_fold,
-                precommitted_groups,
-                precommitted_d_width,
-                entry.root.open_commit_matrix,
-            )?
+        crate::generated::expand::GroupLengthSource::PinnedGrouped {
+            num_claims: key.final_group.num_polynomials(),
+            precommitted_groups,
+        }
     } else {
-        entry
-            .root
-            .final_group
-            .commitment
-            .expand_to_level_params_with_setup(
-                policy,
-                akita_types::CommitmentPayloadMode::Compressed,
-                entry.root.final_group.opening_method,
-                ring_challenge_config,
-                0,
-                Some(entry.root.final_group.num_digits_inner),
-                entry.root.final_group.num_digits_fold,
-                None,
-                expected_root_w_len,
-                key.final_group.num_polynomials(),
-                entry.root.open_commit_matrix,
-                None,
-            )?
+        crate::generated::expand::GroupLengthSource::IncomingWitness {
+            input_witness_len: expected_root_w_len,
+            num_claims: key.final_group.num_polynomials(),
+            setup_prefix: None,
+        }
     };
+    let mut root_params = entry.root.core.group.expand_group(
+        policy,
+        ring_challenge_config,
+        crate::generated::expand::GeneratedGroupExpansion {
+            role: crate::generated::expand::GeneratedFoldExpansionRole::Root {
+                num_digits_inner: entry.root.num_digits_inner,
+            },
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            open_commit_matrix: entry.root.core.open_commit_matrix,
+            // The root's own group *is* the row's lookup key.
+            group: key.final_group,
+            source: length_source,
+        },
+    )?;
     let distributed_levels = distributed_activation_depth(
-        entry.root.witness_partition,
+        entry.root.core.witness_chunks,
         entry
             .recursive_folds
             .iter()
-            .map(|fold| fold.witness_partition),
+            .map(|fold| fold.core.witness_chunks),
     );
     root_params.witness_chunk =
-        partition_to_chunk(entry.root.witness_partition, distributed_levels)?;
+        partition_to_chunk(entry.root.core.witness_chunks, distributed_levels)?;
     let root_output_len = if is_multi_group {
         root_params.output_witness_len_for_field_bits(
             field_bits,
@@ -120,21 +111,29 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
-        let mut params = fold.witness.expand_to_level_params_with_setup(
+        let mut params = fold.core.group.expand_group(
             policy,
-            fold.payload_mode,
-            fold.opening_method,
             ring_challenge_config,
-            index + 1,
-            None,
-            fold.num_digits_fold,
-            fold.response_l2_sq_cap,
-            input_witness_len,
-            1,
-            fold.open_commit_matrix,
-            fold.incoming_setup_prefix,
+            crate::generated::expand::GeneratedGroupExpansion {
+                role: crate::generated::expand::GeneratedFoldExpansionRole::Recursive {
+                    fold_level: index + 1,
+                    response_l2_sq_cap: fold.response_l2_sq_cap,
+                },
+                payload_mode: fold.payload_mode,
+                open_commit_matrix: fold.core.open_commit_matrix,
+                // A recursive fold commits one polynomial over the witness it
+                // receives, so its layout follows from that length.
+                group: akita_types::PolynomialGroupLayout::singleton(
+                    akita_types::padded_boolean_opening_vars(input_witness_len)?,
+                ),
+                source: crate::generated::expand::GroupLengthSource::IncomingWitness {
+                    input_witness_len,
+                    num_claims: 1,
+                    setup_prefix: fold.setup_prefix,
+                },
+            },
         )?;
-        params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
+        params.witness_chunk = partition_to_chunk(fold.core.witness_chunks, distributed_levels)?;
         let output_witness_len = planned_next_witness_len(
             field_bits,
             policy.claim_ext_degree,
@@ -162,12 +161,14 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_mul(terminal_params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
     let e_field_elems = terminal_params
-        .num_live_blocks
+        .blocks
+        .live_blocks
         .checked_mul(terminal_params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
     let t_field_elems = terminal_params
-        .num_live_blocks
-        .checked_mul(terminal_params.inner_commit_matrix.output_rank())
+        .blocks
+        .live_blocks
+        .checked_mul(terminal_params.inner.matrix.output_rank())
         .and_then(|value| value.checked_mul(terminal_params.d_a()))
         .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
     let logical_num_elems = z_coords
@@ -288,47 +289,37 @@ pub(crate) fn walk_generated_schedule_entry(
 }
 
 fn partition_to_chunk(
-    partition: crate::generated::GeneratedWitnessPartition,
+    witness_chunks: u32,
     activated_levels: usize,
 ) -> Result<akita_types::ChunkedWitnessCfg, AkitaError> {
-    match partition {
-        crate::generated::GeneratedWitnessPartition::Single => {
-            Ok(akita_types::ChunkedWitnessCfg::default_non_chunked())
-        }
-        crate::generated::GeneratedWitnessPartition::Distributed { num_chunks } => {
-            let cfg = akita_types::ChunkedWitnessCfg {
-                num_chunks: num_chunks as usize,
-                num_activated_levels: activated_levels,
-            };
-            cfg.validate()?;
-            Ok(cfg)
-        }
+    // A chunk count of 1 is the non-chunked layout; the enum that used to spell
+    // that distinction carried no other information.
+    if witness_chunks == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "generated witness chunk count must be nonzero".to_string(),
+        ));
     }
+    if witness_chunks == 1 {
+        return Ok(akita_types::ChunkedWitnessCfg::default_non_chunked());
+    }
+    let cfg = akita_types::ChunkedWitnessCfg {
+        num_chunks: witness_chunks as usize,
+        num_activated_levels: activated_levels,
+    };
+    cfg.validate()?;
+    Ok(cfg)
 }
 
-fn distributed_activation_depth(
-    current: crate::generated::GeneratedWitnessPartition,
-    following: impl Iterator<Item = crate::generated::GeneratedWitnessPartition>,
-) -> usize {
-    if !matches!(
-        current,
-        crate::generated::GeneratedWitnessPartition::Distributed { .. }
-    ) {
+fn distributed_activation_depth(current: u32, following: impl Iterator<Item = u32>) -> usize {
+    if current <= 1 {
         return 0;
     }
-    1 + following
-        .take_while(|partition| {
-            matches!(
-                partition,
-                crate::generated::GeneratedWitnessPartition::Distributed { .. }
-            )
-        })
-        .count()
+    1 + following.take_while(|chunks| *chunks > 1).count()
 }
 
 fn validate_expanded_precommitted_groups(
     key: &AkitaScheduleLookupKey,
-    groups: &[PrecommittedLevelParams],
+    groups: &[GroupOpenPhaseParams],
 ) -> Result<(), AkitaError> {
     if groups.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(format!(
@@ -338,7 +329,7 @@ fn validate_expanded_precommitted_groups(
         )));
     }
     for (expected, actual) in key.precommitteds.iter().zip(groups) {
-        if &actual.layout != expected {
+        if &actual.profile != expected {
             return Err(AkitaError::InvalidSetup(
                 "multi-group root expanded precommitted layout does not match frozen key"
                     .to_string(),

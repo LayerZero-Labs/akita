@@ -7,7 +7,7 @@
 //! [`CommitmentConfig::resolve_catalog_row_for_opening`] directly and never
 //! need this module.
 //!
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
 use crate::CommitmentConfig;
@@ -25,7 +25,9 @@ use crate::CommitmentConfig;
 /// Tests, benches, and the `profile` example use this to pre-size per-poly
 /// inputs (e.g. `OneHotPoly`) so the `num_positions_per_block` / `num_live_blocks` line up with
 /// what `Scheme::commit` will use under the batched layout. Production
-/// callers always go through `Cfg::resolve_catalog_row_for_opening(&opening_batch).map(|row| row.schedule().root.params.final_group.commitment.clone())`
+/// callers always go through
+/// `Cfg::resolve_catalog_row_for_opening(&opening_batch)` and ask the resolved
+/// root for its final group.
 /// instead.
 ///
 /// # Errors
@@ -40,21 +42,15 @@ where
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;
-    let layout = schedule
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+    let layout = schedule.schedule().root.params.clone();
     tracing::info!(
         num_vars,
         num_polynomials,
         root_m = layout.position_index_bits(),
         root_r = layout.block_index_bits(),
-        root_lb_inner = layout.log_basis_inner,
-        root_lb_outer = layout.log_basis_outer,
-        root_lb_open = layout.log_basis_open,
+        root_lb_inner = layout.inner().digits.log_basis,
+        root_lb_outer = layout.outer().digits.log_basis,
+        root_lb_open = layout.open().digits.log_basis,
         "batched root split: read from runtime schedule"
     );
     Ok(layout)

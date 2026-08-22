@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
 | Revised | 2026-08-14 |
-| Status | active |
+| Status | implemented |
 | PR | [#369](https://github.com/LayerZero-Labs/akita/pull/369) |
 | Supersedes | The physical A role embedding factor in `archive/2026-Q3/weak-binding-norm-fix.md` |
 | Superseded-by | |
@@ -27,7 +27,7 @@ the route after seeing the witness.
 
 The planner runs only while Akita generates a catalog. Runtime code resolves a
 frozen row from that catalog. A committed group stores one checked
-`CommittedGroupProfile`, and that profile is the only source for its matrix
+`GroupCommitPhaseParams`, and those parameters are the only source for its matrix
 geometry, decomposition, and slice count. The verifier resolves the public row
 digest and never runs planner search.
 
@@ -1002,20 +1002,21 @@ expand the selected row. They do not call the planner. The verifier uses
 `resolve_schedule_selection` with the public `OpeningScheduleSelection` digest.
 It performs a bounded digest lookup and does not reconstruct a planner key.
 
-`CommittedGroupProfile::try_from_params` is the checked construction boundary
+`GroupCommitPhaseParams::try_from_params` is the checked construction boundary
 for frozen commitment metadata. It validates the root geometry, digit bases,
 digit depths, slice count, A and B widths, modulus profiles, matrix identities,
 and audited SIS bounds. Prover, verifier, planner emission, schedule expansion,
 and schedule audit use this checked constructor when they assemble a profile.
 
-`GeneratedRootPrecommittedGroup` stores only two values:
+`GeneratedFrozenGroup` stores the frozen profile and the consuming opening
+data. In particular, it stores:
 
-* the checked `CommittedGroupProfile` descriptor;
+* the checked `GroupCommitPhaseParams` descriptor;
 * the fold digit depth used when the grouped root opens that commitment.
 
 The generated row does not store a second copy of the commitment geometry.
 Catalog dimension collection and identity hashing read the descriptor directly.
-`PrecommittedLevelParams::admit` may derive the shared opening parameters for
+`GroupOpenPhaseParams::admit` derives the shared opening parameters for
 the current grouped root, but it cannot replace the descriptor's frozen A or B
 matrix, decomposition, or slice count. Precommitted A matrices remain Linf.
 
@@ -1427,9 +1428,10 @@ Durable user-facing explanations live in:
 * `book/src/how/configuration.md` for planner models, eligibility, and fallback.
 * `book/src/usage/profiling.md` for the compact and detailed reports.
 
-This specification remains active while PR 369 is open. Mark it implemented
-when the PR merges. It can then be archived after the durable text is confirmed
-in the book.
+PR 369 is merged and the acceptance criteria are complete, so this
+specification is implemented. Retain it in the root as the current load-bearing
+security sizing source until the durable text and deferred alternatives are
+fully folded into the Book.
 
 ## References
 

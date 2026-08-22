@@ -7,7 +7,9 @@
 //! expression. Resolution is fallible so unknown openings or malformed backing
 //! tables are rejected with [`AkitaError`] instead of panicking.
 
-use akita_field::{AkitaError, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::FieldCore;
 
 use crate::PolynomialView;
 

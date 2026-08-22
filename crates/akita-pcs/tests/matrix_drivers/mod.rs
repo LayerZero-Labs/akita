@@ -350,7 +350,7 @@ where
             .expect("schedule")
             .into_schedule();
         assert_eq!(
-            schedule.root.params.precommitted_groups.len(),
+            schedule.root.params.precommitted_groups().len(),
             1,
             "dense precommitted key must resolve to a one-precommit entry"
         );

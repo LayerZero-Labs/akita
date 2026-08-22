@@ -6,9 +6,8 @@
 
 use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
-};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
     RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry,

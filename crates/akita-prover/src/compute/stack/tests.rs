@@ -2,7 +2,8 @@ use super::*;
 use crate::compute::CompressionComputeBackend;
 use crate::AkitaProverSetup;
 use crate::CpuBackend;
-use akita_field::{AkitaError, Fp64};
+use akita_error::AkitaError;
+use akita_field::Fp64;
 use akita_types::SetupMatrixCapacity;
 
 type F = Fp64<4294967197>;

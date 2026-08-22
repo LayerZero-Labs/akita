@@ -7,8 +7,9 @@
 mod recursive_prefixes;
 
 use akita_config::CommitmentConfig;
+use akita_error::AkitaError;
 use akita_field::unreduced::HasWide;
-use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::AkitaProverSetup;
 use akita_serialization::Valid;
 #[cfg(feature = "disk-persistence")]
@@ -779,10 +780,10 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    scheduled_setup_prefix, AkitaCommitmentHint, CommittedGroupProfile,
-                    CompressionChainPlan, CompressionChainWitness, InnerCommitMatrixParams,
-                    OuterCommitMatrixParams, PackedNegativeBinary, PolynomialGroupLayout,
-                    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+                    scheduled_setup_prefix, AkitaCommitmentHint, CompressionChainPlan,
+                    CompressionChainWitness, GroupCommitPhaseParams, GroupOpenPhaseParams,
+                    InnerCommitMatrixParams, OuterCommitMatrixParams, PackedNegativeBinary,
+                    PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
                     SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
@@ -816,20 +817,21 @@ mod tests {
                 )
                 .expect("audited prefix B matrix");
                 let commitment_rows = outer_commit_matrix.output_rank();
-                let commitment_params = PrecommittedLevelParams {
-                    layout: CommittedGroupProfile {
-                        version: CommittedGroupProfile::VERSION,
+                let commitment_params = GroupOpenPhaseParams {
+                    setup_natural_len: None,
+                    profile: GroupCommitPhaseParams {
+                        version: GroupCommitPhaseParams::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        num_live_ring_elements_per_claim: 1,
-                        num_positions_per_block: 1,
-                        num_live_blocks: 1,
+                        blocks: akita_types::BlockGeometry::new(1, 1, 1),
                         outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-                        log_basis_inner: 1,
-                        num_digits_inner: 1,
-                        inner_commit_matrix,
-                        log_basis_outer: 1,
-                        num_digits_outer: 1,
-                        outer_commit_matrix,
+                        inner: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(1, 1),
+                            inner_commit_matrix,
+                        ),
+                        outer: akita_types::RoleParams::new(
+                            akita_types::GadgetDigits::new(1, 1),
+                            outer_commit_matrix,
+                        ),
                     },
                     opening: akita_types::GroupOpeningPlan::evaluation_trace(
                         akita_challenges::SparseChallengeConfig::pm1_only(0),
@@ -838,13 +840,12 @@ mod tests {
                         1,
                     ),
                 };
-                let id = scheduled_setup_prefix(1, commitment_params.clone()).slot_id();
+                let id = scheduled_setup_prefix(TEST_D, commitment_params)
+                    .slot_id()
+                    .expect("setup prefix group");
                 let compression_plan = CompressionChainPlan::for_complete_source(
-                    commitment_params
-                        .layout
-                        .outer_commit_matrix
-                        .sis_modulus_profile(),
-                    commitment_params.layout.outer_commit_matrix.output_rank() * TEST_D,
+                    commitment_params.profile.outer.matrix.sis_modulus_profile(),
+                    commitment_params.profile.outer.matrix.output_rank() * TEST_D,
                 )
                 .expect("compression plan");
                 let compression_stages = compression_plan
@@ -1088,10 +1089,8 @@ mod tests {
                 .schedule()
                 .root
                 .params
-                .final_group
-                .commitment
                 .clone();
-                let num_coeffs = lp.num_live_blocks * lp.num_positions_per_block;
+                let num_coeffs = lp.blocks().live_blocks * lp.blocks().positions_per_block;
                 let coeffs = vec![CyclotomicRing::<TestF, TEST_D>::zero(); num_coeffs];
                 let poly = DensePoly::<TestF>::from_ring_coeffs(coeffs);
 
@@ -1106,23 +1105,26 @@ mod tests {
                         )
                         .unwrap();
                     let inner = inner_group.pop().expect("singleton commit result");
-                    let n_a = lp.inner_commit_matrix.output_rank();
-                    let blocks = (0..lp.num_live_blocks)
+                    let n_a = lp.inner().matrix.output_rank();
+                    let blocks = (0..lp.blocks().live_blocks)
                         .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
                         .collect::<Vec<_>>();
-                    let digits =
-                        akita_prover::kernels::linear::decompose_commit_blocks_into::<
-                            TestF,
-                            TEST_D,
-                            TEST_D,
-                        >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
-                        .unwrap();
+                    let digits = akita_prover::kernels::linear::decompose_commit_blocks_into::<
+                        TestF,
+                        TEST_D,
+                        TEST_D,
+                    >(
+                        &blocks,
+                        lp.outer().digits.num_digits,
+                        lp.outer().digits.log_basis,
+                    )
+                    .unwrap();
                     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
-                        lp.outer_slice_count,
-                        lp.num_live_blocks,
+                        lp.outer_slice_count(),
+                        lp.blocks().live_blocks,
                         1,
                         n_a,
-                        lp.num_digits_outer,
+                        lp.outer().digits.num_digits,
                         TEST_D,
                         TEST_D,
                     )
@@ -1138,14 +1140,16 @@ mod tests {
                     let mut slice_digits =
                         digits.typed_planes::<TEST_D>().unwrap()[plane_start..plane_end].to_vec();
                     slice_digits.resize(slice_geometry.physical_input_width(), [0i8; TEST_D]);
-                    CpuBackend::DEFAULT
+                    let mut batches = CpuBackend::DEFAULT
                         .digit_rows::<TEST_D>(
                             &prepared,
-                            lp.outer_commit_matrix.output_rank(),
-                            &slice_digits,
-                            lp.log_basis_outer,
+                            lp.outer().matrix.output_rank(),
+                            &[slice_digits.as_slice()],
+                            lp.outer().digits.log_basis,
                         )
-                        .unwrap()
+                        .unwrap();
+                    assert_eq!(batches.len(), 1);
+                    batches.pop().unwrap()
                 };
 
                 let fresh_u = commit_u(&fresh_setup);

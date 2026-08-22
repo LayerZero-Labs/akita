@@ -44,7 +44,7 @@ fn test_layout(num_chunks: usize) -> (CommittedGroupParams, OpeningClaimsLayout,
     )
     .with_decomp(4, 25, 1, 2, 2)
     .expect("test params");
-    lp.num_digits_fold = 3;
+    lp.own_group_mut().opening.num_digits_fold = 3;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
     let relation_geometry =
         RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
@@ -60,7 +60,8 @@ fn layout_indexing_matches_digit_innermost_semantics() {
     let unit = layout.unit(0, 1).expect("unit");
     let depth_fold = lp.num_digits_fold();
     assert_ne!(
-        lp.num_digits_inner, lp.num_digits_outer,
+        lp.inner().digits.num_digits,
+        lp.outer().digits.num_digits,
         "fixture must distinguish witness and commitment depths"
     );
     assert_eq!(unit.global_block_range(), 3..7);

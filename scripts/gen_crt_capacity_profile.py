@@ -14,6 +14,7 @@ PROFILES = [
         "q": 2**32 - 99,
         "primes": [15361, 13313, 12289, 11777],
         "limb": "i16",
+        "ring_dims": [64, 128, 256],
     },
     {
         "name": "Q32/2xi32",
@@ -22,6 +23,7 @@ PROFILES = [
         "q": 2**32 - 99,
         "primes": [1073692673, 1073668097],
         "limb": "i32",
+        "ring_dims": [64, 128, 256, 512, 1024, 2048],
     },
     {
         "name": "Q64/3xi32",
@@ -30,12 +32,13 @@ PROFILES = [
         "q": 2**64 - 59,
         "primes": [1073692673, 1073668097, 1073707009],
         "limb": "i32",
+        "ring_dims": [64, 128, 256, 512, 1024],
     },
     {
         "name": "Q128/5xi32",
-        "role": "production",
-        "q_label": "2^128 - 275",
-        "q": 2**128 - 275,
+        "role": "portable production",
+        "q_label": "2^128 - 2^32 + 22537",
+        "q": 2**128 - 2**32 + 22537,
         "primes": [
             1073692673,
             1073668097,
@@ -44,10 +47,23 @@ PROFILES = [
             1073732609,
         ],
         "limb": "i32",
+        "ring_dims": [64, 128, 256, 512],
+    },
+    {
+        "name": "Q128/3xu64-IFMA52",
+        "role": "AVX-512 exact cache",
+        "q_label": "2^128 - 2^32 + 22537",
+        "q": 2**128 - 2**32 + 22537,
+        "primes": [
+            1125899906826241,
+            1125899906629633,
+            1125899905744897,
+        ],
+        "limb": "u64",
+        "ring_dims": [64, 128, 256, 512],
     },
 ]
 
-RING_DIMS = [32, 64, 128, 256]
 ROLES = [
     ("balanced128", 128),
     ("raw128", 128),
@@ -55,9 +71,10 @@ ROLES = [
 ]
 
 RUST_PRIME_CONST_BY_PROFILE = {
-    "Q32/2xi32": "Q32_PRIMES",
-    "Q64/3xi32": "Q64_PRIMES",
-    "Q128/5xi32": "I32_RAW_PRIMES",
+    "Q32/2xi32": ("tables.rs", "Q32_PRIMES"),
+    "Q64/3xi32": ("tables.rs", "Q64_PRIMES"),
+    "Q128/5xi32": ("tables.rs", "I32_RAW_PRIMES"),
+    "Q128/3xu64-IFMA52": ("ifma52.rs", "IFMA52_PRIMES"),
 }
 
 
@@ -83,31 +100,36 @@ def fmt_primes(values: list[int]) -> str:
     return ", ".join(str(value) for value in values)
 
 
-def rust_tables_path() -> pathlib.Path:
+def rust_ntt_path(filename: str) -> pathlib.Path:
     return (
         pathlib.Path(__file__).resolve().parents[1]
-        / "crates/akita-algebra/src/ntt/tables.rs"
+        / "crates/akita-algebra/src/ntt"
+        / filename
     )
 
 
-def extract_rust_prime_const(name: str) -> list[int]:
-    text = rust_tables_path().read_text()
+def extract_rust_prime_const(filename: str, name: str) -> list[int]:
+    text = rust_ntt_path(filename).read_text()
     match = re.search(rf"pub const {name}:[^=]*=\s*\[(.*?)\];", text, re.DOTALL)
     if match is None:
         raise RuntimeError(f"could not find Rust prime constant {name}")
     body = match.group(1)
-    p_fields = re.findall(r"p:\s*(-?\d+)", body)
+    p_fields = re.findall(r"p:\s*(-?[\d_]+)", body)
     if p_fields:
-        return [int(value) for value in p_fields]
-    return [int(value) for value in re.findall(r"-?\d+", body)]
+        return [int(value.replace("_", "")) for value in p_fields]
+    return [
+        int(value.replace("_", ""))
+        for value in re.findall(r"-?[\d_]+", body)
+    ]
 
 
 def validate_profile_primes_against_rust() -> None:
     for profile in PROFILES:
-        const_name = RUST_PRIME_CONST_BY_PROFILE.get(profile["name"])
-        if const_name is None:
+        rust_const = RUST_PRIME_CONST_BY_PROFILE.get(profile["name"])
+        if rust_const is None:
             continue
-        rust_primes = extract_rust_prime_const(const_name)
+        filename, const_name = rust_const
+        rust_primes = extract_rust_prime_const(filename, const_name)
         if rust_primes != profile["primes"]:
             raise RuntimeError(
                 f"{profile['name']} primes drifted from {const_name}: "
@@ -125,9 +147,11 @@ def main() -> int:
     print("# CRT/NTT Capacity Profile")
     print()
     print(
-        "This artifact pins the single-CRT-lift capacity of the prime profiles used by"
+        "This artifact pins the single-CRT-lift capacity of Akita's commitment kernels"
     )
-    print("the prover i8 kernels. Regenerate the table with:")
+    print("and records the evidence behind dense q128 kernel dispatch. It includes the")
+    print("portable 30-bit profiles and the 50-bit AVX-512IFMA exact representation.")
+    print("Regenerate the table with:")
     print()
     print("```bash")
     print("python3 scripts/gen_crt_capacity_profile.py > docs/crt-ntt-capacity-profile.md")
@@ -163,7 +187,7 @@ def main() -> int:
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for profile in PROFILES:
         crt_product = product(profile["primes"])
-        for ring_dim in RING_DIMS:
+        for ring_dim in profile["ring_dims"]:
             widths = [
                 fmt_count(safe_width(profile["q"], crt_product, ring_dim, rhs_abs_bound))
                 for _role, rhs_abs_bound in ROLES
@@ -174,6 +198,80 @@ def main() -> int:
                 + " | ".join(widths)
                 + " |"
             )
+    print()
+    print("## Q128 Balanced-Digit Capacity")
+    print()
+    print("The base CRT products for portable and AVX-512 exact accumulation are both")
+    print("about 150 bits. Their mathematical thresholds are therefore almost the same.")
+    print("A row above the listed width needs the 14-bit tail prime `12289` if it is")
+    print("accumulated exactly in one pass.")
+    print()
+    print("| Representation | D | log basis 3 | 4 | 5 | 6 | 7 | 8 |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for profile_name in ["Q128/5xi32", "Q128/3xu64-IFMA52"]:
+        profile = next(item for item in PROFILES if item["name"] == profile_name)
+        crt_product = product(profile["primes"])
+        for ring_dim in [64, 128, 256, 512]:
+            widths = [
+                fmt_count(safe_width(profile["q"], crt_product, ring_dim, 1 << (log_basis - 1)))
+                for log_basis in range(3, 9)
+            ]
+            print(f"| {profile_name} | {ring_dim} | " + " | ".join(widths) + " |")
+    print()
+    print("## Dense q128 Commitment Dispatch")
+    print()
+    print("Tail presence and kernel selection are separate decisions. The capacity formula")
+    print("answers whether one exact accumulation needs the tail. It does not justify")
+    print("materializing an exact cache for digits that already fit in i8.")
+    print()
+    print("For balanced digits with log basis 1 through 8:")
+    print()
+    print("- Scalar, AVX2, and NEON backends use the portable five-prime chunked i8")
+    print("  accumulation.")
+    print("- An AVX-512IFMA backend uses one exact accumulation for a q128 row when the")
+    print("  three-prime IFMA product is too small but the product with 12289 fits.")
+    print("- All other rows stay chunked. Each chunk reconstructs before the next chunk,")
+    print("  so the complete row does not need the tail prime.")
+    print("- The block-parallel kernel still exposes independent blocks to Rayon when the")
+    print("  workload has enough parallel work.")
+    print()
+    print("Log bases 9 through 16 require exact i16 digits on every backend because i8")
+    print("cannot represent those balanced digits. The tail is still added only when the")
+    print("exact capacity check requires it.")
+    print()
+    print("### Production root shapes")
+    print()
+    print("| Variables | D | Log basis | Live blocks | Complete row width | Portable aligned chunk | Chunks |")
+    print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| 26 | 256 | 7 | 256 | 4,864 | 247 | 20 |")
+    print("| 28 | 512 | 7 | 512 | 9,728 | 114 | 86 |")
+    print("| 30 | 512 | 7 | 1,024 | 19,456 | 114 | 171 |")
+    print()
+    print("All three complete rows exceed the base capacity and fit after adding 12289.")
+    print("They therefore use exact IFMA52 accumulation on eligible AVX-512 hosts and the")
+    print("listed bounded chunks on scalar, AVX2, and NEON hosts.")
+    print()
+    print("### Measurement evidence")
+    print()
+    print("Measurements were collected on 2026-08-21 from the PR 430 optimization branch.")
+    print("The measurements use the same production q128 schedule before and after the")
+    print("candidate exact-tail dispatch. Each current AVX-512 result is the median of")
+    print("three interleaved samples after one warmup.")
+    print()
+    print("| Backend and workload | Chunked i8 commit | Exact commit | Change |")
+    print("| --- | ---: | ---: | ---: |")
+    print("| Apple NEON, q128 nv26 | 1.163 s | 2.489 s | 114% slower |")
+    print("| Zen 5 AVX-512IFMA, q128 nv26 | 1.296 s | 1.052 s | 18.8% faster |")
+    print("| Zen 5 AVX-512IFMA, q128 nv28 | 5.158 s | 3.562 s | 30.9% faster |")
+    print("| Zen 5 AVX-512IFMA, q128 nv30 | 20.173 s | 14.359 s | 28.8% faster |")
+    print("| Zen 5 AVX2, q128 nv26 to nv30 | baseline | candidate | 29% to 32% faster |")
+    print("| Hosted 32-thread AVX2, q128 nv28 | baseline | candidate | 16.8% slower |")
+    print()
+    print("On the AVX-512 run, exact accumulation increased setup by 0.051 s, 0.101 s,")
+    print("and 0.239 s at nv26, nv28, and nv30. Prepared-cache bytes increased by 29% to")
+    print("32%, while peak RSS increased by 1.6% to 5.5%. The durable policy therefore")
+    print("selects this trade only from AVX-512IFMA capability and the exact capacity")
+    print("bound. It does not dispatch on a host name or a particular variable count.")
     print()
     print("## Q32 Experiment")
     print()
@@ -198,12 +296,11 @@ def main() -> int:
     print("The reference `4xi16` row remains here only as experiment evidence.")
     print()
     print(
-        "The production profiles all have nonzero `balanced128` and `raw128` widths at"
+        "The portable production profiles all have nonzero `balanced128` and `raw128` widths"
     )
-    print(
-        "`D in {32, 64, 128, 256}`. The `zpre32768 = 0` entries are acceptable because"
-    )
-    print("the fused split-eq path has an exact fallback for centered `z_pre`.")
+    print("at every supported commitment ring dimension. The `zpre32768 = 0` entries")
+    print("are acceptable because the fused split-eq path has an exact fallback for")
+    print("centered `z_pre`.")
     return 0
 
 

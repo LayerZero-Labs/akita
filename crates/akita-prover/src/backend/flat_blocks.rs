@@ -1,4 +1,4 @@
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 
 /// Owned flat storage for sparse entries grouped by logical block.
 ///

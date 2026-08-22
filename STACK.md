@@ -9,7 +9,7 @@ layout cutover is the shared foundation, but most of setup offloading should be
 split into parallel lanes with explicit integration points.
 
 The witness and setup role order follows
-[`specs/digit-innermost-layout.md`](specs/digit-innermost-layout.md). Root and
+[`specs/archive/2026-Q3/digit-innermost-layout.md`](specs/archive/2026-Q3/digit-innermost-layout.md). Root and
 recursive folds use the same digit-innermost order.
 
 ## Invariants
@@ -56,6 +56,11 @@ recursive folds use the same digit-innermost order.
 05 tables, benchmarks, cleanup
 ```
 
+The 03B product sum-check milestone and the 04 planner-selected setup
+offloading milestone are shipped. Rows 03B and 04 remain in this document as
+the implementation history. The remaining broader verifier-offloading work is
+tracked in the Book roadmap and row 05.
+
 `02C` is intentionally independent of the packed setup layout at the math
 level. It may be developed in parallel from `main`, but its review PR should be
 rebased onto `01` before integration so proof structs and transcript labels do
@@ -69,15 +74,15 @@ not encode one person's ownership.
 
 | ID | Suggested branch | Base | Scope | Exit criterion |
 |----|--------|------|-------|----------------|
-| 00 | `setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout design and this stack plan. | Diff contains only `STACK.md` and `specs/setup-layout-repack.md`. |
+| 00 | `setup-layout-repack` | `main` | Spec-only PR. Preserve the packed setup-layout design and this stack plan. | Diff contains only `STACK.md` and `specs/archive/2026-Q3/setup-layout-repack.md`. |
 | 01 | `setup-layout-repack-impl` | `main` after 00 lands | Full layout cutover: remove `max_stride`, introduce packed base A/B/D role views, split ZK B/D blinding out of base `S`, update all existing setup-matrix consumers, and keep direct verification/proving working. | No `setup.seed.max_stride` users remain; direct prover/verifier tests pass; no setup-prefix commitments or setup offloading proof objects. |
 | 02A | `setup-inner-product-oracle` | 01 | Express the direct setup contribution as `<S_{<=N}, omega_S>` with a materialized weight oracle and equivalence tests against the packed direct scan. | Materialized `<S, omega_S>` matches current packed setup contribution for root, recursive, batched, and A/J fixtures. |
 | 02B | `setup-prefix-ladder` | 01 | Add preprocessing metadata, prefix-slot policies, and commitment-hint storage for selected power-of-two prefixes of the flat setup coefficient vector. No offloading proof yet. | Setup metadata names available prefix slots; runtime can select the tightest eligible prover-ready slot; below-threshold or unavailable shapes fall back to direct scan or produce a configured missing-slot error. |
 | 02C | `recursive-carried-openings` | 01 for review; can prototype from `main` | Replace singleton recursive carry state with a carried-opening claim list and root-style incidence at the recursive boundary. Use a common padded field domain first. | Existing singleton recursion is the size-one incidence case; a witness-plus-dummy-setup carried batch verifies end to end. |
 | 02D | `setup-offload-gating` | 01 | Add the policy surface for `D_setup`, `N_min`, eligible levels, selected prefix length, and direct fallback. | The prover/verifier agree on eligibility and selected prefix without changing proof semantics yet. |
 | 03A | `setup-weight-evaluator` | 02A | Implement succinct verifier evaluation of `omega_S(rho_lambda, rho_y)` with canonical digit-innermost D/B/A views and compact mixed-ring projection factors. | Evaluator matches materialized `omega_S` at random points without scanning `S`. |
-| 03B | `setup-product-sumcheck` | 02A | Add the setup product-sumcheck skeleton over the selected prefix. First implement it as a post-Stage-2 Stage 3 closed against a local/materialized setup opening oracle. | Product-sumcheck checks `<S_{<=N}, omega_S>` against the materialized oracle and binds `sigma_S`, `rho`, `alpha`, `tau_1`, and `r_x`; no extra witness claim is left unresolved. |
-| 04 | `setup-claim-offloading` | integration of 02B, 02C, 02D, 03A, 03B | Replace the direct setup scan with delegated setup claims when eligible. Carry `(rho_lambda, rho_y, s_rho)` into the next recursive fold and batch it with the folded-witness opening. | Eligible root/L1 proofs verify without local setup scan; ineligible or terminal-without-next-fold cases use direct fallback. |
+| 03B | `setup-product-sumcheck` | 02A | Shipped in PR #147 and reorganized by later protocol refactors. The current Stage 3 implementation is documented in the Book. | Complete. The setup product sum-check checks the deferred setup contribution and closes against the selected setup-prefix opening. |
+| 04 | `setup-claim-offloading` | integration of 02B, 02C, 02D, 03A, 03B | Shipped in PRs #301 and #318, with later setup-prefix follow-ups. The planner selects direct or offloaded successors under the current recursive config. | Complete for the shipped planner-selected path. Direct, unsupported, and terminal cases retain their fallback behavior. Broader verifier-offloading work remains in the Book roadmap. |
 | 05 | `setup-offload-tables-tests` | 04 | Regenerate tables if needed, add broad benchmarks/regression tests, and remove temporary comparison or oracle helpers. | End-to-end proof size and verifier-time breakdowns reflect setup offloading under representative batched workloads. |
 
 ## Parallel Work Slices
@@ -233,7 +238,7 @@ single witness opening plus the setup opening. The post-Stage-2 Stage-3 placemen
 first implementation step toward this; the relation-shift form is valid because
 the shifted relation work's witness claim is closed by the reduction (the
 alternative closure, carrying both openings into the next recursive incidence
-batch, also works). See `specs/setup-layout-repack.md` (Product Sumcheck
+batch, also works). See `specs/archive/2026-Q3/setup-layout-repack.md` (Product Sumcheck
 Placement) for the full schedule and cost.
 
 If there is no subsequent recursive fold, setup offloading is disabled for that
@@ -314,4 +319,4 @@ checks that were skipped before it is made ready for review.
 
 ## Current Review Frontier
 
-PR 00 is the spec-only cleanup in `specs/setup-layout-repack.md`.
+PR 00 is the spec-only cleanup in `specs/archive/2026-Q3/setup-layout-repack.md`.

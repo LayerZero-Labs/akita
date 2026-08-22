@@ -17,11 +17,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
-use akita_field::AkitaError;
+use akita_error::AkitaError;
 use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, FoldSchedule, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -179,10 +179,19 @@ const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
-    onehot_keys![(14, 1), (16, 1), (16, 2), (20, 1), (28, 1), (30, 1)];
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
+    (14, 1),
+    (16, 1),
+    (16, 2),
+    (20, 1),
+    (28, 1),
+    (30, 1),
+    (34, 1)
+];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
@@ -192,9 +201,12 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(29),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1), (35, 1)];
 
 /// One generated schedule-table family.
 ///
@@ -290,9 +302,9 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn planned_profile_without_precommitted_groups<Cfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
     group: PolynomialGroupLayout,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     let schedule = preplans.scalar::<Cfg>(group)?;
-    CommittedGroupProfile::try_from_params(group, &schedule.root.params.final_group.commitment)
+    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -355,9 +367,9 @@ fn fp128_onehot_grouped_requests(
 fn fp128_onehot_multichunk_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    Ok(sorted_grouped_requests(recursive_onehot_profile_keys::<
-        fp128::OneHotMultiChunk,
-    >(preplans)?))
+    Ok(sorted_grouped_requests(
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>(preplans)?,
+    ))
 }
 
 fn fp128_onehot_multichunk_w2r2_grouped_requests(
@@ -408,9 +420,9 @@ fn fp32_onehot_grouped_requests(
 fn fp32_dense_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    // The precommit half is 20 rather than 14: `fp32::Dense` has no schedule
-    // with at least two folds below 20, so 14 cannot produce the row this
-    // group's frozen profile is read from.
+    // The precommit half is 20 rather than 14 because the shipped fp32 dense
+    // catalog begins at 20. The group's frozen profile must come from a
+    // generated row in that catalog.
     single_pre_grouped_requests::<fp32::Dense>(
         preplans,
         PolynomialGroupLayout::new(20, 1),
@@ -448,16 +460,39 @@ fn fp128_dense_grouped_requests(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
+    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
+    // (34, 2) as the larger profile-bench fixture.
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34])
+}
+
+fn recursive_onehot_chunked_profile_keys<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    // W8R2 (34, 2) currently emits a setup-prefix whose natural length disagrees
+    // with the frozen commitment, so catalog validation rejects the row.
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32])
+}
+
+fn recursive_onehot_profile_keys_for_finals<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+    final_num_vars: &[usize],
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
-    Ok(vec![GroupedGenerationRequest::new(
-        PolynomialGroupLayout::new(32, 2),
-        vec![
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-        ],
-    )])
+    let producers = vec![
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+    ];
+    Ok(final_num_vars
+        .iter()
+        .map(|&num_vars| {
+            GroupedGenerationRequest::new(
+                PolynomialGroupLayout::new(num_vars, 2),
+                producers.clone(),
+            )
+        })
+        .collect())
 }
 
 fn heterogeneous_onehot_catalog_key(
@@ -668,7 +703,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
         fp128::OneHotMultiChunk,
-        recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>
     ),
     family_row!(
         "fp128_dense",

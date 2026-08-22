@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
+use akita_error::AkitaError;
 use akita_field::parallel::*;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
+use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 use akita_types::{AkitaExpandedSetup, FlatMatrix, SetupPrefixSlot};
 
 use crate::backend::poly_helpers::{
@@ -178,21 +177,26 @@ fn setup_prefix_fold_geometry<const D: usize>(
     geometry.validate(
         slot.id
             .commitment_profile
-            .inner_commit_matrix
+            .inner
+            .matrix
             .sis_modulus_profile()
             .field_bits(),
     )?;
     if slot.id.d_setup() != D
         || geometry.group.num_polynomials() != 1
-        || geometry.num_live_ring_elements_per_claim != source_ring_len
-        || geometry.num_positions_per_block == 0
-        || geometry.num_live_blocks != source_ring_len.div_ceil(geometry.num_positions_per_block)
+        || geometry.blocks.live_ring_elements_per_claim != source_ring_len
+        || geometry.blocks.positions_per_block == 0
+        || geometry.blocks.live_blocks
+            != source_ring_len.div_ceil(geometry.blocks.positions_per_block)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix source disagrees with frozen block geometry".into(),
         ));
     }
-    Ok((geometry.num_positions_per_block, geometry.num_live_blocks))
+    Ok((
+        geometry.blocks.positions_per_block,
+        geometry.blocks.live_blocks,
+    ))
 }
 
 fn fold_setup_prefix_blocks<F: FieldCore, const D: usize>(
@@ -669,7 +673,7 @@ mod tests {
     fn setup_prefix_coefficient_packing_matches_copied_dense_oracle() {
         use akita_types::{
             coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
-            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, CommittedGroupProfile,
+            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, GroupCommitPhaseParams,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PreparedSubringCoefficientPackingPoint, SetupPrefixPublicCommitment, SetupPrefixSlotId,
             SisModulusProfileId, SubringCoefficientPackingGeometry,
@@ -688,8 +692,8 @@ mod tests {
         )
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
-        let inner = &params.inner_commit_matrix;
-        params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        let inner = &params.inner().matrix;
+        params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner.sis_table_key().unwrap().table_digest,
             inner.sis_modulus_profile(),
@@ -698,8 +702,8 @@ mod tests {
             2,
             D,
         );
-        let outer = &params.outer_commit_matrix;
-        params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &params.outer().matrix;
+        params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -709,7 +713,7 @@ mod tests {
             D,
         );
         let profile =
-            CommittedGroupProfile::try_from_params(PolynomialGroupLayout::singleton(9), &params)
+            GroupCommitPhaseParams::try_from_params(PolynomialGroupLayout::singleton(9), &params)
                 .expect("valid setup-prefix profile");
         let fields = (0..512)
             .map(|index| F::from_i64((index % 17) as i64 - 8))

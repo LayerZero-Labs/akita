@@ -1,5 +1,5 @@
-use akita_field::AkitaError;
-use akita_types::{CommittedGroupParams, SetupMatrixCapacity, TerminalCommittedGroupParams};
+use akita_error::AkitaError;
+use akita_types::{CommittedGroupParams, SetupMatrixCapacity, TerminalFoldParams};
 
 pub(crate) fn level_setup_field_elements(
     params: &CommittedGroupParams,
@@ -10,7 +10,7 @@ pub(crate) fn level_setup_field_elements(
 }
 
 pub(crate) fn terminal_setup_field_elements(
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
 ) -> Result<usize, AkitaError> {
     let mut field_elements = SetupMatrixCapacity::minimum().num_field_elements;
     akita_types::accumulate_terminal_matrix_field_elements(params, &mut field_elements)?;

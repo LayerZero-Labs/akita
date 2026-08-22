@@ -197,7 +197,7 @@ where
             (Some(plan), Some(norm_proof)) => {
                 let InnerCommitSecurityRoute::L2 {
                     response_l2_sq_cap, ..
-                } = lp.inner_commit_matrix.security_route()
+                } = lp.inner().matrix.security_route()
                 else {
                     return Err(AkitaError::InvalidSetup(
                         "physical response plan exists for a non-L2 route".into(),
@@ -214,7 +214,7 @@ where
                         leaf_coefficients: &leaf.polynomial_coefficients,
                         image_evaluation: proof.range_image_evaluation,
                     },
-                    lp.inner_commit_matrix.sis_modulus_profile(),
+                    lp.inner().matrix.sis_modulus_profile(),
                     response_l2_sq_cap,
                     transcript,
                 )?;
@@ -333,7 +333,7 @@ where
         let setup_point =
             verifier.verify_stage3::<F, T>(setup, next_fold_level_params, proof, transcript)?;
         return Ok(next_fold_level_params
-            .setup_prefix
+            .setup_prefix()
             .as_ref()
             .map(|_| (setup_point, proof.setup_prefix_eval)));
     }

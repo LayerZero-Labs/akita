@@ -13,9 +13,9 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
         precommitteds: schedule
             .root
             .params
-            .precommitted_groups
+            .precommitted_groups()
             .iter()
-            .map(|group| group.descriptor)
+            .map(|group| group.profile)
             .collect(),
     };
     if let Some(catalog) = Cfg::schedule_catalog() {
@@ -72,7 +72,7 @@ where
 /// prover's exact per-round degree schedule. This is a pre-existing inaccuracy
 /// (it reproduces on `main` for schedules whose terminal sumcheck folds an
 /// odd-shaped witness) and is tracked for a proper fix in
-/// `specs/planner-refactor.md`.
+/// `specs/archive/2026-Q2/planner-refactor.md`.
 ///
 /// The overcount scales with the number of stage-2 rounds, so it is largest
 /// for small-field / many-level schedules: across the profile-bench matrix the
@@ -95,7 +95,6 @@ where
 {
     schedule
         .terminal
-        .params
         .response_shape
         .layout
         .z_payload_bytes()

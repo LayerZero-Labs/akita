@@ -3,7 +3,8 @@ use super::CpuBackend;
 use crate::compute::backend::ComputeBackendSetup;
 use crate::compute::requirements::RoutedNttRequirement;
 use crate::kernels::linear::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, prepare_ntt_cache, AkitaExpandedSetup,
     NttCacheKey, NttCacheMode, NttTransformDomain, PreparedNttCache,

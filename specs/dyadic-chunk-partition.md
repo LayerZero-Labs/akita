@@ -4,9 +4,9 @@
 |---|---|
 | Author(s) | Quang Dao |
 | Created | 2026-08-06 |
-| Status | active |
+| Status | implemented |
 | PR | [#372](https://github.com/LayerZero-Labs/akita/pull/372) |
-| Supersedes | The residual chunk rules in `distributed-prover.md`, `distributed-planner.md`, and `digit-innermost-layout.md` |
+| Supersedes | The residual chunk rules in the distributed-prover design records and `archive/2026-Q3/digit-innermost-layout.md` |
 | Superseded-by | |
 | Book-chapter | book/src/how/proving/opening-points-layout.md |
 
@@ -161,9 +161,9 @@ This spec records the cutover and updates the chunk rule in
 uses the same exact range formula. No `AGENTS.md` change is needed because the
 verifier error contract and development commands do not change.
 
-After the PR merges, set the status to `implemented` and record its number. The
-book owns the durable rule, so the spec can then be archived during the normal
-spec pruning pass.
+PR #372 merged with all acceptance criteria complete. The Book owns the
+durable rule, and this record remains in the root as the current load-bearing
+partition contract until the next archive pass.
 
 ## Execution
 
@@ -176,8 +176,6 @@ spec pruning pass.
 
 ## References
 
-- [`distributed-prover.md`](distributed-prover.md)
-- [`distributed-planner.md`](distributed-planner.md)
-- [`digit-innermost-layout.md`](digit-innermost-layout.md)
+- [`archive/2026-Q3/digit-innermost-layout.md`](archive/2026-Q3/digit-innermost-layout.md)
 - [`commitment-compression-cutover.md`](archive/2026-Q3/commitment-compression-cutover.md)
 - [`book/src/how/proving/opening-points-layout.md`](../book/src/how/proving/opening-points-layout.md)

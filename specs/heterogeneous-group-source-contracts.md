@@ -5,11 +5,11 @@
 | Author(s) | Quang Dao |
 | Created | 2026-07-30 |
 | Revised | 2026-08-11 |
-| Status | active |
+| Status | implemented |
 | PR | [#338](https://github.com/LayerZero-Labs/akita/pull/338), [#355](https://github.com/LayerZero-Labs/akita/pull/355) |
 | Supersedes | Earlier source-provider and fold-admission revisions of this specification |
 | Superseded-by | |
-| Book-chapter | how/architecture.md |
+| Book-chapter | book/src/how/architecture.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -713,7 +713,7 @@ The implementation MUST update:
 
 - [`fold-linf-rejection.md`](fold-linf-rejection.md) to mark its old cap and ZK
   probe ownership as superseded;
-- [`tail-wire-encoding.md`](tail-wire-encoding.md) to name the terminal response
+- [`archive/2026-Q3/tail-wire-encoding.md`](archive/2026-Q3/tail-wire-encoding.md) to name the terminal response
   shape as the wire authority;
 - [`book/src/how/architecture.md`](../book/src/how/architecture.md) to describe
   the offline group policy and source-free runtime boundary;
@@ -724,5 +724,5 @@ The implementation MUST update:
 
 - [BCP 14](https://www.rfc-editor.org/info/bcp14)
 - [`fold-linf-rejection.md`](fold-linf-rejection.md)
-- [`tail-wire-encoding.md`](tail-wire-encoding.md)
-- [`multi-group-batching.md`](multi-group-batching.md)
+- [`archive/2026-Q3/tail-wire-encoding.md`](archive/2026-Q3/tail-wire-encoding.md)
+- [`archive/2026-Q3/multi-group-batching.md`](archive/2026-Q3/multi-group-batching.md)

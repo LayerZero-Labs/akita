@@ -1,7 +1,9 @@
 //! The multilinear-polynomial wrapper enum, its borrowed dispatch views, and
 //! the source-trait impls. The `CpuBackend` kernel impls live in [`super::ops`].
 
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_error::AkitaError;
+
+use akita_field::{CanonicalField, FieldCore};
 
 use crate::compute::{RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape};
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
