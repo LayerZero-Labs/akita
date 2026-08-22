@@ -28,7 +28,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     /// through `S = w(w + 1)`. No relation or evaluation-trace term is
     /// included.
     pub fn new_virtual_only(
-        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
+        w_evals_compact: Vec<i8>,
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
@@ -39,7 +39,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let (lane_capacity, coeff_count) = stage2_geometry(lane_bits, coefficient_bits)?;
         Self::new(
             E::one(),
-            w_evals_compact,
+            PackedSignedDigits::from_i8_digits_auto(w_evals_compact),
             stage1_point,
             range_image_evaluation,
             b,
@@ -60,7 +60,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
     pub(crate) fn new(
         batching_coeff: E,
-        w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
+        w_evals_compact: impl Into<PackedSignedDigits>,
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
@@ -128,29 +128,28 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let (ordinary_relation_sum, structured_relation_sum) = w_evals_compact
-                .chunks_exact(coeff_count)
-                .zip(&relation_lane_weights)
+            let (ordinary_relation_sum, structured_relation_sum) = relation_lane_weights
+                .iter()
+                .take(live_lane_count)
                 .enumerate()
                 .fold(
                     (E::zero(), E::zero()),
-                    |(ordinary, structured), (lane, (lane_values, &lane_weight))| {
-                        lane_values
-                            .iter()
-                            .zip(&common_alpha_factor)
-                            .enumerate()
-                            .fold(
-                                (ordinary, structured),
-                                |(ordinary, structured), (coefficient, (&w, &alpha))| {
-                                    let witness = E::from_i64(i64::from(w));
-                                    (
-                                        ordinary + witness * lane_weight * alpha,
-                                        structured
-                                            + witness
-                                                * linear_terms.get(lane, coefficient, coeff_count),
-                                    )
-                                },
-                            )
+                    |(ordinary, structured), (lane, &lane_weight)| {
+                        common_alpha_factor.iter().enumerate().fold(
+                            (ordinary, structured),
+                            |(ordinary, structured), (coefficient, &alpha)| {
+                                let w = w_evals_compact
+                                    .get(lane * coeff_count + coefficient)
+                                    .expect("debug relation witness index is in bounds");
+                                let witness = E::from_i64(i64::from(w));
+                                (
+                                    ordinary + witness * lane_weight * alpha,
+                                    structured
+                                        + witness
+                                            * linear_terms.get(lane, coefficient, coeff_count),
+                                )
+                            },
+                        )
                     },
                 );
             if ordinary_relation_sum + structured_relation_sum
@@ -243,7 +242,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             .expect("compact round 1 requires the first prefix challenge"),
                     )
                 };
-                additional.round_polynomial_compact(compact_witness, first_challenge)
+                additional.round_polynomial_compact(compact_witness.view(), first_challenge)
             }
             WitnessState::FoldedSuffix(folded_witness) => {
                 additional.round_polynomial_folded(folded_witness)
@@ -383,7 +382,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 .expect("two-round prefix requested without cached stage-1 challenges");
             let coefficient_bits = self.num_vars - self.lane_bits;
             let compact_witness = match &self.witness_state {
-                WitnessState::CompactPrefix(compact_witness) => compact_witness,
+                WitnessState::CompactPrefix(compact_witness) => compact_witness.view(),
                 WitnessState::FoldedSuffix(_) => {
                     panic!("two-round prefix can only build from compact witness")
                 }

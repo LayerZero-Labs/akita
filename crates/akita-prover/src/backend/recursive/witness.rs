@@ -22,7 +22,7 @@ use crate::backend::poly_helpers::{
 };
 use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
 use akita_types::WitnessLayout;
-use std::{marker::PhantomData, sync::Arc};
+use std::marker::PhantomData;
 
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 
@@ -111,12 +111,8 @@ impl RecursiveWitnessFlat {
         self.digits.decode()
     }
 
-    /// Materialize the one remaining legacy byte-oriented sum-check input.
-    ///
-    /// This allocation is temporary migration state. Packed sum-check kernels
-    /// must remove it before the representation cutover is complete.
-    pub(crate) fn materialize_shared_i8_digits(&self) -> Arc<[i8]> {
-        self.digits.shared_decoded()
+    pub(crate) fn packed_digits(&self) -> PackedSignedDigits {
+        self.digits.clone()
     }
 
     #[cfg(feature = "response-model-diagnostics")]

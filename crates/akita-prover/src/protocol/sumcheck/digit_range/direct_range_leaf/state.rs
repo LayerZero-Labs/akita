@@ -16,14 +16,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     /// Returns an error if the plan has product stages, if any declared
     /// width overflows, or if the witness or `tau0` length disagrees with
     /// the declared `(live_x_cols, col_bits, ring_bits)` shape.
-    pub fn new(
-        digit_witness: std::sync::Arc<[i8]>,
+    pub(crate) fn new(
+        digit_witness: impl Into<PackedSignedDigits>,
         tau0: &[E],
         plan: DigitRangePlan,
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
+        let digit_witness = digit_witness.into();
         if !plan.product_stage_arities().is_empty() {
             return Err(AkitaError::InvalidInput(
                 "direct range prover requires basis 4 or 8".to_string(),
@@ -177,7 +178,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 .expect("two-round prefix requested without cached tau");
             let ring_bits = self.num_vars - self.col_bits;
             let compact_range_image = match &self.range_image {
-                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness.as_ref(),
+                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness,
                 LowBasisRangeImageStorage::Materialized(_) => {
                     panic!("two-round prefix can only build from compact table")
                 }

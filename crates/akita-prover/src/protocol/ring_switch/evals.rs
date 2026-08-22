@@ -1,6 +1,8 @@
 use akita_error::AkitaError;
 
-/// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
+use crate::backend::packed_digits::PackedSignedDigits;
+
+/// Produce the compact packed eval table of `w` for the fused prover.
 ///
 /// The compact witness stays in the raw `build_w_coeffs` order:
 /// `w[x * y_len + y]`, with x outer and y inner. Only exact live columns are
@@ -11,13 +13,14 @@ use akita_error::AkitaError;
 ///
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
-pub fn build_w_evals_compact(
-    w: std::sync::Arc<[i8]>,
+pub(crate) fn build_w_evals_compact(
+    w: impl Into<PackedSignedDigits>,
     d: usize,
     extension_degree: usize,
     opening_source_len: usize,
-) -> Result<(std::sync::Arc<[i8]>, usize, usize), AkitaError> {
-    if !w.len().is_multiple_of(d) {
+) -> Result<(PackedSignedDigits, usize, usize), AkitaError> {
+    let w = w.into();
+    if d == 0 || !w.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidSize {
             expected: d,
             actual: w.len(),
@@ -44,7 +47,11 @@ pub fn build_w_evals_compact(
     }
     let half = d / (2 * extension_degree);
     let mut compact = vec![0i8; live_physical_cols * packed_len];
-    for (physical_index, ring) in w.chunks_exact(d).enumerate() {
+    let mut ring = vec![0i8; d];
+    for physical_index in 0..live_physical_cols {
+        w.view()
+            .slice(physical_index * d..(physical_index + 1) * d)?
+            .decode_range(0, &mut ring)?;
         let opening_index =
             akita_types::checked_opening_source_index(opening_source_len, physical_index)?;
         let dst = &mut compact[opening_index * packed_len..(opening_index + 1) * packed_len];
@@ -54,7 +61,7 @@ pub fn build_w_evals_compact(
         }
     }
     Ok((
-        compact.into(),
+        PackedSignedDigits::from_i8_digits_auto(compact),
         col_bits,
         packed_len.trailing_zeros() as usize,
     ))

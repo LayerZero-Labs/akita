@@ -25,6 +25,7 @@ mod round_accumulation;
 
 pub use direct_range_leaf::LowBasisRangeCheckProver;
 
+use crate::backend::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
@@ -221,12 +222,13 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
     ///
     /// Returns an error if the witness length, domain, or equality point are
     /// inconsistent.
-    pub fn new(
-        digit_witness: std::sync::Arc<[i8]>,
+    pub(crate) fn new(
+        digit_witness: impl Into<PackedSignedDigits>,
         plan: DigitRangePlan,
         domain: FlatBooleanDomain,
         equality_point: DigitRangeEqualityPoint<E>,
     ) -> Result<Self, AkitaError> {
+        let digit_witness = digit_witness.into();
         equality_point.validate_domain(domain)?;
         let low_variable_count = equality_point.low_variable_count();
         let high_variable_count = domain.num_vars() - low_variable_count;
@@ -343,7 +345,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
             let (norm_proof, stage1_point, range_image_evaluation) =
                 super::physical_l2_norm::prove_physical_l2_norm::<F, E, T>(
                     physical_plan,
-                    compact_witness.as_ref(),
+                    &compact_witness,
                     range_leaf,
                     transcript,
                 )?;

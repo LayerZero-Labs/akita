@@ -7,6 +7,10 @@ use akita_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 
+fn packed(witness: &[i8]) -> PackedSignedDigits {
+    PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct Stage2Params<'a> {
     stage1_point: &'a [F],
@@ -414,16 +418,23 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let r = F::from_u64(53);
 
     let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-    let fold_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(&w_prefix, r);
+    let packed_prefix = packed(&w_prefix);
+    let fold_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(packed_prefix.view(), r);
     assert_eq!(
-        RelationRangeImageProver::<F>::fold_compact_partial_lanes(&w_prefix, 5, 2, &fold_lut),
+        RelationRangeImageProver::<F>::fold_compact_partial_lanes(
+            packed_prefix.view(),
+            5,
+            2,
+            &fold_lut
+        ),
         fold_compact_partial_lanes_reference(&w_prefix, 5, 2, r)
     );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
-    let dense_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(&w_dense, r);
+    let packed_dense = packed(&w_dense);
+    let dense_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(packed_dense.view(), r);
     assert_eq!(
-        RelationRangeImageProver::<F>::materialize_compact_witness(&w_dense, &dense_lut),
+        RelationRangeImageProver::<F>::materialize_compact_witness(packed_dense.view(), &dense_lut),
         materialize_compact_witness_reference(&w_dense, r)
     );
 }
@@ -459,7 +470,9 @@ fn stage2_compact_round0_matches_unfused_reference() {
                 coefficient_bits,
             },
         );
-        let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&compact_witness);
+        let packed_witness = packed(&compact_witness);
+        let (virt_poly, relation_poly) =
+            prover.compute_round_compact_dense_polys(packed_witness.view());
         let virt_ref = virtual_round_reference(&prover.split_eq, &compact_witness);
         let relation_ref = relation_round_reference(
             &compact_witness,
@@ -581,7 +594,9 @@ fn stage2_zero_gated_round0_matches_reference() {
             coefficient_bits,
         },
     );
-    let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&compact_witness);
+    let packed_witness = packed(&compact_witness);
+    let (virt_poly, relation_poly) =
+        prover.compute_round_compact_dense_polys(packed_witness.view());
     assert_eq!(
         virt_poly,
         virtual_round_reference(&prover.split_eq, &compact_witness)
@@ -639,7 +654,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(97);
 
     let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        &w_prefix,
+        packed(&w_prefix).view(),
         live_lane_count,
         coeff_count,
         r0,
@@ -733,7 +748,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let r1 = F::from_u64(127);
 
     let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        &w_prefix,
+        packed(&w_prefix).view(),
         live_lane_count,
         coeff_count,
         r0,

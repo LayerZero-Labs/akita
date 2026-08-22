@@ -206,22 +206,13 @@ where
     #[cfg(feature = "parallel")]
     let (relation_weight_factorization_result, w_result) =
         rayon::join(prepare_relation_weight_factorization, || {
-            build_w_evals_compact(
-                w.materialize_shared_i8_digits(),
-                coeff_count,
-                1,
-                live_relation_lane_count,
-            )
+            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count)
         });
     #[cfg(not(feature = "parallel"))]
     let (relation_weight_factorization_result, w_result) = {
         let relation_weight_factorization = prepare_relation_weight_factorization();
-        let w_compact = build_w_evals_compact(
-            w.materialize_shared_i8_digits(),
-            coeff_count,
-            1,
-            live_relation_lane_count,
-        );
+        let w_compact =
+            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count);
         (relation_weight_factorization, w_compact)
     };
 
@@ -230,7 +221,7 @@ where
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
-        AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
+        AkitaError::InvalidInput(format!("witness opening preparation failed: {err:?}"))
     })?;
     if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
         return Err(AkitaError::InvalidSetup(
