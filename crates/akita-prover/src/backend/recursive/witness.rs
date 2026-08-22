@@ -60,8 +60,14 @@ impl RecursiveWitnessFlat {
                 actual: digits.len(),
             });
         }
+        let digits = PackedSignedDigits::from_i8_digits_auto(digits);
+        if !digits.bounds().fits_balanced_log_basis(log_basis) {
+            return Err(AkitaError::InvalidInput(
+                "recursive witness contains digits outside its declared balanced basis".into(),
+            ));
+        }
         Ok(Self {
-            digits: PackedSignedDigits::from_i8_digits_auto(digits),
+            digits,
             live_coeff_len: expected,
             committed_coeff_len: None,
             commitment_ring_dim: None,
