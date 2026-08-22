@@ -262,6 +262,33 @@ fn exact_cursor_rejects_omitted_entries_and_checks_fold_width() {
 }
 
 #[test]
+fn nonce_stream_packs_max_width_after_an_unaligned_entry() {
+    let fold_site = GrindingSite::FoldResponse { level: 0 };
+    let pow_site = GrindingSite::RingSwitchAlpha { level: 0 };
+    let plan = GrindingPlan::new(
+        vec![
+            GrindingRun::fold_response(0),
+            GrindingRun::proof_of_work(pow_site, 1u64 << MAX_GRINDING_BITS, 128).unwrap(),
+        ],
+        128,
+    )
+    .unwrap();
+    assert_eq!(plan.runs()[1].nonce_bits(), 32);
+
+    let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
+    writer.write_fold_response(fold_site, 0xabc).unwrap();
+    writer.write(pow_site, u32::MAX).unwrap();
+    let stream = writer.finish().unwrap();
+    assert_eq!(stream.bit_len(), 44);
+    assert_eq!(stream.as_bytes(), &[0xbc, 0xfa, 0xff, 0xff, 0xff, 0x0f]);
+
+    let mut reader = stream.reader(&plan).unwrap();
+    assert_eq!(reader.read_fold_response(fold_site).unwrap(), 0xabc);
+    assert_eq!(reader.read(pow_site).unwrap(), u32::MAX);
+    reader.finish().unwrap();
+}
+
+#[test]
 fn nonce_stream_rejects_wrong_length_and_nonzero_padding() {
     assert!(TranscriptNonceStream::from_bytes(vec![0], 9).is_err());
     assert!(TranscriptNonceStream::from_bytes(vec![0, 0x80], 9).is_err());
