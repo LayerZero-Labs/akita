@@ -254,6 +254,9 @@ $$
 R=F[X]/(X^D+1).
 $$
 
+Commitment slicing is a separate axis. It uses the same proportional partition,
+as described in [B slices and chunks](./opening-points-layout.md#b-slices-and-chunks).
+
 Let $N$ be the number of live blocks. Let $C$ be a supported power-of-two chunk
 count and, for this derivation, assume $C\mid N$. For $j=0,\ldots,C-1$, chunk
 $j$ owns the equal-sized range
@@ -492,6 +495,8 @@ $$
 The global $\mathbf z$ is therefore determined by the chunk-local witnesses,
 but it is not an additional committed coordinate and need not be materialized
 through a full-width reduction before constructing the outgoing witness.
+The [distributed prover](./distributed-prover.md#ring-switch-lift-and-next-level-commitment)
+explains how the workers combine partial commitments to that witness.
 
 The basic $\hat{\mathbf z}$ is not a concatenation or reordering of the local
 $\hat{\mathbf z}^{(j)}$ segments. Recovering that digit vector would require
@@ -877,6 +882,16 @@ dimensions, while the consuming level owns the shared $\mathbf D$ dimension.
 Each chunk retains the native layouts of its group's
 $[\hat{\mathbf z}\mid\hat{\mathbf e}\mid\hat{\mathbf t}]$ unit; chunking changes
 the block ranges and column support, not the ring assigned to a relation row.
+
+With multiple groups and chunks, the exact unit order is
+
+$$
+\big\Vert_{j=0}^{C-1}
+\big\Vert_{g\in\mathrm{relation\ order}}
+[\hat{\mathbf z}^{(j)}_g
+ \mid\hat{\mathbf e}^{(j)}_g
+ \mid\hat{\mathbf t}^{(j)}_g].
+$$
 
 The resulting physical witness remains one chunk-major flat coefficient vector
 followed by the shared native quotient rows and any compression suffix. Stage 2
