@@ -18,9 +18,9 @@ struct RecordingFoldDraw {
 }
 
 impl FoldDraw for RecordingFoldDraw {
-    fn absorb_and_squeeze(&mut self, label: &[u8], _payload: &[u8]) -> Vec<u8> {
+    fn absorb_and_squeeze(&mut self, label: &[u8], _payload: &[u8]) -> [u8; 32] {
         self.absorb_labels.push(label.to_vec());
-        vec![0; 32]
+        [0; 32]
     }
 }
 

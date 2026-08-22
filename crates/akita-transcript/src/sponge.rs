@@ -217,6 +217,14 @@ where
         out
     }
 
+    /// Squeeze one native transcript block.
+    pub fn squeeze_block(&mut self, _label: Label) -> [u8; SQUEEZE_CHUNK_LEN] {
+        match self.state_mut() {
+            TranscriptState::Prover(state) => state.verifier_message(),
+            TranscriptState::Verifier(state) => state.verifier_message(),
+        }
+    }
+
     /// Preview the final 32-byte challenge after hypothetical absorbs.
     pub fn preview_challenge_block(
         &self,
@@ -275,6 +283,10 @@ where
 
     fn challenge_bytes(&mut self, _label: &[u8], len: usize) -> Vec<u8> {
         self.squeeze_bytes(crate::label!("compat_squeeze_bytes"), len)
+    }
+
+    fn challenge_block(&mut self, _label: &[u8]) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        self.squeeze_block(crate::label!("compat_squeeze_block"))
     }
 }
 

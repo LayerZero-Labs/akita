@@ -449,7 +449,6 @@ macro_rules! generate_scalar_case {
         let grinding_plan = derive_transcript_grinding_plan::<ScalarCfg>(
             schedule.schedule(),
             &opening_layout,
-            BasisMode::Lagrange,
         )
         .map_err(|err| format!("{} derive grinding plan: {err}", case))?;
         let proof_shape = proof.shape();
@@ -793,7 +792,6 @@ fn run() -> Result<(), String> {
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
         schedule.schedule(),
         &opening_layout,
-        BasisMode::Lagrange,
     )
     .map_err(|err| format!("derive grinding plan failed: {err}"))?;
     let proof_shape = proof.shape();

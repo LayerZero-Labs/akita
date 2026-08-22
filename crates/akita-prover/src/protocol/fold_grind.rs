@@ -630,9 +630,9 @@ mod tests {
     }
 
     impl FoldDraw for FixedDraw {
-        fn absorb_and_squeeze(&mut self, _label: &[u8], _payload: &[u8]) -> Vec<u8> {
+        fn absorb_and_squeeze(&mut self, _label: &[u8], _payload: &[u8]) -> [u8; 32] {
             self.draws += 1;
-            vec![11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
+            [11; akita_transcript::FOLD_CHALLENGE_SEED_LEN]
         }
     }
 

@@ -3,13 +3,12 @@
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_field::{CanonicalField, ExtField};
-use akita_types::{BasisMode, FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use akita_types::{FoldSchedule, GrindingPlan, OpeningClaimsLayout};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
 pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
-    _basis: BasisMode,
 ) -> Result<GrindingPlan, AkitaError>
 where
     Cfg::Field: CanonicalField,
@@ -44,12 +43,8 @@ mod tests {
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
         let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout)
             .expect("generated production row");
-        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(
-            row.schedule(),
-            &layout,
-            BasisMode::Lagrange,
-        )
-        .expect("grinding plan");
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+            .expect("grinding plan");
 
         assert_eq!(
             plan.runs().first().unwrap().site(),
@@ -78,13 +73,48 @@ mod tests {
             (
                 46,
                 51,
-                366,
+                383,
                 [
-                    51, 160, 87, 176, 119, 237, 86, 152, 107, 131, 142, 46, 249, 143, 16, 50, 190,
-                    49, 242, 207, 136, 30, 42, 249, 19, 22, 15, 17, 91, 211, 133, 102,
+                    234, 57, 166, 60, 97, 187, 84, 2, 93, 68, 213, 213, 240, 179, 12, 87, 61, 208,
+                    204, 145, 252, 125, 105, 31, 128, 142, 39, 5, 232, 130, 162, 78,
                 ],
             )
         );
+    }
+
+    #[cfg(feature = "schedules-default")]
+    #[test]
+    fn stage1_prices_the_full_eq_factored_round_degree() {
+        let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
+        let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout)
+            .expect("generated production row");
+        let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
+            .expect("grinding plan");
+        let root = &row.schedule().root;
+        let rounds = akita_types::sumcheck_rounds(root.params.d_a(), root.output_witness_len);
+        let basis = 1usize
+            .checked_shl(root.params.open().digits.log_basis)
+            .expect("digit range basis");
+        let range = akita_types::DigitRangePlan::new(basis).expect("digit range plan");
+        let (stages, _) = range
+            .proof_shapes_for_route(rounds, root.params.inner().matrix.security_route())
+            .expect("Stage 1 shapes");
+
+        for run in plan.runs() {
+            let GrindingSite::SumcheckRound {
+                protocol: akita_types::SumcheckProtocol::Stage1,
+                level: 0,
+                stage,
+                ..
+            } = run.site()
+            else {
+                continue;
+            };
+            let q_degree = stages[usize::try_from(stage).expect("stage index")]
+                .sumcheck_proof
+                .1;
+            assert_eq!(run.loss_factor(), u64::try_from(q_degree + 1).unwrap());
+        }
     }
 
     #[test]
@@ -120,12 +150,8 @@ mod tests {
                 let row = Cfg::resolve_catalog_row_for_key(&entry.to_runtime_lookup_key())
                     .expect("admitted production row");
                 let layout = row.profiles().opening_layout().expect("opening layout");
-                let plan = derive_transcript_grinding_plan::<Cfg>(
-                    row.schedule(),
-                    &layout,
-                    BasisMode::Lagrange,
-                )
-                .expect("complete grinding plan");
+                let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
+                    .expect("complete grinding plan");
                 let count = |kind| plan.runs().iter().filter(|run| run.kind() == kind).count();
                 assert_eq!(
                     count(GrindingQueryKind::FoldResponse),

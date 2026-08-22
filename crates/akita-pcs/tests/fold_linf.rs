@@ -33,12 +33,9 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
     let opening_layout =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     let row = OneHotCfg::resolve_catalog_row_for_opening(&opening_layout).expect("layout");
-    let grinding_plan = akita_config::derive_transcript_grinding_plan::<OneHotCfg>(
-        row.schedule(),
-        &opening_layout,
-        BasisMode::Lagrange,
-    )
-    .expect("grinding plan");
+    let grinding_plan =
+        akita_config::derive_transcript_grinding_plan::<OneHotCfg>(row.schedule(), &opening_layout)
+            .expect("grinding plan");
     let layout = row.schedule().root.params.clone();
     let poly = make_onehot_poly(num_vars, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));

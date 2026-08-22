@@ -17,8 +17,9 @@ use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
-    CompleteObjectiveBound, FoldCandidatePolicy, RecursiveCandidateRequest, RecursiveSetupPrefix,
-    ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
+    CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
+    RecursiveSetupPrefix, ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache,
+    SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -90,9 +91,7 @@ struct ChildEdgePrice {
 
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
-    payload_bytes: usize,
-    nonce_bits: usize,
-    proof_bytes: usize,
+    cost: PackedProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
     suffix_folds: super::CandidateFoldChain,
@@ -198,9 +197,7 @@ impl PendingScheduleCandidate {
                 .map_or(super::SetupPrefixCapacity::MAX, |natural_len| {
                     super::SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            payload_bytes: self.payload_bytes,
-            nonce_bits: self.nonce_bits,
-            proof_bytes: self.proof_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
     }
@@ -208,9 +205,7 @@ impl PendingScheduleCandidate {
     fn into_candidate(self) -> ScheduleCandidate {
         ScheduleCandidate {
             first_direct_setup_field_len: self.first_direct_setup_field_len,
-            payload_bytes: self.payload_bytes,
-            nonce_bits: self.nonce_bits,
-            proof_bytes: self.proof_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
             folds: self.suffix_folds.prepend(self.first_fold),
             terminal: self.terminal,
@@ -255,11 +250,10 @@ fn child_choice(
         return Ok(None);
     }
 
-    let total_bytes = edge_price
+    let edge_payload_bytes = edge_price
         .direct_payload_bytes
         .checked_add(edge_price.stage3_payload_bytes)
-        .and_then(|value| value.checked_add(suffix.payload_bytes))
-        .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("edge proof payload overflow".to_string()))?;
     let setup_field_elements = edge
         .level_setup_field_elements
         .max(suffix.setup_field_elements);
@@ -285,19 +279,12 @@ fn child_choice(
         estimated_direct_payload_bytes: edge_price.direct_payload_bytes,
         estimated_stage3_payload_bytes: edge_price.stage3_payload_bytes,
     };
-    let nonce_bits = edge_nonce_bits
-        .checked_add(suffix.nonce_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("candidate nonce bit length overflow".into()))?;
-    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits, 8)
-        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
-    let proof_bytes = total_bytes
-        .checked_add(nonce_bytes)
-        .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+    let cost = suffix
+        .cost
+        .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
-        payload_bytes: total_bytes,
-        nonce_bits,
-        proof_bytes,
+        cost,
         setup_field_elements,
         first_fold,
         suffix_folds: suffix.folds.clone(),
@@ -493,9 +480,7 @@ fn price_terminal_candidate(
         first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(|| {
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
-        payload_bytes: total,
-        nonce_bits: 0,
-        proof_bytes: total,
+        cost: PackedProofCost::new(total, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),
         terminal: Arc::new(direct_step),

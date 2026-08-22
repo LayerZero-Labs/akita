@@ -75,9 +75,12 @@ static D128_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'stat
     });
 
 #[derive(Clone)]
-struct IndexedSamplingPolicy {
-    rejection: Option<OperatorNormRejection>,
-    op_norm_table: Option<Arc<OpNormTable>>,
+enum IndexedSamplingPolicy {
+    Unrestricted,
+    OperatorNorm {
+        threshold: u32,
+        table: Arc<OpNormTable>,
+    },
 }
 
 impl IndexedSamplingPolicy {
@@ -87,10 +90,7 @@ impl IndexedSamplingPolicy {
         rejection: Option<OperatorNormRejection>,
     ) -> Result<Self, AkitaError> {
         let Some(rejection) = rejection else {
-            return Ok(Self {
-                rejection: None,
-                op_norm_table: None,
-            });
+            return Ok(Self::Unrestricted);
         };
         rejection
             .validate(ring_d, cfg)
@@ -104,14 +104,14 @@ impl IndexedSamplingPolicy {
                 ));
             }
         };
-        let op_norm_table = Arc::clone(
+        let table = Arc::clone(
             table
                 .as_ref()
                 .map_err(|message| AkitaError::InvalidSetup((*message).into()))?,
         );
-        Ok(Self {
-            rejection: Some(rejection),
-            op_norm_table: Some(op_norm_table),
+        Ok(Self::OperatorNorm {
+            threshold: rejection.threshold,
+            table,
         })
     }
 }
@@ -145,21 +145,18 @@ impl IndexedChallengeWorker {
     ) -> Result<SparseChallenge, AkitaError> {
         self.cursor
             .reset_indexed_prefix(&self.prefix, coordinate_index);
-        let Some(rejection) = self.policy.rejection else {
+        let IndexedSamplingPolicy::OperatorNorm { threshold, table } = &self.policy else {
             self.scratch
                 .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
             return Ok(self.scratch.take_challenge());
         };
-        let table = self.policy.op_norm_table.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("operator-norm rejection table is unavailable".into())
-        })?;
         for _ in 0..MAX_OP_NORM_ATTEMPTS {
             self.scratch
                 .sample(&mut self.cursor, ring_d, cfg.count_pm1, cfg.count_pm2)?;
             if table.accept_strict_parts(
                 self.scratch.positions(),
                 self.scratch.coeffs(),
-                u64::from(rejection.threshold),
+                u64::from(*threshold),
             )? {
                 return Ok(self.scratch.take_challenge());
             }
@@ -218,13 +215,25 @@ fn sample_indexed_challenges_sequential(
     cfg: &SparseChallengeConfig,
     policy: &IndexedSamplingPolicy,
 ) -> Result<Vec<SparseChallenge>, AkitaError> {
+    sample_indexed_challenges_sequential_with(prefix, n, cfg, policy, |worker, index| {
+        worker.sample(index, ring_d, cfg)
+    })
+}
+
+fn sample_indexed_challenges_sequential_with(
+    prefix: &IndexedXofPrefix,
+    n: usize,
+    cfg: &SparseChallengeConfig,
+    policy: &IndexedSamplingPolicy,
+    mut sample: impl FnMut(&mut IndexedChallengeWorker, u64) -> Result<SparseChallenge, AkitaError>,
+) -> Result<Vec<SparseChallenge>, AkitaError> {
     let mut worker = IndexedChallengeWorker::new(prefix, cfg, policy);
     (0..n)
         .map(|index| {
             let coordinate_index = u64::try_from(index).map_err(|_| {
                 AkitaError::InvalidSetup("sparse challenge coordinate index exceeds u64".into())
             })?;
-            worker.sample(coordinate_index, ring_d, cfg)
+            sample(&mut worker, coordinate_index)
         })
         .collect()
 }
@@ -264,7 +273,7 @@ where
     absorb_buf.extend_from_slice(&grind_nonce.to_le_bytes());
 
     transcript.append_bytes(ABSORB_SPARSE_CHALLENGE, &absorb_buf);
-    let seed = transcript.challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, 32);
+    let seed = transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE);
     sample_indexed_challenges_from_seed(&seed, ring_d, n, cfg, None)
 }
 
@@ -300,16 +309,35 @@ mod tests {
         let cfg = SparseChallengeConfig::production_for_ring_dim(ring_d).unwrap();
         let seed = [23u8; 32];
         let alternate_seed = [29u8; 32];
-        let mut challenges =
-            sample_indexed_challenges_from_seed(&seed, ring_d, 12, &cfg, None).unwrap();
-        let before = challenges.clone();
+        let before = sample_indexed_challenges_from_seed(&seed, ring_d, 12, &cfg, None).unwrap();
         let policy = IndexedSamplingPolicy::new(ring_d, &cfg, None).unwrap();
+        let prefix = IndexedXofPrefix::new(&seed).unwrap();
         let alternate_prefix = IndexedXofPrefix::new(&alternate_seed).unwrap();
-        let mut worker = IndexedChallengeWorker::new(&alternate_prefix, &cfg, &policy);
-        challenges[7] = worker.sample(7, ring_d, &cfg).unwrap();
-        assert_ne!(challenges[7], before[7]);
-        for index in (0..challenges.len()).filter(|&index| index != 7) {
-            assert_eq!(challenges[index], before[index]);
+        let alternate_answer = IndexedChallengeWorker::new(&alternate_prefix, &cfg, &policy)
+            .sample(7, ring_d, &cfg)
+            .unwrap();
+        assert_ne!(alternate_answer, before[7]);
+
+        let forked = sample_indexed_challenges_sequential_with(
+            &prefix,
+            before.len(),
+            &cfg,
+            &policy,
+            |worker, index| {
+                if index == 7 {
+                    Ok(alternate_answer.clone())
+                } else {
+                    worker.sample(index, ring_d, &cfg)
+                }
+            },
+        )
+        .unwrap();
+        for index in 0..forked.len() {
+            if index == 7 {
+                assert_ne!(forked[index], before[index]);
+            } else {
+                assert_eq!(forked[index], before[index]);
+            }
         }
     }
 

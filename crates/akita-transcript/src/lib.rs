@@ -93,6 +93,9 @@ where
     /// Squeeze `len` challenge bytes under the provided label.
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
 
+    /// Squeeze one native 32-byte transcript block.
+    fn challenge_block(&mut self, label: &[u8]) -> [u8; TRANSCRIPT_CHALLENGE_BLOCK_LEN];
+
     /// Apply one public transcript proof-of-work transition.
     ///
     /// A zero-bit target is an explicit no-op and returns `None`. A nonzero
@@ -109,9 +112,7 @@ where
         let grind_bits = std::num::NonZeroU8::new(grind_bits)?;
         let payload = grinding_payload(grind_bits, nonce_bits, nonce);
         self.append_bytes(labels::ABSORB_TRANSCRIPT_GRINDING, &payload);
-        self.challenge_bytes(labels::CHALLENGE_GRINDING_PREDICATE, GRINDING_PREDICATE_LEN)
-            .try_into()
-            .ok()
+        Some(self.challenge_block(labels::CHALLENGE_GRINDING_PREDICATE))
     }
 }
 

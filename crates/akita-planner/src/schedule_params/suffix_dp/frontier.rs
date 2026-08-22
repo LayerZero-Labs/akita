@@ -82,28 +82,32 @@ fn first_parent_visible_cost(
     parent_visible_cost(policy, candidate.first_fold_params())
 }
 
-fn setup_score(
-    metrics: super::super::CandidateMetrics,
-) -> (
-    crate::schedule_params::SetupPrefixCapacity,
-    usize,
-    usize,
-    usize,
-) {
-    (
-        metrics.first_direct_setup_capacity,
-        metrics.payload_bytes,
-        metrics.nonce_bits,
-        metrics.setup_field_elements,
-    )
+#[derive(Clone, Copy)]
+struct SetupScore {
+    first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
+    cost: crate::schedule_params::PackedProofCost,
+    setup_field_elements: usize,
 }
 
-fn payload_score(metrics: super::super::CandidateMetrics) -> (usize, usize, usize) {
-    (
-        metrics.payload_bytes,
-        metrics.nonce_bits,
-        metrics.setup_field_elements,
-    )
+#[derive(Clone, Copy)]
+struct PayloadScore {
+    cost: crate::schedule_params::PackedProofCost,
+    setup_field_elements: usize,
+}
+
+fn setup_score(metrics: super::super::CandidateMetrics) -> SetupScore {
+    SetupScore {
+        first_direct_setup_capacity: metrics.first_direct_setup_capacity,
+        cost: metrics.cost,
+        setup_field_elements: metrics.setup_field_elements,
+    }
+}
+
+fn payload_score(metrics: super::super::CandidateMetrics) -> PayloadScore {
+    PayloadScore {
+        cost: metrics.cost,
+        setup_field_elements: metrics.setup_field_elements,
+    }
 }
 
 #[derive(Clone)]
@@ -419,28 +423,17 @@ fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> boo
 }
 
 fn setup_primary_strictly_dominates(
-    left_score: (
-        crate::schedule_params::SetupPrefixCapacity,
-        usize,
-        usize,
-        usize,
-    ),
+    left_score: SetupScore,
     left_admission: ParentAdmissionClass,
-    right_score: (
-        crate::schedule_params::SetupPrefixCapacity,
-        usize,
-        usize,
-        usize,
-    ),
+    right_score: SetupScore,
     right_admission: ParentAdmissionClass,
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
-        && (left_score.0 < right_score.0
-            || (left_score.0 == right_score.0
-                && packed_cost_strictly_better_for_every_parent(
-                    (left_score.1, left_score.2),
-                    (right_score.1, right_score.2),
-                )))
+        && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
+            || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
+                && left_score
+                    .cost
+                    .strictly_better_for_every_parent(right_score.cost)))
 }
 
 #[derive(Clone, Copy)]
@@ -452,37 +445,23 @@ struct ProjectionOrder<'a, Score> {
 }
 
 fn setup_projection_dominates(
-    left: ProjectionOrder<
-        '_,
-        (
-            crate::schedule_params::SetupPrefixCapacity,
-            usize,
-            usize,
-            usize,
-        ),
-    >,
-    right: ProjectionOrder<
-        '_,
-        (
-            crate::schedule_params::SetupPrefixCapacity,
-            usize,
-            usize,
-            usize,
-        ),
-    >,
+    left: ProjectionOrder<'_, SetupScore>,
+    right: ProjectionOrder<'_, SetupScore>,
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
-        && (left.score.0 < right.score.0
-            || (left.score.0 == right.score.0
-                && (packed_cost_strictly_better_for_every_parent(
-                    (left.score.1, left.score.2),
-                    (right.score.1, right.score.2),
-                ) || (packed_cost_never_worse_for_every_parent(
-                    (left.score.1, left.score.2),
-                    (right.score.1, right.score.2),
-                ) && left.score.3 <= right.score.3
-                    && left.context == right.context
-                    && left.descriptor <= right.descriptor))))
+        && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
+            || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
+                && (left
+                    .score
+                    .cost
+                    .strictly_better_for_every_parent(right.score.cost)
+                    || (left
+                        .score
+                        .cost
+                        .never_worse_for_every_parent(right.score.cost)
+                        && left.score.setup_field_elements <= right.score.setup_field_elements
+                        && left.context == right.context
+                        && left.descriptor <= right.descriptor))))
 }
 
 fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
@@ -503,62 +482,33 @@ fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> b
 }
 
 fn payload_primary_strictly_dominates(
-    left_score: (usize, usize, usize),
+    left_score: PayloadScore,
     left_admission: ParentAdmissionClass,
-    right_score: (usize, usize, usize),
+    right_score: PayloadScore,
     right_admission: ParentAdmissionClass,
 ) -> bool {
     left_admission.admits_every_parent_of(right_admission)
-        && packed_cost_strictly_better_for_every_parent(
-            (left_score.0, left_score.1),
-            (right_score.0, right_score.1),
-        )
+        && left_score
+            .cost
+            .strictly_better_for_every_parent(right_score.cost)
 }
 
 fn payload_projection_dominates(
-    left: ProjectionOrder<'_, (usize, usize, usize)>,
-    right: ProjectionOrder<'_, (usize, usize, usize)>,
+    left: ProjectionOrder<'_, PayloadScore>,
+    right: ProjectionOrder<'_, PayloadScore>,
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
-        && (packed_cost_strictly_better_for_every_parent(
-            (left.score.0, left.score.1),
-            (right.score.0, right.score.1),
-        ) || (packed_cost_never_worse_for_every_parent(
-            (left.score.0, left.score.1),
-            (right.score.0, right.score.1),
-        ) && left.score.2 <= right.score.2
-            && left.context == right.context
-            && left.descriptor <= right.descriptor))
-}
-
-// A parent adds the same prefix bits to both suffixes. Whole prefix bytes
-// cancel, so checking all eight bit remainders proves the packed ordering for
-// every possible parent.
-fn packed_cost_never_worse_for_every_parent(left: (usize, usize), right: (usize, usize)) -> bool {
-    (0..8).all(|parent_remainder| {
-        packed_proof_bytes(left, parent_remainder)
-            .zip(packed_proof_bytes(right, parent_remainder))
-            .is_some_and(|(left, right)| left <= right)
-    })
-}
-
-fn packed_cost_strictly_better_for_every_parent(
-    left: (usize, usize),
-    right: (usize, usize),
-) -> bool {
-    (0..8).all(|parent_remainder| {
-        packed_proof_bytes(left, parent_remainder)
-            .zip(packed_proof_bytes(right, parent_remainder))
-            .is_some_and(|(left, right)| left < right)
-    })
-}
-
-fn packed_proof_bytes(
-    (payload_bytes, nonce_bits): (usize, usize),
-    parent_remainder: usize,
-) -> Option<usize> {
-    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits.checked_add(parent_remainder)?, 8)?;
-    payload_bytes.checked_add(nonce_bytes)
+        && (left
+            .score
+            .cost
+            .strictly_better_for_every_parent(right.score.cost)
+            || (left
+                .score
+                .cost
+                .never_worse_for_every_parent(right.score.cost)
+                && left.score.setup_field_elements <= right.score.setup_field_elements
+                && left.context == right.context
+                && left.descriptor <= right.descriptor))
 }
 
 fn insert_projected(
@@ -583,10 +533,12 @@ mod tests {
     use super::{
         payload_primary_strictly_dominates, payload_projection_dominates,
         projection_bound_is_dominated, setup_primary_strictly_dominates,
-        setup_projection_dominates, DescriptorOrderContext, ParentAdmissionClass, Projection,
-        ProjectionOrder,
+        setup_projection_dominates, DescriptorOrderContext, ParentAdmissionClass, PayloadScore,
+        Projection, ProjectionOrder, SetupScore,
     };
-    use crate::schedule_params::{CandidateMetrics, CompleteObjectiveBound, SetupPrefixCapacity};
+    use crate::schedule_params::{
+        CandidateMetrics, CompleteObjectiveBound, PackedProofCost, SetupPrefixCapacity,
+    };
 
     fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
         DescriptorOrderContext {
@@ -616,10 +568,34 @@ mod tests {
         }
     }
 
+    fn setup_score(
+        capacity: SetupPrefixCapacity,
+        payload_bytes: usize,
+        nonce_bits: usize,
+        setup_field_elements: usize,
+    ) -> SetupScore {
+        SetupScore {
+            first_direct_setup_capacity: capacity,
+            cost: PackedProofCost::new(payload_bytes, nonce_bits).unwrap(),
+            setup_field_elements,
+        }
+    }
+
+    fn payload_score(
+        payload_bytes: usize,
+        nonce_bits: usize,
+        setup_field_elements: usize,
+    ) -> PayloadScore {
+        PayloadScore {
+            cost: PackedProofCost::new(payload_bytes, nonce_bits).unwrap(),
+            setup_field_elements,
+        }
+    }
+
     #[test]
     fn setup_projection_keeps_setup_descriptor_tradeoffs_that_a_parent_can_mask() {
-        let smaller_setup = (SetupPrefixCapacity::for_natural_len(8), 100, 0, 64);
-        let smaller_descriptor = (SetupPrefixCapacity::for_natural_len(8), 100, 0, 128);
+        let smaller_setup = setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 64);
+        let smaller_descriptor = setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 128);
         assert!(!setup_projection_dominates(
             order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
             order(smaller_descriptor, &[1], &context(2, 7), admission(2, 8),),
@@ -631,7 +607,7 @@ mod tests {
 
         assert!(setup_projection_dominates(
             order(
-                (SetupPrefixCapacity::for_natural_len(4), 100, 0, 256),
+                setup_score(SetupPrefixCapacity::for_natural_len(4), 100, 0, 256),
                 &[9],
                 &context(2, 8),
                 admission(2, 4),
@@ -640,7 +616,7 @@ mod tests {
         ));
         assert!(setup_projection_dominates(
             order(
-                (SetupPrefixCapacity::for_natural_len(8), 99, 0, 256),
+                setup_score(SetupPrefixCapacity::for_natural_len(8), 99, 0, 256),
                 &[9],
                 &context(3, 8),
                 admission(2, 8),
@@ -652,20 +628,60 @@ mod tests {
     #[test]
     fn payload_projection_keeps_setup_descriptor_tradeoffs_that_a_parent_can_mask() {
         assert!(!payload_projection_dominates(
-            order((100, 0, 64), &[2], &context(2, 7), admission(2, 8)),
-            order((100, 0, 128), &[1], &context(2, 7), admission(2, 8)),
+            order(
+                payload_score(100, 0, 64),
+                &[2],
+                &context(2, 7),
+                admission(2, 8)
+            ),
+            order(
+                payload_score(100, 0, 128),
+                &[1],
+                &context(2, 7),
+                admission(2, 8)
+            ),
         ));
         assert!(!payload_projection_dominates(
-            order((100, 0, 128), &[1], &context(2, 7), admission(2, 8)),
-            order((100, 0, 64), &[2], &context(2, 7), admission(2, 8)),
+            order(
+                payload_score(100, 0, 128),
+                &[1],
+                &context(2, 7),
+                admission(2, 8)
+            ),
+            order(
+                payload_score(100, 0, 64),
+                &[2],
+                &context(2, 7),
+                admission(2, 8)
+            ),
         ));
         assert!(payload_projection_dominates(
-            order((99, 0, 256), &[9], &context(3, 8), admission(2, 4)),
-            order((100, 0, 64), &[1], &context(2, 7), admission(2, 8)),
+            order(
+                payload_score(99, 0, 256),
+                &[9],
+                &context(3, 8),
+                admission(2, 4)
+            ),
+            order(
+                payload_score(100, 0, 64),
+                &[1],
+                &context(2, 7),
+                admission(2, 8)
+            ),
         ));
         assert!(payload_projection_dominates(
-            order((100, 0, 64), &[1], &context(2, 7), admission(2, 8)),
-            order((100, 0, 128), &[2], &context(2, 7), admission(2, 8)),
+            order(
+                payload_score(100, 0, 64),
+                &[1],
+                &context(2, 7),
+                admission(2, 8)
+            ),
+            order(
+                payload_score(100, 0, 128),
+                &[2],
+                &context(2, 7),
+                admission(2, 8)
+            ),
         ));
     }
 
@@ -673,8 +689,8 @@ mod tests {
     fn payload_projection_prices_every_nonce_alignment() {
         let admission = admission(2, 8);
         let context = context(2, 7);
-        let smaller_payload = order((100, 8, 64), &[1], &context, admission);
-        let smaller_nonce = order((101, 0, 64), &[2], &context, admission);
+        let smaller_payload = order(payload_score(100, 8, 64), &[1], &context, admission);
+        let smaller_nonce = order(payload_score(101, 0, 64), &[2], &context, admission);
 
         assert!(payload_projection_dominates(smaller_payload, smaller_nonce));
         assert!(!payload_projection_dominates(
@@ -685,15 +701,25 @@ mod tests {
 
     #[test]
     fn projection_dominance_preserves_parent_admission_and_descriptor_order() {
-        let score = (100, 0, 64);
+        let score = payload_score(100, 0, 64);
         let two_fold = admission(2, 8);
 
         assert!(!payload_projection_dominates(
-            order((99, 0, 32), &[1], &context(1, 7), admission(1, 8)),
+            order(
+                payload_score(99, 0, 32),
+                &[1],
+                &context(1, 7),
+                admission(1, 8)
+            ),
             order(score, &[2], &context(2, 7), two_fold),
         ));
         assert!(!payload_projection_dominates(
-            order((99, 0, 32), &[1], &context(2, 7), admission(2, 16)),
+            order(
+                payload_score(99, 0, 32),
+                &[1],
+                &context(2, 7),
+                admission(2, 16)
+            ),
             order(score, &[2], &context(2, 7), two_fold),
         ));
         assert!(!payload_projection_dominates(
@@ -717,33 +743,33 @@ mod tests {
         let capacity = SetupPrefixCapacity::for_natural_len(8);
         let compatible = admission(2, 8);
         assert!(setup_primary_strictly_dominates(
-            (capacity, 99, 0, 256),
+            setup_score(capacity, 99, 0, 256),
             compatible,
-            (capacity, 100, 0, 64),
+            setup_score(capacity, 100, 0, 64),
             compatible,
         ));
         assert!(!setup_primary_strictly_dominates(
-            (capacity, 100, 0, 64),
+            setup_score(capacity, 100, 0, 64),
             compatible,
-            (capacity, 100, 0, 128),
+            setup_score(capacity, 100, 0, 128),
             compatible,
         ));
         assert!(payload_primary_strictly_dominates(
-            (99, 0, 256),
+            payload_score(99, 0, 256),
             compatible,
-            (100, 0, 64),
-            compatible,
-        ));
-        assert!(!payload_primary_strictly_dominates(
-            (100, 0, 64),
-            compatible,
-            (100, 0, 128),
+            payload_score(100, 0, 64),
             compatible,
         ));
         assert!(!payload_primary_strictly_dominates(
-            (99, 0, 32),
+            payload_score(100, 0, 64),
+            compatible,
+            payload_score(100, 0, 128),
+            compatible,
+        ));
+        assert!(!payload_primary_strictly_dominates(
+            payload_score(99, 0, 32),
             admission(1, 8),
-            (100, 0, 64),
+            payload_score(100, 0, 64),
             compatible,
         ));
     }
@@ -751,9 +777,7 @@ mod tests {
     fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
         CandidateMetrics {
             first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
-            payload_bytes: proof_bytes,
-            nonce_bits: 0,
-            proof_bytes,
+            cost: PackedProofCost::new(proof_bytes, 0).unwrap(),
             setup_field_elements: 0,
         }
     }

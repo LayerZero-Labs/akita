@@ -27,18 +27,18 @@ before drawing the protocol challenge. For a site with bad fraction at most
 `2^g |E| / L` classical random-oracle trials. It does not change the challenge
 distribution.
 
-All transcript search nonces will move into one proof-level bit stream. The
-stream also replaces the current fixed `u32` fields used by fold-response
+All transcript search nonces move into one proof-level bit stream. The
+stream also replaces the former fixed `u32` fields used by fold-response
 rejection sampling, but the two mechanisms remain distinct. Proof-of-work pays
 for algebraic challenge loss. Fold-response rejection searches for an honest
 response that fits a scheduled norm bound. The existing sparse fold challenge
 families already provide at least 128 bits of challenge support, so they do not
 receive an additional proof-of-work check.
 
-The same pull request will also repair the sparse fold challenge interface used
-by both `EvaluationTrace` and `SubringCoefficientPacking`. The current code
-squeezes one transcript seed per commitment group and expands the complete
-claim-major block vector from a shared XOF stream. That does not expose the
+The same pull request also repairs the sparse fold challenge interface used by
+both `EvaluationTrace` and `SubringCoefficientPacking`. Before Slice 1, the code
+squeezed one transcript seed per commitment group and expanded the complete
+claim-major block vector from a shared XOF stream. That did not expose the
 coordinatewise forks required by the current CWSS extraction argument. The new
 sampler keeps the group root seed and each coordinate's challenge law, but
 derives every claim-major block coordinate through its own fixed-width indexed
@@ -54,14 +54,23 @@ a fixed `u16` or `u32` slot.
 
 ## Current state
 
-Akita has one mechanism currently called grinding. It lives in
+Slices 1 through 4 are implemented on PR #417. Akita now derives sparse fold
+challenge coordinates from independent indexed SHAKE256 queries, derives one
+public `GrindingPlan`, binds its policy and digest in
+`TranscriptGrindingBinding`, and stores fold-response values in one packed
+proof-level nonce stream. The transcript crate also implements the exact
+32-byte proof-of-work predicate and prover preview transition. Slice 5 has not
+started: live protocol challenge queries do not yet consume proof-of-work plan
+entries.
+
+The existing fold-response search remains in
 `crates/akita-prover/src/protocol/fold_grind.rs`. For each fold, the prover
-tries sequential `u32` nonces until the sparse challenge produces a folded
-response accepted by the scheduled representation and norm checks. The
-verifier validates the nonce against the exclusive bound of 4096, absorbs its
-four little-endian bytes into the sparse challenge context, and checks the
-resulting response. `FoldLinfProtocolBinding` binds the 4096 attempt cap and
-the four-byte wire width.
+tries sequential values until the sparse challenge produces a folded response
+accepted by the scheduled representation and norm checks. The verifier checks
+the value against the exclusive bound of 4096, absorbs its four-byte numeric
+encoding into each sparse challenge context, and checks the resulting response.
+The proof stores the value in 12 packed bits. `TranscriptGrindingBinding` binds
+the attempt cap and packed width.
 
 That mechanism is honest-prover rejection sampling. It does not repair a small
 Fiat-Shamir challenge space and it does not add 12 bits of soundness. Every
@@ -69,7 +78,8 @@ adversarial nonce trial is already another random-oracle query. The current
 accounting is described in
 [`book/src/foundations/pcs-and-binding.md`](../book/src/foundations/pcs-and-binding.md).
 
-Akita does not yet have transcript proof-of-work. Sumcheck rounds, ring-switch
+Akita does not yet apply transcript proof-of-work to live protocol queries.
+Sumcheck rounds, ring-switch
 checks, multilinear points, and power batching draw from a nominal 128-bit
 extension challenge field, but some checks have a bad set larger than one
 field element. A degree `d` polynomial check, for example, has conditional
@@ -94,8 +104,8 @@ and a new byte-granular transcript squeeze cursor. The current code makes those
 choices unnecessary:
 
 1. `AkitaBatchedProofShape` already derives the exact headerless proof layout.
-2. `challenge_bytes(label, 32)` already consumes one complete 32-byte sponge
-   block.
+2. `challenge_block(label)` consumes one complete 32-byte sponge block with a
+   fixed return type.
 3. `AkitaTranscript` already has a prover-only preview path that clones the
    sponge state for fold-response search.
 4. Before this cutover, the proof carried one fixed `u32` fold nonce in every
@@ -511,7 +521,7 @@ not the byte label alone, select the rule.
 | `CHALLENGE_SUMCHECK_BATCH` | EOR split point | multilinear point, `g = ceil_log2(max(1, split_bits))` |
 | `CHALLENGE_SUMCHECK_BATCH` | Stage 2 relation merge | one linear merge, `g = 0` |
 | `CHALLENGE_EOR_CLAIM_BATCH` | independent EOR claim coefficients | independent coefficient vector, `g = 0` |
-| `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | round degree from the canonical sumcheck shape |
+| `CHALLENGE_SUMCHECK_ROUND` | EOR, Stage 1, Stage 2, and Stage 3 rounds | full verifier-checked round degree from the canonical shape; Stage 1 uses `q_degree + 1` for the equality-factored product |
 | `CHALLENGE_SPARSE_CHALLENGE` | one sparse group root | zero-bit group-root entry after the fold-response entry |
 | indexed fold-coordinate query | one claim-major block coordinate | zero-bit coordinate run with certified sparse support |
 | `CHALLENGE_RING_SWITCH` | ring-relation evaluation at `alpha` | relation degree bound |
@@ -546,6 +556,12 @@ The plan MUST mirror the actual branch structure. In particular:
    multiplicity `num_claims * num_live_blocks`. Group and coordinate indices
    use checked `u32` and `u64` canonical encodings even when Rust call sites use
    `usize`.
+8. A Stage 1 round checks the equality-factor interpolation polynomial times
+   the Stage 1 round polynomial. If the stored Stage 1 shape gives the latter
+   degree as `d`, the conditional bad-set bound is therefore `d + 1`. The plan
+   MUST price that full degree. Production degrees 2 and 4 therefore use loss
+   factors 3 and 5, which require 2 and 3 grind bits at nominal 128-bit
+   capacity.
 
 The first implementation MUST include an audit test that records every
 challenge label and indexed fold-coordinate event reached by each production
@@ -606,7 +622,6 @@ pub enum GrindingSite {
 
 pub struct GrindingRun {
     pub site: GrindingSite,
-    pub kind: GrindingQueryKind,
     pub loss_factor: u64,
     pub grind_bits: u8,
     pub nonce_bits: u8,
@@ -619,10 +634,13 @@ pub struct GrindingPlan {
 }
 ```
 
-The exact Rust layout MAY change to avoid recursive or oversized enums. The
-semantic fields and one canonical derivation MUST remain. The constructor takes
-the public schedule, normalized opening layout, field tower metadata, basis,
-and protocol configuration. It validates every checked addition, query count,
+`GrindingSite::kind()` is the only query-kind mapping. A run does not store a
+second kind field because that would admit contradictory states. The exact Rust
+layout MAY change to avoid recursive or oversized enums. The semantic fields
+and one canonical derivation MUST remain. The constructor takes the public
+schedule, normalized opening layout, and field tower metadata. Basis is bound
+elsewhere in the call descriptor but does not change this plan. The constructor
+validates every checked addition, query count,
 loss factor, grind target, multiplicity, and total stream length before proving
 or decoding. It returns the plan before `AkitaBatchedProofShape` is built:
 
@@ -771,8 +789,8 @@ all remaining high bits of that byte are zero.
 
 The codec exposes checked sequential writer and reader operations. It does not
 expose random access by site. The plan cursor checks the next expected
-`GrindingSite` and `GrindingQueryKind` before reading or writing. The verifier
-checks exact completion once protocol replay ends.
+`GrindingSite` before reading or writing and derives the kind from that site.
+The verifier checks exact completion once protocol replay ends.
 
 The stream stores values, not attempts. A proof-of-work writer rejects a value
 that does not fit in `w` bits. The verifier always decodes exactly `w` bits, so
@@ -948,7 +966,7 @@ generated output.
       cover every conditional challenge site, sparse group root, and expanded
       fold coordinate for every production schedule and opening layout.
 - [x] `akita-config` derives that plan from schedule, normalized opening
-      layout, field metadata, basis, and protocol configuration before proof
+      layout, and field metadata before proof
       shape construction. `AkitaBatchedProofShape` consumes the resulting
       `nonce_stream_bits`; no reverse dependency exists.
 - [x] The plan derives `g = max(0, 128 + ceil_log2(L) - C)`, uses `w = g + 7`
@@ -1226,6 +1244,8 @@ tree buildable and testable. The same draft pull request carries all slices.
 
 ### Slice 0: Revive the normative specification
 
+Status: complete on PR #417.
+
 1. Add this current design record.
 2. Add it to the live-spec indexes and dead-symbol guard.
 3. Run documentation guardrails.
@@ -1235,6 +1255,8 @@ ownership, query catalog, and later slice boundaries without relying on the old
 unmerged branch.
 
 ### Slice 1: Coordinatewise sparse fold challenges
+
+Status: complete on PR #417.
 
 1. Add the fixed-width indexed SHAKE256 cursor constructor in
    `akita-challenges`.
@@ -1258,12 +1280,15 @@ blocker from PR #394 is closed without a new full-vector theorem.
 
 ### Slice 2: Canonical policy, loss helpers, and plan
 
+Status: complete on PR #417.
+
 1. Add the grinding policy constants, fixed-width query types, and canonical
    run encoding in `akita-types`.
 2. Add the one canonical conditional loss helper for every site, including the
    relation alpha degree helper.
 3. Derive the complete ordered plan in `akita-config` from schedule, normalized
-   opening layout, field metadata, basis, and protocol configuration.
+   opening layout, and field metadata. Keep basis in its existing call binding;
+   it does not affect the grinding plan.
 4. Expand fold root and coordinate runs in query coverage snapshots for all
    generated production schedules.
 5. Replace `FoldLinfProtocolBinding` with the dedicated
@@ -1277,6 +1302,8 @@ exact stream bit length, expanded audit order, and descriptor digest with no
 plan and proof-shape ownership cycle. No proof wire change has landed yet.
 
 ### Slice 3: Packed stream and fold-response cutover
+
+Status: complete on PR #417.
 
 1. Implement `TranscriptNonceStream` plus checked reader and writer cursors.
 2. Add `nonce_stream_bits` to `AkitaBatchedProofShape`.
@@ -1292,6 +1319,8 @@ cutover, and no proof-of-work query is active yet.
 
 ### Slice 4: Transcript predicate and prover preview
 
+Status: complete on PR #417.
+
 1. Add the canonical payload, 32-byte predicate, and low-bit checker in
    `akita-transcript`.
 2. Generalize the existing prover sponge preview for this one transition.
@@ -1303,6 +1332,8 @@ Exit condition: a focused prover and verifier test can search, serialize,
 decode, and check one proof-of-work entry without protocol integration.
 
 ### Slice 5: Protocol query integration
+
+Status: next. No live protocol query consumes a proof-of-work entry yet.
 
 Integrate in dependency order so lower-level drivers are exercised before full
 fold replay:
