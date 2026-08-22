@@ -30,6 +30,13 @@ guided execution as two settings of the same search engine. An expensive
 oracle run may produce versioned guidance, but the guided run must still prove
 that its selected schedule is optimal.
 
+The pruning proof addendum in this document states the first concrete
+theorems for that result. It derives an exact mandatory recursive witness body,
+an incumbent interval for split search, an admissible relaxed suffix search,
+and transition dominance rules. It also gives separate proof contracts for
+selective L2 routes and setup first slice choices. Those two current shortcuts
+must be removed or certified in later implementation pull requests.
+
 The specification also replaces the narrow semantic model of one main group
 plus precommitted groups. A commitment workload may contain several semantic
 groups, several commitment epochs separated by transcript challenges, and one
@@ -82,6 +89,12 @@ slice choice before successor witness sizing and suffix search. Some levels
 retain a split frontier while others keep a local best candidate according to
 level and policy conditions. Each choice may be useful, but the code does not
 give every omission a common proof contract.
+
+There is no theorem which says that the best L2 route uses the best Linf split.
+There is also no theorem which says that the smallest local padded setup gives
+the best complete setup first schedule. The audited domain must include the
+other L2 splits and slice choices until a checked certificate covers their
+complete objective effect.
 
 ### Local and global choices remain mixed
 
@@ -715,6 +728,12 @@ Linf and selective L2 routes are independent candidate routes when both are
 eligible. An L2 route may reuse a split selected under Linf only if a proof
 shows that no other L2 split can win the complete objective.
 
+The production search must first apply geometry and witness bounds which do not
+depend on the security route. It must then evaluate every eligible route for
+every surviving split cell. A complete route dominance certificate may remove
+a route from a region. The split chosen by another route is never a route
+domain definition.
+
 The route decision carries its source moment or energy class through every DP
 state which may price a later witness. The selected route fixes exact verifier
 visible bounds and ranks in the emitted schedule. Runtime expansion never
@@ -726,6 +745,12 @@ Slice candidates must remain until exact future irrelevance is established.
 For setup first selection, choosing the smallest local padded setup and then
 the smallest slice count is not sufficient by itself. The proof must cover the
 next witness, suffix proof, total setup envelope, and descriptor order.
+
+The current slice domain has four values, 1, 2, 4, and 8. The planner should
+materialize their cheap transition signatures before it starts suffix search.
+It may retain every signature which is not worse on all relevant coordinates.
+It may remove a slice only when the transition dominance theorem in the proof
+addendum applies.
 
 ### Setup offload decisions
 
@@ -912,55 +937,65 @@ proof.
 
 ### Recursive witness body bound
 
-The mandatory E, T, and Z body provides the first certified recursive split
-bound.
+The mandatory Z, E, and T body provides the first certified recursive split
+bound. The full proof appears in the addendum below.
 
-Let (N) be the current ring element count. Let (p) be the number of
-position bits inside a block and let
+Let \(N\) be the current ring element count. Let \(p\) be the number of
+position bits inside a block. Define
 
 \[
+M_p=2^p,
+\qquad
 q_p=\left\lceil\frac{N}{2^p}\right\rceil
 \]
 
-be the number of live blocks. Let (d_A) be the A ring dimension,
-(w_{\mathrm{open}}) the physical opening width, (c) the witness chunk count,
-and let \(\delta_{\mathrm{open}}\) and \(\delta_{\mathrm{commit}}\) be the exact
-digit depths.
-
-The mandatory body has the lower bound
+where \(M_p\) is the number of positions in one block and \(q_p\) is the number
+of live blocks. In any split cell where all ranks, digit depths, compression
+choices, and relation geometry are fixed, the exact current group body has the
+form
 
 \[
-W(p)=Aq_p+B2^p,
+F(p)=a q_p+b2^p,
 \]
 
 where
 
 \[
-A=\delta_{\mathrm{open}}(w_{\mathrm{open}}+d_A),
+a=m\left(\delta_o w_E+n_A\delta_B d_A\right),
 \qquad
-B=\delta_{\mathrm{commit}}c d_A.
+b=c\delta_i\delta_f d_A.
 \]
 
-Setup prefix and relation tail terms can only increase the next witness.
-Therefore, if (W(p)) is at least the current witness length, that split cannot
-produce a strictly contracting recursive fold.
+Here \(m\) is the claim count, \(c\) is the chunk count, \(w_E\) is the
+physical E row width, \(n_A\) is the A row count, and \(d_A\) is the A ring
+dimension. The four digit depths are the exact inner, fold, opening, and outer
+depths for that cell. This identity follows from the canonical witness layout,
+which is shared by the planner, prover, and verifier.
+
+Frozen group bodies and every setup prefix, quotient, compression, and
+alignment term are nonnegative. They can be added exactly when known or
+omitted from a conservative lower bound. Therefore, if the body lower bound is
+at least the current witness length, that split cannot produce a strictly
+contracting recursive fold.
 
 The sequence is discrete convex for the relevant positive domain. If
-(d_p=q_p-q_{p+1}), then (d_p) is nonincreasing and
+\(d_p=q_p-q_{p+1}\), then \(d_p\) is nonincreasing and
 
 \[
-W(p+1)-W(p)=-A d_p+B2^p
+F(p+1)-F(p)=-a d_p+b2^p
 \]
 
 is nondecreasing. The strict contraction sublevel is therefore contiguous.
-The planner may find its endpoints without materializing every split.
+The same result holds for every fixed split cell. The planner can inspect the
+small number of integer split values with checked arithmetic, without building
+their matrices or recursive suffixes.
 
 This theorem proves recursive progress impossibility. It does not prove that a
 remaining split is globally optimal.
 
 ### Local layout lower bound
 
-Adding the mandatory challenge and chunk work to (W(p)) gives a lower bound
+Adding the mandatory challenge and chunk work to \(F(p)\) gives a lower bound
 on the local layout score. Once a local best candidate exists, this bound may
 remove a split from a `Best` search when it is strictly worse in the first
 local score coordinate.
@@ -1026,6 +1061,526 @@ reuse, and obtain the same selected descriptor.
 
 Guide caches and local profile caches follow the same rule. A cache hit may
 save work. It may not add authority.
+
+## Addendum: Certified pruning proofs
+
+This addendum is normative. It states the proof obligations behind the
+certified pruning architecture. A later implementation may use a stronger
+bound, but it must prove at least the same safety claim and expose the same
+unknown behavior.
+
+### Proof boundary
+
+The planner minimizes a total order on complete schedules. The numeric prefix
+is one of these orders.
+
+\[
+(P,S)
+\]
+
+or
+
+\[
+(C_1,P,S).
+\]
+
+Here \(P\) is proof bytes, \(S\) is the total setup envelope, and \(C_1\) is
+the first direct padded setup capacity. The canonical descriptor follows the
+numeric prefix in both orders.
+
+A lower bound contains only numeric coordinates. It may prune a region only
+when it is strictly worse than a completed incumbent on the numeric order.
+Equality is not enough because the canonical descriptor can still choose a
+candidate from that region.
+
+All formulas use mathematical integers. Their checkers use the canonical
+checked arithmetic functions. An overflow or an unsupported table lookup
+returns unknown and retains the region.
+
+### Proof status
+
+| Result | Status in this specification | Current implementation status |
+|---|---|---|
+| Exact mandatory Z, E, and T body identity | Proved below from the canonical witness layout | The canonical formula exists, but the full cell bound is not yet used |
+| Discrete convexity inside one split cell | Proved below for every positive coefficient choice | A weaker lower bound is used for local split checks |
+| Incumbent interval around the analytic balance point | Proved below | Not implemented |
+| Relaxed suffix lower bound | Proved below by induction over remaining depth | Current direct edge bound uses a zero suffix cost |
+| Same state transition dominance | Proved below | Exact completed suffix frontiers implement part of this idea |
+| Interchangeable group symmetry | Proved below under an explicit equivalence relation | PR #412 applies a narrower form |
+| L2 route omission at the Linf winning split | Not proved and not accepted as an exact domain | Current code uses this shortcut |
+| Local setup first slice pruning | Not proved and not accepted as an exact domain | Current code keeps one local slice |
+| Fixed radius recursive split search | Not proved and not accepted as an exact domain | Current bounded policy uses this shortcut |
+
+The last three rows are migration requirements. This PR specifies their
+replacement. It does not claim that the present planner already satisfies the
+target contract.
+
+### Theorem 1: exact mandatory body in one split cell
+
+Fix a planner state, one current group, and one region of split values where
+the following data are constant.
+
+- The claim count \(m\).
+- The witness chunk count \(c\).
+- The A ring dimension \(d_A\).
+- The physical E row width \(w_E\).
+- The A row count \(n_A\).
+- The inner, fold, opening, and outer digit depths
+  \(\delta_i,\delta_f,\delta_o,\delta_B\).
+- The source encoding, security route, relation geometry, and compression plan.
+
+Call such a region a split cell. Let \(M_p=2^p\), and let
+\(q_p=\lceil N/M_p\rceil\). The canonical witness layout creates one Z range
+per chunk. It creates E and T ranges whose block counts sum to \(q_p\) across
+all chunks. Their exact physical coefficient counts are
+
+\[
+Z(p)=c M_p \delta_i \delta_f d_A,
+\]
+
+\[
+E(p)=m q_p \delta_o w_E,
+\]
+
+and
+
+\[
+T(p)=m q_p n_A \delta_B d_A.
+\]
+
+Therefore the current group body is exactly
+
+\[
+F(p)=Z(p)+E(p)+T(p)=a q_p+b2^p,
+\]
+
+with
+
+\[
+a=m(\delta_o w_E+n_A\delta_B d_A)
+\]
+
+and
+
+\[
+b=c\delta_i\delta_f d_A.
+\]
+
+Proof. The canonical `witness_unit_lengths` function gives the three lengths
+for one group and one chunk. Summing Z over \(c\) chunks gives the first
+formula because every chunk has one Z range of the same length. The dyadic
+chunk ranges partition the \(q_p\) live blocks. Summing their lengths gives
+\(q_p\), which gives the E and T formulas. Adding the three terms gives the
+result.
+
+Every coefficient is positive for a valid candidate. Frozen group bodies,
+setup prefixes, quotient rows, compression layers, and alignment can only add
+physical coefficients. The planner may add any of those terms when it can
+compute them cheaply. Omitting them preserves a lower bound.
+
+### Corollary 1.1: discrete convexity
+
+For positive \(a\) and \(b\), the sequence
+
+\[
+F(p)=a\left\lceil\frac{N}{2^p}\right\rceil+b2^p
+\]
+
+is discrete convex on the integer split values in one cell.
+
+Proof. Let \(q_p=\lceil N/2^p\rceil\). Then
+
+\[
+q_{p+1}=\left\lceil\frac{q_p}{2}\right\rceil
+\]
+
+and
+
+\[
+q_p-q_{p+1}=\left\lfloor\frac{q_p}{2}\right\rfloor.
+\]
+
+The last quantity does not increase with \(p\). The first difference is
+
+\[
+F(p+1)-F(p)
+=-a\left\lfloor\frac{q_p}{2}\right\rfloor+b2^p.
+\]
+
+Its negative term becomes less negative while its positive term increases.
+The first difference therefore does not decrease. This is discrete convexity.
+
+Every sublevel set of a discrete convex sequence is an integer interval. In
+particular, all splits which can satisfy a contraction threshold form one
+interval inside a cell.
+
+### Split cell construction
+
+The theorem does not assume that security ranks or digit depths stay fixed over
+the whole split domain. The planner must create a new cell at every checked
+change to any value which affects \(a\), \(b\), fixed body terms, edge cost, or
+the successor state. These changes include:
+
+- a security table key or selected rank;
+- an inner, fold, opening, or outer digit depth;
+- an opening relation width or A row count;
+- a source encoding or response basis;
+- a compression plan or setup offload form;
+- a selective L2 eligibility or norm proof shape change.
+
+The cell builder does not need to guess these boundaries. It can evaluate the
+cheap signature at each supported integer split and group adjacent equal
+signatures. The split count is tiny compared with matrix construction and
+recursive suffix search. This exact scan removes the need for a fixed semantic
+radius.
+
+### Theorem 2: incumbent interval
+
+Suppose a checked lower bound in one cell has the following form in the
+coordinate being pruned.
+
+\[
+L(p)\geq a\frac{N}{2^p}+b2^p+C.
+\]
+
+Here \(a>0\), \(b>0\), and \(C\geq0\). Let \(U\) be the largest value in the
+same coordinate which could still tie or beat the incumbent after the other
+fixed lower bound terms are included. Define
+
+\[
+x=2^p,
+\qquad
+x_0=\sqrt{\frac{aN}{b}},
+\qquad
+\rho=\frac{U-C}{2\sqrt{abN}}.
+\]
+
+If \(\rho<1\), no split in the cell can win. If \(\rho\geq1\), every split
+which can win satisfies
+
+\[
+\rho-\sqrt{\rho^2-1}
+\leq
+\frac{x}{x_0}
+\leq
+\rho+\sqrt{\rho^2-1}.
+\]
+
+Proof. Since \(q_p\geq N/2^p\), a winning split must satisfy
+
+\[
+a\frac{N}{x}+bx+C\leq U.
+\]
+
+Divide by \(\sqrt{abN}\) and set \(y=x/x_0\). The condition becomes
+
+\[
+y+\frac{1}{y}\leq2\rho.
+\]
+
+For positive \(y\), this is equivalent to
+
+\[
+y^2-2\rho y+1\leq0.
+\]
+
+The roots give the stated interval. The quadratic has no real root when
+\(\rho<1\), so no split can meet the bound in that case.
+
+The interval width in split bits is
+
+\[
+2\log_2\left(\rho+\sqrt{\rho^2-1}\right).
+\]
+
+The following table gives a conservative integer count. It uses one plus the
+ceiling of that width, then clips the result to the cell.
+
+| \(\rho\) | Width in split bits | Splits to inspect at most |
+|---:|---:|---:|
+| 1.05 | 0.91 | 2 |
+| 1.10 | 1.28 | 3 |
+| 1.25 | 2.00 | 3 |
+| 1.50 | 2.78 | 4 |
+| 2.00 | 3.80 | 5 |
+
+This theorem replaces a fixed radius with a checked interval. A strong guided
+incumbent makes \(\rho\) close to one, so the exact surviving interval is
+usually small. A weak incumbent leaves a wider interval but never changes the
+answer.
+
+### Corollary 2.1: exact split traversal
+
+An exact split search may use this order.
+
+1. Compute the cheap signature for every supported split.
+2. Form maximal adjacent split cells with equal signatures.
+3. Materialize and validate the guided incumbent.
+4. Apply contraction and feasibility bounds to each cell.
+5. Apply the incumbent interval to each remaining cell.
+6. Evaluate the exact integer splits in the surviving intervals.
+7. Use the complete suffix lower bound below before expanding a child.
+
+The scan in step 1 is part of the exact path. It creates small checked values,
+not matrices or suffix schedules. The oracle can disable steps 4, 5, and 7
+while using the same enumerator and materializer.
+
+### Theorem 3: relaxed suffix lower bound
+
+Let \(V(s)\) be the best complete remaining objective from a real planner state
+\(s\). Define a relaxed suffix problem with these properties.
+
+1. Every real transition from \(s\) has a corresponding relaxed transition.
+2. The relaxed edge cost is no greater than the real edge cost in every
+   objective coordinate which a parent can observe.
+3. Every real child state maps to a relaxed child state.
+4. The relaxed terminal cost is no greater than the real terminal cost.
+5. The operation which combines a prefix edge with a suffix objective is
+   monotone.
+
+Let \(h(s)\) be the optimal value of the relaxed problem. Then
+
+\[
+h(s)\leq V(s)
+\]
+
+in the complete numeric order.
+
+Proof. Use induction on the maximum remaining fold depth. At a terminal state,
+property 4 gives the result. Assume the result for every child. For any real
+transition \(t\), properties 1 to 3 provide a relaxed transition \(t'\).
+The induction hypothesis gives a relaxed child value no greater than the real
+child value. Property 5 preserves this order when the edge and child values are
+combined. The relaxed optimum is no greater than this mapped value because it
+minimizes over a superset of transitions. It is therefore no greater than the
+best real value.
+
+For proof bytes, prefix combination is addition. For total setup, it is the
+maximum of the edge setup and suffix setup. For the first direct setup
+coordinate, it keeps the first direct capacity already chosen by the prefix or
+uses the suffix value when the prefix is offloaded. Each operation is
+monotone.
+
+The planner can combine the exact fixed prefix with \(h(s)\). It may prune the
+region only when the result is strictly worse than a completed incumbent on
+the numeric order. It must retain an equal bound for descriptor comparison.
+
+### Relaxed state and useful bound terms
+
+A relaxed state can merge details only when the merge preserves the theorem.
+The first implementation should retain at least:
+
+- the payload phase and the minimum and maximum remaining fold depth allowed
+  by admission;
+- a checked witness length interval;
+- the incoming setup prefix capacity class;
+- the available ring dimension ceiling;
+- the source moment or energy class;
+- the response basis and security route eligibility;
+- the parent admission class;
+- the descriptor context needed to detect numeric equality.
+
+The first useful relaxed edge should include:
+
+- exact bytes already fixed at the current level;
+- minimum terminal bytes for the witness interval;
+- minimum mandatory bytes for every fold which admission still requires;
+- a lower bound on the first direct setup capacity;
+- a lower bound on the total setup envelope.
+
+The current direct edge bound is the valid but weak special case where the
+suffix contributes zero. The implementation can strengthen one term at a time.
+Every added term needs a focused proof test and an oracle comparison.
+
+### Theorem 4: transition dominance
+
+Consider two transitions \(t_a\) and \(t_b\) from the same exact planner state.
+Transition \(t_a\) dominates \(t_b\) only if all of these conditions hold.
+
+1. Every parent and suffix form which admits \(t_b\) also admits \(t_a\).
+2. The transitions have the same sufficient child state, or a separate proof
+   maps every child completion of \(t_b\) to a no worse completion of \(t_a\).
+3. Every exact edge and parent visible objective projection of \(t_a\) is no
+   worse than the matching projection of \(t_b\).
+4. If the numeric projections can tie, descriptor composition proves that
+   \(t_a\) is no worse. Otherwise one numeric coordinate before the descriptor
+   must be strictly better.
+
+Under these conditions, removing \(t_b\) cannot change the selected complete
+schedule.
+
+Proof. Take any complete schedule which begins with \(t_b\). Condition 2 gives
+a completion after \(t_a\). Conditions 1 and 3 show that the replacement is
+admitted and is no worse on every numeric coordinate seen by any consumer.
+Condition 4 handles the only remaining tie. Thus every schedule removed with
+\(t_b\) has a retained schedule which the complete selector prefers or treats
+as equal.
+
+If the child states differ and no mapping proof exists, a lower bound on one
+child is not enough to establish dominance over all completions of the other.
+The planner must retain both transitions. It may still prune one later when a
+completed incumbent is strictly better than that transition plus \(h(child)\).
+
+### Selective L2 route completeness
+
+Selective L2 and Linf are separate routes. Their security ranks, proof shapes,
+and successor witnesses can cross at different split values. There is no
+general implication from the best Linf split to the best L2 split.
+
+The current shortcut creates selective L2 only at the split chosen by the best
+modeled Linf candidate. It also rejects L2 when its inner A rank is not smaller
+than the Linf rank. Neither fact alone compares the norm proof, the B rank, the
+next witness, the suffix, the setup envelope, or the descriptor. The target
+exact planner must not use either fact as a complete route proof.
+
+The complete route search works as follows.
+
+1. Apply geometry, body, and incumbent interval bounds shared by both routes.
+2. For every surviving split, derive each eligible Linf and L2 route from the
+   same source state.
+3. Partition each route at its own security table, digit, and proof shape
+   boundaries.
+4. Build a route transition signature and retain its exact frontier.
+5. Apply `l2_route_dominance_v1` only when the checker proves Theorem 4.
+
+The L2 transition signature contains at least:
+
+- the certified L2 table key and exact A rank;
+- the source moment and challenge L2 bound;
+- the norm proof shape and bytes;
+- the resulting A payload and B rank;
+- the next witness body, relation tail, and exact length when available;
+- the current edge proof bytes;
+- the level setup envelope;
+- the sufficient child state and parent admission class;
+- the canonical descriptor prefix.
+
+A Linf region can dominate an L2 region only if the checker proves all of the
+following over the whole region.
+
+- Linf admits every parent and suffix admitted by L2.
+- Its first direct setup coordinate is no worse.
+- Its proof bound, including the absence or presence of a norm proof, is no
+  worse.
+- Its setup envelope is no worse.
+- Its child state is equal or is covered by a certified suffix mapping.
+- Any numeric tie is safe under the descriptor order.
+
+The reverse comparison uses the same conditions. If any input is unknown, both
+routes remain. The route frontier must include tests where the best L2 and Linf
+splits differ.
+
+### Setup first slice completeness
+
+The current setup first shortcut chooses the smallest local padded setup and
+then the smallest slice count before it computes every successor witness and
+suffix. Slice count changes the outer commitment input width and can change the
+B rank. It can also change relation rows, compression, the next witness, proof
+bytes, total setup, parent admission, and descriptor order.
+
+The exact planner treats slice count as an ordinary transition decision. Since
+the current domain has only four values, it first builds all feasible cheap
+slice signatures. It then applies `setup_slice_dominance_v1` or retains a
+frontier.
+
+The slice transition signature contains at least:
+
+- the exact physical B input width;
+- the B security table key and exact secure rank;
+- the logical B row count and complete B source coefficients;
+- the compression plan identity and admission result;
+- the next witness body and exact length when available;
+- the active and padded setup capacities;
+- the current edge proof bytes and setup field elements;
+- the sufficient child state, including source moment and response basis;
+- the parent admission class and descriptor prefix.
+
+One slice may remove another before suffix expansion only when Theorem 4 holds.
+The usual cheap case is equal sufficient child state with no worse exact edge
+cost and a safe descriptor prefix. When child states differ, the planner keeps
+both until it has either a mapping proof or a completed incumbent which is
+strictly better than the other edge plus its relaxed suffix bound.
+
+The setup first implementation must test all four slice values against a run
+with slice pruning disabled. Boundary cases include a B rank change, a
+compression plan change, equal padded setup with different next witnesses, a
+smaller first setup with a larger total proof, a parent which masks the child
+setup envelope, and an equal numeric score decided by the descriptor.
+
+### Theorem 5: interchangeable group symmetry
+
+Let \(g\) groups have the same allowed set of \(k\) profile choices. Suppose a
+permutation of those groups preserves all of the following.
+
+- Semantic role and source contract.
+- Commitment epoch and transcript position class.
+- Candidate feasibility and security sizing.
+- Exact current proof and setup costs.
+- Sufficient successor state and parent observations.
+- Batch opening and closing group behavior.
+- Canonical descriptor comparison after a declared representative is chosen.
+
+Then the planner may search profile multiplicities instead of labeled profile
+assignments. The number of multiplicity choices is
+
+\[
+\binom{k+g-1}{g}
+\]
+
+instead of \(k^g\).
+
+Proof. Every labeled assignment maps to a vector of \(k\) nonnegative profile
+counts which sums to \(g\). The assumptions make all assignments with the same
+count vector equal under feasibility, cost, successor state, parent
+observations, and descriptor representative. Keeping one representative per
+vector therefore preserves the selected schedule. The number of nonnegative
+count vectors which sum to \(g\) is the stated binomial coefficient.
+
+If group identifiers, transcript order, semantic roles, source policies, or
+the closing group role change any observed value, the groups are not
+interchangeable. The planner then retains the labeled assignments or proves a
+smaller equivalence class.
+
+### Certificate registry
+
+The first implementation should expose these stable rule names.
+
+| Rule | Removes | Checked basis | Unknown behavior |
+|---|---|---|---|
+| `recursive_body_cell_v1` | Splits which cannot meet progress or a local body threshold | Theorem 1 and Corollary 1.1 | Retain the split |
+| `recursive_incumbent_interval_v1` | Splits outside the incumbent interval | Theorem 2 with a same coordinate budget | Retain the cell |
+| `relaxed_suffix_dp_v1` | Regions whose prefix plus relaxed suffix is strictly worse | Theorem 3 | Retain the region |
+| `transition_dominance_v1` | One transition from an exact state | Theorem 4 | Retain both transitions |
+| `l2_route_dominance_v1` | Linf or L2 route regions | Theorem 4 plus the route signature | Retain both routes |
+| `setup_slice_dominance_v1` | Slice transitions | Theorem 4 plus the slice signature | Retain every slice |
+| `interchangeable_group_symmetry_v1` | Permutations inside an equivalence class | Theorem 5 | Retain labeled assignments |
+
+Each diagnostic record includes the rule name, checker version, normalized
+input region, bound value, incumbent value, strict comparison result, and the
+number of candidates removed. A guide may refer to these names and inputs. It
+may not provide a trusted boolean result.
+
+### Proof test matrix
+
+Every rule must pass three levels of testing.
+
+1. Formula tests compare the checked bound with exact canonical materialization
+   at every small domain point and at every table or digit boundary.
+2. Rule tests compare the candidates removed by one enabled certificate with
+   the same search where only that certificate is disabled.
+3. Search tests compare guided and oracle complete objectives and descriptors
+   across randomized enumeration order, memo capacity, and batch size.
+
+The split tests cover every integer split in small domains, every cell boundary,
+and incumbent equality. The L2 tests pair every split with every route. The
+slice tests pair every split and route with all four slice values. The symmetry
+tests compare labeled enumeration with multiplicity enumeration.
+
+For larger named fixtures where the full oracle is expensive, the repository
+keeps a diagnostic oracle run outside routine CI. A guide generated from that
+run does not prove later pruning. The checked certificates do. Routine CI
+replays the certificates, verifies the selected descriptor, and samples the
+interior and boundary of every declared region.
 
 ## Traversal and memory architecture
 
@@ -1225,12 +1780,24 @@ It must not maintain a second fixture planner.
 
 - [ ] Every pruning rule follows the rule contract in this specification.
 - [ ] Unknown or overflowing bounds retain work.
-- [ ] Recursive witness body contraction intervals are checked against full
-      split enumeration.
+- [ ] The exact Z, E, and T body identity matches
+      `grouped_witness_body_coefficients` at every small split and chunk shape.
+- [ ] Split cells break at every rank, digit, relation, compression, source,
+      setup, and security route signature change.
+- [ ] Recursive witness body contraction intervals and incumbent intervals are
+      checked against full split enumeration.
+- [ ] A fixed balance radius is used only for ordering and never defines an
+      exact production split domain.
 - [ ] Local layout bounds are not used to prune global frontiers without a
       complete consumer proof.
-- [ ] Slice and security route omissions have complete dominance proofs or are
-      removed.
+- [ ] The relaxed suffix value is no greater than the exact suffix optimum on
+      every tractable state.
+- [ ] Transition dominance checks admission, sufficient child state, every
+      parent visible projection, and descriptor ties.
+- [ ] Selective L2 is evaluated at every surviving route cell unless a complete
+      route dominance certificate removes that cell.
+- [ ] All feasible setup first slice choices remain until a complete transition
+      dominance certificate removes one.
 - [ ] Symmetry quotients have permutation invariance tests.
 - [ ] Every optional pruning rule can be disabled independently for oracle
       comparison.
@@ -1282,6 +1849,11 @@ Small exhaustive grid tests must compare every guided result with the oracle.
 The grid must vary split, basis, dimensions, slice count, opening method,
 security route, setup offload choice, terminal choice, and group profile choice
 where each coordinate is supported.
+
+The L2 grid must include cases where the best Linf and L2 routes use different
+splits. It must include every L2 table boundary and a missing or stale modeled
+cap. The setup first grid must include every slice count and cases where local
+setup order disagrees with complete schedule order.
 
 Property tests must randomize enumeration order, reverse candidate order, vary
 streaming batch size, and vary memo capacity. Every run must return the same
@@ -1348,44 +1920,60 @@ rejections without changing selected schedules.
 Make every enumerator expose its complete audited domain. Add the oracle
 configuration to the shared engine and establish exact small grid results.
 
-### Slice 4: Certified local bounds
+### Slice 4: Exact split cells and local bounds
 
-Implement the recursive witness body interval theorem and the local layout
-bound. Use them for exact local best searches. Preserve the full frontier where
-the local theorem is insufficient.
+Implement the exact mandatory body identity, split cell builder, discrete
+convex interval, and incumbent interval. Keep the cheap scan over every integer
+split. Remove the fixed radius as a production domain while preserving the
+balance estimate as traversal order.
 
-### Slice 5: Complete frontier bounds
+### Slice 5: Relaxed suffix bounds and transition dominance
 
-Add complete schedule lower bounds which account for parent observations and
-suffix costs. Replace fixed split windows and level based frontier retention
-with consumer proven bounds.
+Add `relaxed_suffix_dp_v1` with exact current edge bytes and a proved minimum
+terminal cost. Extend it one monotone term at a time. Add the shared transition
+dominance checker and replace level based frontier retention with consumer
+proved bounds.
 
-### Slice 6: Guide artifacts
+### Slice 6: Selective L2 route frontier
+
+Remove the dependency on the best modeled Linf split. Enumerate L2 at every
+surviving split cell, build the full route transition signature, and apply
+`l2_route_dominance_v1` only after all complete objective effects are covered.
+Add exhaustive route by split tests.
+
+### Slice 7: Setup first slice frontier
+
+Replace `prune_locally_unprofitable_slices` with one canonical slice transition
+frontier. Materialize the four cheap slice signatures, retain different child
+states, and apply `setup_slice_dominance_v1` only when the shared dominance
+theorem holds. Add exhaustive slice tests under both complete objectives.
+
+### Slice 8: Guide artifacts
 
 Add guide generation, validation, incumbent seeding, ordering hints, and
 certificate replay. Produce guides for the named recursive fixtures and stock
 catalog rows.
 
-### Slice 7: Workload and group profile planning
+### Slice 9: Workload and group profile planning
 
 Introduce `CommitmentWorkload` information, ordered epochs, and an explicit
 batch opening policy. Integrate exact group profile candidates, symmetry, and
 streamed root frontiers.
 
-### Slice 8: Aerie integration
+### Slice 10: Aerie integration
 
 Express the Aerie eight group workloads through epochs and a closing group.
 Bind the selected plan before the first commitment. Remove application code
 which constructs seven precommits plus a final JL group as the planner facing
 model.
 
-### Slice 9: Runtime and catalog cutover
+### Slice 11: Runtime and catalog cutover
 
 Emit one compact plan, validate it through `akita-schedules`, regenerate stock
 catalogs, and remove superseded planner request and wrapper paths. Keep any
 trusted catalog artifact migration separate from search semantics.
 
-### Slice 10: Performance gate and documentation
+### Slice 12: Performance gate and documentation
 
 Land the performance harness, named fixture records, guide evidence, and CI or
 scheduled audit jobs. Update the Book configuration chapter and archive this
@@ -1403,7 +1991,10 @@ The implementation should converge on ownership close to this map.
 | Terminal decisions | terminal candidate module |
 | Group commitment profile decisions | group profile candidate module |
 | Exact materialization | focused schedule parameter modules |
-| Certified bounds | planner bound module |
+| Split cells and certified bounds | planner bound module |
+| Security route frontier | recursive security route candidate module |
+| Slice transition frontier | recursive slice candidate module |
+| Relaxed suffix value | suffix bound module |
 | Complete objectives | objective module |
 | Parent observable frontier | suffix frontier module |
 | Search queue and guide replay | search module |
@@ -1448,6 +2039,20 @@ Local minimization loses schedules whose next witness or parent visible
 geometry improves the suffix. It is allowed only when a dominance theorem
 covers every consumer.
 
+### Use the Linf split for selective L2
+
+The two routes can cross at different splits because their security ranks and
+proof costs are different functions. Sharing bounds which do not depend on the
+route is safe. Using the winner from one route as the domain of the other is not
+safe without a complete route dominance certificate.
+
+### Keep one setup first slice by local setup
+
+The four value slice domain is cheap to inspect. Removing three values before
+successor sizing gives little proven benefit and can hide a better complete
+schedule. The target planner keeps their transition frontier and uses the
+shared dominance theorem.
+
 ### Full Cartesian group product
 
 Materializing every group profile combination consumes too much time and
@@ -1485,6 +2090,20 @@ Performance acceptance is separate from correctness acceptance.
 This is the main exactness risk. Every frontier proof must begin from the code
 which prices a child in its parent. Tests must compare against the oracle under
 all parent forms, including setup offload and grouped roots.
+
+### A split cell signature may miss a boundary
+
+A missing rank, digit, relation, compression, source, or route field can apply
+one formula outside its proved domain. The signature must be built from the
+canonical materialization inputs. Boundary tests must compare every adjacent
+split, not only the selected candidates.
+
+### A relaxed suffix may be safe but ineffective
+
+Merging too many states or charging zero for most future work preserves the
+lower bound but leaves a large search. Diagnostics must report the incumbent
+gap and candidates removed by each term. Performance work should strengthen
+the weakest term without changing the real candidate domain.
 
 ### Guidance can become a second policy language
 
@@ -1536,6 +2155,12 @@ When implementation is complete:
 ## References
 
 - [`crates/akita-planner/README.md`](../crates/akita-planner/README.md)
+- [`crates/akita-types/src/witness.rs`](../crates/akita-types/src/witness.rs)
+- [`crates/akita-planner/src/schedule_params/objective.rs`](../crates/akita-planner/src/schedule_params/objective.rs)
+- [`crates/akita-planner/src/schedule_params.rs`](../crates/akita-planner/src/schedule_params.rs)
+- [`crates/akita-planner/src/schedule_params/candidate/recursive.rs`](../crates/akita-planner/src/schedule_params/candidate/recursive.rs)
+- [`crates/akita-planner/src/schedule_params/suffix_dp/frontier.rs`](../crates/akita-planner/src/schedule_params/suffix_dp/frontier.rs)
+- [`crates/akita-planner/src/schedule_params/candidate/recursive/split.rs`](../crates/akita-planner/src/schedule_params/candidate/recursive/split.rs)
 - [`book/src/how/configuration.md`](../book/src/how/configuration.md)
 - [`book/src/how/architecture.md`](../book/src/how/architecture.md)
 - [`setup-offloading-planner.md`](setup-offloading-planner.md)
