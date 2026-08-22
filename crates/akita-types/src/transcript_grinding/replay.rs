@@ -390,9 +390,7 @@ impl TranscriptNonceReader<'_> {
         match (NonZeroU8::new(entry.grind_bits), predicate) {
             (None, None) => Ok(()),
             (Some(bits), Some(predicate)) if grinding_predicate_accepts(&predicate, bits) => Ok(()),
-            _ => Err(AkitaError::InvalidInput(format!(
-                "transcript grinding predicate rejected at {site:?}"
-            ))),
+            _ => Err(AkitaError::InvalidProof),
         }
     }
 

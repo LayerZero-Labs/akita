@@ -156,7 +156,7 @@ fn packed_fold_response_nonce_tampering_rejects() {
         .expect_err("mutated packed nonce stream must be rejected");
         assert!(
             matches!(err, AkitaError::InvalidProof)
-                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("transcript grinding predicate rejected")),
+                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
             "tampered grind nonce returned {err:?}"
         );
     });
@@ -255,7 +255,8 @@ fn packed_proof_of_work_nonce_matches_public_predicate() {
                 continue;
             }
             assert!(
-                matches!(result, Err(AkitaError::InvalidInput(ref message)) if message.contains("transcript grinding predicate rejected")),
+                matches!(result, Err(AkitaError::InvalidProof))
+                    || matches!(result, Err(AkitaError::InvalidInput(ref message)) if message.contains("InvalidProof")),
                 "publicly rejected nonce must fail at the verifier predicate: {result:?}"
             );
             return;
