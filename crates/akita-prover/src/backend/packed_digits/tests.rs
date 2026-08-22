@@ -133,6 +133,41 @@ fn aligned_range_decode_uses_implicit_zero_suffix() {
 }
 
 #[test]
+fn unaligned_subview_iteration_matches_the_source_and_zero_suffix() {
+    let digits = (0..197)
+        .map(|index| (index % 16) as i8 - 8)
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 5).unwrap();
+    let view = packed.zero_padded(256).unwrap().slice(13..229).unwrap();
+    let expected = digits[13..]
+        .iter()
+        .copied()
+        .chain(std::iter::repeat_n(0, 229 - digits.len()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(view.iter().collect::<Vec<_>>(), expected);
+    let mut decoded = vec![99; view.len()];
+    assert_eq!(
+        view.decode_range(0, &mut decoded).unwrap(),
+        digits.len() - 13
+    );
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn iterator_arrays_cross_decode_block_boundaries_exactly() {
+    let digits = (0..140)
+        .map(|index| (index % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 4).unwrap();
+    let mut iter = packed.view().slice(62..134).unwrap().iter();
+    for expected in digits[62..134].chunks_exact(4) {
+        assert_eq!(iter.next_array::<4>().unwrap().as_slice(), expected);
+    }
+    assert!(iter.next_array::<4>().is_none());
+}
+
+#[test]
 fn architecture_decoder_matches_scalar_blocks() {
     let mut rng = StdRng::seed_from_u64(0xa4c4_17ec);
     for bit_width in 1..=8 {

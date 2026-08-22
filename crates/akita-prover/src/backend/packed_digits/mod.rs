@@ -8,6 +8,7 @@ mod aarch64;
 mod x86_64;
 
 use std::sync::Arc;
+use std::{iter::FusedIterator, ops::Range};
 
 use akita_error::{checked, AkitaError};
 
@@ -49,6 +50,19 @@ pub(crate) struct PackedSignedDigits {
 impl Default for PackedSignedDigits {
     fn default() -> Self {
         Self::from_i8_digits(Vec::new(), 1).expect("one-bit empty digit storage is valid")
+    }
+}
+
+impl From<Vec<i8>> for PackedSignedDigits {
+    fn from(digits: Vec<i8>) -> Self {
+        Self::from_i8_digits_auto(digits)
+    }
+}
+
+#[cfg(test)]
+impl From<Arc<[i8]>> for PackedSignedDigits {
+    fn from(digits: Arc<[i8]>) -> Self {
+        Self::from_i8_digits_auto(digits.as_ref().to_vec())
     }
 }
 
@@ -118,7 +132,15 @@ impl PackedSignedDigits {
     }
 
     pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = i8> + '_ {
-        (0..self.len).map(|index| scalar::decode_at(&self.storage, index, self.bit_width))
+        self.view().iter()
+    }
+
+    pub(crate) fn view(&self) -> PackedSignedDigitView<'_> {
+        PackedSignedDigitView {
+            digits: self,
+            start: 0,
+            len: self.len,
+        }
     }
 
     pub(crate) fn zero_padded(&self, len: usize) -> Result<PackedSignedDigitView<'_>, AkitaError> {
@@ -128,7 +150,11 @@ impl PackedSignedDigits {
                 actual: len,
             });
         }
-        Ok(PackedSignedDigitView { digits: self, len })
+        Ok(PackedSignedDigitView {
+            digits: self,
+            start: 0,
+            len,
+        })
     }
 
     pub(crate) fn decode(&self) -> Vec<i8> {
@@ -148,20 +174,17 @@ impl PackedSignedDigits {
         decode_prefix(self, output);
         Ok(())
     }
-
-    pub(crate) fn shared_decoded(&self) -> Arc<[i8]> {
-        self.decode().into()
-    }
 }
 
 /// A logical zero-padded view without a second allocation of the witness.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PackedSignedDigitView<'a> {
     digits: &'a PackedSignedDigits,
+    start: usize,
     len: usize,
 }
 
-impl PackedSignedDigitView<'_> {
+impl<'a> PackedSignedDigitView<'a> {
     pub(crate) fn len(self) -> usize {
         self.len
     }
@@ -179,7 +202,36 @@ impl PackedSignedDigitView<'_> {
         if index >= self.len {
             return None;
         }
-        Some(self.digits.get(index).unwrap_or(0))
+        Some(self.digits.get(self.start + index).unwrap_or(0))
+    }
+
+    #[inline(always)]
+    pub(crate) fn at(self, index: usize) -> i8 {
+        self.get(index).expect("packed digit index is in bounds")
+    }
+
+    pub(crate) fn slice(self, range: Range<usize>) -> Result<Self, AkitaError> {
+        if range.start > range.end || range.end > self.len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.len,
+                actual: range.end,
+            });
+        }
+        Ok(Self {
+            digits: self.digits,
+            start: self.start + range.start,
+            len: range.len(),
+        })
+    }
+
+    pub(crate) fn iter(self) -> PackedSignedDigitIter<'a> {
+        PackedSignedDigitIter {
+            view: self,
+            position: 0,
+            decoded_start: 0,
+            decoded_len: 0,
+            decoded: [0; DIGITS_PER_BLOCK],
+        }
     }
 
     pub(crate) fn decode_array<const N: usize>(self, start: usize) -> Result<[i8; N], AkitaError> {
@@ -213,40 +265,47 @@ impl PackedSignedDigitView<'_> {
         }
 
         output.fill(0);
-        let live_end = self.digits.len.min(end);
-        if start >= live_end {
+        let source_start = self.start + start;
+        let source_end = self.start + end;
+        let live_end = self.digits.len.min(source_end);
+        if source_start >= live_end {
             return Ok(0);
         }
-        let live = live_end - start;
-        if start.is_multiple_of(DIGITS_PER_BLOCK) {
-            let first_block = start / DIGITS_PER_BLOCK;
-            let full_blocks = live / DIGITS_PER_BLOCK;
-            for (offset, block) in output
-                .chunks_exact_mut(DIGITS_PER_BLOCK)
-                .take(full_blocks)
-                .enumerate()
-            {
-                decode_full_block(
-                    self.digits,
-                    first_block + offset,
-                    block.try_into().expect("exact packed decode block"),
-                );
-            }
-            let decoded = full_blocks * DIGITS_PER_BLOCK;
-            for (offset, slot) in output
-                .iter_mut()
-                .enumerate()
-                .skip(decoded)
-                .take(live - decoded)
-            {
-                *slot =
-                    scalar::decode_at(&self.digits.storage, start + offset, self.digits.bit_width);
-            }
-            return Ok(live);
+        let live = live_end - source_start;
+        let scalar_prefix =
+            (DIGITS_PER_BLOCK - source_start % DIGITS_PER_BLOCK).min(live) % DIGITS_PER_BLOCK;
+        for (offset, slot) in output.iter_mut().take(scalar_prefix).enumerate() {
+            *slot = scalar::decode_at(
+                &self.digits.storage,
+                source_start + offset,
+                self.digits.bit_width,
+            );
         }
-
-        for (offset, slot) in output.iter_mut().take(live).enumerate() {
-            *slot = scalar::decode_at(&self.digits.storage, start + offset, self.digits.bit_width);
+        let block_start = source_start + scalar_prefix;
+        let full_blocks = (live - scalar_prefix) / DIGITS_PER_BLOCK;
+        for (offset, block) in output[scalar_prefix..]
+            .chunks_exact_mut(DIGITS_PER_BLOCK)
+            .take(full_blocks)
+            .enumerate()
+        {
+            decode_full_block(
+                self.digits,
+                block_start / DIGITS_PER_BLOCK + offset,
+                block.try_into().expect("exact packed decode block"),
+            );
+        }
+        let decoded = scalar_prefix + full_blocks * DIGITS_PER_BLOCK;
+        for (offset, slot) in output
+            .iter_mut()
+            .skip(decoded)
+            .take(live - decoded)
+            .enumerate()
+        {
+            *slot = scalar::decode_at(
+                &self.digits.storage,
+                source_start + decoded + offset,
+                self.digits.bit_width,
+            );
         }
         Ok(live)
     }
@@ -268,13 +327,14 @@ impl PackedSignedDigitView<'_> {
         }
 
         output.fill(0);
-        let logical_end = self.digits.len.min(self.len);
+        let logical_end = self.digits.len.min(self.start + self.len);
+        let start = self.start + start;
         if start >= logical_end {
             return Ok(0);
         }
         let live = (logical_end - start).min(DIGITS_PER_BLOCK);
         if live == DIGITS_PER_BLOCK {
-            decode_full_block(self.digits, block_index, output);
+            decode_full_block(self.digits, start / DIGITS_PER_BLOCK, output);
         } else {
             for (offset, slot) in output.iter_mut().take(live).enumerate() {
                 *slot =
@@ -282,6 +342,82 @@ impl PackedSignedDigitView<'_> {
             }
         }
         Ok(live)
+    }
+}
+
+pub(crate) struct PackedSignedDigitIter<'a> {
+    view: PackedSignedDigitView<'a>,
+    position: usize,
+    decoded_start: usize,
+    decoded_len: usize,
+    decoded: [i8; DIGITS_PER_BLOCK],
+}
+
+impl Iterator for PackedSignedDigitIter<'_> {
+    type Item = i8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position >= self.view.len() {
+            return None;
+        }
+        if self.position < self.decoded_start
+            || self.position >= self.decoded_start + self.decoded_len
+        {
+            self.refill();
+        }
+        let value = self.decoded[self.position - self.decoded_start];
+        self.position += 1;
+        Some(value)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.view.len() - self.position;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for PackedSignedDigitIter<'_> {}
+impl FusedIterator for PackedSignedDigitIter<'_> {}
+
+impl PackedSignedDigitIter<'_> {
+    #[inline(always)]
+    fn refill(&mut self) {
+        self.decoded_start = self.position;
+        let source_position = self.view.start + self.position;
+        let until_aligned =
+            (DIGITS_PER_BLOCK - source_position % DIGITS_PER_BLOCK) % DIGITS_PER_BLOCK;
+        let batch_len = if until_aligned == 0 {
+            DIGITS_PER_BLOCK
+        } else {
+            until_aligned
+        };
+        self.decoded_len = (self.view.len() - self.position).min(batch_len);
+        self.view
+            .decode_range(self.decoded_start, &mut self.decoded[..self.decoded_len])
+            .expect("packed iterator range is in bounds");
+    }
+
+    #[inline(always)]
+    pub(crate) fn next_array<const N: usize>(&mut self) -> Option<[i8; N]> {
+        let end = self.position.checked_add(N)?;
+        if end > self.view.len() {
+            return None;
+        }
+        if self.position < self.decoded_start || end > self.decoded_start + self.decoded_len {
+            self.refill();
+        }
+        let local_start = self.position - self.decoded_start;
+        if local_start + N > self.decoded_len {
+            let values = self
+                .view
+                .decode_array::<N>(self.position)
+                .expect("packed iterator array is in bounds");
+            self.position = end;
+            return Some(values);
+        }
+        let values = std::array::from_fn(|offset| self.decoded[local_start + offset]);
+        self.position = end;
+        Some(values)
     }
 }
 

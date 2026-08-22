@@ -69,15 +69,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::fold_compact_range_image_to_materialized"
     )]
-    pub(super) fn fold_compact_range_image_to_materialized<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn fold_compact_range_image_to_materialized<S: CompactRangeImageSource + ?Sized>(
+        compact_range_image: &S,
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
         cfg_into_iter!(0..compact_range_image.len() / 2)
             .map(|j| {
                 fold_lut.fold(
-                    compact_range_image[2 * j].range_image_value(),
-                    compact_range_image[2 * j + 1].range_image_value(),
+                    compact_range_image.range_image_value(2 * j),
+                    compact_range_image.range_image_value(2 * j + 1),
                 )
             })
             .collect()

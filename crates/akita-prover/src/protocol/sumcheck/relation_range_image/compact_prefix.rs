@@ -18,15 +18,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     #[inline(always)]
-    pub(super) fn stage2_b4_quad_lookup_index_from_column(
-        lane_values: &[i8],
-        base: usize,
+    fn stage2_quad_lookup_index_from_iter(
+        digits: &mut PackedSignedDigitIter<'_>,
+        digit_fn: fn(i8) -> usize,
+        lookup_index_fn: fn([usize; 4]) -> usize,
     ) -> usize {
-        let d0 = stage2_b4_w_digit(lane_values[base]);
-        let d1 = stage2_b4_w_digit(lane_values[base + 1]);
-        let d2 = stage2_b4_w_digit(lane_values[base + 2]);
-        let d3 = stage2_b4_w_digit(lane_values[base + 3]);
-        d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
+        let quad = digits.next_array::<4>().expect("compact quad digits");
+        lookup_index_fn(quad.map(digit_fn))
     }
 
     pub(super) fn build_round2_w_lookup_b4(r0: E, r1: E) -> Vec<E> {
@@ -47,18 +45,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 )
             })
             .collect()
-    }
-
-    #[inline(always)]
-    pub(super) fn stage2_b8_quad_lookup_index_from_column(
-        lane_values: &[i8],
-        base: usize,
-    ) -> usize {
-        let d0 = stage2_b8_w_digit(lane_values[base]);
-        let d1 = stage2_b8_w_digit(lane_values[base + 1]);
-        let d2 = stage2_b8_w_digit(lane_values[base + 2]);
-        let d3 = stage2_b8_w_digit(lane_values[base + 3]);
-        d0 | (d1 << 3) | (d2 << 6) | (d3 << 9)
     }
 
     pub(super) fn build_round2_w_lookup_b8(r0: E, r1: E) -> Vec<E> {
@@ -86,7 +72,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         name = "RelationRangeImageProver::materialize_two_round_compact_prefix"
     )]
     pub(super) fn materialize_two_round_compact_prefix(
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
         live_lane_count: usize,
         coeff_count: usize,
         r0: E,
@@ -99,20 +85,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         for lane in 0..live_lane_count {
             let src_start = lane * coeff_count;
             let dst_start = lane * next_coeff_count;
-            let lane_values = &compact_witness[src_start..src_start + coeff_count];
-            for (quad_y, dst) in out[dst_start..dst_start + next_coeff_count]
-                .iter_mut()
-                .enumerate()
-            {
-                let base = 4 * quad_y;
-                *dst = Self::direct_fold_w_quad_two_rounds(
-                    lane_values[base],
-                    lane_values[base + 1],
-                    lane_values[base + 2],
-                    lane_values[base + 3],
-                    r0,
-                    r1,
-                );
+            let mut digits = compact_witness
+                .slice(src_start..src_start + coeff_count)
+                .expect("compact lane is in bounds")
+                .iter();
+            for dst in &mut out[dst_start..dst_start + next_coeff_count] {
+                let quad: [i8; 4] = std::array::from_fn(|_| {
+                    digits.next().expect("compact quad digit is in bounds")
+                });
+                *dst =
+                    Self::direct_fold_w_quad_two_rounds(quad[0], quad[1], quad[2], quad[3], r0, r1);
             }
         }
         out
@@ -157,7 +139,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     )]
     pub(super) fn materialize_two_round_compact_prefix_and_compute_next_round(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
         alpha_round2: &[E],
         linear_terms_round2: &PreparedProverLinearTerms<E>,
         r0: E,
@@ -180,9 +162,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             8 => Self::build_round2_w_lookup_b8(r0, r1),
             _ => unreachable!("unsupported stage-2 two-round prefix basis"),
         };
-        let quad_index_fn: fn(&[i8], usize) -> usize = match self.b {
-            4 => Self::stage2_b4_quad_lookup_index_from_column,
-            8 => Self::stage2_b8_quad_lookup_index_from_column,
+        let digit_fn: fn(i8) -> usize = match self.b {
+            4 => stage2_b4_w_digit,
+            8 => stage2_b8_w_digit,
+            _ => unreachable!("unsupported stage-2 two-round prefix basis"),
+        };
+        let lookup_index_fn: fn([usize; 4]) -> usize = match self.b {
+            4 => stage2_b4_lookup_index_from_digits,
+            8 => stage2_b8_lookup_index_from_digits,
             _ => unreachable!("unsupported stage-2 two-round prefix basis"),
         };
         let mut out = vec![E::zero(); self.live_lane_count * next_coeff_count];
@@ -194,7 +181,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 .enumerate()
                 .map(|(lane, lane_out)| {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
+                    let mut digits = compact_witness
+                        .slice(lane_start..lane_start + coeff_count)
+                        .expect("compact lane is in bounds")
+                        .iter();
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 2];
@@ -217,9 +207,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            let w0 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
+                            let w1 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
                             lane_out[left] = w0;
                             lane_out[left + 1] = w1;
                             let dw = w1 - w0;
@@ -267,7 +264,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 let mut rel = [E::zero(); 3];
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
+                    let mut digits = compact_witness
+                        .slice(lane_start..lane_start + coeff_count)
+                        .expect("compact lane is in bounds")
+                        .iter();
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -288,9 +288,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            let w0 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
+                            let w1 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
                             lane_out[left] = w0;
                             lane_out[left + 1] = w1;
                             let dw = w1 - w0;
@@ -328,7 +335,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 .enumerate()
                 .map(|(lane, lane_out)| {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
+                    let mut digits = compact_witness
+                        .slice(lane_start..lane_start + coeff_count)
+                        .expect("compact lane is in bounds")
+                        .iter();
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 3];
@@ -351,9 +361,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            let w0 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
+                            let w1 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
                             lane_out[left] = w0;
                             lane_out[left + 1] = w1;
                             let dw = w1 - w0;
@@ -404,7 +421,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 let mut rel = [E::zero(); 3];
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
+                    let mut digits = compact_witness
+                        .slice(lane_start..lane_start + coeff_count)
+                        .expect("compact lane is in bounds")
+                        .iter();
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -425,9 +445,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let base = 8 * coefficient_pair;
-                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            let w0 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
+                            let w1 = quad_fold_lut[Self::stage2_quad_lookup_index_from_iter(
+                                &mut digits,
+                                digit_fn,
+                                lookup_index_fn,
+                            )];
                             lane_out[left] = w0;
                             lane_out[left + 1] = w1;
                             let dw = w1 - w0;
