@@ -350,7 +350,7 @@ impl<'a> TranscriptNonceWriter<'a> {
             self.cursor.bit_offset,
             entry.nonce_bits,
             value,
-        );
+        )?;
         self.cursor.advance_bits(entry.nonce_bits)
     }
 }
@@ -424,7 +424,7 @@ impl TranscriptNonceReader<'_> {
             self.stream.as_bytes(),
             self.cursor.bit_offset,
             entry.nonce_bits,
-        );
+        )?;
         self.cursor.advance_bits(entry.nonce_bits)?;
         Ok(value)
     }
@@ -761,20 +761,36 @@ fn value_fits(value: u32, width: u8) -> bool {
     width == u32::BITS as u8 || value < (1u32 << width)
 }
 
-fn write_bits(bytes: &mut [u8], offset: usize, width: u8, value: u32) {
-    for bit in 0..usize::from(width) {
-        if (value >> bit) & 1 == 1 {
-            let stream_bit = offset + bit;
-            bytes[stream_bit / 8] |= 1 << (stream_bit % 8);
-        }
+fn write_bits(bytes: &mut [u8], offset: usize, width: u8, value: u32) -> Result<(), AkitaError> {
+    let bit_shift = offset % 8;
+    let byte_offset = offset / 8;
+    let byte_count = (bit_shift + usize::from(width)).div_ceil(8);
+    let word = u64::from(value) << bit_shift;
+    for byte_index in 0..byte_count {
+        let dst = bytes
+            .get_mut(byte_offset + byte_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        *dst |= (word >> (byte_index * 8)) as u8;
     }
+    Ok(())
 }
 
-fn read_bits(bytes: &[u8], offset: usize, width: u8) -> u32 {
-    let mut value = u32::default();
-    for bit in 0..usize::from(width) {
-        let stream_bit = offset + bit;
-        value |= u32::from((bytes[stream_bit / 8] >> (stream_bit % 8)) & 1) << bit;
+fn read_bits(bytes: &[u8], offset: usize, width: u8) -> Result<u32, AkitaError> {
+    let bit_shift = offset % 8;
+    let byte_offset = offset / 8;
+    let byte_count = (bit_shift + usize::from(width)).div_ceil(8);
+    let mut word = 0u64;
+    for byte_index in 0..byte_count {
+        let byte = bytes
+            .get(byte_offset + byte_index)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        word |= u64::from(byte) << (byte_index * 8);
     }
-    value
+    let mask = if width == u32::BITS as u8 {
+        u64::from(u32::MAX)
+    } else {
+        (1u64 << width) - 1
+    };
+    Ok(((word >> bit_shift) & mask) as u32)
 }
