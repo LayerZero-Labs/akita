@@ -20,6 +20,11 @@ consumed through the scalar direct path, including a scalar `F = 1` handoff.
 Its physical relation is `consistency | A`: the terminal has no outer `u`, B
 block, or D block.
 
+The setup prefix appears only when the selected recursive schedule offloads the
+preceding setup contribution. [Setup offloading](./setup-offloading.md)
+explains how Stage 3 creates this second opening claim and how the successor
+authenticates it beside the folded witness.
+
 The transcript binds the schedule and exact group geometry before challenges
 that depend on them. Changing a terminal or recursive handoff is therefore a
 protocol change, not a serialization-only change.

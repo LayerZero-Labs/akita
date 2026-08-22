@@ -5,7 +5,7 @@
 | Author(s)     | Alberto Centelles |
 | Created       | 2026-07-15     |
 | Status        | active         |
-| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); [Akita PR B #429](https://github.com/LayerZero-Labs/akita/pull/429); [Jolt PR C #1745](https://github.com/a16z/jolt/pull/1745) |
+| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); [Jolt field-kernel follow-up #1794](https://github.com/a16z/jolt/pull/1794); [Akita PR B #429](https://github.com/LayerZero-Labs/akita/pull/429); [Jolt PR C #1745](https://github.com/a16z/jolt/pull/1745) |
 | Supersedes    | [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
@@ -373,9 +373,10 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `7e4eb60216f0e7697da27bf79b6ce32ee263f013`, the refreshed head
-prepared for Jolt PR A #1792. That revision is replaced with the upstream merge
-revision or a released package identity once PR A lands.
+upstream commit `4a0d4a33265c6fc7c1dc0e97046b67773a8320ea`, the CI-fixed head of
+the field-kernel follow-up Jolt PR #1794. That revision includes the merged
+field stack from Jolt PR A #1792. It is replaced with the upstream merge
+revision or a released package identity once the follow-up lands.
 
 Jolt itself uses the local `crates/jolt-field` workspace member. When Jolt later
 consumes the migrated Akita revision, PR C must use a root Cargo source patch or

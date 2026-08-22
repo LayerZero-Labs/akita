@@ -1,9 +1,8 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
-use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, InnerCommitSecurityRoute, LevelParamsLike,
-    OpeningMethod, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
+    CommittedGroupParams, InnerCommitSecurityRoute, OpeningMethod, RelationAddressGeometry,
+    SetupContributionMode, TerminalResponseShape,
 };
 use akita_error::AkitaError;
 
@@ -12,8 +11,8 @@ mod profiles;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    CommittedSourceEncoding, PrecommittedGroupProfiles,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
+    GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
@@ -42,55 +41,68 @@ pub enum NextWitnessBindingPolicy {
     TerminalInnerState,
 }
 
+/// Parameters for one fold level: the root fold or one recursive fold.
+///
+/// Replaces `RootFoldParams` and `RecursiveFoldParams`. Their nested
+/// `RootFinalGroupParams`, `RootPrecommittedGroupParams`, `WitnessPartition`,
+/// and `ScheduledSetupPrefix` types split one level across several owners.
+/// The overlap was kept honest by equality audits. Each audit compared a
+/// field with a copy of itself:
+///
+/// - both fold types stored `open_commit_matrix` beside the same matrix in
+///   `params`;
+/// - `sparse_challenge_config` on both duplicated `params.fold_challenge_config`;
+/// - root precommitted entries duplicated the groups already held by `params`;
+/// - `RecursiveFoldParams::incoming_setup_prefix` duplicated the setup-prefix
+///   group already held by `params`;
+/// - `RootFinalGroupParams` was a one-field wrapper.
+///
+/// Root and recursive folds share this type because after the merge they hold
+/// identical fields. What separates them stays a validated constraint, as it
+/// already was: `FoldSchedule` names the three positions, so no role is inferred
+/// from an array index.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WitnessPartition {
-    Single,
-    Distributed { num_chunks: usize },
+pub struct FoldParams {
+    /// This fold's own parameters, including its final/new group, its
+    /// precommitted groups, the shared D matrix, and any incoming setup prefix.
+    pub params: CommittedGroupParams,
+    /// Witness field length entering this fold.
+    pub input_witness_len: usize,
+    /// Witness field length leaving this fold.
+    pub output_witness_len: usize,
 }
 
-impl WitnessPartition {
-    pub fn num_chunks(&self) -> usize {
-        match self {
-            Self::Single => 1,
-            Self::Distributed { num_chunks } => *num_chunks,
-        }
+impl FoldParams {
+    /// Shared D matrix over every group's `w_hat` segment.
+    ///
+    /// Stored once, on the fold's params. The two former copies are gone.
+    #[inline]
+    #[must_use]
+    pub fn open_commit_matrix(&self) -> &crate::OpenCommitMatrixParams {
+        &self.params.open_matrix
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFinalGroupParams {
-    pub commitment: CommittedGroupParams,
-}
+    /// Fold-challenge family for this level.
+    #[inline]
+    #[must_use]
+    pub fn sparse_challenge_config(&self) -> akita_challenges::SparseChallengeConfig {
+        self.params.fold_challenge_config()
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootPrecommittedGroupParams {
-    pub descriptor: CommittedGroupProfile,
-    pub commitment: crate::PrecommittedLevelParams,
-}
+    /// The incoming setup prefix, when this fold consumes one.
+    #[inline]
+    #[must_use]
+    pub fn incoming_setup_prefix(&self) -> Option<&crate::GroupOpenPhaseParams> {
+        self.params.setup_prefix()
+    }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFoldParams {
-    pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupParams>,
-    pub open_commit_matrix: crate::OpenCommitMatrixParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub witness_partition: WitnessPartition,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveFoldParams {
-    pub witness: CommittedGroupParams,
-    pub open_commit_matrix: crate::OpenCommitMatrixParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub incoming_setup_prefix: Option<crate::ScheduledSetupPrefix>,
-    pub witness_partition: WitnessPartition,
-}
-
-impl RecursiveFoldParams {
-    /// Setup-contribution mode of the fold that produces this recursive
-    /// witness. Presence of this consumer-owned prefix is the sole authority.
+    /// Setup-contribution mode of the fold that produces this witness.
+    ///
+    /// Presence of the consumer-owned prefix is the sole authority; there is no
+    /// separately stored mode that could disagree with adjacency.
+    #[must_use]
     pub fn predecessor_setup_contribution_mode(&self) -> SetupContributionMode {
-        if self.incoming_setup_prefix.is_some() {
+        if self.params.setup_prefix().is_some() {
             SetupContributionMode::Recursive
         } else {
             SetupContributionMode::Direct
@@ -105,17 +117,19 @@ impl RecursiveFoldParams {
 /// needed to audit a calibrated L2 route. It has no outer/open commitment
 /// matrix and no outer/open response decomposition.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalCommittedGroupParams {
-    pub log_basis_inner: u32,
-    /// Response basis used by the planner for this terminal fold.
-    pub fold_log_basis: u32,
-    /// Number of response digits used by the planner for this terminal fold.
-    pub fold_digit_count: usize,
-    pub inner_commit_matrix: InnerCommitMatrixParams,
-    pub num_live_ring_elements_per_claim: usize,
-    pub num_positions_per_block: usize,
-    pub num_live_blocks: usize,
-    pub num_digits_inner: usize,
+pub struct TerminalFoldParams {
+    /// Exact `(N, M, B)` block split of the terminal source.
+    pub blocks: crate::BlockGeometry,
+    /// A/source role: gadget decomposition and audited matrix identity.
+    pub inner: crate::InnerRoleParams,
+    /// Response basis and depth this terminal fold was planned against.
+    pub fold: crate::GadgetDigits,
+    /// Fold-challenge family for the terminal response.
+    pub fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Shape of the clear terminal response payload.
+    pub response_shape: TerminalResponseShape,
+    /// Witness field length entering the terminal fold.
+    pub input_witness_len: usize,
 }
 
 /// Minimum fraction of the unconstrained terminal-response target that a
@@ -125,25 +139,36 @@ pub struct TerminalCommittedGroupParams {
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
 pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
 
-impl TerminalCommittedGroupParams {
-    /// Canonical byte encoding used to order semantically distinct terminal candidates.
-    #[must_use]
-    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        self.append_descriptor_bytes(&mut bytes);
-        bytes
-    }
-
+impl TerminalFoldParams {
+    /// Project a fold's params into terminal parameters.
+    ///
+    /// `response_shape` and `input_witness_len` are placeholders: the response
+    /// shape is derived from the admission cap this projection computes, so it
+    /// cannot be known here. Callers assemble it and assign both, mirroring the
+    /// existing `params_only` then `with_decomp` idiom on `CommittedGroupParams`.
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
-            log_basis_inner: params.log_basis_inner,
-            fold_log_basis: params.log_basis_open,
-            fold_digit_count: params.num_digits_fold,
-            inner_commit_matrix: params.inner_commit_matrix,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
-            num_digits_inner: params.num_digits_inner,
+            fold_challenge_config: params.fold_challenge_config(),
+            response_shape: TerminalResponseShape {
+                layout: crate::TailSegmentLayout {
+                    ring_dimension: params.d_a(),
+                    groups: Vec::new(),
+                    logical_num_elems: 0,
+                },
+            },
+            input_witness_len: 0,
+            blocks: params.blocks(),
+            inner: crate::RoleParams::new(
+                crate::GadgetDigits::new(
+                    params.inner().digits.log_basis,
+                    params.inner().digits.num_digits,
+                ),
+                params.inner().matrix,
+            ),
+            fold: crate::GadgetDigits::new(
+                params.open().digits.log_basis,
+                params.num_digits_fold(),
+            ),
         }
     }
 
@@ -152,23 +177,24 @@ impl TerminalCommittedGroupParams {
     pub fn try_from_expanded_group(
         params: CommittedGroupParams,
     ) -> Result<(Self, u128), AkitaError> {
-        let sparse = params.fold_challenge_config;
+        let sparse = params.fold_challenge_config();
         let num_fold_coeffs = usize::try_from(params.num_fold_coeffs()).map_err(|_| {
             AkitaError::InvalidSetup("terminal fold coefficient count exceeds usize".into())
         })?;
         let cap_config =
             crate::sis::FoldWitnessLinfCapConfig::for_fold_coeffs(&sparse, num_fold_coeffs)?;
         let challenge = crate::sis::FoldChallengeNorms::new(&sparse);
-        let witness = crate::sis::FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a());
+        let witness =
+            crate::sis::FoldWitnessNorms::bounded(params.inner().digits.log_basis, params.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_linf_cap(
-            params.num_live_blocks,
+            params.blocks().live_blocks,
             1,
             challenge,
             witness,
             &cap_config,
         )?;
         let terminal = Self::from_expanded_group(params);
-        let admission_cap = terminal.certified_response_linf_cap(&sparse)?;
+        let admission_cap = terminal.certified_response_linf_cap()?;
         let minimum_usable_cap = unconstrained_target
             .checked_mul(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal target ratio overflow".into()))?
@@ -185,20 +211,20 @@ impl TerminalCommittedGroupParams {
 
     #[inline]
     pub fn d_a(&self) -> usize {
-        self.inner_commit_matrix.ring_dimension()
+        self.inner.matrix.ring_dimension()
     }
 
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.inner_commit_matrix.input_width()
+        self.inner.matrix.input_width()
     }
 
     /// Logical opening-point width for the witness entering the terminal fold.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
         crate::layout::params::recursive_opening_num_vars_for_geometry(
             self.d_a(),
-            self.num_positions_per_block,
-            self.num_live_blocks,
+            self.blocks.positions_per_block,
+            self.blocks.live_blocks,
         )
     }
 
@@ -208,46 +234,41 @@ impl TerminalCommittedGroupParams {
     /// The matrix rank can incidentally support a larger collision bucket. The
     /// terminal wire does not consume that slack because doing so would change
     /// its admission and encoding bounds when an unrelated rank frontier moves.
-    pub fn certified_response_linf_cap(
-        &self,
-        sparse: &akita_challenges::SparseChallengeConfig,
-    ) -> Result<u128, AkitaError> {
+    /// Takes no challenge family. Every production caller passed this terminal's
+    /// own `fold_challenge_config` -- the prover and verifier suffixes both bind
+    /// `params = &scheduled` and then passed `&scheduled.fold_challenge_config`,
+    /// and `try_from_expanded_group` derives both the cap and the stored config
+    /// from one `CommittedGroupParams`. Nothing forced the argument to agree with
+    /// the receiver, so a caller could only ever pass the same value or silently
+    /// move the admission cap that gates acceptance. Reading the field removes
+    /// that gap by construction.
+    pub fn certified_response_linf_cap(&self) -> Result<u128, AkitaError> {
         if matches!(
-            self.inner_commit_matrix.security_route(),
+            self.inner.matrix.security_route(),
             crate::sis::InnerCommitSecurityRoute::L2 { .. }
         ) {
             return Err(AkitaError::InvalidSetup(
                 "terminal L2 route has no independent Linf cap".into(),
             ));
         }
-        let challenge = crate::sis::FoldChallengeNorms::new(sparse);
-        let collision_capacity = self.inner_commit_matrix.coeff_linf_bound().ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal A cannot use an L2 security route".into())
-        })?;
-        let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
-            collision_capacity,
-            challenge.l1_norm,
+        crate::sis::certified_terminal_response_linf_cap(
+            &self.inner.matrix,
+            &self.fold_challenge_config,
         )
-        .filter(|value| *value > 0)
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;
-        // Terminal NTT kernels currently consume signed i16 coefficients.
-        // This representation limit is independent of the SIS capacity.
-        Ok(certified_capacity.min(i16::MAX as u128))
     }
 
     /// Validate that the wire carries exactly the norm cap required by the
     /// selected terminal security route.
     pub fn validate_terminal_linf_cap(
         &self,
-        sparse: &akita_challenges::SparseChallengeConfig,
         scheduled_cap: Option<u128>,
     ) -> Result<(), AkitaError> {
-        match self.inner_commit_matrix.security_route() {
+        match self.inner.matrix.security_route() {
             crate::sis::InnerCommitSecurityRoute::Linf(_) => {
                 let cap = scheduled_cap.ok_or_else(|| {
                     AkitaError::InvalidSetup("terminal Linf route is missing its cap".into())
                 })?;
-                if cap == 0 || cap > self.certified_response_linf_cap(sparse)? {
+                if cap == 0 || cap > self.certified_response_linf_cap()? {
                     return Err(AkitaError::InvalidSetup(
                         "terminal Linf cap exceeds its matrix-certified capacity".into(),
                     ));
@@ -267,7 +288,7 @@ impl TerminalCommittedGroupParams {
     /// Verifier-enforced complete physical L2 cap for a clear terminal route.
     #[must_use]
     pub fn response_l2_sq_cap(&self) -> Option<u128> {
-        match self.inner_commit_matrix.security_route() {
+        match self.inner.matrix.security_route() {
             crate::sis::InnerCommitSecurityRoute::Linf(_) => None,
             crate::sis::InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
@@ -275,50 +296,25 @@ impl TerminalCommittedGroupParams {
         }
     }
 
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        push_u32(bytes, self.log_basis_inner);
-        push_u32(bytes, self.fold_log_basis);
-        push_usize(bytes, self.fold_digit_count);
-        self.inner_commit_matrix.append_descriptor_bytes(bytes);
-        push_usize(bytes, self.num_live_ring_elements_per_claim);
-        push_usize(bytes, self.num_positions_per_block);
-        push_usize(bytes, self.num_live_blocks);
-        push_usize(bytes, self.num_digits_inner);
+    /// Role-atomic order, per the plan's encoding rule: declared field order,
+    /// each field written by its own encoder.
+    ///
+    /// This is the one encoder in the plan whose byte order changes. It used to
+    /// interleave the A basis, the fold decomposition, the A matrix, the block
+    /// triple, and the A depth; it now writes geometry, then the A role as
+    /// `basis, depth, matrix`, then the fold decomposition.
+    pub(crate) fn append_group_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        self.blocks.append_descriptor_bytes(bytes);
+        self.inner.append_descriptor_bytes(bytes);
+        self.fold.append_descriptor_bytes(bytes);
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalFoldParams {
-    pub witness: TerminalCommittedGroupParams,
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub response_shape: TerminalResponseShape,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RootFoldStep {
-    pub params: RootFoldParams,
-    pub input_witness_len: usize,
-    pub output_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveFoldStep {
-    pub params: RecursiveFoldParams,
-    pub input_witness_len: usize,
-    pub output_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TerminalFoldStep {
-    pub params: TerminalFoldParams,
-    pub input_witness_len: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldSchedule {
-    pub root: RootFoldStep,
-    pub recursive_folds: Vec<RecursiveFoldStep>,
-    pub terminal: TerminalFoldStep,
+    pub root: FoldParams,
+    pub recursive_folds: Vec<FoldParams>,
+    pub terminal: TerminalFoldParams,
 }
 
 /// Borrowed nonterminal step used to encode a checked planner candidate
@@ -331,53 +327,47 @@ pub struct FoldScheduleDescriptorStep<'a> {
     pub output_witness_len: usize,
 }
 
-/// Borrowed terminal step used by canonical schedule descriptor encoding.
-#[derive(Clone, Copy)]
-pub struct TerminalFoldDescriptor<'a> {
-    pub witness: &'a TerminalCommittedGroupParams,
-    pub sparse_challenge_config: &'a akita_challenges::SparseChallengeConfig,
-    pub response_shape: &'a TerminalResponseShape,
-    pub input_witness_len: usize,
-}
-
 impl FoldSchedule {
     pub fn num_fold_levels(&self) -> usize {
         self.recursive_folds.len() + 2
     }
 
-    pub fn root_fold(&self) -> &RootFoldStep {
+    pub fn root_fold(&self) -> &FoldParams {
         &self.root
     }
 
-    pub fn root_fold_mut(&mut self) -> &mut RootFoldStep {
+    pub fn root_fold_mut(&mut self) -> &mut FoldParams {
         &mut self.root
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        let root_commitment = &self.root.params.final_group.commitment;
+        let root_commitment = &self.root.params;
+        root_commitment.validate_group_topology()?;
+        if root_commitment.setup_prefix().is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "root fold cannot consume a setup prefix".into(),
+            ));
+        }
         root_commitment
             .validate_commitment_request(0, root_commitment.commitment_polynomial_count()?)?;
-        for group in &self.root.params.precommitted_groups {
-            group.commitment.validate()?;
+        for group in self.root.params.precommitted_groups() {
+            group.validate()?;
         }
-        if !self
-            .root
-            .params
-            .final_group
-            .commitment
-            .payload_mode
-            .is_compressed()
-        {
+        if !self.root.params.payload_mode.is_compressed() {
             return Err(AkitaError::InvalidSetup(
                 "root fold payload must be compressed".into(),
             ));
         }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
-            step.params
-                .witness
-                .validate_commitment_request(index + 1, 1)?;
-            let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
+            step.params.validate_group_topology()?;
+            if !step.params.precommitted_groups().is_empty() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} cannot consume precommitted groups"
+                )));
+            }
+            step.params.validate_commitment_request(index + 1, 1)?;
+            let consumes_setup_prefix = step.params.setup_prefix().is_some();
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
@@ -385,13 +375,13 @@ impl FoldSchedule {
             }
             if !payload_phase
                 .candidate_modes(index + 1, consumes_setup_prefix)
-                .contains(&step.params.witness.payload_mode)
+                .contains(&step.params.payload_mode)
             {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} payload mode disagrees with the compression cutover policy"
                 )));
             }
-            payload_phase = payload_phase.after(step.params.witness.payload_mode);
+            payload_phase = payload_phase.after(step.params.payload_mode);
         }
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -413,20 +403,15 @@ impl FoldSchedule {
             self.recursive_folds.first().map_or_else(
                 || {
                     Ok((
-                        self.terminal.params.witness.d_a(),
-                        self.terminal.params.witness.recursive_opening_num_vars()?,
+                        self.terminal.d_a(),
+                        self.terminal.recursive_opening_num_vars()?,
                     ))
                 },
-                |step| {
-                    Ok((
-                        step.params.witness.d_a(),
-                        step.params.witness.recursive_opening_num_vars()?,
-                    ))
-                },
+                |step| Ok((step.params.d_a(), step.params.recursive_opening_num_vars()?)),
             )?;
         validate_stage2_successor_capacity(
             "root fold",
-            &self.root.params.final_group.commitment,
+            &self.root.params,
             self.root.output_witness_len,
             first_successor_d,
             first_successor_opening_num_vars,
@@ -437,28 +422,25 @@ impl FoldSchedule {
                     "recursive fold witness lengths must be nonzero".to_string(),
                 ));
             }
-            if step.params.witness.setup_prefix != step.params.incoming_setup_prefix {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "recursive fold {index} setup-prefix mirror disagrees with its successor edge"
-                )));
-            }
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
-                prefix.commitment_params.validate()?;
-                prefix
-                    .commitment_params
-                    .layout
-                    .outer_slice_count
-                    .validate_for_commitment(
-                        0,
-                        crate::CommitmentPayloadMode::Compressed,
-                        prefix.commitment_params.layout.num_live_blocks,
-                    )?;
+            if let Some(prefix) = &step.params.setup_prefix() {
+                prefix.validate()?;
+                prefix.profile.outer_slice_count.validate_for_commitment(
+                    0,
+                    crate::CommitmentPayloadMode::Compressed,
+                    prefix.profile.blocks.live_blocks,
+                )?;
                 let n_prefix = prefix.n_prefix()?;
-                if prefix.natural_len == 0
-                    || prefix.natural_len > n_prefix
-                    || prefix.d_setup() == 0
-                    || !n_prefix.is_multiple_of(prefix.d_setup())
-                {
+                let natural_len = prefix.setup_natural_len.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "incoming setup prefix carries no active support length".to_string(),
+                    )
+                })?;
+                crate::validate_setup_prefix_domain(natural_len, n_prefix).map_err(|_| {
+                    AkitaError::InvalidSetup(format!(
+                        "recursive fold {index} setup-prefix geometry is invalid"
+                    ))
+                })?;
+                if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
                     return Err(AkitaError::InvalidSetup(format!(
                         "recursive fold {index} setup-prefix geometry is invalid"
                     )));
@@ -479,27 +461,22 @@ impl FoldSchedule {
                 self.recursive_folds.get(index + 1).map_or_else(
                     || {
                         Ok((
-                            self.terminal.params.witness.d_a(),
-                            self.terminal.params.witness.recursive_opening_num_vars()?,
+                            self.terminal.d_a(),
+                            self.terminal.recursive_opening_num_vars()?,
                         ))
                     },
-                    |next| {
-                        Ok((
-                            next.params.witness.d_a(),
-                            next.params.witness.recursive_opening_num_vars()?,
-                        ))
-                    },
+                    |next| Ok((next.params.d_a(), next.params.recursive_opening_num_vars()?)),
                 )?;
             validate_stage2_successor_capacity(
                 &format!("recursive fold {index}"),
-                &step.params.witness,
+                &step.params,
                 step.output_witness_len,
                 successor_d,
                 successor_opening_num_vars,
             )?;
         }
         if self.terminal.input_witness_len == 0
-            || self.terminal.params.response_shape.logical_num_elems() == 0
+            || self.terminal.response_shape.logical_num_elems() == 0
         {
             return Err(AkitaError::InvalidSetup(
                 "terminal fold and response lengths must be nonzero".to_string(),
@@ -530,49 +507,73 @@ impl FoldSchedule {
                 "root input witness length must be a power of two".into(),
             ));
         }
-        let root_final = &self.root.params.final_group.commitment;
-        let mut root_groups = vec![OpeningExecutionGroup {
-            params: root_final,
+        // Canonical transcript order: earlier groups first, the fold's own
+        // final/new group last. This is the ordering `preceding_group_iter`
+        // already uses, and the one `FoldParams::groups` makes structural.
+        let root_final = &self.root.params;
+        let mut root_groups: Vec<OpeningExecutionGroup> = self
+            .root
+            .params
+            .precommitted_groups()
+            .iter()
+            .map(|group| {
+                let commitment = group;
+                OpeningExecutionGroup {
+                    opening_method: commitment.opening.opening_method,
+                    inner_commit_matrix: &commitment.profile.inner.matrix,
+                    fold_challenge_config: commitment.opening.fold_challenge_config,
+                    // Precommitted groups are canonical by admission.
+                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+                    expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
+                        commitment.opening.opening_method,
+                        extension_degree,
+                        commitment.profile.inner.matrix.ring_dimension(),
+                        group.profile.group.num_vars(),
+                        true,
+                    )),
+                }
+            })
+            .collect();
+        root_groups.push(OpeningExecutionGroup {
+            opening_method: root_final.opening_method(),
+            inner_commit_matrix: &root_final.inner().matrix,
+            fold_challenge_config: root_final.fold_challenge_config(),
+            source_encoding: root_final.source_encoding,
             expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                root_final.opening_method,
+                root_final.opening_method(),
                 extension_degree,
                 root_final.d_a(),
                 self.root.input_witness_len.trailing_zeros() as usize,
                 true,
             )),
-        }];
-        root_groups.extend(self.root.params.precommitted_groups.iter().map(|group| {
-            let commitment = &group.commitment;
-            OpeningExecutionGroup {
-                params: commitment as &dyn LevelParamsLike,
-                expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                    commitment.opening.opening_method,
-                    extension_degree,
-                    commitment.layout.inner_commit_matrix.ring_dimension(),
-                    group.descriptor.group.num_vars(),
-                    true,
-                )),
-            }
-        }));
+        });
         validate_level_opening_execution(0, extension_degree, &root_groups)?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
-            let witness = &step.params.witness;
-            let mut groups = vec![OpeningExecutionGroup {
-                params: witness,
+            let witness = &step.params;
+            let mut groups: Vec<OpeningExecutionGroup> = Vec::new();
+            // An incoming setup prefix is group 0 in canonical order.
+            if let Some(prefix) = &step.params.setup_prefix() {
+                groups.push(OpeningExecutionGroup {
+                    opening_method: prefix.opening.opening_method,
+                    inner_commit_matrix: &prefix.profile.inner.matrix,
+                    fold_challenge_config: prefix.opening.fold_challenge_config,
+                    source_encoding: crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+                    expected_source_encoding: None,
+                });
+            }
+            groups.push(OpeningExecutionGroup {
+                opening_method: witness.opening_method(),
+                inner_commit_matrix: &witness.inner().matrix,
+                fold_challenge_config: witness.fold_challenge_config(),
+                source_encoding: witness.source_encoding,
                 expected_source_encoding: Some(crate::CommittedSourceEncoding::for_producer(
-                    witness.opening_method,
+                    witness.opening_method(),
                     extension_degree,
                     witness.d_a(),
                     0,
                     false,
                 )),
-            }];
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
-                groups.push(OpeningExecutionGroup {
-                    params: &prefix.commitment_params,
-                    expected_source_encoding: None,
-                });
-            }
+            });
             validate_level_opening_execution(index + 1, extension_degree, &groups)?;
         }
         Ok(())
@@ -583,8 +584,35 @@ impl FoldSchedule {
     }
 }
 
+/// One group admitted by a fold, paired with the source encoding its producer
+/// must have used.
+///
+/// Formerly a borrowed view over `&dyn LevelParamsLike`, needed because a fold's
+/// final group and a precommitted group had different types. Rather than replace
+/// the trait object with a group, this names the three things admission actually
+/// reads, so a fold and a standalone group can each supply them from what they
+/// already hold.
+#[derive(Clone, Copy)]
 struct OpeningExecutionGroup<'a> {
-    params: &'a dyn LevelParamsLike,
+    /// What admission reads off the group itself.
+    ///
+    /// Carried directly rather than as a whole group, for the same reason
+    /// `source_encoding` is: a fold's own new witness has no
+    /// `PolynomialGroupLayout` of its own, so handing this check a group would
+    /// mean inventing one. `final_group_scalar` is the natural way to invent it
+    /// and it rejects any fold whose live-ring-element count times `d_a` is not
+    /// a power of two — true of every multi-chunk fold, and never a condition
+    /// this admission check meant to impose.
+    opening_method: OpeningMethod,
+    inner_commit_matrix: &'a crate::InnerCommitMatrixParams,
+    fold_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Encoding the committing fold actually used for this group.
+    ///
+    /// Carried explicitly rather than read from `params`: a group's own
+    /// `source_encoding` accessor returns a hard-coded canonical value, because a
+    /// precommitted group has nowhere to store one. Reading it from the group
+    /// would make both tensor-projection rejections below unreachable.
+    source_encoding: crate::CommittedSourceEncoding,
     expected_source_encoding: Option<crate::CommittedSourceEncoding>,
 }
 
@@ -593,11 +621,18 @@ fn validate_level_opening_execution(
     extension_degree: usize,
     groups: &[OpeningExecutionGroup<'_>],
 ) -> Result<(), AkitaError> {
+    // Which group is `first` does not affect the accept/reject outcome. The
+    // family taken from it is checked against *every* group below, so for a
+    // fold that passes, all groups share that family and any element would give
+    // the same answer; for a fold that fails, both orderings reject. That is why
+    // moving the prefix to index 0 is behaviour-preserving here, and it settles
+    // the ordering disagreement between this check and
+    // `preceding_group_iter`, which already put the prefix first.
     let first = groups
         .first()
         .ok_or_else(|| AkitaError::InvalidSetup("nonterminal fold has no opening groups".into()))?;
     let packing_family = matches!(
-        first.params.opening_method(),
+        first.opening_method,
         OpeningMethod::SubringCoefficientPacking { .. }
     );
     let packing_required = absolute_level <= 1;
@@ -613,7 +648,7 @@ fn validate_level_opening_execution(
     }
     if groups.iter().any(|group| {
         matches!(
-            group.params.opening_method(),
+            group.opening_method,
             OpeningMethod::SubringCoefficientPacking { .. }
         ) != packing_family
     }) {
@@ -622,8 +657,8 @@ fn validate_level_opening_execution(
         ));
     }
     for group in groups {
-        let opening_method = group.params.opening_method();
-        match (opening_method, group.params.source_encoding()) {
+        let opening_method = group.opening_method;
+        match (opening_method, group.source_encoding) {
             (
                 OpeningMethod::EvaluationTrace,
                 crate::CommittedSourceEncoding::TensorSubfieldProjection {
@@ -646,7 +681,7 @@ fn validate_level_opening_execution(
         }
         if group
             .expected_source_encoding
-            .is_some_and(|expected| expected != group.params.source_encoding())
+            .is_some_and(|expected| expected != group.source_encoding)
         {
             return Err(AkitaError::InvalidSetup(
                 "committed source encoding does not match its producer geometry and opening method"
@@ -672,13 +707,13 @@ fn validate_level_opening_execution(
                 "coefficient-packing challenge subring is not in the production ladder".into(),
             )
         })?;
-        let matrix = group.params.inner_commit_matrix_params();
+        let matrix = group.inner_commit_matrix;
         if !matches!(matrix.security_route(), InnerCommitSecurityRoute::Linf(_)) {
             return Err(AkitaError::InvalidSetup(
                 "coefficient packing requires the L-infinity A security route".into(),
             ));
         }
-        if group.params.fold_challenge_config() != expected {
+        if group.fold_challenge_config != expected {
             return Err(AkitaError::InvalidSetup(
                 "coefficient packing requires its audited production challenge family".into(),
             ));
@@ -712,12 +747,12 @@ fn validate_stage2_successor_capacity(
     let mut relation_coefficient_block_len = role_dims.common_relation_coeff_count();
     if let OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension,
-    } = predecessor.opening_method
+    } = predecessor.opening_method()
     {
         relation_coefficient_block_len =
             relation_coefficient_block_len.min(challenge_subring_dimension);
     }
-    for group in predecessor.precommitted_group_iter() {
+    for group in predecessor.preceding_group_iter() {
         let group_dims = group.role_dims(shared_d);
         relation_coefficient_block_len =
             relation_coefficient_block_len.min(group_dims.common_relation_coeff_count());
@@ -800,8 +835,9 @@ pub struct PlannedFoldSchedule {
 
 /// Witness length entering the root fold, in field elements.
 pub fn root_input_witness_len(lp: &CommittedGroupParams) -> usize {
-    lp.num_live_blocks
-        .checked_mul(lp.num_positions_per_block)
+    lp.blocks()
+        .live_blocks
+        .checked_mul(lp.blocks().positions_per_block)
         .and_then(|len| len.checked_mul(lp.d_a()))
         .unwrap_or(0)
 }

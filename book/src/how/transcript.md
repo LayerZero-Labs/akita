@@ -29,15 +29,16 @@ Prover and verifier share one helper:
 - `crates/akita-config/src/transcript_binding.rs` — `bind_transcript_instance_descriptor`
 - `crates/akita-types/src/instance_descriptor/mod.rs` — descriptor shape and serialization
 
-Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
+The descriptor is absorbed before any protocol message or challenge. This
+binds the transcript to the selected algebra, setup, schedule, and public call
+shape rather than trusting those choices from later proof bytes.
 
 ### Integrator note (Jolt / recursion hosts)
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently **`2`**. It was bumped for
-the flat public-matrix derivation cutover, which intentionally changes setup
-bytes and descriptor-bound setup semantics. Pin an exact Akita git revision and
-re-run prove/verify integration tests when upgrading; the repository does not
-promise compatibility across revisions.
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` is currently **`1`**. Validation rejects
+any other version. Pin an exact Akita git revision and rerun prove and verify
+integration tests when upgrading. The repository does not promise
+compatibility across revisions.
 
 After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
 `false` on the wire. Ongoing wire regression is covered by serde roundtrips and

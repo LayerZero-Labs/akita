@@ -15,7 +15,7 @@ name = "akita-recursion-host"
 path = "src/main.rs"
 
 [dependencies]
-jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", default-features = false, features = [
+jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
   "host",
 ] }
 # We pin `jolt-sdk-macros` with `guest-std` directly so that the
@@ -23,7 +23,7 @@ jolt-sdk = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb57
 # its own `cfg(feature = "guest-std")` at host compile time). Going through
 # `jolt-sdk/guest-std` would also pull `zeroos-runtime-musl` in for the
 # host build, which fails to link on macOS / non-musl platforms.
-jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "2509bdcea9bb3e8978bb578380383ef06dbbada7", features = [
+jolt-sdk-macros = { git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", features = [
   "guest-std",
 ] }
 guest = { package = "akita-recursion-guest", path = "../guest", features = [
@@ -31,7 +31,10 @@ guest = { package = "akita-recursion-guest", path = "../guest", features = [
 ] }
 akita-recursion-glue = { path = "../glue" }
 akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp32-onehot",
+  "schedules-fp64-onehot",
   "schedules-fp128-onehot",
+  "schedules-fp128-onehot-recursive",
 ] }
 akita-transcript = { path = "../../../crates/akita-transcript" }
 akita-types = { path = "../../../crates/akita-types" }

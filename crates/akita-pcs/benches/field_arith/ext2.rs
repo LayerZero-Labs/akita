@@ -3,6 +3,7 @@ use jolt_field::{FpExt2, Prime31Offset19, Prime32Offset99, Prime64Offset59, TwoN
 use jolt_field::{PackedFpExt2, WithPacking};
 
 use super::arithmetic::bench_arithmetic_case;
+use super::cases::Prime63Offset259;
 use super::params::ArithmeticBenchParams;
 
 pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
@@ -21,6 +22,11 @@ pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
     type F64FpExt2 = FpExt2<F64, TwoNr>;
     type PF64FpExt2 = PackedFpExt2<PF64, TwoNr>;
 
+    type F63 = Prime63Offset259;
+    type PF63 = <F63 as WithPacking>::Packing;
+    type F63FpExt2 = FpExt2<F63, TwoNr>;
+    type PF63FpExt2 = PackedFpExt2<PF63, TwoNr>;
+
     let params = ArithmeticBenchParams::from_env("AKITA_BENCH_EXT2_ARITH", 512, 128);
 
     bench_arithmetic_case::<F31FpExt2, PF31FpExt2>(
@@ -35,6 +41,13 @@ pub(crate) fn bench_ext2_matrix(c: &mut Criterion) {
         "ext2",
         "prime32_offset99_fp_ext2",
         0xe200_0032,
+        params,
+    );
+    bench_arithmetic_case::<F63FpExt2, PF63FpExt2>(
+        c,
+        "ext2",
+        "prime63_offset259_fp_ext2",
+        0xe200_0063,
         params,
     );
     bench_arithmetic_case::<F64FpExt2, PF64FpExt2>(

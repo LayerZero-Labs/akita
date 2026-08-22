@@ -24,7 +24,7 @@ pub(super) fn verify_root<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
-    next_fold_params: Option<&RecursiveFoldParams>,
+    next_fold_params: Option<&FoldParams>,
     next_witness_ring_dim: usize,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
@@ -54,7 +54,7 @@ where
         .map_or(SetupContributionMode::Direct, |params| {
             params.predecessor_setup_contribution_mode()
         });
-    let next_fold_level_params = next_fold_params.map(|params| &params.witness);
+    let next_fold_level_params = next_fold_params.map(|params| &params.params);
     let stage3_sumcheck_proof = proof
         .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
         .map(|(proof, _)| proof);

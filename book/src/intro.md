@@ -1,89 +1,230 @@
 # Introduction
 
-Akita is a high-performance, modular, lattice-based polynomial commitment scheme
-(PCS) with transparent setup and post-quantum design goals, written in Rust. It
-is intended to replace Dory as the PCS inside the [Jolt](https://jolt.a16zcrypto.com/)
-zkVM.
+Akita is a lattice-based polynomial commitment scheme, or PCS, implemented in
+Rust. Akita lets a prover commit to a large table and later prove an evaluation
+of the multilinear polynomial represented by that table. The verifier checks
+the proof without receiving the whole table. Akita uses transparent setup, so
+it needs no trusted ceremony. Its production parameters provide 128-bit
+post-quantum security under Module-SIS.
 
-> **Status:** this book is an initial scaffold. Most pages are stubs that name
-> the source files, specs, and paper sections their content should be folded
-> from. See [How to read this book](#how-to-read-this-book) below.
+Akita's small proofs are one of its strongest advantages. Current production
+benchmarks produce opening proofs of roughly 65 to 80 KB. This contrasts with
+hash-based post-quantum polynomial commitment schemes, which produce proofs of
+hundreds of kilobytes at the same polynomial sizes Akita supports.
 
-This book has four top-level parts:
+The codebase implements a standalone PCS that other proof systems can use. Its
+first major integration is [Jolt](https://jolt.a16zcrypto.com/), a
+zero-knowledge virtual machine, or zkVM, that proves the correct execution of
+64-bit RISC-V programs.
 
-1. **[Usage](./usage/usage.md)** — how to build, configure, commit, prove,
-   verify, profile, and integrate Akita (including the Jolt recursion path).
-2. **[How it works](./how/how-it-works.md)** — the architecture and the
-   commit → fold → recurse → verify protocol, end to end.
-3. **[Foundations](./foundations/foundations.md)** — the field, ring, sumcheck,
-   and lattice background, plus the glossary, notation, spec index, and
-   references.
-4. **[Roadmap](./roadmap/roadmap.md)** — in-flight and planned work.
+> **Our claim:** Akita is the first production-ready lattice-based polynomial
+> commitment scheme. Earlier systems such as Greyhound showed that lattice
+> commitments could be practical. Akita improves on that line of work and adds
+> the validation, portability, verifier isolation, and integration work needed
+> for deployment.
 
-## What is Akita?
+## Why Akita exists
 
-A multilinear PCS whose binding and knowledge soundness reduce to Module-SIS,
-with generated production tables targeting at least 128 bits under a scalar
-infinity-norm LGSA estimate using the ADPS16 quantum cost model. This is an
-attack-cost model, not an unqualified post-quantum security claim.
-It commits to
-base-field (or extension-field) multilinear polynomials, then proves evaluation
-claims by a recursive fold whose witness shrinks roughly from `N` to `N^{1/2}`
-ring elements per step. No trusted setup, no pairing, post-quantum target.
+Many proof systems deployed today commit to their data with elliptic curve
+cryptography. Groth16, Plonk, and Bulletproofs are prominent examples. Their
+commitments are compact and well understood, but a sufficiently powerful
+quantum computer could break the assumptions behind them.
 
-**Sources to fold in**
+The commitment is often the part of the proof system that carries this
+assumption. The surrounding protocol checks polynomial identities using
+algebra and random challenges. Replacing the PCS with a post-quantum PCS can
+therefore protect the complete proof without replacing every other protocol in
+the system.
 
-- `crates/akita-pcs/src/lib.rs:1-16` — umbrella crate module docs.
-- Paper §1 `sec:introduction`, §1.1 `sec:contributions` (Akita's contributions).
-- `specs/archive/2026-Q3/akita-pcs-crate-decomposition.md` (lineage, naming).
-- Council note: post-quantum is currently asserted, not argued — keep the claim honest.
+Hash-based commitments provide one post-quantum path. They are well developed,
+but they tend to produce larger proofs and require more prover memory. Akita
+takes the lattice path. It uses structured lattice problems to obtain
+post-quantum security, compact proofs, and a commitment operation that can
+preserve sparse inputs.
 
-## Lineage and naming
+## What a polynomial commitment proves
 
-Akita descends from the LaBRADOR → Greyhound → Hachi line of lattice folding
-arguments. Naming maps (paper ↔ code) and the "what each predecessor
-contributed" story belong here.
+A proof system often represents a computation as one or more large tables. The
+prover has the tables. The verifier wants confidence in a calculation over them
+without downloading the tables or repeating the calculation.
 
-**Sources to fold in**
+The word *polynomial* describes how the proof system gives a table useful
+algebraic structure. A table with $2^n$ entries defines a multilinear
+polynomial with $n$ variables. Each variable appears with degree at most one.
+For example, eight table entries define a polynomial in three variables because
+three bits select one of eight positions.
 
-- Paper §3 `sec:akita-recap` ("From Hachi to Basic Akita": Greyhound relation
-  matrix, Hachi's three contributions, Akita's contributions).
-- `crates/akita-types/src/sis/norm_bound.rs:1-2` (Hachi Lemma 7 reference).
-- `specs/archive/2026-Q2/w-to-e-notation.md` (paper ↔ code naming).
-- External: Hachi, Greyhound, LaBRADOR, SuperNeo (ePrint 2026/242). See [References](./foundations/references.md).
+The polynomial also has values away from those eight table positions. A larger
+proof system uses evaluations at such points to combine many table checks into
+a small number of claims.
 
-## Security status (honest)
+A PCS gives the prover and verifier four operations:
 
-State the audited reality separately from the marketing claim: which hardness
-assumption is used, why the production tables use coefficient-`L∞` SIS bounds,
-and what is asserted vs proven. The canonical narrative lives in
-[How it works → Security model](./how/security.md).
+| Operation | What it does |
+| --- | --- |
+| Setup | Creates the public information needed by commitments and proofs |
+| Commit | Fixes one or more polynomials and produces a compact public commitment |
+| Prove | Produces evidence for claimed evaluations of the committed polynomials |
+| Verify | Checks the claims against the commitment and public setup |
 
-**Sources to fold in**
+The commitment fixes the data before the evaluation point is known. A valid
+opening should not let the prover change that data after seeing the point.
 
-- `crates/akita-types/src/sis/` (`mod.rs`, `ajtai_key.rs`, `norm_bound.rs`).
-- `docs/security-posture.md`.
-- Paper §3.12 `sec:batched-soundness`, §3.11 `sec:akita-cwss` (audited soundness).
-- `specs/archive/2026-Q3/security-hardening.md`, `specs/sis-quantum128-scalar-n-table.md`,
-  `specs/fold-linf-rejection.md`.
-- `specs/sis-quantum128-scalar-n-table.md` (implemented policy, role coverage,
-  generated tables, and schedule identity).
+Akita currently exposes multilinear commitments. Its folding protocol needs
+tensor structure rather than multilinearity itself, so the same architecture
+can support a future univariate interface.
 
-## How to read this book
+## Why Akita uses lattices
 
-Reading orders by audience:
+The choice of commitment changes the security, proof size, prover work, and
+verifier work of the complete proof system.
 
-- **Application developer (integrating Jolt or another host):** start with
-  [Usage](./usage/usage.md). While chapters are stubs, use
-  [`profile/akita-recursion/README.md`](../../profile/akita-recursion/README.md),
-  [`usage/commitment-api.md`](./usage/commitment-api.md),
-  and [`AGENTS.md`](../../AGENTS.md) for the current API contracts.
-- **Contributor:** [How it works](./how/how-it-works.md), lead with the lifecycle.
-- **Reviewer:** [Foundations](./foundations/foundations.md) + [Security model](./how/security.md).
+| Approach | Main advantage | Main cost |
+| --- | --- | --- |
+| Elliptic curves and pairings | Very small proofs and fast verification | The security assumptions are not post-quantum, and some schemes require a trusted setup |
+| Hash functions | Post-quantum security and transparent setup | Proofs often contain many hash tree paths, which increases proof size and data movement |
+| Structured lattices | Post-quantum security with useful algebraic structure | Parameters, norm bounds, and optimized ring arithmetic must agree exactly |
 
-Surface the hardest newcomer questions early.
+Akita writes each field value as small signed digits and multiplies those digits
+by a public matrix. A zero digit contributes nothing to that product. The
+prover can therefore keep sparse polynomials sparse instead of first expanding
+them into a dense encoding. This is useful for one-hot tables such as those
+created by Jolt memory checks.
 
-**Sources to fold in**
+Module lattices also connect Akita to the direction taken by post-quantum
+cryptography more broadly. NIST standardized module lattice systems
+[ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) for key establishment and
+[ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) for signatures. Akita brings
+module lattice algebra to polynomial commitments, which makes it a natural
+commitment layer for proof systems that need to reason about post-quantum
+protocols.
 
-- Council newcomer report (hardest questions, reading order).
-- Paper §1.3 `sec:organization` (paper's own reading guide).
+The [Why lattices?](./introduction/why-lattices.md) chapter develops this
+comparison, the sparse advantage, and the protocol lineage in more detail.
+
+## How Akita makes the proof small
+
+Akita combines lattice commitments with repeated folding. A fold replaces one
+large claim with a smaller claim that has the same form. The proof records why
+the replacement is valid. Akita can then apply the same step again instead of
+sending evidence proportional to the original table.
+
+First, the prover commits to small signed digits using public matrices over
+polynomial rings. Binding rests on Module-SIS. Informally, Module-SIS says that
+it is hard to find a short nonzero input that a public matrix maps to zero.
+
+Second, Akita follows a fold schedule. This is a plan that says how large each
+intermediate claim will be and which security limits the verifier will enforce.
+
+The benchmark suite currently tests 13 cases. Each case fixes the arithmetic
+field and the shape of the polynomial data. It also fixes how many polynomials
+are opened and how the prover handles the public setup calculation. Twelve
+cases use seven fold levels. A fold level means one reduction step. The seventh
+level is the terminal fold, where the verifier checks the remaining response
+directly. One benchmark case divides the work into eight chunks during its
+first two steps and uses eight fold levels in total.
+
+For a concrete example, consider the benchmark that opens one dense polynomial
+over Akita's 128-bit field. Dense means that every position in the polynomial's
+table may contain an arbitrary element of that field. This polynomial has 28
+variables, so its table contains $2^{28} = 268,435,456$ field values. The fold
+schedule reduces the data that remains to be checked as follows:
+
+| Fold level | Field values entering the level |
+| --- | ---: |
+| L0 | 268,435,456 |
+| L1 | 55,332,544 |
+| L2 | 3,892,032 |
+| L3 | 1,064,256 |
+| L4 | 488,384 |
+| L5 | 255,488 |
+| L6, terminal | 128,768 |
+
+The first six levels send a new commitment and a few small field values. They
+also send short algebraic proofs, called sumchecks, that connect the next claim
+to the previous one. Those messages occupy 19,912 bytes in this benchmark case.
+L6 performs the terminal check, adds a 4-byte number used when choosing the
+folding challenge, and sends the remaining response directly. The complete
+fold payload is therefore 19,916 bytes.
+
+That complete proof is 73,018 bytes. Its 53,102-byte terminal response contains
+three parts:
+
+| Terminal part | What it contains | Size |
+| --- | --- | ---: |
+| $z$ | The folded witness response, 16,384 coefficients stored with a compact integer encoding called Golomb coding | 20,334 bytes |
+| $e$ | The 512 opening values needed by the final check | 8,192 bytes |
+| $t$ | The 1,536 inner commitment values needed by the final check | 24,576 bytes |
+
+Another fold is useful only when the bytes it removes from this remaining
+response exceed the bytes needed to prove the extra fold. The planner stops at
+the least expensive valid point. Across the latest complete profile run, all
+13 production cases passed with proofs from 66,600 to 79,527 bytes. The
+[benchmark report guide](./usage/benchmark-reports.md) explains how to inspect
+the current totals and the byte cost of every fold.
+
+Finally, the verifier checks the selected schedule, replays the same transcript,
+checks every fold, and verifies the clear terminal response before it accepts
+the claimed evaluation.
+
+Akita does not need a trusted ceremony or a secret trapdoor. The prover may
+cache expanded public setup for speed, but correctness does not depend on
+anybody keeping a setup secret. The current PCS proof is not itself zero
+knowledge. Applications that require witness privacy must account for that
+boundary. The [zero-knowledge roadmap](./roadmap/zero-knowledge.md) describes
+the planned privacy layer.
+
+The [How it works](./how/how-it-works.md) section follows the complete protocol
+from configuration through setup, commitment, folding, and verification. The
+[security model](./how/security.md) gives the exact Module-SIS assumptions and
+parameter checks.
+
+## Built as a complete system
+
+Akita treats deployment engineering as part of the cryptographic design. The
+repository ships generated schedule tables, checked security parameters, a
+separate verifier package, canonical proof encoding, and portable optimized
+arithmetic. The verifier rejects malformed public input with structured errors
+instead of panicking. The prover preserves sparse inputs and streams selected
+matrix operations in bounded chunks.
+
+Memory is another scaling advantage. An arbitrary dense source still occupies
+one field element per table entry, but Akita can take ownership of that buffer
+instead of copying the complete table. Its folding schedules replace the
+source with progressively smaller intermediate data. For large supported
+tables, the prover's working memory beyond the source polynomial grows more
+slowly than the polynomial itself. This is in contrast to standard hash-based
+PCS provers, which usually materialize an encoded word and a hash tree during
+commitment, then retain both to answer later openings. The memory for those
+objects grows linearly with the polynomial size.
+
+The 65 to 80 KB figures cover the Akita commitment proof. The host proof system
+contributes its own proof data.
+
+Jolt is the first demanding host for these boundaries. It exercises Akita
+inside another verifier and accounts for proof bytes, verification work,
+memory, serialization, and guest failures as one integration problem. The same
+interfaces are designed for other proof systems to adopt.
+
+The [Built for production](./introduction/built-for-production.md) chapter
+explains the engineering evidence behind the production-ready claim. The
+[Reviewing and auditing Akita](./introduction/reviewing-akita.md) chapter maps
+the security boundaries to the code, generated artifacts, and tests that
+enforce them.
+
+## Continue through the Book
+
+Choose the next section by what you want to do:
+
+| Goal | Continue with |
+| --- | --- |
+| Run Akita or integrate the PCS | [Usage](./usage/usage.md) |
+| Learn the mathematical ideas from the beginning | [Foundations](./foundations/foundations.md) |
+| Follow the protocol and implementation | [How it works](./how/how-it-works.md) |
+| Review the assumptions and verifier boundary | [Reviewing and auditing Akita](./introduction/reviewing-akita.md) |
+| See planned work rather than current behavior | [Roadmap](./roadmap/roadmap.md) |
+
+The Book explains each mechanism before pointing to its implementation. Current
+code is the authority for runtime behavior. Live specifications record accepted
+designs that have not yet been fully folded into the Book, while archived
+specifications record history rather than current requirements.

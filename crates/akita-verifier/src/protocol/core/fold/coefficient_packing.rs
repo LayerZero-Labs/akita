@@ -15,7 +15,7 @@ fn prepare_group<E: Field>(
     point: &[E],
     basis: BasisMode,
     source_num_vars: usize,
-    group_params: &(impl akita_types::LevelParamsLike + ?Sized),
+    group_params: &akita_types::GroupOpenPhaseParams,
     extension_degree: usize,
 ) -> Result<PreparedSubringCoefficientPackingPoint<E>, AkitaError> {
     let akita_types::OpeningMethod::SubringCoefficientPacking {
@@ -61,7 +61,7 @@ fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
                 claims.group_point(group_index)?,
                 basis,
                 layout.num_vars(),
-                group_params,
+                &group_params,
                 E::DEGREE,
             )?,
         ));
@@ -78,7 +78,7 @@ pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E>(
     root_lp: &CommittedGroupParams,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
     let prepared_points =
@@ -101,7 +101,7 @@ pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix<F, E, 
     transcript: &mut T,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {

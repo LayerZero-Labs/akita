@@ -20,24 +20,26 @@ fn test_lp() -> CommittedGroupParams {
     .with_decomp(8, 32, 2, 3, 3)
     .expect("tail segment test params");
     let key = crate::sis::SisTableKey {
-        policy: params.inner_commit_matrix.security_policy(),
+        policy: params.inner().matrix.security_policy(),
         table_digest: params
-            .inner_commit_matrix
+            .inner()
+            .matrix
             .sis_table_key()
             .expect("L infinity test matrix")
             .table_digest,
-        modulus_profile: params.inner_commit_matrix.sis_modulus_profile(),
+        modulus_profile: params.inner().matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: *crate::sis::COEFF_LINF_BUCKETS
             .last()
             .expect("nonempty SIS buckets"),
     };
-    params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
-        key,
-        params.inner_commit_matrix.input_width(),
-    )
-    .expect("secure terminal test matrix");
+    params.own_group_mut().profile.inner.matrix =
+        crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+            key,
+            params.inner().matrix.input_width(),
+        )
+        .expect("secure terminal test matrix");
     params
 }
 
@@ -52,7 +54,7 @@ fn scalar_group_layout(
         lp,
         field_bits,
         [(
-            lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             num_w_vectors,
             num_t_vectors,
             num_z_segments,
@@ -138,7 +140,13 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
-        [(&lp as &dyn LevelParamsLike, 1, 1, 1, cap)],
+        [(
+            lp.final_group_scalar().expect("scalar final group"),
+            1usize,
+            1usize,
+            1usize,
+            cap,
+        )],
     )
     .unwrap()
     .layout;
@@ -161,7 +169,7 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
         &lp,
         field_bits,
         [(
-            &lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             1usize,
             1usize,
             1usize,
@@ -182,7 +190,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
         &lp,
         field_bits,
         [(
-            &lp as &dyn LevelParamsLike,
+            lp.final_group_scalar().expect("scalar final group"),
             1usize,
             1usize,
             1usize,
@@ -196,7 +204,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
     let recomposed_inner_rows = RingVec::from_coeffs(vec![F::zero(); group_layout.t_field_elems]);
     let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
     let group = TerminalResponseGroupParts {
-        params: &lp,
+        params: lp.final_group_scalar().expect("scalar final group"),
         num_w_vectors: 1,
         num_t_vectors: 1,
         num_z_segments: 1,
@@ -233,7 +241,7 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
     let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
         1,
-        lp.num_digits_inner,
+        lp.inner().digits.num_digits,
         rice_low_bits,
         zigzag_w_z,
     )
@@ -397,6 +405,107 @@ fn terminal_layout_decode_rejects_oversized_group_count_before_allocation() {
         err,
         SerializationError::LengthLimitExceeded { .. }
     ));
+}
+
+/// Terminal A matrix pinned to one audited coefficient bucket.
+///
+/// The default [`test_lp`] fixture uses the largest bucket, whose certified
+/// capacity is far above the terminal wire limit, so it can only exercise the
+/// clamp. A small bucket puts the SIS bound in charge instead.
+fn terminal_matrix_with_bucket(bucket: u128) -> crate::sis::InnerCommitMatrixParams {
+    let base = test_lp();
+    let key = crate::sis::SisTableKey {
+        policy: base.inner().matrix.security_policy(),
+        table_digest: base
+            .inner()
+            .matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        modulus_profile: base.inner().matrix.sis_modulus_profile(),
+        role: crate::sis::SisMatrixRole::Inner,
+        ring_dimension: 64,
+        coeff_linf_bound: bucket,
+    };
+    crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+        key,
+        base.inner().matrix.input_width(),
+    )
+    .expect("terminal test matrix for the requested bucket")
+}
+
+#[test]
+fn certified_terminal_cap_applies_the_wire_representation_limit() {
+    let lp = test_lp();
+    let raw = crate::sis::max_response_linf_for_role_a_collision(
+        lp.inner()
+            .matrix
+            .coeff_linf_bound()
+            .expect("L infinity route"),
+        crate::sis::FoldChallengeNorms::new(&lp.fold_challenge_config()).l1_norm,
+    )
+    .expect("raw SIS capacity");
+    assert!(
+        raw > crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "fixture must exercise the clamp; raw capacity was {raw}"
+    );
+    let cap = crate::sis::certified_terminal_response_linf_cap(
+        &lp.inner().matrix,
+        &lp.fold_challenge_config(),
+    )
+    .expect("certified terminal cap");
+    assert_eq!(
+        cap,
+        crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "a cap the terminal z wire cannot encode is not a usable cap"
+    );
+}
+
+#[test]
+fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
+    let matrix = terminal_matrix_with_bucket(2047);
+    let light = crate::sis::certified_terminal_response_linf_cap(
+        &matrix,
+        &SparseChallengeConfig::pm1_only(3),
+    )
+    .expect("light challenge cap");
+    let heavy = crate::sis::certified_terminal_response_linf_cap(
+        &matrix,
+        &SparseChallengeConfig::pm1_only(6),
+    )
+    .expect("heavy challenge cap");
+    assert!(
+        light < crate::sis::TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+        "bucket must leave the SIS bound in charge; got {light}"
+    );
+    assert!(
+        heavy < light,
+        "a heavier challenge family must price the same matrix more conservatively: {heavy} vs {light}"
+    );
+}
+
+#[test]
+fn terminal_cap_has_exactly_one_implementation() {
+    // The schedule-side method must not re-derive the cap. If these ever
+    // disagree the split-brain this consolidation removed has returned.
+    for bucket in [2047u128, 8191, 67_108_863] {
+        let matrix = terminal_matrix_with_bucket(bucket);
+        for weight in [3usize, 6, 11] {
+            let sparse = SparseChallengeConfig::pm1_only(weight);
+            let mut lp = test_lp();
+            lp.own_group_mut().profile.inner.matrix = matrix;
+            lp.own_group_mut().opening.fold_challenge_config = sparse;
+            let terminal = crate::TerminalFoldParams::from_expanded_group(lp);
+            assert_eq!(
+                terminal
+                    .certified_response_linf_cap()
+                    .expect("schedule-side cap"),
+                crate::sis::certified_terminal_response_linf_cap(&matrix, &sparse)
+                    .expect("single-authority cap"),
+                "bucket {bucket}, challenge weight {weight}"
+            );
+        }
+    }
 }
 
 #[path = "test_support.rs"]

@@ -193,15 +193,15 @@ pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
     lp: &CommittedGroupParams,
     opening_counts: RingRelationOpeningCounts,
 ) -> Result<RingRelationSegmentLengths, AkitaError> {
-    let num_live_blocks = lp.num_live_blocks;
+    let num_live_blocks = lp.blocks().live_blocks;
     if num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "num_live_blocks must be positive".to_string(),
         ));
     }
-    let depth_open = lp.num_digits_open;
-    let depth_inner = lp.num_digits_inner;
-    let depth_outer = lp.num_digits_outer;
+    let depth_open = lp.open().digits.num_digits;
+    let depth_inner = lp.inner().digits.num_digits;
+    let depth_outer = lp.outer().digits.num_digits;
     let RingRelationOpeningCounts {
         num_claims,
         num_t_vectors,
@@ -223,12 +223,12 @@ pub fn ring_relation_segment_lengths<F: Field + CanonicalEncoding>(
         .checked_mul(total_blocks)
         .ok_or_else(|| AkitaError::InvalidSetup("e-hat segment length overflow".to_string()))?;
     let t_len = depth_outer
-        .checked_mul(lp.inner_commit_matrix.output_rank())
+        .checked_mul(lp.inner().matrix.output_rank())
         .and_then(|len| len.checked_mul(t_total_blocks))
         .ok_or_else(|| AkitaError::InvalidSetup("T segment length overflow".to_string()))?;
     let z_len = depth_fold
         .checked_mul(depth_inner)
-        .and_then(|len| len.checked_mul(lp.num_positions_per_block))
+        .and_then(|len| len.checked_mul(lp.blocks().positions_per_block))
         .ok_or_else(|| AkitaError::InvalidSetup("Z segment length overflow".to_string()))?;
 
     Ok(RingRelationSegmentLengths {
@@ -488,7 +488,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
 
     /// Validate the mandatory D-row payload shape.
     pub fn check_v_shape_for_level(&self, lp: &CommittedGroupParams) -> Result<(), AkitaError> {
-        let expected = lp.open_commit_matrix.output_rank();
+        let expected = lp.open().matrix.output_rank();
         let d_d = self.role_dims.d_d();
         let actual = if self.v.coeff_len() == 0 {
             0
@@ -602,7 +602,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
         }
         // `EvaluationTrace` is a logical relation row used by Stage 2. It is
         // not materialized in the quotient witness's shared `r` tail.
-        let r_levels = r_decomp_levels::<F>(lp.log_basis_open);
+        let r_levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
         let layout = WitnessLayout::new(
             lp,
             &self.opening_batch,

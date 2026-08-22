@@ -32,10 +32,10 @@ where
     E: ExtField<F>,
 {
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
-    if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
+    if let Some(setup_prefix_id) = lp.setup_prefix() {
         let slot = setup
             .prefix_slots
-            .get(&setup_prefix_id.slot_id())
+            .get(&setup_prefix_id.slot_id().expect("setup prefix group"))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "planned setup-prefix slot is missing from verifier setup".to_string(),
@@ -123,13 +123,11 @@ where
         if current_state.witness_len != step.input_witness_len {
             return Err(AkitaError::InvalidProof);
         }
-        let current_lp = &step.params.witness;
+        let current_lp = &step.params;
         let next_step = schedule.recursive_folds.get(offset + 1);
-        let next_params = next_step.map(|next| &next.params.witness);
-        let next_witness_ring_dim = next_params.map_or(
-            schedule.terminal.params.witness.d_a(),
-            CommittedGroupParams::d_a,
-        );
+        let next_params = next_step.map(|next| &next.params);
+        let next_witness_ring_dim =
+            next_params.map_or(schedule.terminal.d_a(), CommittedGroupParams::d_a);
         let current_commitment = match &current_state.witness {
             SuffixWitnessState::Commitment(commitment) => *commitment,
             SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
@@ -167,7 +165,7 @@ where
             _ => return Err(AkitaError::InvalidProof),
         };
         let setup_contribution_mode = next_step.map_or(SetupContributionMode::Direct, |step| {
-            step.params.predecessor_setup_contribution_mode()
+            step.predecessor_setup_contribution_mode()
         });
         let stage3 = fold.stage3_for_mode(setup_contribution_mode, next_params)?;
         let prepared = prepare_fold_replay::<F, E, T>(
@@ -220,7 +218,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     if terminal.terminal_response().num_elems()
-        != schedule.terminal.params.response_shape.logical_num_elems()
+        != schedule.terminal.response_shape.logical_num_elems()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -229,7 +227,7 @@ where
         setup,
         transcript,
         &current_state,
-        &schedule.terminal.params,
+        &schedule.terminal,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!(
@@ -250,7 +248,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let params = &scheduled.witness;
+    let params = &scheduled;
     let t_state = match &current_state.witness {
         SuffixWitnessState::TerminalT(bytes) if !bytes.is_empty() => bytes,
         _ => return Err(AkitaError::InvalidProof),
@@ -269,9 +267,7 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if scheduled.response_shape.layout.groups.len() != 1
-        || params
-            .validate_terminal_linf_cap(&scheduled.sparse_challenge_config, group.z_linf_cap)
-            .is_err()
+        || params.validate_terminal_linf_cap(group.z_linf_cap).is_err()
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -326,7 +322,7 @@ where
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
                 params.d_a(),
-                &scheduled.sparse_challenge_config,
+                &scheduled.fold_challenge_config,
             )
             .ok_or(AkitaError::InvalidProof)?,
         )
@@ -337,9 +333,9 @@ where
         akita_challenges::FoldChallengeDrawDomain::EvaluationTrace,
         params.d_a(),
         0,
-        params.num_live_blocks,
+        params.blocks.live_blocks,
         1,
-        &scheduled.sparse_challenge_config,
+        &scheduled.fold_challenge_config,
         proof.fold_grind_nonce,
         operator_rejection,
     )?;
@@ -349,7 +345,6 @@ where
         &challenges,
         &prepared_points[0].ring_multiplier_point,
         params,
-        &scheduled.sparse_challenge_config,
         proof.terminal_response(),
     )
     .map_err(|error| {
@@ -412,10 +407,7 @@ where
     }
     let witness_point = current_state.opening_point.clone();
 
-    let block_claims = match (
-        &current_state.setup_prefix_opening,
-        lp.setup_prefix.as_ref(),
-    ) {
+    let block_claims = match (&current_state.setup_prefix_opening, lp.setup_prefix()) {
         (Some((setup_prefix_point, setup_prefix_eval)), Some(_)) => {
             let groups = vec![
                 PolynomialGroupClaims::new(
@@ -447,7 +439,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let claim_state = if matches!(
-        lp.opening_method,
+        lp.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
     ) {
         if proof.extension_opening_reduction.is_some() {

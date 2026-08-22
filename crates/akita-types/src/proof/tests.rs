@@ -394,7 +394,7 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let mut oversized_shape = shape.clone();
     oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
     assert!(matches!(
-        oversized_shape.validate_base_field_decode_budget(batched_bytes.len(), 16),
+        oversized_shape.validate_decode_budget(batched_bytes.len(), 16, 16),
         Err(SerializationError::LengthLimitExceeded { .. })
     ));
     assert_eq!(

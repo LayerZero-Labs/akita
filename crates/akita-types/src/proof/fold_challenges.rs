@@ -5,8 +5,8 @@ use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
 use crate::{
-    CoefficientPackingChallenges, InnerCommitSecurityRoute, LevelParamsLike, OpeningFamily,
-    OpeningMethod, SubringCoefficientPackingGeometry,
+    CoefficientPackingChallenges, InnerCommitSecurityRoute, OpeningFamily, OpeningMethod,
+    SubringCoefficientPackingGeometry,
 };
 
 /// One sampled fold challenge with its method-specific algebraic views.
@@ -27,7 +27,7 @@ impl OpeningFamily<Challenges, CoefficientPackingChallenges> {
 /// method and certified A-security route.
 pub fn draw_group_fold_challenges<F, E, D>(
     draw: &mut D,
-    params: &(impl LevelParamsLike + ?Sized),
+    params: &crate::GroupOpenPhaseParams,
     group_index: usize,
     num_claims: usize,
     grind_nonce: u32,

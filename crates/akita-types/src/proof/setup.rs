@@ -169,6 +169,42 @@ impl<F: Field> AkitaVerifierSetup<F> {
 }
 
 impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
+    /// Install a prepared scalar Q128 cache whose bytes have trusted provenance.
+    ///
+    /// The artifact format checks its setup and schedule identities, target
+    /// representation, geometry, lengths, and residue ranges. It cannot prove
+    /// that the transformed payload was derived from the named setup seed.
+    /// Callers must bind the bytes to trusted setup provisioning or to the
+    /// verifier program identity before calling this method.
+    pub fn install_trusted_prepared_verifier_ntt_cache(
+        &self,
+        artifact: &[u8],
+        schedule_row_digest: crate::ScheduleRowDigest,
+    ) -> Result<(), AkitaError> {
+        let metadata = crate::prepared_verifier_ntt_cache_metadata(artifact)?;
+        let setup_seed_digest = crate::setup_seed_digest(&self.expanded.seed.setup_seed)
+            .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
+        let expected_binding = crate::PreparedVerifierNttCacheBinding {
+            setup_seed_digest,
+            schedule_row_digest,
+            setup_field_elements: self.expanded.seed.num_field_elements,
+        };
+        crate::dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            metadata.ring_dimension,
+            |D| {
+                let (decoded_metadata, prepared) =
+                    crate::ntt_cache::decode_riscv64_scalar_q128_cache::<F, D>(
+                        artifact,
+                        expected_binding,
+                    )?;
+                self.verifier_ntt
+                    .install_trusted(decoded_metadata, prepared)
+            }
+        )
+    }
+
     /// Return an exact or covering negacyclic prefix, preparing it on demand.
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
@@ -681,7 +717,7 @@ mod tests {
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
 
-    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
+    fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::GroupOpenPhaseParams {
         let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
             crate::SisTableKey {
                 policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -706,20 +742,15 @@ mod tests {
             inner_commit_matrix.output_rank() * (n_prefix / d_setup),
         )
         .expect("audited prefix B matrix");
-        crate::PrecommittedLevelParams {
-            layout: crate::CommittedGroupProfile {
-                version: crate::CommittedGroupProfile::VERSION,
+        crate::GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: crate::GroupCommitPhaseParams {
+                version: crate::GroupCommitPhaseParams::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                num_live_ring_elements_per_claim: n_prefix / d_setup,
-                num_positions_per_block: 1,
-                num_live_blocks: n_prefix / d_setup,
+                blocks: crate::BlockGeometry::new(n_prefix / d_setup, 1, n_prefix / d_setup),
                 outer_slice_count: crate::CommitmentSliceCount::ONE,
-                log_basis_inner: 1,
-                num_digits_inner: 1,
-                inner_commit_matrix,
-                log_basis_outer: 1,
-                num_digits_outer: 1,
-                outer_commit_matrix,
+                inner: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), inner_commit_matrix),
+                outer: crate::RoleParams::new(crate::GadgetDigits::new(1, 1), outer_commit_matrix),
             },
             opening: crate::GroupOpeningPlan::evaluation_trace(
                 akita_challenges::SparseChallengeConfig::pm1_only(0),
@@ -748,7 +779,7 @@ mod tests {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new(setup_seed.setup_seed.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
-        let matrix = &commitment_params.layout.outer_commit_matrix;
+        let matrix = &commitment_params.profile.outer.matrix;
         let payload_coefficients = crate::CompressionChainPlan::for_complete_source(
             matrix.sis_modulus_profile(),
             matrix.output_rank() * matrix.ring_dimension(),
@@ -756,7 +787,9 @@ mod tests {
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         let slot = SetupPrefixVerifierSlot {
-            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params).slot_id(),
+            id: crate::scheduled_setup_prefix(d_setup - 1, commitment_params)
+                .slot_id()
+                .expect("setup prefix group"),
             commitment: SetupPrefixPublicCommitment {
                 rows: vec![RingVec::from_coeffs(vec![F::zero(); payload_coefficients])],
             },

@@ -52,16 +52,14 @@ fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
-        let layout = OneHotCfg::resolve_catalog_row_for_opening(
-            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
-        )
-        .expect("layout")
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+            .expect("layout")
+            .schedule()
+            .root
+            .params
+            .final_group();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
@@ -308,16 +306,14 @@ impl ProofTamper {
 fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
-        let layout = OneHotCfg::resolve_catalog_row_for_opening(
-            &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
-        )
-        .expect("layout")
-        .schedule()
-        .root
-        .params
-        .final_group
-        .commitment
-        .clone();
+        let opening_batch =
+            akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
+        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+            .expect("layout")
+            .schedule()
+            .root
+            .params
+            .final_group();
         let poly = make_onehot_poly(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);

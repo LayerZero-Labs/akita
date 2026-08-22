@@ -2,7 +2,7 @@
 
 use super::super::*;
 use super::{absorb_protocol_opening_points, FoldClaimMaterial, PreparedFoldOpeningPoint};
-use akita_types::{dispatch_for_field, TerminalCommittedGroupParams};
+use akita_types::{dispatch_for_field, TerminalFoldParams};
 
 pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
@@ -28,9 +28,8 @@ struct EorSumcheckReplay<E: Field> {
 }
 
 fn eor_reduction_shape<F, E>(
-    opening_num_vars: usize,
-    partials_len: usize,
-    num_claims: usize,
+    opening_batch: &OpeningClaimsLayout,
+    reduction: &ExtensionOpeningReductionProof<E>,
 ) -> Result<EorReductionShape, AkitaError>
 where
     F: Field,
@@ -38,19 +37,15 @@ where
 {
     let (split_bits, width) =
         tensor_opening_split::<F, E>().map_err(|_| AkitaError::InvalidProof)?;
-    let num_rounds = opening_num_vars
-        .checked_sub(split_bits)
-        .ok_or(AkitaError::InvalidProof)?;
-    let expected_partials = width
-        .checked_mul(num_claims)
-        .ok_or(AkitaError::InvalidProof)?;
-    if width == 1 || partials_len != expected_partials {
+    let expected = canonical_extension_opening_reduction_shape(opening_batch, width)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    if width == 1 || reduction.shape() != expected {
         return Err(AkitaError::InvalidProof);
     }
     Ok(EorReductionShape {
         split_bits,
         width,
-        num_rounds,
+        num_rounds: expected.sumcheck.len(),
     })
 }
 
@@ -84,7 +79,7 @@ fn verify_eor_sumcheck<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -100,11 +95,7 @@ where
     let Some(reduction) = extension_opening_reduction else {
         return Ok(None);
     };
-    let shape = eor_reduction_shape::<F, E>(
-        opening_batch.max_num_vars(),
-        reduction.partials.len(),
-        num_claims,
-    )?;
+    let shape = eor_reduction_shape::<F, E>(opening_batch, reduction)?;
     let mut claim_offset = 0usize;
     for (group_index, group_point) in group_points.iter().enumerate() {
         let group_layout = opening_batch.group_layout(group_index)?;
@@ -221,7 +212,7 @@ pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -255,7 +246,7 @@ fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -312,7 +303,7 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -379,11 +370,11 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
     opening: &E,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
@@ -398,8 +389,8 @@ where
         opening_batch,
         basis,
         params.d_a(),
-        params.num_positions_per_block,
-        params.num_live_blocks,
+        params.blocks.positions_per_block,
+        params.blocks.live_blocks,
         E::DEGREE > 1,
         transcript,
     )
@@ -433,7 +424,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     transcript: &mut T,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {

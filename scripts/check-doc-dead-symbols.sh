@@ -113,6 +113,24 @@ removed_api_patterns=(
   'RootPolyMeta::num_ring_elems\b'
   'meta_ring_elems\b'
   'total_ring_elems\b'
+  'CommittedGroupProfile'
+  'PrecommittedLevelParams'
+  'GeneratedRootPrecommittedGroup'
+  'GeneratedSetupPrefixInput'
+  'RecursiveFoldParams'
+  'RootFoldParams'
+  'RootFinalGroupParams'
+  'RootPrecommittedGroupParams'
+  'WitnessPartition\b'
+  'GeneratedWitnessPartition'
+  'GeneratedCommittedGroup'
+  'GeneratedOpenCommitMatrix'
+  '\bLevelParams\b'
+  'LevelParamsLike'
+  'GeneratedFoldStep'
+  'GeneratedSetupPrefixGroup'
+  '\bFoldStep\b'
+  'TerminalWitnessPlan'
 )
 
 api_pattern="$(IFS='|'; echo "${removed_api_patterns[*]}")"
@@ -153,7 +171,7 @@ if [[ -n "$matches" ]]; then
   exit 1
 fi
 
-api_paths=(book/src docs)
+api_paths=(book/src docs specs)
 for f in crates/*/README.md; do
   if [[ -f "$f" ]]; then
     api_paths+=("$f")

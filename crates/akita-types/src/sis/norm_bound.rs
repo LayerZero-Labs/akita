@@ -116,6 +116,59 @@ pub fn max_response_linf_for_role_a_collision(
     collision_linf_capacity.checked_div(price_per_unit)
 }
 
+/// Signed-`i16` coefficient limit of the terminal `z` wire encoding.
+///
+/// Terminal `z` segments decode through `i16::try_from` and reject as
+/// `InvalidProof` above this magnitude, so a certified cap larger than this is
+/// not a usable cap. This limit is independent of the SIS capacity.
+pub const TERMINAL_RESPONSE_WIRE_LINF_LIMIT: u128 = i16::MAX as u128;
+
+/// The certified terminal-response `L∞` cap. **This is the only implementation.**
+///
+/// Two independent properties bound a terminal folded response, and every
+/// caller must apply both:
+///
+/// 1. The A-role weak-binding bound for the matrix's *selected* SIS bucket. A
+///    larger bucket that the same rank incidentally supports is unused schedule
+///    slack, so the selected `coeff_linf_bound` is the input rather than the
+///    rank.
+/// 2. The terminal wire's [`TERMINAL_RESPONSE_WIRE_LINF_LIMIT`] representation
+///    limit.
+///
+/// `fold_challenge_config` **must be the config of the group being bounded**,
+/// not of the fold that receives it. A multi-group terminal fold can admit
+/// groups whose challenge families differ, and pricing one group's response
+/// against another's challenge mass is not a valid bound.
+pub fn certified_terminal_response_linf_cap(
+    inner_commit_matrix: &super::ajtai_key::InnerCommitMatrixParams,
+    fold_challenge_config: &SparseChallengeConfig,
+) -> Result<u128, AkitaError> {
+    let table_key = inner_commit_matrix.sis_table_key().ok_or_else(|| {
+        AkitaError::InvalidSetup(
+            "terminal response requires an L-infinity A-role matrix".to_string(),
+        )
+    })?;
+    // Unreachable by construction: every `InnerCommitMatrixParams` constructor
+    // pins `SisMatrixRole::Inner`. Retained as a cheap verifier-side invariant
+    // assertion rather than removed, because it costs one comparison outside any
+    // hot path and it states the requirement at the boundary that depends on it.
+    if table_key.role != SisMatrixRole::Inner {
+        return Err(AkitaError::InvalidSetup(
+            "terminal response requires an A-role inner matrix".to_string(),
+        ));
+    }
+    let challenge = FoldChallengeNorms::new(fold_challenge_config);
+    let certified =
+        max_response_linf_for_role_a_collision(table_key.coeff_linf_bound, challenge.l1_norm)
+            .filter(|&limit| limit > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "terminal inner matrix cannot certify a nonzero folded response".to_string(),
+                )
+            })?;
+    Ok(certified.min(TERMINAL_RESPONSE_WIRE_LINF_LIMIT))
+}
+
 /// A-role committed-level coefficient-`L∞` collision bucket for one exact
 /// verifier-accepted fold digit depth.
 ///

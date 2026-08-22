@@ -15,8 +15,8 @@ use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
-    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedGroupProfile,
-    CommittedSourceEncoding, CompressionChainPlan, FpExtEncoding, InnerCommitMatrixParams,
+    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedSourceEncoding,
+    CompressionChainPlan, FpExtEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
 };
 use jolt_field::Unreduced;
@@ -46,7 +46,7 @@ enum PrecommittedGroupContext<'a> {
 
 impl PrecommittedGroupContext<'_> {
     /// Borrow the ordered precommitted profiles, empty when there are none.
-    fn as_slice(&self) -> &[CommittedGroupProfile] {
+    fn as_slice(&self) -> &[GroupCommitPhaseParams] {
         match self {
             Self::NoPrecommittedGroups => &[],
             Self::WithPrecommittedGroups(profiles) => profiles.as_slice(),
@@ -140,15 +140,15 @@ impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
     fn from(params: &'a CommittedGroupParams) -> Self {
         Self {
             context: "commit params",
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
-            log_basis_inner: params.log_basis_inner,
-            num_digits_inner: params.num_digits_inner,
-            inner_matrix: &params.inner_commit_matrix,
-            log_basis_outer: params.log_basis_outer,
-            num_digits_outer: params.num_digits_outer,
-            outer_matrix: &params.outer_commit_matrix,
-            outer_slice_count: params.outer_slice_count,
+            num_positions_per_block: params.blocks().positions_per_block,
+            num_live_blocks: params.blocks().live_blocks,
+            log_basis_inner: params.inner().digits.log_basis,
+            num_digits_inner: params.inner().digits.num_digits,
+            inner_matrix: &params.inner().matrix,
+            log_basis_outer: params.outer().digits.log_basis,
+            num_digits_outer: params.outer().digits.num_digits,
+            outer_matrix: &params.outer().matrix,
+            outer_slice_count: params.outer_slice_count(),
         }
     }
 }
@@ -224,12 +224,12 @@ where
     F: Field + CanonicalEncoding,
 {
     let slice_geometry = params.validate_commitment_request(fold_level, num_polynomials)?;
-    if params.num_live_blocks == 0 || params.num_positions_per_block == 0 {
+    if params.blocks().live_blocks == 0 || params.blocks().positions_per_block == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.num_digits_inner == 0 || params.num_digits_outer == 0 {
+    if params.inner().digits.num_digits == 0 || params.outer().digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero A/B digit depths".to_string(),
         ));
@@ -238,19 +238,22 @@ where
 
     // D/opening geometry is level-only: standalone commitment profiles freeze
     // only the A/B matrices used to materialize the commitment.
-    if params.num_digits_open == 0 {
+    if params.open().digits.num_digits == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero opening digit depth".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(params.log_basis_open, "for i8 opening decomposition")?;
+    validate_i8_setup_log_basis(
+        params.open().digits.log_basis,
+        "for i8 opening decomposition",
+    )?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
-    if params.open_commit_matrix.input_width() == 0 {
+    if params.open().matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
-            params.open_commit_matrix.input_width()
+            params.open().matrix.input_width()
         )));
     }
     // Commitment materialization uses only A and B. In particular, a
@@ -516,30 +519,33 @@ fn validate_explicit_context(
     group_layout: akita_types::PolynomialGroupLayout,
     precommitted_groups: PrecommittedGroupContext<'_>,
     params: &CommittedGroupParams,
-) -> Result<CommittedGroupProfile, AkitaError> {
+) -> Result<GroupCommitPhaseParams, AkitaError> {
     match precommitted_groups {
         PrecommittedGroupContext::NoPrecommittedGroups => {
             params.require_scalar_level("explicit commitment")?;
         }
         PrecommittedGroupContext::WithPrecommittedGroups(precommitteds) => {
-            if params.setup_prefix.is_some() {
+            if params.setup_prefix().is_some() {
                 return Err(AkitaError::InvalidSetup(
                     "explicit grouped root params must not contain a setup-prefix group"
                         .to_string(),
                 ));
             }
             let profiles = precommitteds.as_slice();
-            if params.precommitted_groups.len() != profiles.len() {
+            if params.precommitted_groups().len() != profiles.len() {
                 return Err(AkitaError::InvalidSetup(format!(
                     "explicit grouped root params contain {} precommitted groups, expected {}",
-                    params.precommitted_groups.len(),
+                    params.precommitted_groups().len(),
                     profiles.len(),
                 )));
             }
-            for (index, (group, profile)) in
-                params.precommitted_groups.iter().zip(profiles).enumerate()
+            for (index, (group, profile)) in params
+                .precommitted_groups()
+                .iter()
+                .zip(profiles)
+                .enumerate()
             {
-                if group.layout != *profile {
+                if group.profile != *profile {
                     return Err(AkitaError::InvalidSetup(format!(
                         "explicit grouped root precommitted profile {index} does not match its params"
                     )));
@@ -555,7 +561,7 @@ fn validate_explicit_context(
         }
     }
 
-    CommittedGroupProfile::try_from_params(group_layout, params)
+    GroupCommitPhaseParams::try_from_params(group_layout, params)
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -586,7 +592,7 @@ where
     let group_layout = opening_layout.root_final_group_layout()?;
 
     let scheduled_row;
-    let (params, profile): (&CommittedGroupParams, CommittedGroupProfile) =
+    let (params, profile): (&CommittedGroupParams, GroupCommitPhaseParams) =
         if let GroupParameterSource::Explicit(params) = context.parameter_source {
             let profile =
                 validate_explicit_context(group_layout, context.precommitted_groups, params)?;
@@ -615,7 +621,7 @@ where
 
             // `audit_resolved_schedule` already proved this row's profile
             // agrees with its parameters, so no re-derivation happens here.
-            let params = &scheduled_row.schedule().root.params.final_group.commitment;
+            let params = &scheduled_row.schedule().root.params;
             (params, scheduled_row.profiles().final_group)
         };
 

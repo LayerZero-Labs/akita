@@ -119,7 +119,7 @@ pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     >,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
-    scheduled: &akita_types::RootFoldStep,
+    scheduled: &akita_types::FoldParams,
     next_params: super::fold::FoldSuccessorParams<'_>,
     next_witness_binding: akita_types::NextWitnessBindingPolicy,
     basis: BasisMode,
@@ -157,7 +157,7 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let root_params = &scheduled.params.final_group.commitment;
+    let root_params = &scheduled.params;
     let opening_layout = claims.opening_layout()?;
     let opening_method = super::fold::uniform_opening_method(root_params, &opening_layout)?;
     if !matches!(

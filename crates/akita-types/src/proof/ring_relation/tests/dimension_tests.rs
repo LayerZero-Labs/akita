@@ -16,10 +16,11 @@ fn uniform_dimension_check_accepts_coefficient_packing() {
     )
     .with_decomp(4, 8, 1, 2, 2)
     .expect("uniform packing params");
-    params.opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: PACK_D,
-    };
-    params.fold_challenge_config = config;
+    params.own_group_mut().opening.opening_method =
+        crate::OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: PACK_D,
+        };
+    params.own_group_mut().opening.fold_challenge_config = config;
     let opening_batch = OpeningClaimsLayout::new(8, 1).expect("opening batch");
     let relation_geometry = crate::RelationWitnessGeometry::for_level(&params, &opening_batch, 1)
         .expect("packing relation geometry");

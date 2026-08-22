@@ -5,8 +5,8 @@ use crate::layout::{CommitmentRingDims, CommittedGroupParams};
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use crate::{
-    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, LevelParamsLike,
-    OpeningMethod, SisModulusProfileId, SubringCoefficientPackingGeometry,
+    CommitmentSliceCount, CommittedSourceEncoding, CompressionChainPlan, OpeningMethod,
+    SisModulusProfileId, SubringCoefficientPackingGeometry,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -26,12 +26,21 @@ pub use layout_types::{
     RelationWitnessGeometry,
 };
 
+/// Row geometry for one group's opening.
+///
+/// `source_encoding` is passed in rather than read off the group. It is a
+/// property of the **fold** — `CommittedSourceEncoding` is commitment identity
+/// owned by the level that commits the witness, and a precommitted group has
+/// nowhere to store it, which is why the group's own accessor returns a
+/// hard-coded canonical value. Reading it from the group would make the
+/// tensor-projection mismatch below unreachable.
 pub(crate) fn opening_row_geometry(
-    params: &dyn LevelParamsLike,
+    params: &crate::GroupOpenPhaseParams,
+    source_encoding: CommittedSourceEncoding,
     extension_degree: usize,
 ) -> Result<RelationRowGeometry, AkitaError> {
     let d_a = params.inner_commit_matrix_params().ring_dimension();
-    match (params.opening_method(), params.source_encoding()) {
+    match (params.opening_method(), source_encoding) {
         (
             OpeningMethod::EvaluationTrace,
             CommittedSourceEncoding::TensorSubfieldProjection {
@@ -341,40 +350,44 @@ fn build_relation_rhs_layout(
     extension_degree: usize,
 ) -> Result<RelationRhsLayout, AkitaError> {
     let final_group_index = lp.validate_opening_batch_geometry(opening_batch)?;
-    let n_d = lp.open_commit_matrix.output_rank();
+    let n_d = lp.open().matrix.output_rank();
     let opening_plan = lp
         .payload_mode
         .is_compressed()
         .then(|| {
             compression_plan(
-                lp.open_commit_matrix.sis_modulus_profile(),
+                lp.open().matrix.sis_modulus_profile(),
                 n_d,
-                lp.open_commit_matrix.ring_dimension(),
+                lp.open().matrix.ring_dimension(),
             )
         })
         .transpose()?;
-    if !lp.has_precommitted_groups() {
+    if !lp.has_preceding_groups() {
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
         let group_indices = opening_batch.root_group_order()?;
-        let opening_geometry = opening_row_geometry(lp, extension_degree)?;
+        // Use the layout the opening batch already carries rather than
+        // deriving one: it is the authority, and it is correct even for a
+        // fixture whose geometry has not been through validate_root_geometry.
+        let opening_geometry =
+            opening_row_geometry(&lp.final_group(), lp.source_encoding, extension_degree)?;
         let groups = group_indices
             .iter()
             .map(|&group_index| RelationGroupRows {
                 group_index,
                 role_dims,
                 opening_geometry,
-                opening_method: lp.opening_method,
-                n_a: lp.inner_commit_matrix.output_rank(),
-                physical_b_rows: lp.outer_commit_matrix.output_rank(),
-                outer_slice_count: lp.outer_slice_count,
+                opening_method: lp.opening_method(),
+                n_a: lp.inner().matrix.output_rank(),
+                physical_b_rows: lp.outer().matrix.output_rank(),
+                outer_slice_count: lp.outer_slice_count(),
             })
             .collect::<Vec<_>>();
         let compression = if let Some(opening_plan) = opening_plan {
             let group_plan = compression_plan(
-                lp.outer_commit_matrix.sis_modulus_profile(),
-                lp.outer_slice_count
-                    .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
+                lp.outer().matrix.sis_modulus_profile(),
+                lp.outer_slice_count()
+                    .logical_output_rows(lp.outer().matrix.output_rank())?,
                 role_dims.d_b(),
             )?;
             Some(RelationCompressionLayout {
@@ -395,46 +408,54 @@ fn build_relation_rhs_layout(
         return Ok(layout);
     }
     let final_role_dims = lp.group_role_dims_geometry(opening_batch, final_group_index)?;
-    let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
-    let mut group_indices = Vec::with_capacity(lp.precommitted_group_count() + 1);
-    let mut group_plans = Vec::with_capacity(lp.precommitted_group_count() + 1);
+    let mut groups = Vec::with_capacity(lp.preceding_group_count() + 1);
+    let mut group_indices = Vec::with_capacity(lp.preceding_group_count() + 1);
+    let mut group_plans = Vec::with_capacity(lp.preceding_group_count() + 1);
     groups.push(RelationGroupRows {
         group_index: final_group_index,
         role_dims: final_role_dims,
-        opening_geometry: opening_row_geometry(lp, extension_degree)?,
-        opening_method: lp.opening_method,
-        n_a: lp.inner_commit_matrix.output_rank(),
-        physical_b_rows: lp.outer_commit_matrix.output_rank(),
-        outer_slice_count: lp.outer_slice_count,
+        opening_geometry: opening_row_geometry(
+            &lp.final_group(),
+            lp.source_encoding,
+            extension_degree,
+        )?,
+        opening_method: lp.opening_method(),
+        n_a: lp.inner().matrix.output_rank(),
+        physical_b_rows: lp.outer().matrix.output_rank(),
+        outer_slice_count: lp.outer_slice_count(),
     });
     group_indices.push(final_group_index);
     if opening_plan.is_some() {
         group_plans.push(compression_plan(
-            lp.outer_commit_matrix.sis_modulus_profile(),
-            lp.outer_slice_count
-                .logical_output_rows(lp.outer_commit_matrix.output_rank())?,
+            lp.outer().matrix.sis_modulus_profile(),
+            lp.outer_slice_count()
+                .logical_output_rows(lp.outer().matrix.output_rank())?,
             final_role_dims.d_b(),
         )?);
     }
-    for (group_index, group) in lp.precommitted_group_iter().enumerate() {
+    for (group_index, group) in lp.preceding_group_iter().enumerate() {
         let role_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
         groups.push(RelationGroupRows {
             group_index,
             role_dims,
-            opening_geometry: opening_row_geometry(group, extension_degree)?,
+            opening_geometry: opening_row_geometry(
+                group,
+                crate::CommittedSourceEncoding::CanonicalCoefficientTable,
+                extension_degree,
+            )?,
             opening_method: group.opening.opening_method,
-            n_a: group.layout.inner_commit_matrix.output_rank(),
-            physical_b_rows: group.layout.outer_commit_matrix.output_rank(),
-            outer_slice_count: group.layout.outer_slice_count,
+            n_a: group.profile.inner.matrix.output_rank(),
+            physical_b_rows: group.profile.outer.matrix.output_rank(),
+            outer_slice_count: group.profile.outer_slice_count,
         });
         group_indices.push(group_index);
         if opening_plan.is_some() {
             group_plans.push(compression_plan(
-                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                group.profile.outer.matrix.sis_modulus_profile(),
                 group
-                    .layout
+                    .profile
                     .outer_slice_count
-                    .logical_output_rows(group.layout.outer_commit_matrix.output_rank())?,
+                    .logical_output_rows(group.profile.outer.matrix.output_rank())?,
                 role_dims.d_b(),
             )?);
         }

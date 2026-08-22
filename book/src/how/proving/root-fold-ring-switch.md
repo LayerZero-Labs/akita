@@ -360,4 +360,6 @@ quotients of the lattice relation itself.
 - `crates/akita-prover/src/protocol/coefficient_packing.rs`.
 - `crates/akita-types/src/subring_coefficient_packing.rs`.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs`.
-- Paper section 3.5 and implementation appendix B.3.
+- `crates/akita-verifier/src/protocol/core/fold/` replays the relation and
+  rejects a proof whose dimensions or quotient structure do not match the
+  selected schedule.

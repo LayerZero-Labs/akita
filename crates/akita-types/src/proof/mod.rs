@@ -107,15 +107,15 @@ pub use setup_envelope::{
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, scheduled_setup_prefix,
     setup_prefix_coverage_eval_len, setup_prefix_precommitted_params, suffix_opening_layout,
-    ScheduledSetupPrefix, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
-    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    validate_setup_prefix_domain, SetupPrefixProverRegistry, SetupPrefixPublicCommitment,
+    SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     SETUP_PREFIX_CONTENT_TAG,
 };
 pub use shapes::{
-    canonical_base_field_proof_shape, AkitaBatchedProofShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, NextWitnessBindingShape,
-    PhysicalL2NormProofWireShape, SetupProductSumcheckShape, TerminalLevelProofShape,
-    SETUP_SUMCHECK_DEGREE,
+    canonical_extension_opening_reduction_shape, canonical_proof_shape, AkitaBatchedProofShape,
+    AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
+    NextWitnessBindingShape, PhysicalL2NormProofWireShape, SetupProductSumcheckShape,
+    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,

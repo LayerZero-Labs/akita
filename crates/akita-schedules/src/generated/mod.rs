@@ -1,92 +1,91 @@
 #![allow(missing_docs)]
 
+/// Compact planner input for any commitment matrix.
+///
+/// The containing field identifies whether this is an inner, outer, opening,
+/// or terminal matrix. Expansion re-derives its rank against the checked-in SIS
+/// table, so generated rows only store the chosen ring dimension and basis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedBlockGeometry {
-    pub live_ring_elements_per_claim: u64,
-    pub positions_per_block: u64,
-    pub live_blocks: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedInnerCommitMatrix {
+pub struct GeneratedMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
 }
 
+/// One group a fold derives and commits itself.
+///
+/// The root-only inner digit depth lives on [`GeneratedRootFold`]. Recursive
+/// folds derive it from their incoming witness, so it cannot be set here.
+///
+/// The group's polynomial layout is deliberately *not* here. It is a property
+/// of the row's lookup key, not of a group, so it lives on
+/// `GeneratedFoldScheduleEntry` where every row has exactly one and no position
+/// has to default it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedOuterCommitMatrix {
-    pub ring_dimension: u32,
-    pub log_basis: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedOpenCommitMatrix {
-    pub ring_dimension: u32,
-    pub log_basis: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedCommittedGroup {
-    pub geometry: GeneratedBlockGeometry,
-    pub inner_commit_matrix: GeneratedInnerCommitMatrix,
-    pub outer_commit_matrix: GeneratedOuterCommitMatrix,
+pub struct GeneratedGroup {
+    pub geometry: akita_types::BlockGeometry,
+    pub inner_commit_matrix: GeneratedMatrix,
+    pub outer_commit_matrix: GeneratedMatrix,
     pub outer_slice_count: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRootFinalGroup {
-    pub layout: akita_types::PolynomialGroupLayout,
-    pub num_digits_inner: u32,
-    pub num_digits_fold: u32,
-    pub opening_method: akita_types::OpeningMethod,
-    pub commitment: GeneratedCommittedGroup,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedRootPrecommittedGroup {
-    pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
     pub opening_method: akita_types::OpeningMethod,
 }
 
+/// One group's exact frozen commit and opening inputs.
+///
+/// This stays frozen rather than using compact inputs because
+/// `to_runtime_lookup_key` has no `PlannerPolicy` and drives catalog binary
+/// search: deriving the profile would make key comparison depend on expansion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedWitnessPartition {
-    Single,
-    Distributed { num_chunks: u32 },
+pub struct GeneratedFrozenGroup {
+    pub profile: akita_types::GroupCommitPhaseParams,
+    /// Procedure the consuming fold uses to open this group.
+    pub opening_method: akita_types::OpeningMethod,
+    /// Folded-witness digit depth for this group.
+    pub num_digits_fold: u32,
 }
 
+/// A group committed before the root fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedPrecommittedGroup {
+    pub group: GeneratedFrozenGroup,
+}
+
+/// A setup output consumed as the first group of a recursive fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedSetupPrefix {
+    pub group: GeneratedFrozenGroup,
+    pub natural_len: u64,
+}
+
+/// Fields executed by every nonterminal fold level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedFoldCore {
+    pub group: GeneratedGroup,
+    pub open_commit_matrix: GeneratedMatrix,
+    pub witness_chunks: u32,
+}
+
+/// Generated fields that are legal only at the root fold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFold {
-    pub final_group: GeneratedRootFinalGroup,
-    pub precommitted_groups: &'static [GeneratedRootPrecommittedGroup],
-    pub open_commit_matrix: GeneratedOpenCommitMatrix,
-    pub witness_partition: GeneratedWitnessPartition,
+    pub core: GeneratedFoldCore,
+    pub num_digits_inner: u32,
+    pub precommitted_groups: &'static [GeneratedPrecommittedGroup],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedSetupPrefixInput {
-    pub natural_len: u64,
-    /// Exact frozen commitment identity emitted by the planner.
-    pub commitment: akita_types::CommittedGroupProfile,
-    pub opening: akita_types::GroupOpeningPlan,
-}
-
+/// Generated fields that are legal only at a recursive fold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
+    pub core: GeneratedFoldCore,
+    pub setup_prefix: Option<GeneratedSetupPrefix>,
     pub payload_mode: akita_types::CommitmentPayloadMode,
-    pub opening_method: akita_types::OpeningMethod,
-    pub witness: GeneratedCommittedGroup,
-    pub num_digits_fold: u32,
     pub response_l2_sq_cap: Option<u128>,
-    pub open_commit_matrix: GeneratedOpenCommitMatrix,
-    pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
-    pub witness_partition: GeneratedWitnessPartition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedTerminalFold {
-    pub geometry: GeneratedBlockGeometry,
-    pub inner_commit_matrix: GeneratedInnerCommitMatrix,
+    pub geometry: akita_types::BlockGeometry,
+    pub inner_commit_matrix: GeneratedMatrix,
     pub num_digits_inner: u32,
     pub fold_log_basis: u32,
     pub fold_digit_count: u32,
@@ -100,6 +99,8 @@ pub struct GeneratedTerminalFold {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldScheduleEntry {
+    /// Layout of this row's final group: the row's own lookup key.
+    pub final_group: akita_types::PolynomialGroupLayout,
     pub root: GeneratedRootFold,
     pub recursive_folds: &'static [GeneratedRecursiveFold],
     pub terminal: GeneratedTerminalFold,
@@ -109,12 +110,12 @@ impl GeneratedFoldScheduleEntry {
     /// Build the runtime schedule lookup key represented by this generated row.
     pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
-            final_group: self.root.final_group.layout,
+            final_group: self.final_group,
             precommitteds: self
                 .root
                 .precommitted_groups
                 .iter()
-                .map(|group| group.descriptor)
+                .map(|group| group.group.profile)
                 .collect(),
         }
     }
@@ -168,8 +169,8 @@ pub use crate::{
     SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
-    CommitmentPayloadMode, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout,
+    BlockGeometry, CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 pub use akita_types::{SisL2TableDigest, SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
@@ -211,12 +212,12 @@ pub fn generated_schedule_key_cmp(
     right: &GeneratedFoldScheduleEntry,
 ) -> std::cmp::Ordering {
     let left_main = (
-        left.root.final_group.layout.num_vars(),
-        left.root.final_group.layout.num_polynomials(),
+        left.final_group.num_vars(),
+        left.final_group.num_polynomials(),
     );
     let right_main = (
-        right.root.final_group.layout.num_vars(),
-        right.root.final_group.layout.num_polynomials(),
+        right.final_group.num_vars(),
+        right.final_group.num_polynomials(),
     );
     left_main
         .cmp(&right_main)
@@ -230,13 +231,13 @@ pub fn generated_schedule_key_cmp(
             left.root
                 .precommitted_groups
                 .iter()
-                .map(|group| precommitted_group_sort_key(&group.descriptor))
+                .map(|group| precommitted_group_sort_key(&group.group.profile))
                 .cmp(
                     right
                         .root
                         .precommitted_groups
                         .iter()
-                        .map(|group| precommitted_group_sort_key(&group.descriptor)),
+                        .map(|group| precommitted_group_sort_key(&group.group.profile)),
                 )
         })
 }
@@ -246,8 +247,8 @@ pub fn generated_schedule_key_cmp_runtime(
     runtime: &akita_types::AkitaScheduleLookupKey,
 ) -> std::cmp::Ordering {
     let left_main = (
-        generated.root.final_group.layout.num_vars(),
-        generated.root.final_group.layout.num_polynomials(),
+        generated.final_group.num_vars(),
+        generated.final_group.num_polynomials(),
     );
     let right_main = (
         runtime.final_group.num_vars(),
@@ -267,7 +268,7 @@ pub fn generated_schedule_key_cmp_runtime(
                 .root
                 .precommitted_groups
                 .iter()
-                .map(|group| &group.descriptor);
+                .map(|group| &group.group.profile);
             generated
                 .zip(&runtime.precommitteds)
                 .map(|(left, right)| {
@@ -302,7 +303,7 @@ pub fn runtime_schedule_key_cmp(
         })
 }
 
-fn precommitted_group_sort_key(key: &akita_types::CommittedGroupProfile) -> Vec<u8> {
+fn precommitted_group_sort_key(key: &akita_types::GroupCommitPhaseParams) -> Vec<u8> {
     key.canonical_descriptor_bytes()
 }
 
@@ -310,19 +311,19 @@ fn schedule_key_eq(
     generated: &GeneratedFoldScheduleEntry,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
-    generated.root.final_group.layout == key.final_group
+    generated.final_group == key.final_group
         && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root
             .precommitted_groups
             .iter()
             .zip(&key.precommitteds)
-            .all(|(generated, layout)| precommitted_group_key_eq(&generated.descriptor, layout))
+            .all(|(generated, layout)| precommitted_group_key_eq(&generated.group.profile, layout))
 }
 
 fn precommitted_group_key_eq(
-    generated: &akita_types::CommittedGroupProfile,
-    layout: &akita_types::CommittedGroupProfile,
+    generated: &akita_types::GroupCommitPhaseParams,
+    layout: &akita_types::GroupCommitPhaseParams,
 ) -> bool {
     generated == layout
 }
@@ -478,39 +479,39 @@ pub fn fp64_onehot_table() -> GeneratedScheduleTable {
 mod mixed_dimension_key_tests {
     use super::{precommitted_group_key_eq, precommitted_group_sort_key};
     use akita_types::{
-        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        GroupCommitPhaseParams, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
     };
 
-    fn descriptor() -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+    fn descriptor() -> GroupCommitPhaseParams {
+        GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group: PolynomialGroupLayout::new(12, 1),
-            num_live_ring_elements_per_claim: 32,
-            num_positions_per_block: 8,
-            num_live_blocks: 4,
+            blocks: akita_types::BlockGeometry::new(32, 8, 4),
             outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            log_basis_inner: 4,
-            num_digits_inner: 2,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                3,
-                16,
-                7,
-                128,
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(4, 2),
+                InnerCommitMatrixParams::new_unchecked(
+                    akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    3,
+                    16,
+                    7,
+                    128,
+                ),
             ),
-            log_basis_outer: 5,
-            num_digits_outer: 2,
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                2,
-                48,
-                11,
-                64,
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(5, 2),
+                OuterCommitMatrixParams::new_unchecked(
+                    akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    2,
+                    48,
+                    11,
+                    64,
+                ),
             ),
         }
     }
@@ -519,7 +520,7 @@ mod mixed_dimension_key_tests {
     fn precommitted_key_identity_includes_both_native_ring_dimensions() {
         let base = descriptor();
         let mut changed_inner = base;
-        changed_inner.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        changed_inner.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
@@ -529,7 +530,7 @@ mod mixed_dimension_key_tests {
             64,
         );
         let mut changed_outer = base;
-        changed_outer.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        changed_outer.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,

@@ -307,10 +307,11 @@ mod tests {
         )
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        params.own_group_mut().opening.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
         let batch =
             OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::new(9, 2)]).unwrap();
         let geometry = RelationWitnessGeometry::for_level(&params, &batch, 2).unwrap();
@@ -435,17 +436,18 @@ mod tests {
         )
         .with_decomp(4, 6, 2, 2, 2)
         .unwrap();
-        params.opening_method = OpeningMethod::SubringCoefficientPacking {
+        params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         };
-        params.fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(64).unwrap();
-        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
-            params.open_commit_matrix.security_policy(),
-            params.open_commit_matrix.sis_table_key().table_digest,
-            params.open_commit_matrix.sis_modulus_profile(),
-            params.open_commit_matrix.output_rank(),
+        params.own_group_mut().opening.fold_challenge_config =
+            SparseChallengeConfig::production_for_ring_dim(64).unwrap();
+        params.open_matrix = OpenCommitMatrixParams::new_unchecked(
+            params.open().matrix.security_policy(),
+            params.open().matrix.sis_table_key().table_digest,
+            params.open().matrix.sis_modulus_profile(),
+            params.open().matrix.output_rank(),
             8,
-            params.open_commit_matrix.coeff_linf_bound(),
+            params.open().matrix.coeff_linf_bound(),
             D_D,
         );
         let batch =

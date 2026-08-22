@@ -2,9 +2,8 @@
 
 use akita_error::AkitaError;
 use akita_types::{
-    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, NttCacheKey,
-    NttTransformDomain, PrecommittedLevelParams, SetupPrefixSlotId, SisModulusProfileId,
-    TerminalCommittedGroupParams,
+    centered_quotient_requires_i16_tail, CommittedGroupParams, FoldSchedule, GroupOpenPhaseParams,
+    NttCacheKey, NttTransformDomain, SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
 };
 
 /// Compute cluster that owns one public-matrix transform request.
@@ -51,9 +50,9 @@ impl NttExecutionRequirements {
     pub fn from_commit_and_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         let mut requirements = Self::from_prove_schedule(schedule)?;
         let root = &schedule.root.params;
-        requirements.add_group_commit(0, &root.final_group.commitment)?;
-        for precommitted in &root.precommitted_groups {
-            requirements.add_precommitted_commit(0, &precommitted.commitment)?;
+        requirements.add_group_commit(0, root)?;
+        for precommitted in root.precommitted_groups() {
+            requirements.add_precommitted_commit(0, precommitted)?;
         }
         Ok(requirements)
     }
@@ -68,22 +67,22 @@ impl NttExecutionRequirements {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
         let root = &schedule.root.params;
-        let root_num_chunks = root.witness_partition.num_chunks();
-        requirements.add_group_relation(0, &root.final_group.commitment, root_num_chunks)?;
-        for precommitted in &root.precommitted_groups {
-            requirements.add_precommitted_relation(0, &precommitted.commitment, root_num_chunks)?;
+        let root_num_chunks = root.witness_chunk.num_chunks;
+        requirements.add_group_relation(0, root, root_num_chunks)?;
+        for precommitted in root.precommitted_groups() {
+            requirements.add_precommitted_relation(0, precommitted, root_num_chunks)?;
         }
         let root_open_extent = matrix_extent(
-            root.open_commit_matrix.output_rank(),
-            root.open_commit_matrix.input_width(),
+            root.open().matrix.output_rank(),
+            root.open().matrix.input_width(),
         )?;
         requirements.add_matrix(
             0,
             NttOperationCluster::RingSwitch,
             NttCacheKey::from_matrix_shape(
-                root.open_commit_matrix.ring_dimension(),
-                root.open_commit_matrix.output_rank(),
-                root.open_commit_matrix.input_width(),
+                root.open().matrix.ring_dimension(),
+                root.open().matrix.output_rank(),
+                root.open().matrix.input_width(),
                 NttTransformDomain::Negacyclic,
             )?,
             root_open_extent,
@@ -92,9 +91,9 @@ impl NttExecutionRequirements {
             0,
             NttOperationCluster::RingSwitch,
             NttCacheKey::from_matrix_shape(
-                root.open_commit_matrix.ring_dimension(),
-                root.open_commit_matrix.output_rank(),
-                root.open_commit_matrix.input_width(),
+                root.open().matrix.ring_dimension(),
+                root.open().matrix.output_rank(),
+                root.open().matrix.input_width(),
                 NttTransformDomain::Cyclic,
             )?,
             root_open_extent,
@@ -103,28 +102,27 @@ impl NttExecutionRequirements {
         for (index, step) in schedule.recursive_folds.iter().enumerate() {
             let predecessor_level = index;
             let level = index + 1;
-            let num_chunks = step.params.witness_partition.num_chunks();
-            requirements.add_group_commit(predecessor_level, &step.params.witness)?;
-            requirements.add_group_relation(level, &step.params.witness, num_chunks)?;
-            if let Some(prefix) = &step.params.incoming_setup_prefix {
-                requirements.add_setup_prefix_commitment(level, &prefix.slot_id())?;
-                requirements.add_precommitted_relation(
+            let num_chunks = step.params.witness_chunk.num_chunks;
+            requirements.add_group_commit(predecessor_level, &step.params)?;
+            requirements.add_group_relation(level, &step.params, num_chunks)?;
+            if let Some(prefix) = &step.params.setup_prefix() {
+                requirements.add_setup_prefix_commitment(
                     level,
-                    &prefix.commitment_params,
-                    num_chunks,
+                    &prefix.slot_id().expect("setup prefix group"),
                 )?;
+                requirements.add_precommitted_relation(level, prefix, num_chunks)?;
             }
             let open_extent = matrix_extent(
-                step.params.open_commit_matrix.output_rank(),
-                step.params.open_commit_matrix.input_width(),
+                step.params.open().matrix.output_rank(),
+                step.params.open().matrix.input_width(),
             )?;
             requirements.add_matrix(
                 level,
                 NttOperationCluster::RingSwitch,
                 NttCacheKey::from_matrix_shape(
-                    step.params.open_commit_matrix.ring_dimension(),
-                    step.params.open_commit_matrix.output_rank(),
-                    step.params.open_commit_matrix.input_width(),
+                    step.params.open().matrix.ring_dimension(),
+                    step.params.open().matrix.output_rank(),
+                    step.params.open().matrix.input_width(),
                     NttTransformDomain::Negacyclic,
                 )?,
                 open_extent,
@@ -133,19 +131,16 @@ impl NttExecutionRequirements {
                 level,
                 NttOperationCluster::RingSwitch,
                 NttCacheKey::from_matrix_shape(
-                    step.params.open_commit_matrix.ring_dimension(),
-                    step.params.open_commit_matrix.output_rank(),
-                    step.params.open_commit_matrix.input_width(),
+                    step.params.open().matrix.ring_dimension(),
+                    step.params.open().matrix.output_rank(),
+                    step.params.open().matrix.input_width(),
                     NttTransformDomain::Cyclic,
                 )?,
                 open_extent,
             )?;
         }
 
-        requirements.add_terminal(
-            schedule.recursive_folds.len(),
-            &schedule.terminal.params.witness,
-        )?;
+        requirements.add_terminal(schedule.recursive_folds.len(), &schedule.terminal)?;
         Ok(requirements)
     }
 
@@ -162,12 +157,12 @@ impl NttExecutionRequirements {
     ) -> Result<(), AkitaError> {
         let params = &slot.commitment_profile;
         let inner_key = NttCacheKey::from_matrix_shape(
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
+            params.inner.matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.inner.matrix.input_width(),
             signed_commit_domain(
-                params.inner_commit_matrix.input_width(),
-                params.log_basis_inner,
+                params.inner.matrix.input_width(),
+                params.inner.digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -175,14 +170,14 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             inner_key,
             matrix_extent(
-                params.inner_commit_matrix.output_rank(),
-                params.inner_commit_matrix.input_width(),
+                params.inner.matrix.output_rank(),
+                params.inner.matrix.input_width(),
             )?,
         )?;
         let outer_key = NttCacheKey::from_matrix_shape(
-            params.outer_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.output_rank(),
-            params.outer_commit_matrix.input_width(),
+            params.outer.matrix.ring_dimension(),
+            params.outer.matrix.output_rank(),
+            params.outer.matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
         self.add_matrix(
@@ -190,8 +185,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             outer_key,
             matrix_extent(
-                params.outer_commit_matrix.output_rank(),
-                params.outer_commit_matrix.input_width(),
+                params.outer.matrix.output_rank(),
+                params.outer.matrix.input_width(),
             )?,
         )
     }
@@ -234,12 +229,12 @@ impl NttExecutionRequirements {
         params: &CommittedGroupParams,
     ) -> Result<(), AkitaError> {
         let inner_key = NttCacheKey::from_matrix_shape(
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
+            params.inner().matrix.ring_dimension(),
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
             signed_commit_domain(
-                params.inner_commit_matrix.input_width(),
-                params.log_basis_inner,
+                params.inner().matrix.input_width(),
+                params.inner().digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -247,14 +242,14 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             inner_key,
             matrix_extent(
-                params.inner_commit_matrix.output_rank(),
-                params.inner_commit_matrix.input_width(),
+                params.inner().matrix.output_rank(),
+                params.inner().matrix.input_width(),
             )?,
         )?;
         let outer_key = NttCacheKey::from_matrix_shape(
-            params.outer_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.output_rank(),
-            params.outer_commit_matrix.input_width(),
+            params.outer().matrix.ring_dimension(),
+            params.outer().matrix.output_rank(),
+            params.outer().matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
         self.add_matrix(
@@ -262,8 +257,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             outer_key,
             matrix_extent(
-                params.outer_commit_matrix.output_rank(),
-                params.outer_commit_matrix.input_width(),
+                params.outer().matrix.output_rank(),
+                params.outer().matrix.input_width(),
             )?,
         )
     }
@@ -276,18 +271,18 @@ impl NttExecutionRequirements {
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
-            params.outer_commit_matrix.ring_dimension(),
-            params.outer_commit_matrix.output_rank(),
-            params.outer_commit_matrix.input_width(),
-            params.log_basis_open,
-            params.num_digits_fold,
+            params.inner().matrix.ring_dimension(),
+            params.inner().matrix.output_rank(),
+            params.inner().matrix.input_width(),
+            params.outer().matrix.ring_dimension(),
+            params.outer().matrix.output_rank(),
+            params.outer().matrix.input_width(),
+            params.open().digits.log_basis,
+            params.num_digits_fold(),
             num_chunks,
-            params.inner_commit_matrix.sis_modulus_profile(),
+            params.inner().matrix.sis_modulus_profile(),
         )?;
-        for precommitted in &params.precommitted_groups {
+        for precommitted in params.precommitted_groups() {
             self.add_precommitted_relation(level, precommitted, num_chunks)?;
         }
         Ok(())
@@ -296,37 +291,37 @@ impl NttExecutionRequirements {
     fn add_precommitted_relation(
         &mut self,
         level: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
         num_chunks: usize,
     ) -> Result<(), AkitaError> {
         self.add_relation_ab(
             level,
-            params.layout.inner_commit_matrix.ring_dimension(),
-            params.layout.inner_commit_matrix.output_rank(),
-            params.layout.inner_commit_matrix.input_width(),
-            params.layout.outer_commit_matrix.ring_dimension(),
-            params.layout.outer_commit_matrix.output_rank(),
-            params.layout.outer_commit_matrix.input_width(),
+            params.profile.inner.matrix.ring_dimension(),
+            params.profile.inner.matrix.output_rank(),
+            params.profile.inner.matrix.input_width(),
+            params.profile.outer.matrix.ring_dimension(),
+            params.profile.outer.matrix.output_rank(),
+            params.profile.outer.matrix.input_width(),
             params.opening.log_basis_open,
             params.opening.num_digits_fold,
             num_chunks,
-            params.layout.inner_commit_matrix.sis_modulus_profile(),
+            params.profile.inner.matrix.sis_modulus_profile(),
         )
     }
 
     fn add_precommitted_commit(
         &mut self,
         level: usize,
-        params: &PrecommittedLevelParams,
+        params: &GroupOpenPhaseParams,
     ) -> Result<(), AkitaError> {
-        let layout = &params.layout;
+        let layout = &params.profile;
         let inner_key = NttCacheKey::from_matrix_shape(
-            layout.inner_commit_matrix.ring_dimension(),
-            layout.inner_commit_matrix.output_rank(),
-            layout.inner_commit_matrix.input_width(),
+            layout.inner.matrix.ring_dimension(),
+            layout.inner.matrix.output_rank(),
+            layout.inner.matrix.input_width(),
             signed_commit_domain(
-                layout.inner_commit_matrix.input_width(),
-                layout.log_basis_inner,
+                layout.inner.matrix.input_width(),
+                layout.inner.digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -334,14 +329,14 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             inner_key,
             matrix_extent(
-                layout.inner_commit_matrix.output_rank(),
-                layout.inner_commit_matrix.input_width(),
+                layout.inner.matrix.output_rank(),
+                layout.inner.matrix.input_width(),
             )?,
         )?;
         let outer_key = NttCacheKey::from_matrix_shape(
-            layout.outer_commit_matrix.ring_dimension(),
-            layout.outer_commit_matrix.output_rank(),
-            layout.outer_commit_matrix.input_width(),
+            layout.outer.matrix.ring_dimension(),
+            layout.outer.matrix.output_rank(),
+            layout.outer.matrix.input_width(),
             NttTransformDomain::Negacyclic,
         )?;
         self.add_matrix(
@@ -349,8 +344,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             outer_key,
             matrix_extent(
-                layout.outer_commit_matrix.output_rank(),
-                layout.outer_commit_matrix.input_width(),
+                layout.outer.matrix.output_rank(),
+                layout.outer.matrix.input_width(),
             )?,
         )
     }
@@ -420,15 +415,15 @@ impl NttExecutionRequirements {
     fn add_terminal(
         &mut self,
         level: usize,
-        params: &TerminalCommittedGroupParams,
+        params: &TerminalFoldParams,
     ) -> Result<(), AkitaError> {
         let key = NttCacheKey::from_matrix_shape(
-            params.inner_commit_matrix.ring_dimension(),
-            params.inner_commit_matrix.output_rank(),
-            params.inner_commit_matrix.input_width(),
+            params.inner.matrix.ring_dimension(),
+            params.inner.matrix.output_rank(),
+            params.inner.matrix.input_width(),
             signed_commit_domain(
-                params.inner_commit_matrix.input_width(),
-                params.log_basis_inner,
+                params.inner.matrix.input_width(),
+                params.inner.digits.log_basis,
             )?,
         )?;
         self.add_matrix(
@@ -436,8 +431,8 @@ impl NttExecutionRequirements {
             NttOperationCluster::Commit,
             key,
             matrix_extent(
-                params.inner_commit_matrix.output_rank(),
-                params.inner_commit_matrix.input_width(),
+                params.inner.matrix.output_rank(),
+                params.inner.matrix.input_width(),
             )?,
         )
     }
@@ -696,11 +691,11 @@ mod tests {
         let mut expected_root_level_commits = NttExecutionRequirements::default();
         if let Some(first_recursive) = schedule.recursive_folds.first() {
             expected_root_level_commits
-                .add_group_commit(0, &first_recursive.params.witness)
+                .add_group_commit(0, &first_recursive.params)
                 .expect("recursive witness requirements");
         } else {
             expected_root_level_commits
-                .add_terminal(0, &schedule.terminal.params.witness)
+                .add_terminal(0, &schedule.terminal)
                 .expect("terminal witness requirements");
         }
         let actual_root_level_commits = requirements
@@ -722,13 +717,13 @@ mod tests {
         assert!(requirements.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::RingSwitch
-                && entry.key.ring_d == schedule.root.params.open_commit_matrix.ring_dimension()
+                && entry.key.ring_d == schedule.root.params.open().matrix.ring_dimension()
                 && entry.key.domain == NttTransformDomain::Cyclic
         }));
         assert!(requirements.entries().iter().any(|entry| {
             entry.fold_level == schedule.recursive_folds.len()
                 && entry.cluster == NttOperationCluster::Commit
-                && entry.key.ring_d == schedule.terminal.params.witness.d_a()
+                && entry.key.ring_d == schedule.terminal.d_a()
                 && entry.key.domain == NttTransformDomain::Negacyclic
         }));
     }
@@ -743,11 +738,11 @@ mod tests {
         .into_schedule();
         let prove = NttExecutionRequirements::from_prove_schedule(&schedule).unwrap();
         let complete = NttExecutionRequirements::from_commit_and_prove_schedule(&schedule).unwrap();
-        let root = &schedule.root.params.final_group.commitment;
+        let root = &schedule.root.params;
         assert!(complete.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::Commit
-                && entry.key.ring_d == root.inner_commit_matrix.ring_dimension()
+                && entry.key.ring_d == root.inner().matrix.ring_dimension()
         }));
         assert!(complete.entries().len() >= prove.entries().len());
     }
@@ -765,14 +760,7 @@ mod tests {
         assert!(requirements.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::RingSwitch
-                && entry.key.ring_d
-                    == schedule
-                        .root
-                        .params
-                        .final_group
-                        .commitment
-                        .role_dims()
-                        .d_a()
+                && entry.key.ring_d == schedule.root.params.role_dims().d_a()
                 && entry.key.domain == NttTransformDomain::I16TailBothTransforms
         }));
     }
@@ -792,9 +780,9 @@ mod tests {
             .expect("generated fp64 dense schedule")
             .into_schedule(),
         ] {
-            let root = &schedule.root.params.final_group.commitment;
+            let root = &schedule.root.params;
             assert!(matches!(
-                root.opening_method,
+                root.opening_method(),
                 akita_types::OpeningMethod::SubringCoefficientPacking { .. }
             ));
             assert_eq!(
@@ -802,13 +790,15 @@ mod tests {
                 akita_types::CommittedSourceEncoding::CanonicalCoefficientTable,
             );
 
-            let expected_commit_domain =
-                signed_commit_domain(root.inner_commit_matrix.input_width(), root.log_basis_inner)
-                    .expect("selected exact commit domain");
+            let expected_commit_domain = signed_commit_domain(
+                root.inner().matrix.input_width(),
+                root.inner().digits.log_basis,
+            )
+            .expect("selected exact commit domain");
             let expected_commit_key = NttCacheKey::from_matrix_shape(
-                root.inner_commit_matrix.ring_dimension(),
-                root.inner_commit_matrix.output_rank(),
-                root.inner_commit_matrix.input_width(),
+                root.inner().matrix.ring_dimension(),
+                root.inner().matrix.output_rank(),
+                root.inner().matrix.input_width(),
                 expected_commit_domain,
             )
             .expect("selected root commit key");

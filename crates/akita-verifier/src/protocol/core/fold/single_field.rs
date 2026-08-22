@@ -9,7 +9,7 @@ use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
     append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point, BasisMode,
     CommittedGroupParams, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    TerminalCommittedGroupParams,
+    TerminalFoldParams,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
@@ -34,7 +34,7 @@ pub(in crate::protocol::core) fn prepare_single_field_terminal_suffix<F, E, T>(
     protocol_point: &[E],
     basis: BasisMode,
     opening: &E,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     transcript: &mut T,
 ) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
 where
@@ -50,8 +50,8 @@ where
             prepare_opening_point::<F, E, D>(
                 protocol_point,
                 basis,
-                params.num_positions_per_block,
-                params.num_live_blocks,
+                params.blocks.positions_per_block,
+                params.blocks.live_blocks,
                 params.d_a().trailing_zeros() as usize,
             )
         }
@@ -101,7 +101,7 @@ where
                         "suffix group point width mismatch: group={group_index}, \
                          groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
                         opening_batch.num_groups(),
-                        lp.setup_prefix.is_some(),
+                        lp.setup_prefix().is_some(),
                         group_protocol_point.len()
                     )));
                 }

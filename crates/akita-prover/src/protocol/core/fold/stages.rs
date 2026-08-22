@@ -49,7 +49,7 @@ where
                 .ok_or(AkitaError::InvalidProof)?;
             let InnerCommitSecurityRoute::L2 {
                 response_l2_sq_cap, ..
-            } = lp.inner_commit_matrix.security_route()
+            } = lp.inner().matrix.security_route()
             else {
                 return Err(AkitaError::InvalidSetup(
                     "physical L2 plan disagrees with the A security route".into(),

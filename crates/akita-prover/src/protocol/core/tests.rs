@@ -131,9 +131,12 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     })
     .expect("multi-group schedule")
     .into_schedule();
-    let root_params = schedule.root.params.final_group.commitment.clone();
-    assert_eq!(root_params.precommitted_groups.len(), 2);
-    for precommitted in &root_params.precommitted_groups {
-        assert_eq!(precommitted.layout.group, PolynomialGroupLayout::new(16, 1));
+    let root_params = schedule.root.params.clone();
+    assert_eq!(root_params.precommitted_groups().len(), 2);
+    for precommitted in root_params.precommitted_groups() {
+        assert_eq!(
+            precommitted.profile.group,
+            PolynomialGroupLayout::new(16, 1)
+        );
     }
 }

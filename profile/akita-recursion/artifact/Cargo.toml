@@ -12,9 +12,16 @@ name = "akita-recursion-artifact"
 path = "src/main.rs"
 
 [dependencies]
+akita-error = { path = "../../../crates/akita-error" }
 akita-recursion-glue = { path = "../glue" }
-akita-config = { path = "../../../crates/akita-config" }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "7e4eb60216f0e7697da27bf79b6ce32ee263f013", default-features = false, features = [
+akita-serialization = { path = "../../../crates/akita-serialization" }
+akita-config = { path = "../../../crates/akita-config", default-features = false, features = [
+  "schedules-fp32-onehot",
+  "schedules-fp64-onehot",
+  "schedules-fp128-onehot",
+  "schedules-fp128-onehot-recursive",
+] }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
   "solinas",
 ] }
 akita-pcs = { path = "../../../crates/akita-pcs", default-features = false, features = [

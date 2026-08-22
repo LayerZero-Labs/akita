@@ -5,6 +5,7 @@ use crate::protocol::core::RootProverGroupMeta;
 use crate::PreparedProverGroup;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
+use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
@@ -314,7 +315,7 @@ where
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
-        CommitF: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+        CommitF: CanonicalEncoding + AkitaSerialize,
         PointF: ExtField<CommitF>,
         T: Transcript<CommitF>,
     {
@@ -421,9 +422,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{
-        CommittedGroupProfile, PrecommittedLevelParams, RingVec, SisModulusProfileId,
-    };
+    use akita_types::{GroupCommitPhaseParams, GroupOpenPhaseParams, RingVec, SisModulusProfileId};
     use jolt_field::{Fp32, Zero};
 
     type F = Fp32<251>;
@@ -450,20 +449,32 @@ mod tests {
     fn synthetic_profile(
         group: PolynomialGroupLayout,
         params: &CommittedGroupParams,
-    ) -> CommittedGroupProfile {
-        CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
+    ) -> GroupCommitPhaseParams {
+        GroupCommitPhaseParams {
+            version: GroupCommitPhaseParams::VERSION,
             group,
-            num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
-            num_positions_per_block: params.num_positions_per_block,
-            num_live_blocks: params.num_live_blocks,
-            outer_slice_count: params.outer_slice_count,
-            log_basis_inner: params.log_basis_inner,
-            num_digits_inner: params.num_digits_inner,
-            inner_commit_matrix: params.inner_commit_matrix,
-            log_basis_outer: params.log_basis_outer,
-            num_digits_outer: params.num_digits_outer,
-            outer_commit_matrix: params.outer_commit_matrix,
+
+            blocks: akita_types::BlockGeometry::new(
+                params.blocks().live_ring_elements_per_claim,
+                params.blocks().positions_per_block,
+                params.blocks().live_blocks,
+            ),
+
+            outer_slice_count: params.outer_slice_count(),
+            inner: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(
+                    params.inner().digits.log_basis,
+                    params.inner().digits.num_digits,
+                ),
+                params.inner().matrix,
+            ),
+            outer: akita_types::RoleParams::new(
+                akita_types::GadgetDigits::new(
+                    params.outer().digits.log_basis,
+                    params.outer().digits.num_digits,
+                ),
+                params.outer().matrix,
+            ),
         }
     }
 
@@ -481,29 +492,31 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("precommitted params");
-        let inner = &pre.inner_commit_matrix;
-        pre.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
-            inner.security_policy(),
-            inner
-                .sis_table_key()
-                .expect("test matrix is L infinity")
-                .table_digest,
-            inner.sis_modulus_profile(),
-            inner.output_rank(),
-            inner.input_width(),
-            2,
-            inner.ring_dimension(),
-        );
-        let outer = &pre.outer_commit_matrix;
-        pre.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
-            outer.security_policy(),
-            outer.sis_table_key().table_digest,
-            outer.sis_modulus_profile(),
-            outer.output_rank(),
-            outer.input_width(),
-            3,
-            outer.ring_dimension(),
-        );
+        let inner = &pre.inner().matrix;
+        pre.own_group_mut().profile.inner.matrix =
+            akita_types::InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner
+                    .sis_table_key()
+                    .expect("test matrix is L infinity")
+                    .table_digest,
+                inner.sis_modulus_profile(),
+                inner.output_rank(),
+                inner.input_width(),
+                2,
+                inner.ring_dimension(),
+            );
+        let outer = &pre.outer().matrix;
+        pre.own_group_mut().profile.outer.matrix =
+            akita_types::OuterCommitMatrixParams::new_unchecked(
+                outer.security_policy(),
+                outer.sis_table_key().table_digest,
+                outer.sis_modulus_profile(),
+                outer.output_rank(),
+                outer.input_width(),
+                3,
+                outer.ring_dimension(),
+            );
         let mut root = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -516,15 +529,17 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
-        root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: synthetic_profile(pre_layout, &pre),
+        root.insert_precommitted_group(GroupOpenPhaseParams {
+            setup_natural_len: None,
+            profile: synthetic_profile(pre_layout, &pre),
             opening: akita_types::GroupOpeningPlan::evaluation_trace(
-                pre.fold_challenge_config,
-                pre.log_basis_open,
-                pre.num_digits_open,
-                pre.num_digits_fold,
+                pre.fold_challenge_config(),
+                pre.open().digits.log_basis,
+                pre.open().digits.num_digits,
+                pre.num_digits_fold(),
             ),
-        });
+        })
+        .unwrap();
         root
     }
 

@@ -190,7 +190,7 @@ where
 {
     if E::DEGREE == 1 && extension_opening_reduction.is_some() {
         return Err(SerializationError::InvalidData(
-            "extension-opening reduction is forbidden when ExtField::EXT_DEGREE is 1".to_string(),
+            "extension-opening reduction is forbidden when ExtField::DEGREE is 1".to_string(),
         ));
     }
     Ok(())

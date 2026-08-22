@@ -208,8 +208,8 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.open_commit_matrix.output_rank();
-    let levels = r_decomp_levels::<F>(lp.log_basis_open);
+    let n_d_active = lp.open().matrix.output_rank();
+    let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
     let witness_layout = instance.segment_layout(lp, None)?;
     if witness_layout.r_rows().len() != rows || witness_layout.quotient_depth() != levels {
         return Err(AkitaError::InvalidSetup(
@@ -327,7 +327,7 @@ where
             .map(|range| range.end)
             .max()
             .unwrap_or(0);
-        let rank = lp.open_commit_matrix.output_rank();
+        let rank = lp.open().matrix.output_rank();
         Some((&setup.shared_matrix, rank, d_physical_columns))
     } else {
         None
@@ -747,7 +747,7 @@ where
             }
         }
     }
-    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis_open)
+    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.open().digits.log_basis)
         .into_iter()
         .map(E::lift_base)
         .collect();

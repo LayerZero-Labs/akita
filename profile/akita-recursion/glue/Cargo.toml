@@ -26,7 +26,7 @@ trusted-benchmark-artifact = []
 akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "7e4eb60216f0e7697da27bf79b6ce32ee263f013", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
@@ -36,6 +36,7 @@ akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default
 akita-challenges = { version = "0.1.0", path = "../../../crates/akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false, features = [
   "schedules-fp128-onehot",
+  "schedules-fp32-onehot",
   "test-support",
   "transcript-blake2b",
 ] }

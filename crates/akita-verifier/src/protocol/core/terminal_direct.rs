@@ -6,7 +6,7 @@ use akita_error::AkitaError;
 use akita_types::{
     decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
     AkitaVerifierSetup, FpExtEncoding, PreparedOpeningPoint, RingMultiplierOpeningPoint,
-    TerminalCommittedGroupParams, TerminalResponse,
+    TerminalFoldParams, TerminalResponse,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
@@ -134,8 +134,7 @@ pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaVerifierSetup<F>,
     challenges: &Challenges,
     multiplier: &RingMultiplierOpeningPoint<F>,
-    params: &TerminalCommittedGroupParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
+    params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,
 ) -> Result<(), AkitaError>
 where
@@ -151,7 +150,7 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     if params
-        .validate_terminal_linf_cap(sparse, group_layout.z_linf_cap)
+        .validate_terminal_linf_cap(group_layout.z_linf_cap)
         .is_err()
     {
         return Err(AkitaError::InvalidProof);
@@ -208,10 +207,10 @@ where
             {
                 let _span = tracing::info_span!(
                     "terminal_direct_challenges",
-                    num_blocks = params.num_live_blocks
+                    num_blocks = params.blocks.live_blocks
                 )
                 .entered();
-                if challenges.as_slice().len() != params.num_live_blocks {
+                if challenges.as_slice().len() != params.blocks.live_blocks {
                     return Err(AkitaError::InvalidProof);
                 }
                 for challenge in challenges.as_slice() {
@@ -219,22 +218,23 @@ where
                 }
             }
             let expected_t_len = params
-                .num_live_blocks
-                .checked_mul(params.inner_commit_matrix.output_rank())
+                .blocks
+                .live_blocks
+                .checked_mul(params.inner.matrix.output_rank())
                 .ok_or(AkitaError::InvalidProof)?;
-            if e.len() != params.num_live_blocks || t.len() != expected_t_len {
+            if e.len() != params.blocks.live_blocks || t.len() != expected_t_len {
                 return Err(AkitaError::InvalidInput(format!(
                     "terminal raw segment ring count mismatch: e={}, expected_e={}, t={}, expected_t={expected_t_len}",
                     e.len(),
-                    params.num_live_blocks,
+                    params.blocks.live_blocks,
                     t.len(),
                 )));
             }
-            let n_a = params.inner_commit_matrix.output_rank();
-            let n_a_cols = params.inner_commit_matrix.input_width();
-            let num_positions = params.num_positions_per_block;
-            let num_digits_inner = params.num_digits_inner;
-            let log_basis_inner = params.log_basis_inner;
+            let n_a = params.inner.matrix.output_rank();
+            let n_a_cols = params.inner.matrix.input_width();
+            let num_positions = params.blocks.positions_per_block;
+            let num_digits_inner = params.inner.digits.num_digits;
+            let log_basis_inner = params.inner.digits.log_basis;
             multiplier.ensure_ring_dim::<D_A>().map_err(|error| {
                 AkitaError::InvalidInput(format!("terminal multiplier layout failed: {error:?}"))
             })?;
@@ -242,7 +242,7 @@ where
                 || {
                     let _span = tracing::info_span!(
                         "terminal_direct_consistency",
-                        num_blocks = params.num_live_blocks,
+                        num_blocks = params.blocks.live_blocks,
                         num_positions
                     )
                     .entered();
@@ -323,7 +323,7 @@ where
 #[tracing::instrument(skip_all, name = "terminal_direct_trace")]
 pub(super) fn verify_terminal_trace<F, E>(
     multiplier: &RingMultiplierOpeningPoint<F>,
-    params: &TerminalCommittedGroupParams,
+    params: &TerminalFoldParams,
     terminal_response: &TerminalResponse<F>,
     prepared_point: &PreparedOpeningPoint<F, E>,
     row_coefficients: &[E],
@@ -349,7 +349,7 @@ where
             let e = e_rings;
             let packed_inner = prepared_point.packed_inner_trusted::<D>()?;
             let claim_e = e;
-            if claim_e.len() != params.num_live_blocks {
+            if claim_e.len() != params.blocks.live_blocks {
                 return Err(AkitaError::InvalidProof);
             }
             let claim_opening = if multiplier.as_base().is_none() {

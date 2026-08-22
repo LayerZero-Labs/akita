@@ -17,7 +17,7 @@ use crate::{
     SisModulusProfileId, WitnessLayout,
 };
 use crate::{
-    CommittedGroupProfile, GroupOpeningPlan, InnerCommitMatrixParams, PrecommittedLevelParams,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams,
 };
 
 type F = Prime64Offset59;
@@ -58,11 +58,11 @@ where
         num_chunks,
         num_activated_levels: usize::from(num_chunks > 1),
     };
-    params.opening_method = OpeningMethod::SubringCoefficientPacking {
+    params.own_group_mut().opening.opening_method = OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: s,
     };
-    let outer = params.outer_commit_matrix;
-    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = params.outer().matrix;
+    params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -71,8 +71,8 @@ where
         outer.coeff_linf_bound(),
         64,
     );
-    let opening = params.open_commit_matrix;
-    params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+    let opening = params.open().matrix;
+    params.open_matrix = OpenCommitMatrixParams::new_unchecked(
         opening.security_policy(),
         opening.sis_table_key().table_digest,
         opening.sis_modulus_profile(),
@@ -92,7 +92,7 @@ where
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<Base>(params.log_basis_open),
+        r_decomp_levels::<Base>(params.open().digits.log_basis),
     )
     .unwrap();
     let relation_address_geometry = RelationAddressGeometry::for_relation(
@@ -703,7 +703,7 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
         .unwrap()
     );
 
-    let depth_open = fixture.params.num_digits_open;
+    let depth_open = fixture.params.open().digits.num_digits;
     let quotient_depth = fixture.relation_plan.witness_layout().quotient_depth();
     let extension_degree = <E as ExtField<F>>::DEGREE;
     let expected_e_events = 2 * 2 * depth_open * extension_degree;
@@ -754,8 +754,8 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
         RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
     };
     let opening_gadget = gadget_row_scalars::<F>(
-        fixture.params.num_digits_open,
-        fixture.params.log_basis_open,
+        fixture.params.open().digits.num_digits,
+        fixture.params.open().digits.log_basis,
     );
     let first_challenge = challenges.eval_at_pows::<F, E>(0, &alpha_powers).unwrap();
     assert_eq!(
@@ -765,7 +765,7 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     let denominator = alpha_powers.last().copied().unwrap() * alpha + E::one();
     let quotient_gadget = gadget_row_scalars::<F>(
         fixture.relation_plan.witness_layout().quotient_depth(),
-        fixture.params.log_basis_open,
+        fixture.params.open().digits.log_basis,
     );
     assert_eq!(
         events[expected_e_events].scalar(),
@@ -805,8 +805,8 @@ fn semantics_bind_partial_blocks_claims_planes_and_positive_q_convention() {
     assert_eq!(direct_terms, 2 * 2 * depth_open);
     assert_eq!(
         z_terms,
-        fixture.params.num_positions_per_block
-            * fixture.params.num_digits_inner
+        fixture.params.blocks().positions_per_block
+            * fixture.params.inner().digits.num_digits
             * fixture.params.num_digits_fold()
     );
     for term in semantics.stage2_terms().terms() {
@@ -978,7 +978,7 @@ fn e_events_split_planes_at_d_boundaries_without_changing_exponents() {
         .collect::<Vec<_>>();
     assert_eq!(
         continued_plane_chunks.len(),
-        fixture.params.num_digits_open * 2
+        fixture.params.open().digits.num_digits * 2
     );
     for event in continued_plane_chunks {
         assert_eq!(event.physical_coefficients().len(), 64);
@@ -1022,8 +1022,8 @@ fn semantic_events_match_an_independent_dense_accumulation() {
     )
     .unwrap();
     let opening_gadget = gadget_row_scalars::<F>(
-        fixture.params.num_digits_open,
-        fixture.params.log_basis_open,
+        fixture.params.open().digits.num_digits,
+        fixture.params.open().digits.log_basis,
     );
     let d_d = fixture.params.role_dims().d_d();
     let claims = fixture.opening_batch.num_total_polynomials();
@@ -1036,7 +1036,10 @@ fn semantic_events_match_an_independent_dense_accumulation() {
         {
             for block in unit.global_block_range() {
                 let challenge = challenges
-                    .eval_at_pows::<F, E>(claim * fixture.params.num_live_blocks + block, &powers)
+                    .eval_at_pows::<F, E>(
+                        claim * fixture.params.blocks().live_blocks + block,
+                        &powers,
+                    )
                     .unwrap();
                 for (digit, &gadget) in opening_gadget.iter().enumerate() {
                     for (plane, &basis_element) in basis.iter().enumerate() {
@@ -1046,7 +1049,7 @@ fn semantic_events_match_an_independent_dense_accumulation() {
                                 .e_coefficient_index(
                                     d_d,
                                     claims,
-                                    fixture.params.num_digits_open,
+                                    fixture.params.open().digits.num_digits,
                                     claim,
                                     block,
                                     flat / d_d,
@@ -1068,7 +1071,7 @@ fn semantic_events_match_an_independent_dense_accumulation() {
     let denominator = powers.last().copied().unwrap() * alpha + E::one();
     let quotient_gadget = gadget_row_scalars::<F>(
         fixture.relation_plan.witness_layout().quotient_depth(),
-        fixture.params.log_basis_open,
+        fixture.params.open().digits.log_basis,
     );
     let row = fixture.relation_plan.consistency_row_index(0).unwrap();
     for (digit, &gadget) in quotient_gadget.iter().enumerate() {
@@ -1179,8 +1182,8 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
         RingRelationGroupOpeningView::EvaluationTrace { .. } => panic!("method was erased"),
     };
     let trace_point = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-        position_weights: vec![F::zero(); fixture.params.num_positions_per_block],
-        live_block_weights: vec![F::zero(); fixture.params.num_live_blocks],
+        position_weights: vec![F::zero(); fixture.params.blocks().positions_per_block],
+        live_block_weights: vec![F::zero(); fixture.params.blocks().live_blocks],
     });
     let trace_relation = RingRelationInstance::new(
         vec![RingRelationGroupOpening::evaluation_trace(
@@ -1219,8 +1222,10 @@ fn malformed_authorities_and_exact_overlap_dispatch_by_method() {
     }
 
     for mutate in [
-        |params: &mut CommittedGroupParams| params.log_basis_open = 128,
-        |params: &mut CommittedGroupParams| params.log_basis_inner = 128,
+        |params: &mut CommittedGroupParams| params.own_group_mut().opening.log_basis_open = 128,
+        |params: &mut CommittedGroupParams| {
+            params.own_group_mut().profile.inner.digits.log_basis = 128
+        },
     ] {
         let mut malformed = fixture.params.clone();
         mutate(&mut malformed);
@@ -1281,16 +1286,16 @@ fn structured_stage2_terms_match_independent_dense_tables() {
     );
     let basis = canonical_extension_basis::<F4, E4>(4).unwrap();
     let opening_gadget = gadget_row_scalars::<F4>(
-        fixture.params.num_digits_open,
-        fixture.params.log_basis_open,
+        fixture.params.open().digits.num_digits,
+        fixture.params.open().digits.log_basis,
     );
     let witness_gadget = gadget_row_scalars::<F4>(
-        fixture.params.num_digits_inner,
-        fixture.params.log_basis_inner,
+        fixture.params.inner().digits.num_digits,
+        fixture.params.inner().digits.log_basis,
     );
     let fold_gadget = gadget_row_scalars::<F4>(
-        fixture.params.num_digits_fold,
-        fixture.params.log_basis_open,
+        fixture.params.num_digits_fold(),
+        fixture.params.open().digits.log_basis,
     );
     let consistency_weight = relation_row_weight(
         fixture.relation_plan.consistency_row_index(0).unwrap(),
@@ -1327,7 +1332,7 @@ fn structured_stage2_terms_match_independent_dense_tables() {
                                 .e_coefficient_index(
                                     d_d,
                                     fixture.opening_batch.num_total_polynomials(),
-                                    fixture.params.num_digits_open,
+                                    fixture.params.open().digits.num_digits,
                                     claim,
                                     block,
                                     flat / d_d,
@@ -1366,9 +1371,9 @@ fn structured_stage2_terms_match_independent_dense_tables() {
                         let physical = unit
                             .z_coefficient_index(
                                 geometry.a_ring_dimension(),
-                                fixture.params.num_positions_per_block,
-                                fixture.params.num_digits_inner,
-                                fixture.params.num_digits_fold,
+                                fixture.params.blocks().positions_per_block,
+                                fixture.params.inner().digits.num_digits,
+                                fixture.params.num_digits_fold(),
                                 position,
                                 witness_digit,
                                 fold_digit,

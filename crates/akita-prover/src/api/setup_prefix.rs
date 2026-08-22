@@ -10,8 +10,9 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{
-    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupProfile,
-    CompressionChainPlan, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId,
+    dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CompressionChainPlan,
+    GroupCommitPhaseParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -30,7 +31,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     expanded: &AkitaExpandedSetup<F>,
     backend: &B,
     prepared: &B::PreparedSetup,
-    commitment_profile: &CommittedGroupProfile,
+    commitment_profile: &GroupCommitPhaseParams,
     n_prefix: usize,
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
@@ -50,8 +51,9 @@ where
     }
     let full_prefix_ring_slots = n_prefix / D;
     let witness_ring_slots = commitment_profile
-        .num_live_blocks
-        .checked_mul(commitment_profile.num_positions_per_block)
+        .blocks
+        .live_blocks
+        .checked_mul(commitment_profile.blocks.positions_per_block)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("setup prefix witness shape overflow".to_string())
         })?;
@@ -82,8 +84,8 @@ where
             witnesses.len()
         ))
     })?;
-    let n_a = commitment_profile.inner_commit_matrix.output_rank();
-    let recomposed_inner_rows = (0..commitment_profile.num_live_blocks)
+    let n_a = commitment_profile.inner.matrix.output_rank();
+    let recomposed_inner_rows = (0..commitment_profile.blocks.live_blocks)
         .map(|block| {
             witness
                 .block_rows::<D>(block, n_a)
@@ -91,14 +93,14 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let n_b = commitment_profile.outer_commit_matrix.output_rank();
-    let d_b = commitment_profile.outer_commit_matrix.ring_dimension();
+    let n_b = commitment_profile.outer.matrix.output_rank();
+    let d_b = commitment_profile.outer.matrix.ring_dimension();
     let slice_geometry = akita_types::CommitmentSliceGeometry::try_new(
         commitment_profile.outer_slice_count,
-        commitment_profile.num_live_blocks,
+        commitment_profile.blocks.live_blocks,
         1,
         n_a,
-        commitment_profile.num_digits_outer,
+        commitment_profile.outer.digits.num_digits,
         D,
         d_b,
     )?;
@@ -110,8 +112,8 @@ where
                 .collect::<Vec<_>>();
             let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
                 &blocks,
-                commitment_profile.num_digits_outer,
-                commitment_profile.log_basis_outer,
+                commitment_profile.outer.digits.num_digits,
+                commitment_profile.outer.digits.log_basis,
             )?;
             let u = commit_outer_slices::<F, _, D_B>(
                 backend,
@@ -119,7 +121,7 @@ where
                 n_b,
                 std::iter::once(&decomposed_inner_rows),
                 &slice_geometry,
-                commitment_profile.log_basis_outer,
+                commitment_profile.outer.digits.log_basis,
             )?;
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
@@ -137,7 +139,8 @@ where
     }
     let plan = CompressionChainPlan::for_complete_source(
         commitment_profile
-            .outer_commit_matrix
+            .outer
+            .matrix
             .sis_table_key()
             .modulus_profile,
         raw_commitment.coeff_len(),
@@ -238,64 +241,68 @@ mod tests {
             2,
         )
         .expect("level params");
-        let inner = params.inner_commit_matrix;
-        params.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                policy: inner.security_policy(),
-                table_digest: inner
-                    .sis_table_key()
-                    .expect("L infinity test matrix")
-                    .table_digest,
-                modulus_profile: inner.sis_modulus_profile(),
-                role: akita_types::sis::SisMatrixRole::Inner,
-                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
-                coeff_linf_bound: 131_071,
-            },
-            inner.input_width(),
-        )
-        .expect("audited inner matrix");
+        let inner = params.inner().matrix;
+        params.own_group_mut().profile.inner.matrix =
+            InnerCommitMatrixParams::try_new_with_min_rank(
+                SisTableKey {
+                    policy: inner.security_policy(),
+                    table_digest: inner
+                        .sis_table_key()
+                        .expect("L infinity test matrix")
+                        .table_digest,
+                    modulus_profile: inner.sis_modulus_profile(),
+                    role: akita_types::sis::SisMatrixRole::Inner,
+                    ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                    coeff_linf_bound: 131_071,
+                },
+                inner.input_width(),
+            )
+            .expect("audited inner matrix");
         params = params
             .with_decomp(
-                params.num_positions_per_block,
-                params.num_live_ring_elements_per_claim,
-                params.num_digits_inner,
-                params.num_digits_outer,
-                params.num_digits_open,
+                params.blocks().positions_per_block,
+                params.blocks().live_ring_elements_per_claim,
+                params.inner().digits.num_digits,
+                params.outer().digits.num_digits,
+                params.open().digits.num_digits,
             )
             .expect("layout rebuilt for audited inner rank");
-        let outer = params.outer_commit_matrix;
-        params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                policy: outer.security_policy(),
-                table_digest: outer.sis_table_key().table_digest,
-                modulus_profile: outer.sis_modulus_profile(),
-                role: akita_types::sis::SisMatrixRole::Outer,
-                ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
-                coeff_linf_bound: 3,
-            },
-            outer.input_width(),
-        )
-        .expect("audited outer matrix");
+        let outer = params.outer().matrix;
+        params.own_group_mut().profile.outer.matrix =
+            OuterCommitMatrixParams::try_new_with_min_rank(
+                SisTableKey {
+                    policy: outer.security_policy(),
+                    table_digest: outer.sis_table_key().table_digest,
+                    modulus_profile: outer.sis_modulus_profile(),
+                    role: akita_types::sis::SisMatrixRole::Outer,
+                    ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
+                    coeff_linf_bound: 3,
+                },
+                outer.input_width(),
+            )
+            .expect("audited outer matrix");
         params
     }
 
     fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         let a_fields = level_params
-            .inner_commit_matrix
+            .inner()
+            .matrix
             .output_rank()
-            .checked_mul(level_params.inner_commit_matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.inner_commit_matrix.ring_dimension()))
+            .checked_mul(level_params.inner().matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.inner().matrix.ring_dimension()))
             .expect("A setup capacity");
         let b_fields = level_params
-            .outer_commit_matrix
+            .outer()
+            .matrix
             .output_rank()
-            .checked_mul(level_params.outer_commit_matrix.input_width())
-            .and_then(|n| n.checked_mul(level_params.outer_commit_matrix.ring_dimension()))
+            .checked_mul(level_params.outer().matrix.input_width())
+            .and_then(|n| n.checked_mul(level_params.outer().matrix.ring_dimension()))
             .expect("B setup capacity");
-        let compression_source = level_params.outer_commit_matrix.output_rank()
-            * level_params.outer_commit_matrix.ring_dimension();
+        let compression_source = level_params.outer().matrix.output_rank()
+            * level_params.outer().matrix.ring_dimension();
         let compression_fields = CompressionChainPlan::for_complete_source(
-            level_params.outer_commit_matrix.sis_modulus_profile(),
+            level_params.outer().matrix.sis_modulus_profile(),
             compression_source,
         )
         .expect("compression plan")
@@ -367,8 +374,9 @@ mod tests {
         )
         .expect("level params");
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
@@ -392,7 +400,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             natural_len,
         )
@@ -404,8 +412,9 @@ mod tests {
         let level_params = prefix_level_params(D);
         let opening_batch = OpeningClaimsLayout::new(4, 1).expect("opening_batch");
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(D).expect("prefix length");
         let natural_len = active_setup_field_len(&level_params, &opening_batch)
@@ -420,7 +429,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             natural_len,
         )
@@ -440,14 +449,15 @@ mod tests {
     fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
-            .num_live_blocks
-            .checked_mul(level_params.num_positions_per_block)
+            .blocks()
+            .live_blocks
+            .checked_mul(level_params.blocks().positions_per_block)
             .expect("witness shape");
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let outer = &prefix_params.layout.outer_commit_matrix;
-        prefix_params.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &prefix_params.profile.outer.matrix;
+        prefix_params.profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -464,7 +474,7 @@ mod tests {
             &setup.expanded,
             &backend,
             &prepared,
-            &prefix_params.layout,
+            &prefix_params.profile,
             n_prefix,
             n_prefix,
         )

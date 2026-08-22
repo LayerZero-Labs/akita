@@ -2,15 +2,13 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
-use crate::schedule::CommittedGroupProfile;
+use crate::schedule::GroupCommitPhaseParams;
 use crate::sis::{
     num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     InnerCommitMatrixParams, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
     SisTableDigest,
 };
 use crate::{CommitmentRingDims, DecompositionParams};
-
-use super::CommittedGroupParams;
 
 /// Schedule-selected procedure for opening one committed group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -160,13 +158,23 @@ impl GroupOpeningPlan {
     }
 }
 
-/// One frozen commitment profile and the policy selected by its consuming fold.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrecommittedLevelParams {
-    /// Frozen standalone group layout bound into commitment identity.
-    pub layout: CommittedGroupProfile,
+/// One commitment group taking part in one fold's opening batch.
+///
+/// Every group in a fold has this type: the final/new group, each precommitted
+/// group, and the setup prefix. The fold owns the shared D matrix; a group owns
+/// only its contribution of D digits, through `opening`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupOpenPhaseParams {
+    /// Frozen commit-phase identity of this group.
+    pub profile: GroupCommitPhaseParams,
     /// Opening policy owned by the fold that consumes this commitment.
     pub opening: GroupOpeningPlan,
+    /// Active setup-weight support, in flat field coefficients.
+    ///
+    /// `Some` exactly when this group is the consuming fold's setup prefix.
+    /// This is the sole record of that fact and the sole record of the length,
+    /// so there is no second field to audit it against.
+    pub setup_natural_len: Option<usize>,
 }
 
 /// Security and decomposition policy needed to admit a frozen precommit into
@@ -183,7 +191,34 @@ pub struct PrecommittedGroupAdmissionPolicy {
     pub sis_modulus_profile: SisModulusProfileId,
 }
 
-impl PrecommittedLevelParams {
+impl GroupOpenPhaseParams {
+    /// Registry identity for a prefix group; `None` for an ordinary group.
+    ///
+    /// `SetupPrefixSlotId` stays the runtime registry key. It is derived here
+    /// rather than stored, which removes the third copy of a prefix's frozen
+    /// commit-phase identity.
+    #[must_use]
+    pub fn slot_id(&self) -> Option<crate::SetupPrefixSlotId> {
+        self.setup_natural_len
+            .map(|natural_len| crate::SetupPrefixSlotId {
+                natural_len,
+                commitment_profile: self.profile,
+            })
+    }
+
+    /// Full power-of-two flat coefficient length committed for this prefix.
+    pub fn n_prefix(&self) -> Result<usize, AkitaError> {
+        self.slot_id()
+            .ok_or_else(|| AkitaError::InvalidSetup("group is not a setup prefix".to_string()))?
+            .n_prefix()
+    }
+
+    /// Ring dimension used for the frozen setup-prefix commitment.
+    #[must_use]
+    pub fn d_setup(&self) -> usize {
+        self.profile.inner.matrix.ring_dimension()
+    }
+
     /// Canonical bytes for deterministic planner ordering and schedule identity.
     pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -191,20 +226,76 @@ impl PrecommittedLevelParams {
         bytes
     }
 
-    /// Validate and materialize one frozen group at the batch-shared opening
-    /// basis. This is the canonical admission path for planner generation and
-    /// generated-schedule replay.
+    /// Validate and materialize one ordinary frozen precommit at the
+    /// batch-shared opening basis.
     pub fn admit(
-        layout: CommittedGroupProfile,
+        layout: GroupCommitPhaseParams,
         num_digits_fold: usize,
         policy: PrecommittedGroupAdmissionPolicy,
         opening_method: OpeningMethod,
         fold_challenge_config: SparseChallengeConfig,
         log_basis_open: u32,
     ) -> Result<Self, AkitaError> {
-        layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
-        if layout.inner_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
-            || layout.outer_commit_matrix.sis_modulus_profile() != policy.sis_modulus_profile
+        Self::admit_with_setup_natural_len(
+            layout,
+            None,
+            num_digits_fold,
+            policy,
+            opening_method,
+            fold_challenge_config,
+            log_basis_open,
+        )
+    }
+
+    /// Validate and materialize a recursive setup prefix at the batch-shared
+    /// opening basis.
+    pub fn admit_setup_prefix(
+        layout: GroupCommitPhaseParams,
+        natural_len: usize,
+        num_digits_fold: usize,
+        policy: PrecommittedGroupAdmissionPolicy,
+        opening_method: OpeningMethod,
+        fold_challenge_config: SparseChallengeConfig,
+        log_basis_open: u32,
+    ) -> Result<Self, AkitaError> {
+        Self::admit_with_setup_natural_len(
+            layout,
+            Some(natural_len),
+            num_digits_fold,
+            policy,
+            opening_method,
+            fold_challenge_config,
+            log_basis_open,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn admit_with_setup_natural_len(
+        layout: GroupCommitPhaseParams,
+        setup_natural_len: Option<usize>,
+        num_digits_fold: usize,
+        policy: PrecommittedGroupAdmissionPolicy,
+        opening_method: OpeningMethod,
+        fold_challenge_config: SparseChallengeConfig,
+        log_basis_open: u32,
+    ) -> Result<Self, AkitaError> {
+        if let Some(natural_len) = setup_natural_len {
+            layout.validate(policy.decomposition.field_bits())?;
+            let d_a = layout.inner.matrix.ring_dimension();
+            let n_prefix = 1usize
+                .checked_shl(layout.group.num_vars() as u32)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
+            crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
+            if natural_len.div_ceil(d_a) != layout.blocks.live_ring_elements_per_claim {
+                return Err(AkitaError::InvalidSetup(
+                    "setup-prefix natural length disagrees with its frozen commitment".into(),
+                ));
+            }
+        } else {
+            layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
+        }
+        if layout.inner.matrix.sis_modulus_profile() != policy.sis_modulus_profile
+            || layout.outer.matrix.sis_modulus_profile() != policy.sis_modulus_profile
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group modulus profile does not match admission policy".into(),
@@ -212,10 +303,10 @@ impl PrecommittedLevelParams {
         }
 
         let outer_decomposition = DecompositionParams {
-            log_basis: layout.log_basis_outer,
+            log_basis: layout.outer.digits.log_basis,
             ..policy.decomposition
         };
-        if num_digits_open(outer_decomposition) != layout.num_digits_outer {
+        if num_digits_open(outer_decomposition) != layout.outer.digits.num_digits {
             return Err(AkitaError::InvalidSetup(
                 "precommitted outer digit depth does not match its frozen basis".into(),
             ));
@@ -224,16 +315,16 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            layout.outer_commit_matrix.ring_dimension(),
-            layout.log_basis_outer,
+            layout.outer.matrix.ring_dimension(),
+            layout.outer.digits.log_basis,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
-        if layout.outer_commit_matrix.coeff_linf_bound() < frozen_b_bound {
+        if layout.outer.matrix.coeff_linf_bound() < frozen_b_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group B bound is below its frozen outer-basis requirement".into(),
             ));
         }
-        if log_basis_open < layout.log_basis_outer {
+        if log_basis_open < layout.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the precommitted outer basis".into(),
             ));
@@ -248,18 +339,15 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
-            layout.inner_commit_matrix.ring_dimension(),
+            layout.inner.matrix.ring_dimension(),
             log_basis_open,
             &fold_challenge_config,
             num_digits_fold,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
-        let declared_a_bound = layout
-            .inner_commit_matrix
-            .coeff_linf_bound()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
-            })?;
+        let declared_a_bound = layout.inner.matrix.coeff_linf_bound().ok_or_else(|| {
+            AkitaError::InvalidSetup("precommitted A cannot use an L2 security route".into())
+        })?;
         if required_a_bound > declared_a_bound {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A bound does not cover the certified opening basis".into(),
@@ -269,18 +357,19 @@ impl PrecommittedLevelParams {
             policy.sis_security_policy,
             policy.sis_modulus_profile,
             SisMatrixRole::Outer,
-            layout.outer_commit_matrix.ring_dimension(),
+            layout.outer.matrix.ring_dimension(),
             log_basis_open,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".into()))?;
-        if required_b_bound > layout.outer_commit_matrix.coeff_linf_bound() {
+        if required_b_bound > layout.outer.matrix.coeff_linf_bound() {
             return Err(AkitaError::InvalidSetup(
                 "precommitted B bound does not cover the certified opening basis".into(),
             ));
         }
 
         let params = Self {
-            layout,
+            profile: layout,
+            setup_natural_len,
             opening: GroupOpeningPlan {
                 opening_method,
                 fold_challenge_config,
@@ -305,23 +394,19 @@ impl PrecommittedLevelParams {
     #[must_use]
     pub fn role_dims(&self, shared_opening_ring_dimension: usize) -> CommitmentRingDims {
         CommitmentRingDims {
-            inner: self.layout.inner_commit_matrix.ring_dimension(),
-            outer: self.layout.outer_commit_matrix.ring_dimension(),
+            inner: self.profile.inner.matrix.ring_dimension(),
+            outer: self.profile.outer.matrix.ring_dimension(),
             opening: shared_opening_ring_dimension,
         }
     }
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        let field_bits = self
-            .layout
-            .inner_commit_matrix
-            .sis_modulus_profile()
-            .field_bits();
-        self.layout.validate(field_bits)?;
+        let field_bits = self.profile.inner.matrix.sis_modulus_profile().field_bits();
+        self.profile.validate(field_bits)?;
         if self.opening.fold_challenge_config.weight() != 0 {
             let challenge_dimension = match self.opening.opening_method {
-                OpeningMethod::EvaluationTrace => self.layout.inner_commit_matrix.ring_dimension(),
+                OpeningMethod::EvaluationTrace => self.profile.inner.matrix.ring_dimension(),
                 OpeningMethod::SubringCoefficientPacking {
                     challenge_subring_dimension,
                 } => challenge_subring_dimension,
@@ -339,18 +424,19 @@ impl PrecommittedLevelParams {
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
-        if self.opening.log_basis_open < self.layout.log_basis_outer {
+        if self.opening.log_basis_open < self.profile.outer.digits.log_basis {
             return Err(AkitaError::InvalidSetup(
                 "certified opening basis must dominate the precommitted outer basis".to_string(),
             ));
         }
         let expected_a_width = self
-            .layout
-            .num_positions_per_block
-            .checked_mul(self.layout.num_digits_inner)
+            .profile
+            .blocks
+            .positions_per_block
+            .checked_mul(self.profile.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
-        let inner_ring_dimension = self.layout.inner_commit_matrix.ring_dimension();
-        let outer_ring_dimension = self.layout.outer_commit_matrix.ring_dimension();
+        let inner_ring_dimension = self.profile.inner.matrix.ring_dimension();
+        let outer_ring_dimension = self.profile.outer.matrix.ring_dimension();
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A-native source rings do not decompose into B-native subcolumns"
@@ -358,17 +444,17 @@ impl PrecommittedLevelParams {
             ));
         }
         let expected_b_width = crate::CommitmentSliceGeometry::try_new(
-            self.layout.outer_slice_count,
-            self.layout.num_live_blocks,
-            self.layout.group.num_polynomials(),
-            self.layout.inner_commit_matrix.output_rank(),
-            self.layout.num_digits_outer,
+            self.profile.outer_slice_count,
+            self.profile.blocks.live_blocks,
+            self.profile.group.num_polynomials(),
+            self.profile.inner.matrix.output_rank(),
+            self.profile.outer.digits.num_digits,
             inner_ring_dimension,
             outer_ring_dimension,
         )?
         .physical_input_width();
-        if self.layout.inner_commit_matrix.input_width() != expected_a_width
-            || self.layout.outer_commit_matrix.input_width() != expected_b_width
+        if self.profile.inner.matrix.input_width() != expected_a_width
+            || self.profile.outer.matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
@@ -381,13 +467,13 @@ impl PrecommittedLevelParams {
     /// Width of this group's A matrix.
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.layout.inner_commit_matrix.input_width()
+        self.profile.inner.matrix.input_width()
     }
 
     /// Width of this group's B matrix.
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.layout.outer_commit_matrix.input_width()
+        self.profile.outer.matrix.input_width()
     }
 
     /// Width contribution to the consuming batch's shared D matrix
@@ -403,11 +489,11 @@ impl PrecommittedLevelParams {
         opening_d_segment_width(
             self.opening.opening_method,
             extension_degree,
-            self.layout.inner_commit_matrix.ring_dimension(),
+            self.profile.inner.matrix.ring_dimension(),
             opening_ring_dimension,
             self.opening.num_digits_open,
-            self.layout.num_live_blocks,
-            self.layout.group.num_polynomials(),
+            self.profile.blocks.live_blocks,
+            self.profile.group.num_polynomials(),
         )
     }
 
@@ -419,214 +505,151 @@ impl PrecommittedLevelParams {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        self.layout.append_descriptor_bytes(bytes);
+        self.profile.append_descriptor_bytes(bytes);
         self.opening.append_descriptor_bytes(bytes);
     }
 }
 
-/// Common view over full and precommitted level parameters.
-///
-/// Use this trait when code only needs the shared commitment geometry carried
-/// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
-pub trait LevelParamsLike {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding;
-    fn opening_method(&self) -> OpeningMethod;
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
-    fn a_rows_len(&self) -> usize;
-    fn a_col_len(&self) -> usize;
-    fn b_rows_len(&self) -> usize;
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount;
-    fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
+impl GroupOpenPhaseParams {
+    /// Logical B output rows after un-slicing the physical matrix.
+    ///
+    /// Mirrors the trait's default body.
+    pub fn logical_b_rows_len(&self) -> Result<usize, AkitaError> {
         self.outer_slice_count()
             .logical_output_rows(self.b_rows_len())
     }
-    fn b_col_len(&self) -> usize;
-    fn num_live_ring_elements_per_claim(&self) -> usize;
-    fn num_positions_per_block(&self) -> usize;
-    fn num_live_blocks(&self) -> usize;
-    fn fold_challenge_config(&self) -> SparseChallengeConfig;
-    fn position_index_bits(&self) -> usize;
-    fn block_index_bits(&self) -> usize;
-    fn num_digits_inner(&self) -> usize;
-    fn num_digits_outer(&self) -> usize;
-    fn num_digits_open(&self) -> usize;
-    fn num_digits_fold(&self) -> usize;
-    fn log_basis_inner(&self) -> u32;
-    fn log_basis_outer(&self) -> u32;
-    fn log_basis_open(&self) -> u32;
 }
 
-impl LevelParamsLike for CommittedGroupParams {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
-        self.source_encoding
-    }
-
-    fn opening_method(&self) -> OpeningMethod {
-        self.opening_method
-    }
-
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.inner_commit_matrix
-    }
-
-    fn a_rows_len(&self) -> usize {
-        self.inner_commit_matrix.output_rank()
-    }
-
-    fn a_col_len(&self) -> usize {
-        self.inner_commit_matrix.input_width()
-    }
-
-    fn b_rows_len(&self) -> usize {
-        self.outer_commit_matrix.output_rank()
-    }
-
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
-        self.outer_slice_count
-    }
-
-    fn b_col_len(&self) -> usize {
-        self.outer_commit_matrix.input_width()
-    }
-
-    fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.num_live_ring_elements_per_claim
-    }
-
-    fn num_positions_per_block(&self) -> usize {
-        self.num_positions_per_block
-    }
-
-    fn num_live_blocks(&self) -> usize {
-        self.num_live_blocks
-    }
-
-    fn fold_challenge_config(&self) -> SparseChallengeConfig {
-        self.fold_challenge_config
-    }
-
-    fn position_index_bits(&self) -> usize {
-        self.position_index_bits()
-    }
-
-    fn block_index_bits(&self) -> usize {
-        self.block_index_bits()
-    }
-
-    fn num_digits_inner(&self) -> usize {
-        self.num_digits_inner
-    }
-
-    fn num_digits_outer(&self) -> usize {
-        self.num_digits_outer
-    }
-
-    fn num_digits_open(&self) -> usize {
-        self.num_digits_open
-    }
-
-    fn num_digits_fold(&self) -> usize {
-        self.num_digits_fold
-    }
-
-    fn log_basis_outer(&self) -> u32 {
-        self.log_basis_outer
-    }
-
-    fn log_basis_inner(&self) -> u32 {
-        self.log_basis_inner
-    }
-
-    fn log_basis_open(&self) -> u32 {
-        self.log_basis_open
-    }
-}
-
-impl LevelParamsLike for PrecommittedLevelParams {
-    fn source_encoding(&self) -> crate::CommittedSourceEncoding {
+/// Commitment geometry and opening policy carried by one group.
+///
+/// These were the 22 methods of the deleted `LevelParamsLike` trait, which
+/// existed only to let a caller treat a fold's final group and a precommitted
+/// group uniformly without knowing which it held. Both are the same
+/// type.
+impl GroupOpenPhaseParams {
+    #[inline]
+    #[must_use]
+    pub fn source_encoding(&self) -> crate::CommittedSourceEncoding {
         crate::CommittedSourceEncoding::CanonicalCoefficientTable
     }
 
-    fn opening_method(&self) -> OpeningMethod {
+    #[inline]
+    #[must_use]
+    pub fn opening_method(&self) -> OpeningMethod {
         self.opening.opening_method
     }
 
-    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
-        &self.layout.inner_commit_matrix
+    #[inline]
+    #[must_use]
+    pub fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
+        &self.profile.inner.matrix
     }
 
-    fn a_rows_len(&self) -> usize {
-        self.layout.inner_commit_matrix.output_rank()
+    #[inline]
+    #[must_use]
+    pub fn a_rows_len(&self) -> usize {
+        self.profile.inner.matrix.output_rank()
     }
 
-    fn a_col_len(&self) -> usize {
-        self.layout.inner_commit_matrix.input_width()
+    #[inline]
+    #[must_use]
+    pub fn a_col_len(&self) -> usize {
+        self.profile.inner.matrix.input_width()
     }
 
-    fn b_rows_len(&self) -> usize {
-        self.layout.outer_commit_matrix.output_rank()
+    #[inline]
+    #[must_use]
+    pub fn b_rows_len(&self) -> usize {
+        self.profile.outer.matrix.output_rank()
     }
 
-    fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
-        self.layout.outer_slice_count
+    #[inline]
+    #[must_use]
+    pub fn outer_slice_count(&self) -> crate::CommitmentSliceCount {
+        self.profile.outer_slice_count
     }
 
-    fn b_col_len(&self) -> usize {
-        self.layout.outer_commit_matrix.input_width()
+    #[inline]
+    #[must_use]
+    pub fn b_col_len(&self) -> usize {
+        self.profile.outer.matrix.input_width()
     }
 
-    fn num_live_ring_elements_per_claim(&self) -> usize {
-        self.layout.num_live_ring_elements_per_claim
+    #[inline]
+    #[must_use]
+    pub fn num_live_ring_elements_per_claim(&self) -> usize {
+        self.profile.blocks.live_ring_elements_per_claim
     }
 
-    fn num_positions_per_block(&self) -> usize {
-        self.layout.num_positions_per_block
+    #[inline]
+    #[must_use]
+    pub fn num_positions_per_block(&self) -> usize {
+        self.profile.blocks.positions_per_block
     }
 
-    fn num_live_blocks(&self) -> usize {
-        self.layout.num_live_blocks
+    #[inline]
+    #[must_use]
+    pub fn num_live_blocks(&self) -> usize {
+        self.profile.blocks.live_blocks
     }
 
-    fn fold_challenge_config(&self) -> SparseChallengeConfig {
+    #[inline]
+    #[must_use]
+    pub fn fold_challenge_config(&self) -> SparseChallengeConfig {
         self.opening.fold_challenge_config
     }
 
-    fn position_index_bits(&self) -> usize {
-        self.layout.num_positions_per_block.trailing_zeros() as usize
+    #[inline]
+    #[must_use]
+    pub fn position_index_bits(&self) -> usize {
+        self.profile.blocks().position_index_bits()
     }
 
-    fn block_index_bits(&self) -> usize {
-        self.layout
-            .num_live_blocks
-            .checked_next_power_of_two()
-            .map_or(0, |capacity| capacity.trailing_zeros() as usize)
+    #[inline]
+    #[must_use]
+    pub fn block_index_bits(&self) -> usize {
+        self.profile.blocks().block_index_bits()
     }
 
-    fn num_digits_inner(&self) -> usize {
-        self.layout.num_digits_inner
+    #[inline]
+    #[must_use]
+    pub fn num_digits_inner(&self) -> usize {
+        self.profile.inner.digits.num_digits
     }
 
-    fn num_digits_outer(&self) -> usize {
-        self.layout.num_digits_outer
+    #[inline]
+    #[must_use]
+    pub fn num_digits_outer(&self) -> usize {
+        self.profile.outer.digits.num_digits
     }
 
-    fn num_digits_open(&self) -> usize {
+    #[inline]
+    #[must_use]
+    pub fn num_digits_open(&self) -> usize {
         self.opening.num_digits_open
     }
 
-    fn num_digits_fold(&self) -> usize {
+    #[inline]
+    #[must_use]
+    pub fn num_digits_fold(&self) -> usize {
         self.opening.num_digits_fold
     }
 
-    fn log_basis_outer(&self) -> u32 {
-        self.layout.log_basis_outer
+    #[inline]
+    #[must_use]
+    pub fn log_basis_outer(&self) -> u32 {
+        self.profile.outer.digits.log_basis
     }
 
-    fn log_basis_inner(&self) -> u32 {
-        self.layout.log_basis_inner
+    #[inline]
+    #[must_use]
+    pub fn log_basis_inner(&self) -> u32 {
+        self.profile.inner.digits.log_basis
     }
 
-    fn log_basis_open(&self) -> u32 {
+    #[inline]
+    #[must_use]
+    pub fn log_basis_open(&self) -> u32 {
         self.opening.log_basis_open
     }
 }
