@@ -212,8 +212,9 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i32>() {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
-            // SAFETY: the width check proves transparent i32 storage for the
-            // destination, prime, and twiddle table. Both arrays contain D
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i32. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both arrays contain D
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
                 avx::forward_ntt_i8_i32(
@@ -229,8 +230,9 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i16>() {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
-            // SAFETY: the width check proves transparent i16 storage for the
-            // destination, prime, and twiddle table. Both arrays contain D
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i16. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both arrays contain D
             // elements, do not overlap, and the prepared plan proves AVX2.
             unsafe {
                 avx::forward_ntt_i8_i16(
@@ -247,8 +249,9 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
             let prime = params.primes[k];
             let tw = &params.twiddles[k];
-            // SAFETY: the width check proves transparent i32 storage for the
-            // destination, prime, and twiddle table. Both input arrays have D
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i32. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both input arrays have D
             // elements and do not overlap.
             unsafe {
                 neon::forward_ntt_i8_i32(

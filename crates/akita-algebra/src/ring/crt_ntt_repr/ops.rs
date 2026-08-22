@@ -369,6 +369,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// reduction needs `6 * D` scratch coefficients instead of `6 * K * D`.
     /// The caller must select a backend whose [`CrtNttParamSet::pointwise_dot_batch_size`]
     /// is greater than one and pass no more than that many columns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the parameter set does not select the lazy i32 dot kernel, or
+    /// if `digits` is empty or exceeds the selected batch size.
     #[inline]
     pub fn add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
         accs: &mut [Self],
@@ -379,10 +384,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
         scratch: &mut [[MontCoeff<W>; D]; I32_LAZY_DOT_BATCH],
     ) {
-        debug_assert_eq!(accs.len(), ntt_mat.len());
-        debug_assert!(params.uses_lazy_i32_dot());
-        debug_assert!(!digits.is_empty());
-        debug_assert!(digits.len() <= I32_LAZY_DOT_BATCH);
+        assert_eq!(accs.len(), ntt_mat.len());
+        assert!(
+            params.uses_lazy_i32_dot(),
+            "lazy pointwise dot requires an i32 SIMD parameter set"
+        );
+        assert!(
+            !digits.is_empty() && digits.len() <= params.pointwise_dot_batch_size(),
+            "lazy pointwise dot batch must fit the selected kernel"
+        );
 
         for k in 0..K {
             for (dst, digit) in scratch.iter_mut().zip(digits) {

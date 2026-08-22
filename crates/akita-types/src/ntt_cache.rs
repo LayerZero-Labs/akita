@@ -285,17 +285,6 @@ pub fn centered_quotient_requires_i16_tail(
     ring_dimension: usize,
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
-    ntt_cache_requires_i16_tail_for_profile(profile, ring_dimension, 1, rhs_abs_bound)
-}
-
-/// Whether one exact signed matrix product needs the 14-bit exactness tail in
-/// addition to the protocol CRT prefix.
-pub fn ntt_cache_requires_i16_tail_for_profile(
-    profile: SisModulusProfileId,
-    ring_dimension: usize,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<bool, AkitaError> {
     let capacity = match profile {
         SisModulusProfileId::Q32Offset99 => {
             CrtCapacity::from_prime_moduli(Q32_PRIMES.map(|prime| prime.p as u128))
@@ -307,17 +296,17 @@ pub fn ntt_cache_requires_i16_tail_for_profile(
             CrtCapacity::from_prime_moduli(q128_primes().map(|prime| prime.p as u128))
         }
     };
-    if capacity.supports_modulus(width, ring_dimension, profile.modulus(), rhs_abs_bound) {
+    if capacity.supports_modulus(1, ring_dimension, profile.modulus(), rhs_abs_bound) {
         return Ok(false);
     }
     if capacity
         .with_prime_modulus(I16_TAIL_PRIME.p as u128)
-        .supports_modulus(width, ring_dimension, profile.modulus(), rhs_abs_bound)
+        .supports_modulus(1, ring_dimension, profile.modulus(), rhs_abs_bound)
     {
         return Ok(true);
     }
     Err(AkitaError::InvalidSetup(format!(
-        "exact signed matrix product exceeds base plus i16-tail capacity for D={ring_dimension}, width={width}, rhs_abs_bound={rhs_abs_bound}"
+        "centered quotient term exceeds base plus i16-tail capacity for D={ring_dimension}, rhs_abs_bound={rhs_abs_bound}"
     )))
 }
 

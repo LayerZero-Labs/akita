@@ -22,7 +22,12 @@ fn use_x86_i32_transform_ntt<W: PrimeWidth, const D: usize>(plan: NttKernelPlan)
 /// Precomputed twiddle factors for a specific prime and degree `D`.
 ///
 /// `D` must be a power of two.
+///
+/// The C representation is part of the SIMD dispatch contract. `PrimeWidth`
+/// is sealed to `i16` and `i32`, and architecture-specific kernels reinterpret
+/// a table after checking which of those two widths is active.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[repr(C)]
 pub struct NttTwiddles<W: PrimeWidth, const D: usize> {
     /// Stage roots for iterative forward cyclic NTT in Montgomery form.
     pub(crate) fwd_wlen: [MontCoeff<W>; D],
