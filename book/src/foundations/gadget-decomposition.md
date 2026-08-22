@@ -326,11 +326,12 @@ opening exponents from 3 to 6. It tries inner exponents up to 10 for fields
 with 32 bits and up to 11 for fields with 64 or 128 bits.
 
 The ring API can return digits as field elements, `i8` values, or `i16` values.
-On supported x86 processors, the packed `i8` function can use AVX2. AVX2 is a
-set of CPU instructions that performs the same operation on several integers
-at once. The fast path processes field values in their standard 32 bit integer
-representation, eight values at a time. The ordinary fallback processes one
-value at a time and produces the same digit major output.
+For 32 bit fields, the packed `i8` function uses SIMD when the processor
+supports it. SIMD applies the same operation to several integers at once. The
+NEON path on AArch64 processes four field values at a time. The AVX2 path on
+x86 processes eight. Both read the standard 32 bit representation directly.
+The ordinary fallback processes one value at a time and produces the same
+digit major output.
 
 The `i8` NTT commitment path next represents each signed digit modulo several
 smaller primes. It stores those residues in Montgomery form, which is an
@@ -385,7 +386,7 @@ verifier use the same values.
 | Prover and verifier use the same choice | [The public schedule](#where-akita-uses-decomposition) | The resolved schedule stores each role specific basis and depth in `CommittedGroupParams` |
 | A committed source satisfies the assumptions used to size it | [Source width and source shape](#source-width-and-source-shape-are-separate) | `committed_source.rs` defines the contract and `akita-prover/src/api/commitment.rs` enforces its numeric and structural parts |
 | Compact extraction and field conversion preserve the same digits | [How digits are stored](#how-digits-are-stored) | `signed_digit.rs` selects `i8` or `i16`, `decomposition.rs` extracts the digits, and `crt_ntt_repr/lut.rs` prepares `i8` digits for multiplication |
-| AVX2 extraction agrees with scalar extraction | [The fast path and fallback](#how-digits-are-stored) | `decomposition/x86.rs` implements the fast path and the centering boundary tests compare it with the scalar path |
+| SIMD extraction agrees with scalar extraction | [The fast path and fallback](#how-digits-are-stored) | `decomposition/aarch64.rs` and `decomposition/x86.rs` implement the fast paths, while the centering boundary tests compare their public dispatch with the scalar definition |
 
 This table separates the protocol contract from its implementation. The
 equations and ranges state what must hold. The schedule and source contract
@@ -408,8 +409,8 @@ A code review or security audit can follow the mechanism in this order.
    interval and the declared source class are independent.
 5. Check that the resolved schedule, proof layout, prover, and verifier all use
    the same role specific depth and basis.
-6. Check that the flat, ring, `i8`, `i16`, scalar, and AVX2 paths agree on digit
-   order and centering at their boundaries.
+6. Check that the flat, ring, `i8`, `i16`, scalar, NEON, and AVX2 paths agree on
+   digit order and centering at their boundaries.
 7. Check any performance change against the scalar implementation before
    relying on benchmark results. A faster layout is only valid if it preserves
    the same digits and reconstruction.
@@ -422,8 +423,9 @@ tests live in `crates/akita-types/src/proof/stage1.rs`. Together, these tests
 cover the asymmetric field boundary, the exact positive reach, the
 intersection of declared and representable source ranges, supported range
 proof bases, digit major layout, the wider `i16` bases, and agreement between
-scalar and AVX2 decomposition. These tests are useful evidence, but they do not
-replace checking that every protocol caller uses the right public parameters.
+scalar and SIMD decomposition. These tests are useful evidence, but they do
+not replace checking that every protocol caller uses the right public
+parameters.
 
 ## What to remember
 

@@ -179,6 +179,8 @@ const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
 const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
@@ -192,6 +194,8 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
 const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
