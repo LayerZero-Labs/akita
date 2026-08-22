@@ -290,6 +290,27 @@ fn matvec_tail_planning_and_runtime_selectors_agree_for_production_fields() {
 }
 
 #[test]
+fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
+    let q128 = SisModulusProfileId::Q128OffsetA7F7.modulus();
+    assert!(dense_i8_exact_ifma52_is_profitable(
+        q128, 512, 19_456, 64, true,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        q128, 512, 127, 64, true,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        q128, 512, 19_456, 64, false,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        SisModulusProfileId::Q64Offset59.modulus(),
+        512,
+        19_456,
+        64,
+        true,
+    ));
+}
+
+#[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(
         select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),

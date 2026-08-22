@@ -83,9 +83,12 @@ materializing an exact cache for digits that already fit in i8.
 
 For balanced digits with log basis 1 through 8:
 
-- Every backend uses the portable five-prime chunked i8 accumulation.
-- Each chunk stays within the base CRT capacity and reconstructs before the next
-  chunk, so complete rows do not need the tail prime.
+- Scalar, AVX2, and NEON backends use the portable five-prime chunked i8
+  accumulation.
+- An AVX-512IFMA backend uses one exact accumulation for a q128 row when the
+  three-prime IFMA product is too small but the product with 12289 fits.
+- All other rows stay chunked. Each chunk reconstructs before the next chunk,
+  so the complete row does not need the tail prime.
 - The block-parallel kernel still exposes independent blocks to Rayon when the
   workload has enough parallel work.
 
@@ -101,26 +104,31 @@ exact capacity check requires it.
 | 28 | 512 | 7 | 512 | 9,728 | 114 | 86 |
 | 30 | 512 | 7 | 1,024 | 19,456 | 114 | 171 |
 
-All three complete rows exceed the base capacity. The production kernel uses
-the listed bounded chunks rather than allocating an extra exact matrix cache.
+All three complete rows exceed the base capacity and fit after adding 12289.
+They therefore use exact IFMA52 accumulation on eligible AVX-512 hosts and the
+listed bounded chunks on scalar, AVX2, and NEON hosts.
 
 ### Measurement evidence
 
 Measurements were collected on 2026-08-21 from the PR 430 optimization branch.
 The measurements use the same production q128 schedule before and after the
-candidate exact-tail dispatch. The candidate was rejected.
+candidate exact-tail dispatch. Each current AVX-512 result is the median of
+three interleaved samples after one warmup.
 
 | Backend and workload | Chunked i8 commit | Exact commit | Change |
 | --- | ---: | ---: | ---: |
 | Apple NEON, q128 nv26 | 1.163 s | 2.489 s | 114% slower |
-| Zen 5 AVX-512IFMA, q128 nv26 | 1.333 s | 1.063 s | 20.2% faster |
+| Zen 5 AVX-512IFMA, q128 nv26 | 1.296 s | 1.052 s | 18.8% faster |
+| Zen 5 AVX-512IFMA, q128 nv28 | 5.158 s | 3.562 s | 30.9% faster |
+| Zen 5 AVX-512IFMA, q128 nv30 | 20.173 s | 14.359 s | 28.8% faster |
 | Zen 5 AVX2, q128 nv26 to nv30 | baseline | candidate | 29% to 32% faster |
 | Hosted 32-thread AVX2, q128 nv28 | baseline | candidate | 16.8% slower |
 
-The candidate also increased hosted setup time by 15% to 31% and prepared-cache
-memory by 25% to 49% across q128 cases. The result is CPU-dependent while the
-setup and memory costs are structural. Akita therefore keeps the portable
-chunked i8 route instead of adding a host or nv-specific dispatch rule.
+On the AVX-512 run, exact accumulation increased setup by 0.051 s, 0.101 s,
+and 0.239 s at nv26, nv28, and nv30. Prepared-cache bytes increased by 29% to
+32%, while peak RSS increased by 1.6% to 5.5%. The durable policy therefore
+selects this trade only from AVX-512IFMA capability and the exact capacity
+bound. It does not dispatch on a host name or a particular variable count.
 
 ## Q32 Experiment
 
