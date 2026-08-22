@@ -76,6 +76,10 @@ performance-sensitive arithmetic kernel that can affect an Akita verifier result
     must be bound and checked before use.
 14. Performance claims require measurements on named hardware. A proof does not
     imply that a replacement kernel is fast enough.
+15. Constant-time execution is not an acceptance criterion for this proof
+    program. Verifier kernels may branch, index tables, or repeat public work
+    based on public verifier inputs and public intermediate values. The proof
+    report must not present functional correctness as a side-channel claim.
 
 ### Non-Goals
 
@@ -90,6 +94,10 @@ performance-sensitive arithmetic kernel that can affect an Akita verifier result
   conditional on an input stream of independent uniform bits or bytes.
 - This work does not prove the external lattice estimators. It proves only the
   exact integer and fixed-point predicates that consume their certified bounds.
+- This work does not prove constant-time execution or make constant-time
+  execution a requirement for verifier kernels. A dependency's separate
+  constant-time claim remains separate from Akita's functional-correctness
+  claim.
 - This work does not duplicate fp128 add, subtract, or multiply proofs in Akita
   after Jolt becomes the production owner. Akita records those theorems as linked
   dependencies and proves the ring kernels that call them.
@@ -415,9 +423,25 @@ Every symbol needs these artifacts.
 When a required instruction is missing, prefer a small reviewed model extension
 when the instruction is natural and widely used. The extension must include the
 instruction datatype, decoder, execution semantics, lane-level simplification
-rule, positive simulator vectors, and invalid-encoding tests. It must be proposed
-upstream to s2n-bignum. Akita may pin a reviewed fork while the upstream change is
-pending.
+rule, positive simulator vectors, invalid-encoding tests, and real-machine
+cosimulation. For loads and stores, tests must cover the exact memory width,
+register wraparound, addressing modes, writeback, and fault or invalid-encoding
+conditions. The mathematical definition should be short enough to review by
+hand. An independently stated lane or memory-layout lemma must connect that
+definition to the expanded form used by proof automation.
+
+The first expected x86 extensions are `VPSHUFHW`, `VPSHUFLW`, and, if the
+verifier's final object contains it, `VPMOVSXBW`. The first expected AArch64
+extensions are `LD4`, `ST4`, and `SHSUB`. The exact production disassembly is the
+source of truth. Compiler intrinsic names alone do not establish which model
+extensions are needed.
+
+Every extension must be proposed upstream to s2n-bignum as a generic processor
+model change. Akita may pin a reviewed fork while the upstream change is pending,
+but the production proof profile must record that fork and must move back to an
+upstream revision after acceptance. The model review is part of the trust
+boundary: a theorem using a new instruction proves behavior according to the new
+HOL definition, so an incorrect definition can support an incorrect theorem.
 
 A kernel rewrite is acceptable when it uses an already modeled sequence and does
 not regress the relevant benchmark. A rewrite made only to avoid proof work is not
@@ -639,8 +663,9 @@ spec.
    security size of the accepted set. Those are separate named targets.
 7. A deterministic sampler theorem does not prove that SHAKE behaves as a random
    oracle. The cryptographic assumption must remain visible.
-8. Variable-time public challenge rejection is not a secret timing leak, but the
-   theorem and documentation must say that it is variable time.
+8. Constant-time execution is out of scope. Public challenge rejection and other
+   verifier kernels may be variable time. The documentation must state this so a
+   functional-correctness theorem is not mistaken for a side-channel theorem.
 9. Adding instruction semantics expands the trusted model. Upstream review,
    decoder tests, simulator vectors, and revision pins are required.
 10. Disabling IFMA52 for verifier work may have a measurable cost on capable
