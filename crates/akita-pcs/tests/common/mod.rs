@@ -18,7 +18,7 @@ use akita_prover::{commit_setup_prefix, AkitaProverSetup};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
-    canonical_base_field_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
+    canonical_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
     AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
     GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
     SetupPrefixVerifierRegistry, SetupSumcheckProof,
@@ -706,7 +706,8 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let shape = proof.shape();
         assert_eq!(
             shape,
-            canonical_base_field_proof_shape(&schedule).expect("canonical schedule proof shape"),
+            canonical_proof_shape(&schedule, &opening_layout, 1)
+                .expect("canonical schedule proof shape"),
             "a produced proof must have the verifier's canonical schedule-derived shape"
         );
         let mut bytes = Vec::new();

@@ -1,5 +1,7 @@
 use super::*;
-use crate::{CommittedGroupParams, FoldSchedule};
+use crate::{
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningMethod, PolynomialGroupLayout,
+};
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
 pub const SETUP_SUMCHECK_DEGREE: usize = 2;
@@ -40,6 +42,35 @@ impl ExtensionOpeningReductionShape {
             sumcheck: uniform_sumcheck_shape(num_rounds, EXTENSION_OPENING_REDUCTION_DEGREE),
         }
     }
+}
+
+/// Derive the only accepted extension-opening reduction shape for one opening batch.
+pub fn canonical_extension_opening_reduction_shape(
+    opening_layout: &OpeningClaimsLayout,
+    extension_degree: usize,
+) -> Result<ExtensionOpeningReductionShape, AkitaError> {
+    if extension_degree <= 1 || !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "extension opening degree must be a power of two greater than one".to_string(),
+        ));
+    }
+    opening_layout.check()?;
+    let split_bits = extension_degree.trailing_zeros() as usize;
+    let num_rounds = opening_layout
+        .max_num_vars()
+        .checked_sub(split_bits)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "extension opening split exceeds the opening arity".to_string(),
+            )
+        })?;
+    let num_claims = opening_layout.num_total_polynomials();
+    let partials = extension_degree.checked_mul(num_claims).ok_or_else(|| {
+        AkitaError::InvalidSetup("extension opening partial count overflow".to_string())
+    })?;
+    Ok(ExtensionOpeningReductionShape::standard(
+        partials, num_rounds, num_claims,
+    ))
 }
 
 impl Valid for SetupProductSumcheckShape {
@@ -145,14 +176,41 @@ pub struct AkitaBatchedProofShape {
     pub terminal: TerminalLevelProofShape,
 }
 
-/// Derive the only accepted headerless proof shape for a base-field schedule.
-///
-/// This is the verifier-side owner for decoding proofs whose claim field is the
-/// base field. Proper extension fields add an extension-opening reduction shape
-/// and must use their configuration-specific derivation.
-pub fn canonical_base_field_proof_shape(
+/// Derive the only accepted headerless proof shape for a schedule and opening layout.
+pub fn canonical_proof_shape(
     schedule: &FoldSchedule,
+    root_opening_layout: &OpeningClaimsLayout,
+    extension_degree: usize,
 ) -> Result<AkitaBatchedProofShape, AkitaError> {
+    if !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "proof-shape extension degree must be a nonzero power of two".to_string(),
+        ));
+    }
+
+    fn level_extension_shape(
+        params: &CommittedGroupParams,
+        opening_layout: &OpeningClaimsLayout,
+        extension_degree: usize,
+    ) -> Result<Option<ExtensionOpeningReductionShape>, AkitaError> {
+        let first_method = params.group_params(opening_layout, 0)?.opening_method();
+        for group_index in 1..opening_layout.num_groups() {
+            if params
+                .group_params(opening_layout, group_index)?
+                .opening_method()
+                != first_method
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "one fold cannot mix opening-method families".to_string(),
+                ));
+            }
+        }
+        if extension_degree == 1 || !matches!(first_method, OpeningMethod::EvaluationTrace) {
+            return Ok(None);
+        }
+        canonical_extension_opening_reduction_shape(opening_layout, extension_degree).map(Some)
+    }
+
     fn stage3_shape(
         successor: Option<&CommittedGroupParams>,
     ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
@@ -178,6 +236,8 @@ pub fn canonical_base_field_proof_shape(
 
     fn level_shape(
         params: &CommittedGroupParams,
+        opening_layout: &OpeningClaimsLayout,
+        extension_degree: usize,
         output_witness_len: usize,
         successor: Option<&CommittedGroupParams>,
     ) -> Result<LevelProofShape, AkitaError> {
@@ -196,7 +256,11 @@ pub fn canonical_base_field_proof_shape(
             None => NextWitnessBindingShape::TerminalInnerState,
         };
         Ok(LevelProofShape {
-            extension_opening_reduction: None,
+            extension_opening_reduction: level_extension_shape(
+                params,
+                opening_layout,
+                extension_degree,
+            )?,
             opening_payload_coeffs: params
                 .opening_payload_geometry()?
                 .transmitted_coefficients(),
@@ -211,26 +275,43 @@ pub fn canonical_base_field_proof_shape(
     let root_successor = schedule.recursive_folds.first().map(|step| &step.params);
     let root = level_shape(
         &schedule.root.params,
+        root_opening_layout,
+        extension_degree,
         schedule.root.output_witness_len,
         root_successor,
     )?;
     let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
+    let mut predecessor_rounds =
+        crate::sumcheck_rounds(schedule.root.params.d_a(), schedule.root.output_witness_len);
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let successor = schedule
             .recursive_folds
             .get(index + 1)
             .map(|next| &next.params);
+        let opening_layout = step
+            .params
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
         recursive_folds.push(level_shape(
             &step.params,
+            &opening_layout,
+            extension_degree,
             step.output_witness_len,
             successor,
         )?);
+        predecessor_rounds = crate::sumcheck_rounds(step.params.d_a(), step.output_witness_len);
     }
     Ok(AkitaBatchedProofShape {
         root,
         recursive_folds,
         terminal: TerminalLevelProofShape {
-            extension_opening_reduction: None,
+            extension_opening_reduction: if extension_degree == 1 {
+                None
+            } else {
+                Some(canonical_extension_opening_reduction_shape(
+                    &OpeningClaimsLayout::new(predecessor_rounds, 1)?,
+                    extension_degree,
+                )?)
+            },
             terminal_response: schedule.terminal.response_shape.clone(),
         },
     })
@@ -724,16 +805,17 @@ impl Valid for AkitaBatchedProofShape {
 }
 
 impl AkitaBatchedProofShape {
-    /// Reject a base-field proof shape whose aggregate declared payload cannot
-    /// fit in the bytes available to the proof decoder.
-    pub fn validate_base_field_decode_budget(
+    /// Reject a proof shape whose aggregate declared field payload cannot fit
+    /// in the bytes available to the proof decoder.
+    pub fn validate_decode_budget(
         &self,
         available_bytes: usize,
-        field_bytes: usize,
+        base_field_bytes: usize,
+        extension_field_bytes: usize,
     ) -> Result<(), SerializationError> {
-        if field_bytes == 0 {
+        if base_field_bytes == 0 || extension_field_bytes == 0 {
             return Err(SerializationError::InvalidData(
-                "base field wire size must be nonzero".to_string(),
+                "base and extension field wire sizes must be nonzero".to_string(),
             ));
         }
         fn add(total: &mut usize, value: usize) -> Result<(), SerializationError> {
@@ -750,7 +832,7 @@ impl AkitaBatchedProofShape {
             }
             Ok(())
         }
-        fn add_extension(
+        fn add_extension_opening(
             total: &mut usize,
             shape: Option<&ExtensionOpeningReductionShape>,
         ) -> Result<(), SerializationError> {
@@ -761,55 +843,80 @@ impl AkitaBatchedProofShape {
             }
             Ok(())
         }
-        fn add_level(total: &mut usize, shape: &LevelProofShape) -> Result<(), SerializationError> {
-            add_extension(total, shape.extension_opening_reduction.as_ref())?;
-            add(total, shape.opening_payload_coeffs)?;
+        fn add_level(
+            base: &mut usize,
+            extension: &mut usize,
+            shape: &LevelProofShape,
+        ) -> Result<(), SerializationError> {
+            add_extension_opening(extension, shape.extension_opening_reduction.as_ref())?;
+            add(base, shape.opening_payload_coeffs)?;
             for stage in &shape.stage1_stages {
                 let (rounds, stored_coefficients) = stage.sumcheck_proof;
                 add(
-                    total,
+                    extension,
                     rounds.checked_mul(stored_coefficients).ok_or_else(|| {
                         SerializationError::InvalidData(
                             "stage-1 proof shape field count overflow".to_string(),
                         )
                     })?,
                 )?;
-                add(total, stage.child_claims)?;
+                add(extension, stage.child_claims)?;
             }
-            add(total, 1)?;
-            add_sumcheck(total, &shape.stage2_sumcheck_proof)?;
+            add(extension, 1)?;
+            if let Some(norm) = &shape.stage1_norm {
+                add(extension, norm.subclaims)?;
+                add(extension, norm.virtual_evaluations)?;
+                add_sumcheck(extension, &norm.sumcheck)?;
+            }
+            add_sumcheck(extension, &shape.stage2_sumcheck_proof)?;
             match shape.next_witness_binding {
-                NextWitnessBindingShape::OuterPayload { coeffs } => add(total, coeffs)?,
+                NextWitnessBindingShape::OuterPayload { coeffs } => add(base, coeffs)?,
                 NextWitnessBindingShape::TerminalInnerState => {}
             }
-            add(total, 1)?;
+            add(extension, 1)?;
             if let Some(stage3) = &shape.stage3_sumcheck {
-                add(total, 2)?;
-                add_sumcheck(total, &stage3.sumcheck)?;
+                add(extension, 2)?;
+                add_sumcheck(extension, &stage3.sumcheck)?;
             }
             Ok(())
         }
 
-        let mut field_elements = 0usize;
-        add_level(&mut field_elements, &self.root)?;
+        let mut base_field_elements = 0usize;
+        let mut extension_field_elements = 0usize;
+        add_level(
+            &mut base_field_elements,
+            &mut extension_field_elements,
+            &self.root,
+        )?;
         for shape in &self.recursive_folds {
-            add_level(&mut field_elements, shape)?;
+            add_level(
+                &mut base_field_elements,
+                &mut extension_field_elements,
+                shape,
+            )?;
         }
-        add_extension(
-            &mut field_elements,
+        add_extension_opening(
+            &mut extension_field_elements,
             self.terminal.extension_opening_reduction.as_ref(),
         )?;
         add(
-            &mut field_elements,
+            &mut base_field_elements,
             self.terminal.terminal_response.layout.e_field_elems(),
         )?;
         add(
-            &mut field_elements,
+            &mut base_field_elements,
             self.terminal.terminal_response.layout.t_field_elems(),
         )?;
-        let required_bytes = field_elements.checked_mul(field_bytes).ok_or_else(|| {
-            SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
-        })?;
+        let required_bytes = base_field_elements
+            .checked_mul(base_field_bytes)
+            .and_then(|base_bytes| {
+                extension_field_elements
+                    .checked_mul(extension_field_bytes)
+                    .and_then(|extension_bytes| base_bytes.checked_add(extension_bytes))
+            })
+            .ok_or_else(|| {
+                SerializationError::InvalidData("aggregate proof byte budget overflow".to_string())
+            })?;
         if required_bytes > available_bytes {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(required_bytes).unwrap_or(u64::MAX),
