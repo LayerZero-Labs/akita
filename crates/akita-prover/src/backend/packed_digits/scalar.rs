@@ -15,6 +15,28 @@ pub(super) fn encode_at(storage: &mut [u8], index: usize, bit_width: u8, digit: 
     }
 }
 
+/// Encode one byte-aligned block of at most 64 digits.
+///
+/// Sixty-four digits always occupy an integral number of bytes for every
+/// supported width, so callers can encode separate blocks concurrently.
+#[inline]
+pub(super) fn encode_block(source: &[i8], bit_width: u8, output: &mut [u8]) {
+    debug_assert!(source.len() <= DIGITS_PER_BLOCK);
+    debug_assert_eq!(
+        output.len(),
+        (source.len() * usize::from(bit_width)).div_ceil(8)
+    );
+    if bit_width == 8 {
+        for (slot, &digit) in output.iter_mut().zip(source) {
+            *slot = digit as u8;
+        }
+        return;
+    }
+    for (index, &digit) in source.iter().enumerate() {
+        encode_at(output, index, bit_width, digit);
+    }
+}
+
 #[inline]
 pub(super) fn decode_at(storage: &[u8], index: usize, bit_width: u8) -> i8 {
     let bit_offset = index * usize::from(bit_width);

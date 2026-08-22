@@ -45,6 +45,18 @@ fn round_trips_every_signed_width_and_tail_shape() {
     }
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_block_encoder_round_trips_every_width_and_a_partial_tail() {
+    const LEN: usize = (1 << 16) + 13;
+    let mut rng = StdRng::seed_from_u64(0x7061_636b_6564);
+    for bit_width in 1..=8 {
+        let digits = random_digits(&mut rng, LEN, bit_width);
+        let packed = PackedSignedDigits::from_i8_digits(digits.clone(), bit_width).unwrap();
+        assert_eq!(packed.decode(), digits, "bit width {bit_width}");
+    }
+}
+
 #[test]
 fn rejects_widths_and_digits_that_do_not_fit() {
     for bit_width in [0, 9, u8::MAX] {
@@ -152,6 +164,22 @@ fn unaligned_subview_iteration_matches_the_source_and_zero_suffix() {
         digits.len() - 13
     );
     assert_eq!(decoded, expected);
+}
+
+#[test]
+fn unaligned_subview_full_block_decode_matches_the_source() {
+    let digits = (0..160)
+        .map(|index| (index % 16) as i8 - 8)
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 5).unwrap();
+    let view = packed.view().slice(13..141).unwrap();
+    let mut decoded = [99; DIGITS_PER_BLOCK];
+
+    assert_eq!(
+        view.decode_block(0, &mut decoded).unwrap(),
+        DIGITS_PER_BLOCK
+    );
+    assert_eq!(decoded.as_slice(), &digits[13..77]);
 }
 
 #[test]

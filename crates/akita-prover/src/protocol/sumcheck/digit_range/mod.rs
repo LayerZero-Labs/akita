@@ -222,13 +222,26 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
     ///
     /// Returns an error if the witness length, domain, or equality point are
     /// inconsistent.
-    pub(crate) fn new(
-        digit_witness: impl Into<PackedSignedDigits>,
+    pub fn new(
+        digit_witness: std::sync::Arc<[i8]>,
         plan: DigitRangePlan,
         domain: FlatBooleanDomain,
         equality_point: DigitRangeEqualityPoint<E>,
     ) -> Result<Self, AkitaError> {
-        let digit_witness = digit_witness.into();
+        Self::from_packed_digits(
+            PackedSignedDigits::from_i8_digits_auto(digit_witness.as_ref().to_vec()),
+            plan,
+            domain,
+            equality_point,
+        )
+    }
+
+    pub(crate) fn from_packed_digits(
+        digit_witness: PackedSignedDigits,
+        plan: DigitRangePlan,
+        domain: FlatBooleanDomain,
+        equality_point: DigitRangeEqualityPoint<E>,
+    ) -> Result<Self, AkitaError> {
         equality_point.validate_domain(domain)?;
         let low_variable_count = equality_point.low_variable_count();
         let high_variable_count = domain.num_vars() - low_variable_count;
