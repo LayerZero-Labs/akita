@@ -12,6 +12,7 @@ policy and the checker use the same live set in
 | Spec | Status | Why it remains live |
 |------|--------|---------------------|
 | [`akita-compute-backend-metal`](../../../specs/akita-compute-backend-metal.md) | active | Metal and hybrid backend work remains open. |
+| [`certified-planner-architecture`](../../../specs/certified-planner-architecture.md) | proposed | Defines the target exact guided search and phased commitment workload architecture. |
 | [`quotient-free-tail-ring-relations`](../../../specs/quotient-free-tail-ring-relations.md) | active | Defines reduced evaluation and its bounded quotient-free tail cutover. |
 | [`quotient-free-tail-ring-relations-implementation`](../../../specs/quotient-free-tail-ring-relations-implementation.md) | active | Defines the implementation architecture and acceptance contract for the quotient-free tail cutover. |
 | [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | implemented | Defines the current witness chunk partition contract. |
