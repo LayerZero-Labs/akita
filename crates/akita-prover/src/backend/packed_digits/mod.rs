@@ -37,6 +37,15 @@ impl SignedDigitBounds {
     pub(crate) fn positive_max(self) -> u8 {
         self.positive_max
     }
+
+    /// Whether every observed digit lies in the balanced base-`2^log_basis`
+    /// interval `[-2^(log_basis - 1), 2^(log_basis - 1) - 1]`.
+    pub(crate) fn fits_balanced_log_basis(self, log_basis: u32) -> bool {
+        let Some(abs_bound) = akita_types::balanced_signed_digit_abs_bound(log_basis) else {
+            return false;
+        };
+        u64::from(self.negative_abs_max) <= abs_bound && u64::from(self.positive_max) < abs_bound
+    }
 }
 
 /// Immutable exact-width two's-complement packed signed digits.

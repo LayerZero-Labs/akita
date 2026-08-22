@@ -186,10 +186,7 @@ impl CpuBackend {
             let known_balanced = known_balanced_log_basis
                 .is_some_and(|source_log_basis| log_basis_inner >= source_log_basis);
             let bounds = digits.bounds();
-            let scheduled_bound = balanced_signed_digit_abs_bound(log_basis_inner)
-                .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
-            let stored_is_balanced = u64::from(bounds.negative_abs_max()) <= scheduled_bound
-                && u64::from(bounds.positive_max()) < scheduled_bound;
+            let stored_is_balanced = bounds.fits_balanced_log_basis(log_basis_inner);
             if known_balanced || stored_is_balanced {
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(

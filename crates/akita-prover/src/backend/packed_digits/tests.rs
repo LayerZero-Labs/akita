@@ -99,6 +99,19 @@ fn automatic_width_is_the_smallest_exact_signed_width() {
 }
 
 #[test]
+fn observed_bounds_certify_the_asymmetric_balanced_interval() {
+    let basis_three = PackedSignedDigits::from_i8_digits_auto(vec![-4, 3]);
+    assert!(basis_three.bounds().fits_balanced_log_basis(3));
+
+    let negative_overflow = PackedSignedDigits::from_i8_digits_auto(vec![-5, 0]);
+    assert!(!negative_overflow.bounds().fits_balanced_log_basis(3));
+
+    let positive_overflow = PackedSignedDigits::from_i8_digits_auto(vec![4]);
+    assert!(!positive_overflow.bounds().fits_balanced_log_basis(3));
+    assert!(!basis_three.bounds().fits_balanced_log_basis(0));
+}
+
+#[test]
 fn zero_padding_is_metadata_not_encoded_storage() {
     let digits = (0..70).map(|index| (index % 4) as i8 - 2).collect();
     let packed = PackedSignedDigits::from_i8_digits(digits, 2).unwrap();
