@@ -650,7 +650,6 @@ where
         let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
             resolved.schedule(),
             &root_opening_layout,
-            akita_types::BasisMode::Lagrange,
         )
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         proof_shape.validate_grinding_plan(&grinding_plan)?;

@@ -202,7 +202,7 @@ pub use transcript::AppendToTranscript;
 pub use transcript_grinding::{
     grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol,
+    GrindingPlan, GrindingPolicy, GrindingQueryKind, GrindingRun, GrindingSite, SumcheckProtocol,
     TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
     FOLD_COORDINATE_ORACLE_REVISION, FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS,
     GRINDING_ENCODING_VERSION, GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS,

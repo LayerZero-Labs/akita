@@ -243,6 +243,10 @@ fn append_nonterminal(
         range.proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
     for (stage_index, stage_shape) in stages.iter().enumerate() {
         let stage = usize_to_u32(stage_index, "Stage 1 grinding stage")?;
+        let full_round_degree =
+            stage_shape.sumcheck_proof.1.checked_add(1).ok_or_else(|| {
+                AkitaError::InvalidSetup("Stage 1 full round degree overflow".into())
+            })?;
         for round in 0..stage_shape.sumcheck_proof.0 {
             append_sumcheck(
                 runs,
@@ -251,7 +255,7 @@ fn append_nonterminal(
                 level,
                 stage,
                 round,
-                stage_shape.sumcheck_proof.1,
+                full_round_degree,
             )?;
         }
         if stage_shape.child_claims > 0 {

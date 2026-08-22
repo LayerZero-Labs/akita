@@ -140,6 +140,12 @@ fn enumerate_suffixes(
                             )?
                         {
                             let direct_bytes = terminal_eor_bytes;
+                            let payload_bytes =
+                                direct_bytes.checked_add(terminal_bytes).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "unpruned traversal terminal proof size overflow".into(),
+                                    )
+                                })?;
                             terminal.estimated_direct_payload_bytes = direct_bytes;
                             schedules.push(ScheduleCandidate {
                                 first_direct_setup_field_len: std::num::NonZeroUsize::new(
@@ -148,23 +154,7 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                payload_bytes: direct_bytes
-                                    .checked_add(terminal_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal terminal proof size overflow"
-                                                .into(),
-                                        )
-                                    })?,
-                                nonce_bits: 0,
-                                proof_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
-                                    || {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal terminal proof size overflow"
-                                                .into(),
-                                        )
-                                    },
-                                )?,
+                                cost: PackedProofCost::new(payload_bytes, 0)?,
                                 setup_field_elements: terminal_setup_field_elements(
                                     &terminal.params,
                                 )?,
@@ -244,6 +234,7 @@ fn enumerate_suffixes(
                                 estimated_direct_payload_bytes: direct_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
+                            let cost = child.cost.checked_prepend(direct_bytes, 0)?;
                             schedules.push(ScheduleCandidate {
                                 first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                     akita_types::active_setup_field_len(
@@ -251,21 +242,7 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                payload_bytes: direct_bytes
-                                    .checked_add(child.payload_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
-                                nonce_bits: 0,
-                                proof_bytes: direct_bytes
-                                    .checked_add(child.payload_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
+                                cost,
                                 setup_field_elements: level_setup_field_elements(&params)?
                                     .max(child.setup_field_elements),
                                 folds,
@@ -399,50 +376,23 @@ pub(super) fn find_schedule(
                                 estimated_direct_payload_bytes: root_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
+                            let payload_cost = suffix.cost.checked_prepend(root_bytes, 0)?;
                             let mut candidate = ScheduleCandidate {
                                 first_direct_setup_field_len: Some(first_direct_setup_field_len),
-                                payload_bytes: root_bytes
-                                    .checked_add(suffix.payload_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
-                                nonce_bits: 0,
-                                proof_bytes: root_bytes
-                                    .checked_add(suffix.payload_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
+                                cost: payload_cost,
                                 setup_field_elements: level_setup_field_elements(&root_params)?
                                     .max(suffix.setup_field_elements),
                                 folds,
                                 terminal: Arc::clone(&suffix.terminal),
                             };
-                            candidate.nonce_bits =
+                            let nonce_bits =
                                 akita_schedules::planner_support::candidate_grinding_nonce_bits(
                                     policy,
                                     &schedule_key.opening_layout()?,
                                     &candidate.folds.to_vec(),
                                     candidate.terminal.as_ref(),
                                 )?;
-                            let nonce_bytes =
-                                akita_error::checked::div_ceil(candidate.nonce_bits, 8)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "invalid unpruned nonce stream byte width".into(),
-                                        )
-                                    })?;
-                            candidate.proof_bytes = candidate
-                                .payload_bytes
-                                .checked_add(nonce_bytes)
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned candidate proof size overflow".into(),
-                                    )
-                                })?;
+                            candidate.cost = candidate.cost.with_nonce_bits(nonce_bits)?;
                             complete.push(candidate);
                         }
                     }
@@ -466,7 +416,7 @@ pub(super) fn find_schedule(
             None
         };
     materialize_candidate_schedule(
-        selected.proof_bytes,
+        selected.cost.proof_bytes(),
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
         policy,

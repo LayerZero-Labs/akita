@@ -23,6 +23,70 @@ pub const GRINDING_QUERY_POLICY_REVISION: u16 = 1;
 pub const FOLD_COORDINATE_ORACLE_REVISION: u16 = 1;
 
 const GRINDING_PLAN_DOMAIN: &[u8] = b"akita/grinding-plan/v1";
+const GRINDING_POLICY_BYTES: usize = 17;
+
+/// Fixed protocol policy shared by plan hashing and descriptor binding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GrindingPolicy {
+    pub encoding_version: u16,
+    pub target_security_bits: u16,
+    pub proof_of_work_slack_bits: u8,
+    pub maximum_proof_of_work_bits: u8,
+    pub predicate_bytes: u8,
+    pub predicate_bit_order_tag: u8,
+    pub fold_response_attempt_bits: u8,
+    pub fold_response_attempts: u32,
+    pub query_policy_revision: u16,
+    pub fold_coordinate_oracle_revision: u16,
+}
+
+impl GrindingPolicy {
+    /// The only policy accepted by this protocol revision.
+    pub const ACTIVE: Self = Self {
+        encoding_version: GRINDING_ENCODING_VERSION,
+        target_security_bits: TRANSCRIPT_SECURITY_BITS,
+        proof_of_work_slack_bits: GRINDING_NONCE_SLACK_BITS,
+        maximum_proof_of_work_bits: MAX_GRINDING_BITS,
+        predicate_bytes: GRINDING_PREDICATE_BYTES,
+        predicate_bit_order_tag: GRINDING_LITTLE_ENDIAN_BIT_ORDER,
+        fold_response_attempt_bits: FOLD_RESPONSE_NONCE_BITS,
+        fold_response_attempts: FOLD_RESPONSE_ATTEMPTS,
+        query_policy_revision: GRINDING_QUERY_POLICY_REVISION,
+        fold_coordinate_oracle_revision: FOLD_COORDINATE_ORACLE_REVISION,
+    };
+
+    /// Fixed-width little-endian policy encoding.
+    #[must_use]
+    pub fn canonical_bytes(self) -> [u8; GRINDING_POLICY_BYTES] {
+        let mut out = [0u8; GRINDING_POLICY_BYTES];
+        out[0..2].copy_from_slice(&self.encoding_version.to_le_bytes());
+        out[2..4].copy_from_slice(&self.target_security_bits.to_le_bytes());
+        out[4] = self.proof_of_work_slack_bits;
+        out[5] = self.maximum_proof_of_work_bits;
+        out[6] = self.predicate_bytes;
+        out[7] = self.predicate_bit_order_tag;
+        out[8] = self.fold_response_attempt_bits;
+        out[9..13].copy_from_slice(&self.fold_response_attempts.to_le_bytes());
+        out[13..15].copy_from_slice(&self.query_policy_revision.to_le_bytes());
+        out[15..17].copy_from_slice(&self.fold_coordinate_oracle_revision.to_le_bytes());
+        out
+    }
+
+    pub(crate) fn from_canonical_bytes(bytes: [u8; GRINDING_POLICY_BYTES]) -> Self {
+        Self {
+            encoding_version: u16::from_le_bytes([bytes[0], bytes[1]]),
+            target_security_bits: u16::from_le_bytes([bytes[2], bytes[3]]),
+            proof_of_work_slack_bits: bytes[4],
+            maximum_proof_of_work_bits: bytes[5],
+            predicate_bytes: bytes[6],
+            predicate_bit_order_tag: bytes[7],
+            fold_response_attempt_bits: bytes[8],
+            fold_response_attempts: u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]),
+            query_policy_revision: u16::from_le_bytes([bytes[13], bytes[14]]),
+            fold_coordinate_oracle_revision: u16::from_le_bytes([bytes[15], bytes[16]]),
+        }
+    }
+}
 
 /// Security role of one ordered plan run.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -124,6 +188,17 @@ pub enum GrindingSite {
 }
 
 impl GrindingSite {
+    /// Security role determined by this logical site.
+    #[must_use]
+    pub const fn kind(self) -> GrindingQueryKind {
+        match self {
+            Self::FoldResponse { .. } => GrindingQueryKind::FoldResponse,
+            Self::FoldChallengeRoot { .. } => GrindingQueryKind::FoldChallengeRoot,
+            Self::FoldChallengeCoordinates { .. } => GrindingQueryKind::FoldChallengeCoordinates,
+            _ => GrindingQueryKind::ProofOfWork,
+        }
+    }
+
     fn validate(self) -> Result<(), AkitaError> {
         let invalid = match self {
             Self::EvaluationBatch
@@ -238,7 +313,6 @@ impl GrindingSite {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct GrindingRun {
     site: GrindingSite,
-    kind: GrindingQueryKind,
     loss_factor: u64,
     grind_bits: u8,
     nonce_bits: u8,
@@ -255,7 +329,7 @@ impl GrindingRun {
     /// Security role of this run.
     #[must_use]
     pub const fn kind(self) -> GrindingQueryKind {
-        self.kind
+        self.site.kind()
     }
 
     /// Conditional bad set loss factor, or zero for a non proof of work run.
@@ -288,6 +362,11 @@ impl GrindingRun {
         loss_factor: u64,
         nominal_capacity_bits: u32,
     ) -> Result<Self, AkitaError> {
+        if !matches!(site.kind(), GrindingQueryKind::ProofOfWork) {
+            return Err(AkitaError::InvalidSetup(
+                "special grinding sites cannot be proof-of-work runs".into(),
+            ));
+        }
         let grind_bits = grind_bits_for_loss(loss_factor, nominal_capacity_bits)?;
         let nonce_bits = if grind_bits == 0 {
             0
@@ -298,7 +377,6 @@ impl GrindingRun {
         };
         Ok(Self {
             site,
-            kind: GrindingQueryKind::ProofOfWork,
             loss_factor,
             grind_bits,
             nonce_bits,
@@ -311,7 +389,6 @@ impl GrindingRun {
     pub const fn fold_response(level: u32) -> Self {
         Self {
             site: GrindingSite::FoldResponse { level },
-            kind: GrindingQueryKind::FoldResponse,
             loss_factor: 0,
             grind_bits: 0,
             nonce_bits: FOLD_RESPONSE_NONCE_BITS,
@@ -324,7 +401,6 @@ impl GrindingRun {
     pub const fn fold_challenge_root(level: u32, group: u32) -> Self {
         Self {
             site: GrindingSite::FoldChallengeRoot { level, group },
-            kind: GrindingQueryKind::FoldChallengeRoot,
             loss_factor: 0,
             grind_bits: 0,
             nonce_bits: 0,
@@ -337,7 +413,6 @@ impl GrindingRun {
     pub const fn fold_challenge_coordinates(level: u32, group: u32, multiplicity: u64) -> Self {
         Self {
             site: GrindingSite::FoldChallengeCoordinates { level, group },
-            kind: GrindingQueryKind::FoldChallengeCoordinates,
             loss_factor: 0,
             grind_bits: 0,
             nonce_bits: 0,
@@ -347,15 +422,8 @@ impl GrindingRun {
 
     fn validate(self) -> Result<(), AkitaError> {
         self.site.validate()?;
-        match (self.kind, self.site) {
-            (GrindingQueryKind::ProofOfWork, site)
-                if !matches!(
-                    site,
-                    GrindingSite::FoldResponse { .. }
-                        | GrindingSite::FoldChallengeRoot { .. }
-                        | GrindingSite::FoldChallengeCoordinates { .. }
-                ) =>
-            {
+        match self.kind() {
+            GrindingQueryKind::ProofOfWork => {
                 if self.loss_factor == 0 || self.multiplicity != 1 {
                     return Err(AkitaError::InvalidSetup(
                         "proof-of-work run has invalid loss or multiplicity".into(),
@@ -376,23 +444,21 @@ impl GrindingRun {
                     ));
                 }
             }
-            (GrindingQueryKind::FoldResponse, GrindingSite::FoldResponse { .. })
+            GrindingQueryKind::FoldResponse
                 if self.loss_factor == 0
                     && self.grind_bits == 0
                     && self.nonce_bits == FOLD_RESPONSE_NONCE_BITS
                     && self.multiplicity == 1 => {}
-            (GrindingQueryKind::FoldChallengeRoot, GrindingSite::FoldChallengeRoot { .. })
+            GrindingQueryKind::FoldChallengeRoot
                 if self.loss_factor == 0
                     && self.grind_bits == 0
                     && self.nonce_bits == 0
                     && self.multiplicity == 1 => {}
-            (
-                GrindingQueryKind::FoldChallengeCoordinates,
-                GrindingSite::FoldChallengeCoordinates { .. },
-            ) if self.loss_factor == 0
-                && self.grind_bits == 0
-                && self.nonce_bits == 0
-                && self.multiplicity > 0 => {}
+            GrindingQueryKind::FoldChallengeCoordinates
+                if self.loss_factor == 0
+                    && self.grind_bits == 0
+                    && self.nonce_bits == 0
+                    && self.multiplicity > 0 => {}
             _ => {
                 return Err(AkitaError::InvalidSetup(
                     "grinding run kind and site do not match".into(),
@@ -403,7 +469,7 @@ impl GrindingRun {
     }
 
     fn append_canonical_bytes(self, out: &mut Vec<u8>) {
-        out.push(self.kind.tag());
+        out.push(self.kind().tag());
         self.site.append_canonical_bytes(out);
         out.extend_from_slice(&self.loss_factor.to_le_bytes());
         out.push(self.grind_bits);
@@ -424,7 +490,6 @@ pub struct GrindingPlan {
 #[derive(Clone, Copy)]
 struct GrindingPlanEntry {
     site: GrindingSite,
-    kind: GrindingQueryKind,
     nonce_bits: u8,
 }
 
@@ -447,7 +512,6 @@ impl<'a> GrindingPlanCursor<'a> {
         let run = *self.plan.runs.get(self.run_index)?;
         let entry = GrindingPlanEntry {
             site: run.site,
-            kind: run.kind,
             nonce_bits: run.nonce_bits,
         };
         self.run_offset += 1;
@@ -537,15 +601,10 @@ impl<'a> TranscriptNonceWriter<'a> {
         })
     }
 
-    /// Write the next expected logical entry and reject a site, kind, or width mismatch.
-    pub fn write(
-        &mut self,
-        site: GrindingSite,
-        kind: GrindingQueryKind,
-        value: u32,
-    ) -> Result<(), AkitaError> {
+    /// Write the next expected logical entry and reject a site or width mismatch.
+    pub fn write(&mut self, site: GrindingSite, value: u32) -> Result<(), AkitaError> {
         let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.kind != kind || !value_fits(value, entry.nonce_bits) {
+        if entry.site != site || !value_fits(value, entry.nonce_bits) {
             return Err(AkitaError::InvalidProof);
         }
         write_bits(&mut self.bytes, self.bit_offset, entry.nonce_bits, value);
@@ -564,7 +623,7 @@ impl<'a> TranscriptNonceWriter<'a> {
     ) -> Result<(), AkitaError> {
         loop {
             let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-            if entry.kind == GrindingQueryKind::FoldResponse {
+            if entry.site.kind() == GrindingQueryKind::FoldResponse {
                 if entry.site != site || !value_fits(value, entry.nonce_bits) {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -579,7 +638,7 @@ impl<'a> TranscriptNonceWriter<'a> {
     /// Finish the stream, requiring that no fold-response entry was omitted.
     pub fn finish(mut self) -> Result<TranscriptNonceStream, AkitaError> {
         while let Some(entry) = self.plan.next() {
-            if entry.kind == GrindingQueryKind::FoldResponse {
+            if entry.site.kind() == GrindingQueryKind::FoldResponse {
                 return Err(AkitaError::InvalidProof);
             }
             self.bit_offset += usize::from(entry.nonce_bits);
@@ -602,10 +661,10 @@ pub struct TranscriptNonceReader<'a> {
 }
 
 impl TranscriptNonceReader<'_> {
-    /// Read the next expected logical entry and reject a site or kind mismatch.
-    pub fn read(&mut self, site: GrindingSite, kind: GrindingQueryKind) -> Result<u32, AkitaError> {
+    /// Read the next expected logical entry and reject a site mismatch.
+    pub fn read(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
         let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
-        if entry.site != site || entry.kind != kind {
+        if entry.site != site {
             return Err(AkitaError::InvalidProof);
         }
         let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
@@ -622,7 +681,7 @@ impl TranscriptNonceReader<'_> {
             let entry = self.plan.next().ok_or(AkitaError::InvalidProof)?;
             let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
             self.bit_offset += usize::from(entry.nonce_bits);
-            if entry.kind == GrindingQueryKind::FoldResponse {
+            if entry.site.kind() == GrindingQueryKind::FoldResponse {
                 if entry.site != site {
                     return Err(AkitaError::InvalidProof);
                 }
@@ -639,7 +698,7 @@ impl TranscriptNonceReader<'_> {
         while let Some(entry) = self.plan.next() {
             let value = read_bits(self.stream.as_bytes(), self.bit_offset, entry.nonce_bits);
             self.bit_offset += usize::from(entry.nonce_bits);
-            if entry.kind == GrindingQueryKind::FoldResponse || value != 0 {
+            if entry.site.kind() == GrindingQueryKind::FoldResponse || value != 0 {
                 return Err(AkitaError::InvalidProof);
             }
         }
@@ -691,7 +750,7 @@ impl GrindingPlan {
         let mut expanded_query_count = 0u64;
         for run in &runs {
             run.validate()?;
-            if run.kind == GrindingQueryKind::ProofOfWork
+            if run.kind() == GrindingQueryKind::ProofOfWork
                 && run.grind_bits != grind_bits_for_loss(run.loss_factor, nominal_capacity_bits)?
             {
                 return Err(AkitaError::InvalidSetup(
@@ -753,7 +812,7 @@ impl GrindingPlan {
             .map_err(|_| AkitaError::InvalidSetup("grinding plan run count exceeds u32".into()))?;
         let mut out = Vec::new();
         out.extend_from_slice(GRINDING_PLAN_DOMAIN);
-        append_grinding_policy_bytes(&mut out);
+        out.extend_from_slice(&GrindingPolicy::ACTIVE.canonical_bytes());
         push_u32(&mut out, run_count);
         for run in &self.runs {
             run.append_canonical_bytes(&mut out);
@@ -838,389 +897,9 @@ pub fn ring_switch_alpha_loss_factor(
     polynomial_identity_loss_factor(degree_bound)
 }
 
-/// Append the fixed active policy bytes used by both plan digest and binding.
-pub(crate) fn append_grinding_policy_bytes(out: &mut Vec<u8>) {
-    out.extend_from_slice(&GRINDING_ENCODING_VERSION.to_le_bytes());
-    out.extend_from_slice(&TRANSCRIPT_SECURITY_BITS.to_le_bytes());
-    out.push(GRINDING_NONCE_SLACK_BITS);
-    out.push(MAX_GRINDING_BITS);
-    out.push(GRINDING_PREDICATE_BYTES);
-    out.push(GRINDING_LITTLE_ENDIAN_BIT_ORDER);
-    out.push(FOLD_RESPONSE_NONCE_BITS);
-    out.extend_from_slice(&FOLD_RESPONSE_ATTEMPTS.to_le_bytes());
-    out.extend_from_slice(&GRINDING_QUERY_POLICY_REVISION.to_le_bytes());
-    out.extend_from_slice(&FOLD_COORDINATE_ORACLE_REVISION.to_le_bytes());
-}
-
 fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_field::Prime128Offset275;
-    use akita_transcript::{
-        grinding_predicate_accepts, preview_grinding_predicate, search_grinding_nonce,
-        AkitaTranscript, Transcript,
-    };
-    use std::num::NonZeroU8;
-
-    fn stream_test_plan() -> GrindingPlan {
-        GrindingPlan::new(
-            vec![
-                GrindingRun::proof_of_work(GrindingSite::RingSwitchAlpha { level: 0 }, 2, 128)
-                    .unwrap(),
-                GrindingRun::fold_response(0),
-                GrindingRun::proof_of_work(GrindingSite::Tau0Point { level: 0 }, 4, 128).unwrap(),
-                GrindingRun::fold_response(1),
-            ],
-            128,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn one_proof_of_work_entry_searches_packs_and_replays() {
-        let site = GrindingSite::Tau0Point { level: 0 };
-        let run = GrindingRun::proof_of_work(site, 1, 127).unwrap();
-        let plan = GrindingPlan::new(vec![run], 127).unwrap();
-        assert_eq!(run.grind_bits(), 1);
-        assert_eq!(run.nonce_bits(), 8);
-
-        let mut prover =
-            AkitaTranscript::<Prime128Offset275>::prover(b"grinding-wire-test", b"instance");
-        let nonce = search_grinding_nonce(&prover, run.grind_bits(), run.nonce_bits()).unwrap();
-        let preview =
-            preview_grinding_predicate(&prover, run.grind_bits(), run.nonce_bits(), nonce).unwrap();
-
-        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
-        writer
-            .write(site, GrindingQueryKind::ProofOfWork, nonce)
-            .unwrap();
-        let stream = writer.finish().unwrap();
-        let wire = stream.as_bytes().to_vec();
-        let decoded = TranscriptNonceStream::from_bytes(wire, plan.total_nonce_bits()).unwrap();
-        let mut reader = decoded.reader(&plan).unwrap();
-        let decoded_nonce = reader.read(site, GrindingQueryKind::ProofOfWork).unwrap();
-        reader.finish().unwrap();
-        assert_eq!(decoded_nonce, nonce);
-
-        let prover_predicate = Transcript::grinding_predicate(
-            &mut prover,
-            akita_transcript::labels::CHALLENGE_TAU0,
-            run.grind_bits(),
-            run.nonce_bits(),
-            nonce,
-        )
-        .unwrap();
-        let mut verifier =
-            AkitaTranscript::<Prime128Offset275>::verifier(b"grinding-wire-test", b"instance");
-        let verifier_predicate = Transcript::grinding_predicate(
-            &mut verifier,
-            akita_transcript::labels::CHALLENGE_TAU0,
-            run.grind_bits(),
-            run.nonce_bits(),
-            decoded_nonce,
-        )
-        .unwrap();
-        assert_eq!(preview, prover_predicate);
-        assert_eq!(prover_predicate, verifier_predicate);
-        assert!(grinding_predicate_accepts(
-            &verifier_predicate,
-            NonZeroU8::new(run.grind_bits()).unwrap()
-        ));
-    }
-
-    #[test]
-    fn nonce_stream_is_little_endian_and_crosses_byte_boundaries() {
-        let plan = stream_test_plan();
-        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
-        writer
-            .write(
-                GrindingSite::RingSwitchAlpha { level: 0 },
-                GrindingQueryKind::ProofOfWork,
-                0xa5,
-            )
-            .unwrap();
-        writer
-            .write(
-                GrindingSite::FoldResponse { level: 0 },
-                GrindingQueryKind::FoldResponse,
-                0xabc,
-            )
-            .unwrap();
-        writer
-            .write(
-                GrindingSite::Tau0Point { level: 0 },
-                GrindingQueryKind::ProofOfWork,
-                0x101,
-            )
-            .unwrap();
-        writer
-            .write(
-                GrindingSite::FoldResponse { level: 1 },
-                GrindingQueryKind::FoldResponse,
-                0x123,
-            )
-            .unwrap();
-        let stream = writer.finish().unwrap();
-        assert_eq!(stream.bit_len(), 41);
-        assert_eq!(stream.as_bytes(), &[0xa5, 0xbc, 0x1a, 0x70, 0x24, 0x00]);
-
-        let mut reader = stream.reader(&plan).unwrap();
-        assert_eq!(
-            reader
-                .read(
-                    GrindingSite::RingSwitchAlpha { level: 0 },
-                    GrindingQueryKind::ProofOfWork,
-                )
-                .unwrap(),
-            0xa5
-        );
-        assert_eq!(
-            reader
-                .read(
-                    GrindingSite::FoldResponse { level: 0 },
-                    GrindingQueryKind::FoldResponse,
-                )
-                .unwrap(),
-            0xabc
-        );
-        assert_eq!(
-            reader
-                .read(
-                    GrindingSite::Tau0Point { level: 0 },
-                    GrindingQueryKind::ProofOfWork,
-                )
-                .unwrap(),
-            0x101
-        );
-        assert_eq!(
-            reader
-                .read(
-                    GrindingSite::FoldResponse { level: 1 },
-                    GrindingQueryKind::FoldResponse,
-                )
-                .unwrap(),
-            0x123
-        );
-        reader.finish().unwrap();
-    }
-
-    #[test]
-    fn inactive_entries_are_canonical_zero_and_fold_width_is_checked() {
-        let plan = stream_test_plan();
-        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
-        writer
-            .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
-            .unwrap();
-        assert!(writer
-            .write_next_fold_response(
-                GrindingSite::FoldResponse { level: 1 },
-                FOLD_RESPONSE_ATTEMPTS,
-            )
-            .is_err());
-
-        let mut writer = TranscriptNonceWriter::new(&plan).unwrap();
-        writer
-            .write_next_fold_response(GrindingSite::FoldResponse { level: 0 }, 17)
-            .unwrap();
-        writer
-            .write_next_fold_response(GrindingSite::FoldResponse { level: 1 }, 23)
-            .unwrap();
-        let stream = writer.finish().unwrap();
-        let mut reader = stream.reader(&plan).unwrap();
-        assert_eq!(
-            reader
-                .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
-                .unwrap(),
-            17
-        );
-        assert_eq!(
-            reader
-                .read_next_fold_response(GrindingSite::FoldResponse { level: 1 })
-                .unwrap(),
-            23
-        );
-        reader.finish().unwrap();
-
-        let mut malleable = stream.as_bytes().to_vec();
-        malleable[0] |= 1;
-        let malleable = TranscriptNonceStream::from_bytes(malleable, stream.bit_len()).unwrap();
-        assert!(malleable
-            .reader(&plan)
-            .unwrap()
-            .read_next_fold_response(GrindingSite::FoldResponse { level: 0 })
-            .is_err());
-    }
-
-    #[test]
-    fn nonce_stream_rejects_wrong_length_and_nonzero_padding() {
-        assert!(TranscriptNonceStream::from_bytes(vec![0], 9).is_err());
-        assert!(TranscriptNonceStream::from_bytes(vec![0, 0x80], 9).is_err());
-        assert!(TranscriptNonceStream::from_bytes(vec![0, 1], 9).is_ok());
-    }
-
-    #[test]
-    fn current_capacity_prices_exact_nominal_loss_bits() {
-        for (loss, expected) in [(1, 0), (2, 1), (3, 2), (4, 2), (5, 3), (u64::MAX, 64)] {
-            let actual = if expected > u32::from(MAX_GRINDING_BITS) {
-                grind_bits_for_loss(loss, 128).expect_err("oversized target")
-            } else {
-                let actual = grind_bits_for_loss(loss, 128).expect("supported target");
-                assert_eq!(u32::from(actual), expected);
-                continue;
-            };
-            assert!(matches!(actual, AkitaError::InvalidSetup(_)));
-        }
-    }
-
-    #[test]
-    fn nominal_security_inequality_holds_for_every_supported_target() {
-        let losses = [
-            1,
-            2,
-            3,
-            4,
-            5,
-            (1u64 << (MAX_GRINDING_BITS - 1)) - 1,
-            1u64 << (MAX_GRINDING_BITS - 1),
-            (1u64 << MAX_GRINDING_BITS) - 1,
-            1u64 << MAX_GRINDING_BITS,
-        ];
-        for loss in losses {
-            let grind = grind_bits_for_loss(loss, 128).expect("supported loss");
-            assert!(u128::from(loss) <= (1u128 << grind));
-        }
-    }
-
-    #[test]
-    fn nonce_slack_provisions_exactly_128_expected_trials() {
-        for grind in 1..=MAX_GRINDING_BITS {
-            let nonce_bits = grind + GRINDING_NONCE_SLACK_BITS;
-            assert_eq!((1u64 << nonce_bits) / (1u64 << grind), 128);
-            let failure =
-                (1.0 - 2f64.powi(-i32::from(grind))).powf(2f64.powi(i32::from(nonce_bits)));
-            assert!(failure <= (-128f64).exp());
-        }
-    }
-
-    #[test]
-    fn plan_encoding_covers_every_discriminator() {
-        let capacity = 128;
-        let sites = [
-            GrindingSite::EvaluationBatch,
-            GrindingSite::ExtensionOpeningPoint,
-            GrindingSite::ExtensionOpeningClaimBatch,
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::ExtensionOpeningReduction,
-                level: u32::MAX,
-                stage: 1,
-                round: 2,
-            },
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::Stage1,
-                level: 3,
-                stage: 4,
-                round: 5,
-            },
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::PhysicalL2,
-                level: 6,
-                stage: 7,
-                round: 8,
-            },
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::Stage2,
-                level: 9,
-                stage: 10,
-                round: 11,
-            },
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::Stage3,
-                level: 12,
-                stage: 13,
-                round: 14,
-            },
-            GrindingSite::RingSwitchAlpha { level: 1 },
-            GrindingSite::Tau0Point { level: 1 },
-            GrindingSite::Tau1Point { level: 1 },
-            GrindingSite::Stage1InterstageBatch { level: 1, stage: 2 },
-            GrindingSite::L2SubclaimBatch { level: 1 },
-            GrindingSite::L2NormMerge { level: 1 },
-            GrindingSite::L2VirtualBatch { level: 1 },
-            GrindingSite::CompressionBinary { level: 1 },
-            GrindingSite::Stage2Batch { level: 1 },
-        ];
-        let mut runs = sites
-            .into_iter()
-            .map(|site| GrindingRun::proof_of_work(site, 3, capacity).unwrap())
-            .collect::<Vec<_>>();
-        runs.push(GrindingRun::fold_response(2));
-        runs.push(GrindingRun::fold_challenge_root(2, 3));
-        runs.push(GrindingRun::fold_challenge_coordinates(2, 3, 4));
-        let plan = GrindingPlan::new(runs, capacity).unwrap();
-        let bytes = plan.canonical_bytes().unwrap();
-        assert!(bytes.starts_with(GRINDING_PLAN_DOMAIN));
-        assert_eq!(plan.expanded_query_count(), 23);
-        assert_eq!(plan.total_nonce_bits(), 17 * 9 + 12);
-        assert_eq!(
-            plan.digest().unwrap(),
-            [
-                201, 71, 193, 56, 131, 65, 105, 160, 79, 152, 66, 44, 189, 232, 205, 168, 168, 208,
-                84, 23, 96, 48, 174, 168, 14, 112, 165, 199, 177, 190, 157, 156,
-            ]
-        );
-    }
-
-    #[test]
-    fn ring_switch_loss_uses_the_opening_polynomial_dimension() {
-        assert_eq!(
-            ring_switch_alpha_loss_factor(OpeningMethod::EvaluationTrace, 64).unwrap(),
-            127
-        );
-        assert_eq!(
-            ring_switch_alpha_loss_factor(
-                OpeningMethod::SubringCoefficientPacking {
-                    challenge_subring_dimension: 16,
-                },
-                64,
-            )
-            .unwrap(),
-            31
-        );
-    }
-
-    #[test]
-    fn malformed_kind_site_and_reserved_sentinel_are_rejected() {
-        let mismatched = GrindingRun {
-            site: GrindingSite::FoldResponse { level: 0 },
-            kind: GrindingQueryKind::ProofOfWork,
-            loss_factor: 1,
-            grind_bits: 0,
-            nonce_bits: 0,
-            multiplicity: 1,
-        };
-        assert!(GrindingPlan::new(vec![mismatched], 128).is_err());
-
-        let mut underpriced =
-            GrindingRun::proof_of_work(GrindingSite::RingSwitchAlpha { level: 0 }, 3, 128).unwrap();
-        underpriced.grind_bits = 1;
-        underpriced.nonce_bits = 8;
-        assert!(GrindingPlan::new(vec![underpriced], 128).is_err());
-
-        let reserved = GrindingRun::proof_of_work(
-            GrindingSite::SumcheckRound {
-                protocol: SumcheckProtocol::Stage2,
-                level: u32::MAX,
-                stage: 0,
-                round: 0,
-            },
-            3,
-            128,
-        )
-        .unwrap();
-        assert!(GrindingPlan::new(vec![reserved], 128).is_err());
-    }
-}
+mod tests;

@@ -9,7 +9,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     CanonicalBytes, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -381,7 +381,14 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
 
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, Some(&schedule));
+    let grinding_plan = derive_transcript_grinding_plan::<ProofCfg>(&schedule, &opening_layout)
+        .expect("profile grinding plan");
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        Some(&schedule),
+        &grinding_plan,
+    );
     if validate_against_planner {
         report_proof_size_against_planner(
             label,

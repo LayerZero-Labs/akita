@@ -10,7 +10,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{
     HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo,
@@ -130,7 +130,30 @@ fn run_prove<
     };
 
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
+    let opening_batch =
+        OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
+    let runtime_schedule = if plan.is_none() {
+        Some(
+            Cfg::resolve_catalog_row_for_opening(&opening_batch)
+                .expect("runtime schedule")
+                .into_schedule(),
+        )
+    } else {
+        None
+    };
+    let effective_schedule = plan.unwrap_or_else(|| {
+        runtime_schedule
+            .as_ref()
+            .expect("runtime schedule was resolved")
+    });
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
+        .expect("profile grinding plan");
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        Some(effective_schedule),
+        &grinding_plan,
+    );
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -163,24 +186,20 @@ fn run_prove<
             Cfg::decomposition().field_bits(),
         );
     } else {
-        let opening_batch = OpeningClaimsLayout::from_root_groups(&[], group_layout)
-            .expect("same-point opening batch");
-        let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
-            .expect("runtime schedule")
-            .into_schedule();
+        let schedule = effective_schedule;
         if validate_against_planner {
             report_proof_size_against_planner(
                 label,
                 &proof,
-                planned_payload_bytes::<Cfg>(&schedule, group_layout),
+                planned_payload_bytes::<Cfg>(schedule, group_layout),
                 "runtime schedule",
                 setup_contribution_mode,
-                &schedule,
+                schedule,
             );
         }
         emit_runtime_schedule_summary(
             label,
-            &schedule,
+            schedule,
             group_layout,
             Cfg::decomposition().field_bits(),
             Cfg::EXT_DEGREE,
@@ -189,7 +208,7 @@ fn run_prove<
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
-            &schedule,
+            schedule,
             Cfg::decomposition().field_bits(),
         );
     }

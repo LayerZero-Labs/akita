@@ -54,7 +54,8 @@ pub fn fold_challenge_sample_label(
 }
 
 pub trait FoldDraw {
-    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8]) -> Vec<u8>;
+    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8])
+        -> [u8; FOLD_CHALLENGE_SEED_LEN];
 
     fn draw_folding_challenges(
         &mut self,
@@ -166,10 +167,14 @@ impl<'a> PreviewFoldDraw<'a> {
 }
 
 impl FoldDraw for PreviewFoldDraw<'_> {
-    fn absorb_and_squeeze(&mut self, _label: &[u8], payload: &[u8]) -> Vec<u8> {
+    fn absorb_and_squeeze(
+        &mut self,
+        _label: &[u8],
+        payload: &[u8],
+    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         self.absorbs.push(payload.to_vec());
         let absorbs = self.absorbs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        self.preview.preview_challenge_block(&absorbs).to_vec()
+        self.preview.preview_challenge_block(&absorbs)
     }
 }
 
@@ -192,10 +197,13 @@ where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    fn absorb_and_squeeze(&mut self, label: &[u8], payload: &[u8]) -> Vec<u8> {
+    fn absorb_and_squeeze(
+        &mut self,
+        label: &[u8],
+        payload: &[u8],
+    ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
         self.transcript.append_bytes(label, payload);
-        self.transcript
-            .challenge_bytes(CHALLENGE_SPARSE_CHALLENGE, FOLD_CHALLENGE_SEED_LEN)
+        self.transcript.challenge_block(CHALLENGE_SPARSE_CHALLENGE)
     }
 }
 
@@ -216,9 +224,13 @@ mod tests {
     }
 
     impl FoldDraw for CapturingDraw {
-        fn absorb_and_squeeze(&mut self, _label: &[u8], payload: &[u8]) -> Vec<u8> {
+        fn absorb_and_squeeze(
+            &mut self,
+            _label: &[u8],
+            payload: &[u8],
+        ) -> [u8; FOLD_CHALLENGE_SEED_LEN] {
             self.payloads.push(payload.to_vec());
-            vec![7; FOLD_CHALLENGE_SEED_LEN]
+            [7; FOLD_CHALLENGE_SEED_LEN]
         }
     }
 

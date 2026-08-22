@@ -8,11 +8,12 @@ use akita_types::{
     layout::proof_size::field_bytes,
     sis::{compute_num_digits_field_width, num_digits_for_bound},
     AkitaBatchedProof, CommitmentPayloadMode, CommitmentSliceCount, CommittedGroupParams,
-    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, GroupOpenPhaseParams,
-    InnerCommitSecurityRoute, NttTransformDomain, OpenCommitMatrixParams, OpeningMethod,
-    PolynomialGroupLayout, SetupSumcheckProof, SisModulusProfileId,
-    SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
+    CommittedSourceEncoding, FoldLevelProof, FoldSchedule, GrindingPlan, GrindingQueryKind,
+    GrindingSite, GroupOpenPhaseParams, InnerCommitSecurityRoute, NttTransformDomain,
+    OpenCommitMatrixParams, OpeningMethod, PolynomialGroupLayout, SetupSumcheckProof,
+    SisModulusProfileId, SubringCoefficientPackingGeometry, TerminalLevelProof, ZFoldEncodingStats,
 };
+use std::collections::BTreeMap;
 
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
@@ -1052,6 +1053,7 @@ fn print_akita_level_breakdown<FF, E>(
     level_idx: usize,
     level: &FoldLevelProof<FF, E>,
     ring_d: usize,
+    fold_response_nonce: u32,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -1116,6 +1118,8 @@ where
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         extension_opening_final_claims_bytes = extension_opening_final_claims_size,
         opening_payload_bytes = opening_payload_size,
+        grind_nonce = fold_response_nonce,
+        grind_attempts = u64::from(fold_response_nonce) + 1,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
@@ -1169,6 +1173,7 @@ fn print_terminal_level_breakdown<FF, E>(
     level: &TerminalLevelProof<FF, E>,
     root_variant: &'static str,
     ring_d: usize,
+    fold_response_nonce: u32,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -1213,6 +1218,8 @@ where
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
         extension_opening_final_claims_bytes = extension_opening_final_claims_size,
+        grind_nonce = fold_response_nonce,
+        grind_attempts = u64::from(fold_response_nonce) + 1,
         response_l2_sq = ?response_l2_sq,
         terminal_response_bytes = terminal_response_size,
         root_variant = root_variant,
@@ -1249,6 +1256,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
     schedule: Option<&FoldSchedule>,
+    grinding_plan: &GrindingPlan,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
@@ -1268,6 +1276,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     let akita_levels_total = root_total + recursive_steps_total - tail_total;
     let accounted_total = nonce_stream_total + akita_levels_total + tail_total;
     let fold_levels = proof.num_fold_levels();
+    let fold_response_nonces = fold_response_nonces(proof, grinding_plan);
 
     tracing::info!(
         label,
@@ -1303,17 +1312,60 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
             }
         })
     };
-    print_akita_level_breakdown(label, 0, &proof.root, level_ring_dimension(0));
+    print_akita_level_breakdown(
+        label,
+        0,
+        &proof.root,
+        level_ring_dimension(0),
+        fold_response_nonces[&0],
+    );
     for (i, step) in proof.recursive_folds.iter().enumerate() {
-        print_akita_level_breakdown(label, i + 1, step, level_ring_dimension(i + 1));
+        let level = i + 1;
+        print_akita_level_breakdown(
+            label,
+            level,
+            step,
+            level_ring_dimension(level),
+            fold_response_nonces[&level],
+        );
     }
+    let terminal_level = proof.num_fold_levels() - 1;
     print_terminal_level_breakdown(
         label,
-        proof.num_fold_levels() - 1,
+        terminal_level,
         &proof.terminal,
         "fold",
-        level_ring_dimension(proof.num_fold_levels() - 1),
+        level_ring_dimension(terminal_level),
+        fold_response_nonces[&terminal_level],
     );
+}
+
+fn fold_response_nonces<FF: FieldCore, E: FieldCore>(
+    proof: &AkitaBatchedProof<FF, E>,
+    grinding_plan: &GrindingPlan,
+) -> BTreeMap<usize, u32> {
+    let mut reader = proof
+        .nonce_stream
+        .reader(grinding_plan)
+        .expect("proof nonce stream matches its public grinding plan");
+    let mut nonces = BTreeMap::new();
+    for run in grinding_plan.runs() {
+        for _ in 0..run.multiplicity() {
+            let value = reader
+                .read(run.site())
+                .expect("profile proof follows its public grinding plan");
+            if let GrindingSite::FoldResponse { level } = run.site() {
+                assert_eq!(run.kind(), GrindingQueryKind::FoldResponse);
+                let level = usize::try_from(level).expect("fold level fits usize");
+                assert!(nonces.insert(level, value).is_none());
+            }
+        }
+    }
+    reader
+        .finish()
+        .expect("profile proof consumes its complete grinding plan");
+    assert_eq!(nonces.len(), proof.num_fold_levels());
+    nonces
 }
 
 pub(crate) fn print_layout(

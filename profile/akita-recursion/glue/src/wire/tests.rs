@@ -240,7 +240,6 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
     let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
         row.schedule(),
         &opening_layout,
-        akita_types::BasisMode::Lagrange,
     )
     .expect("grinding plan");
     let canonical = canonical_proof_shape(
@@ -288,7 +287,6 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(
         row.schedule(),
         &opening_layout,
-        akita_types::BasisMode::Lagrange,
     )
     .expect("grinding plan");
     let mut noncanonical = canonical_proof_shape(

@@ -221,7 +221,7 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         akita_schedules::planner_support::validate_policy(policy)
     }
@@ -315,12 +315,79 @@ impl CandidateFoldChain {
 #[derive(Clone, Debug)]
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
-    pub(crate) payload_bytes: usize,
-    pub(crate) nonce_bits: usize,
-    pub(crate) proof_bytes: usize,
+    pub(crate) cost: PackedProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackedProofCost {
+    payload_bytes: usize,
+    nonce_bits: usize,
+}
+
+impl PackedProofCost {
+    pub(crate) fn new(payload_bytes: usize, nonce_bits: usize) -> Result<Self, AkitaError> {
+        let cost = Self {
+            payload_bytes,
+            nonce_bits,
+        };
+        cost.checked_proof_bytes()
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+        Ok(cost)
+    }
+
+    pub(crate) fn proof_bytes(self) -> usize {
+        self.checked_proof_bytes()
+            .expect("validated packed proof cost")
+    }
+
+    pub(crate) fn checked_prepend(
+        self,
+        payload_bytes: usize,
+        nonce_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            self.payload_bytes
+                .checked_add(payload_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?,
+            self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
+                AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
+            })?,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_nonce_bits(self, nonce_bits: usize) -> Result<Self, AkitaError> {
+        Self::new(self.payload_bytes, nonce_bits)
+    }
+
+    pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
+        (0..8).all(|parent_remainder| {
+            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
+                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
+                .is_some_and(|(left, right)| left <= right)
+        })
+    }
+
+    pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
+        (0..8).all(|parent_remainder| {
+            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
+                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
+                .is_some_and(|(left, right)| left < right)
+        })
+    }
+
+    fn checked_proof_bytes(self) -> Option<usize> {
+        self.checked_proof_bytes_with_parent_remainder(0)
+    }
+
+    fn checked_proof_bytes_with_parent_remainder(self, parent_remainder: usize) -> Option<usize> {
+        let nonce_bytes =
+            akita_error::checked::div_ceil(self.nonce_bits.checked_add(parent_remainder)?, 8)?;
+        self.payload_bytes.checked_add(nonce_bytes)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -341,10 +408,14 @@ impl SetupPrefixCapacity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
-    pub(crate) payload_bytes: usize,
-    pub(crate) nonce_bits: usize,
-    pub(crate) proof_bytes: usize,
+    pub(crate) cost: PackedProofCost,
     pub(crate) setup_field_elements: usize,
+}
+
+impl CandidateMetrics {
+    pub(crate) fn proof_bytes(self) -> usize {
+        self.cost.proof_bytes()
+    }
 }
 
 impl ScheduleCandidate {
@@ -359,9 +430,7 @@ impl ScheduleCandidate {
                 .map_or(SetupPrefixCapacity::MAX, |natural_len| {
                     SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            payload_bytes: self.payload_bytes,
-            nonce_bits: self.nonce_bits,
-            proof_bytes: self.proof_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
     }

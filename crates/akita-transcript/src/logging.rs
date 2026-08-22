@@ -331,6 +331,14 @@ where
         self.inner.challenge_bytes(label, len)
     }
 
+    fn challenge_block(&mut self, label: &[u8]) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        self.record(TranscriptEvent::Squeeze {
+            label: label.to_vec(),
+            len: crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN,
+        });
+        self.inner.challenge_block(label)
+    }
+
     fn grinding_predicate(
         &mut self,
         site_label: &[u8],

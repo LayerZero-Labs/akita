@@ -48,7 +48,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
     Cfg::ExtField: FpExtEncoding<F>,
 {
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch, basis)?;
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?;
     let descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
