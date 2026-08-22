@@ -71,6 +71,22 @@ fn records_exact_bounds_during_the_pack() {
 }
 
 #[test]
+fn automatic_width_is_the_smallest_exact_signed_width() {
+    for (digits, expected_width) in [
+        (vec![0], 1),
+        (vec![-1, 0], 1),
+        (vec![-2, 1], 2),
+        (vec![-4, 3], 3),
+        (vec![-32, 31], 6),
+        (vec![i8::MIN, i8::MAX], 8),
+    ] {
+        let packed = PackedSignedDigits::from_i8_digits_auto(digits.clone());
+        assert_eq!(packed.bit_width(), expected_width);
+        assert_eq!(packed.decode(), digits);
+    }
+}
+
+#[test]
 fn zero_padding_is_metadata_not_encoded_storage() {
     let digits = (0..70).map(|index| (index % 4) as i8 - 2).collect();
     let packed = PackedSignedDigits::from_i8_digits(digits, 2).unwrap();
@@ -101,6 +117,19 @@ fn random_access_matches_the_source() {
         }
         assert_eq!(packed.get(digits.len()), None);
     }
+}
+
+#[test]
+fn aligned_range_decode_uses_implicit_zero_suffix() {
+    let digits = (0..150)
+        .map(|index| (index % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let packed = PackedSignedDigits::from_i8_digits(digits.clone(), 4).unwrap();
+    let view = packed.zero_padded(256).unwrap();
+    let mut decoded = [99i8; 128];
+    assert_eq!(view.decode_range(64, &mut decoded).unwrap(), 86);
+    assert_eq!(&decoded[..86], &digits[64..]);
+    assert!(decoded[86..].iter().all(|&digit| digit == 0));
 }
 
 #[test]

@@ -30,8 +30,7 @@ where
     E: ExtField<F>,
 {
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
-    let packed =
-        pack_tensor_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::EXT_DEGREE, width)?;
+    let packed = pack_tensor_base_lift_i8_digits::<D>(logical_w.digits(), E::EXT_DEGREE, width)?;
     RecursiveWitnessFlat::from_packed_i8_digits(packed, logical_w.live_coeff_len())?
         .align_for_commitment_ring_dim(D)
 }
@@ -69,7 +68,7 @@ mod tests {
         let packed = tensor_pack_recursive_witness::<F, E, D>(&witness).unwrap();
 
         assert_eq!(packed.live_coeff_len(), logical_len);
-        assert_eq!(packed.as_i8_digits().len(), 2 * D);
+        assert_eq!(packed.to_i8_digits().len(), 2 * D);
         assert_eq!(packed.committed_coeff_len().unwrap(), 2 * D);
     }
 }

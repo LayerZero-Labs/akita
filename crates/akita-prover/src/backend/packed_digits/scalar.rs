@@ -1,4 +1,4 @@
-//! Canonical scalar packed-digit codec.
+//! Canonical scalar signed-digit codec.
 
 use super::DIGITS_PER_BLOCK;
 
@@ -25,6 +25,7 @@ pub(super) fn decode_at(storage: &[u8], index: usize, bit_width: u8) -> i8 {
     sign_extend(raw, bit_width)
 }
 
+#[cfg_attr(target_arch = "aarch64", allow(dead_code))]
 pub(super) fn decode_full_block(
     encoded: &[u8],
     bit_width: u8,

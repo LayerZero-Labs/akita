@@ -1,4 +1,4 @@
-//! NEON packed-digit extraction and byte-wise sign extension.
+//! NEON signed-digit extraction and byte-wise sign extension.
 
 use core::arch::aarch64::*;
 

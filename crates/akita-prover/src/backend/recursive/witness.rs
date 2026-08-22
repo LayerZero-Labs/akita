@@ -3,8 +3,8 @@
 //! Recursive levels do not operate on a caller-provided polynomial anymore.
 //! Instead they carry a flat digit witness `w` that is re-chunked under the
 //! current ring dimension `D` on demand. [`RecursiveWitnessFlat`] owns the
-//! D-agnostic digit buffer, while [`SuffixWitnessView`] provides the
-//! zero-copy D-specific operations used by recursive folding and handoff paths.
+//! D-agnostic packed digit buffer, while [`SuffixWitnessView`] provides the
+//! D-specific operations used by recursive folding and handoff paths.
 
 #![allow(missing_docs, clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
@@ -16,8 +16,9 @@ use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 
+use crate::backend::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
 use crate::backend::poly_helpers::{
-    balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
+    build_decompose_fold_witness, packed_tight_digit_fold_partitioned,
 };
 use crate::compute::{CommitInnerPlan, CpuBackend, RootCommitKernel};
 use akita_types::WitnessLayout;
@@ -28,9 +29,9 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 /// D-agnostic owner for the recursive witness vector `w`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecursiveWitnessFlat {
-    digits: Arc<[i8]>,
+    digits: PackedSignedDigits,
     live_coeff_len: usize,
-    commitment_digits: Option<Arc<[i8]>>,
+    committed_coeff_len: Option<usize>,
     commitment_ring_dim: Option<usize>,
     known_balanced_log_basis: Option<u32>,
 }
@@ -39,9 +40,9 @@ impl RecursiveWitnessFlat {
     pub fn from_i8_digits(digits: Vec<i8>) -> Self {
         let live_coeff_len = digits.len();
         Self {
-            digits: digits.into(),
+            digits: PackedSignedDigits::from_i8_digits_auto(digits),
             live_coeff_len,
-            commitment_digits: None,
+            committed_coeff_len: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: None,
         }
@@ -59,10 +60,13 @@ impl RecursiveWitnessFlat {
                 actual: digits.len(),
             });
         }
+        let bit_width = u8::try_from(log_basis).map_err(|_| {
+            AkitaError::InvalidInput("recursive witness digit basis exceeds eight bits".into())
+        })?;
         Ok(Self {
-            digits: digits.into(),
+            digits: PackedSignedDigits::from_i8_digits(digits, bit_width)?,
             live_coeff_len: expected,
-            commitment_digits: None,
+            committed_coeff_len: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: Some(log_basis),
         })
@@ -79,9 +83,9 @@ impl RecursiveWitnessFlat {
             });
         }
         Ok(Self {
-            digits: digits.into(),
+            digits: PackedSignedDigits::from_i8_digits_auto(digits),
             live_coeff_len,
-            commitment_digits: None,
+            committed_coeff_len: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: None,
         })
@@ -98,24 +102,30 @@ impl RecursiveWitnessFlat {
         }
         let committed_len =
             akita_types::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
-        self.commitment_digits = if committed_len == self.digits.len() {
-            Some(Arc::clone(&self.digits))
-        } else {
-            let mut committed = Vec::with_capacity(committed_len);
-            committed.extend_from_slice(&self.digits);
-            committed.resize(committed_len, 0);
-            Some(committed.into())
-        };
+        self.committed_coeff_len = Some(committed_len);
         self.commitment_ring_dim = Some(ring_dim);
         Ok(self)
     }
 
-    pub fn as_i8_digits(&self) -> &[i8] {
-        &self.digits
+    pub fn to_i8_digits(&self) -> Vec<i8> {
+        self.digits.decode()
     }
 
-    pub(crate) fn shared_i8_digits(&self) -> Arc<[i8]> {
-        Arc::clone(&self.digits)
+    /// Materialize the one remaining legacy byte-oriented sum-check input.
+    ///
+    /// This allocation is temporary migration state. Packed sum-check kernels
+    /// must remove it before the representation cutover is complete.
+    pub(crate) fn materialize_shared_i8_digits(&self) -> Arc<[i8]> {
+        self.digits.shared_decoded()
+    }
+
+    #[cfg(feature = "response-model-diagnostics")]
+    pub(crate) fn digit(&self, index: usize) -> Option<i8> {
+        self.digits.get(index)
+    }
+
+    pub(crate) fn digits(&self) -> impl ExactSizeIterator<Item = i8> + '_ {
+        self.digits.iter()
     }
 
     pub fn live_coeff_len(&self) -> usize {
@@ -123,10 +133,7 @@ impl RecursiveWitnessFlat {
     }
 
     pub(crate) fn committed_coeff_len(&self) -> Result<usize, AkitaError> {
-        self.commitment_digits
-            .as_ref()
-            .map(|digits| digits.len())
-            .ok_or(AkitaError::InvalidProof)
+        self.committed_coeff_len.ok_or(AkitaError::InvalidProof)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -136,30 +143,30 @@ impl RecursiveWitnessFlat {
     pub fn view<F: FieldCore, const D: usize>(
         &self,
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
-        let digits = match (&self.commitment_digits, self.commitment_ring_dim) {
-            (Some(digits), Some(ring_dim)) if ring_dim == D => digits.as_ref(),
+        let physical_len = match (self.committed_coeff_len, self.commitment_ring_dim) {
+            (Some(committed_len), Some(ring_dim)) if ring_dim == D => committed_len,
             (Some(_), Some(_)) => return Err(AkitaError::InvalidProof),
-            (None, None) => self.digits.as_ref(),
+            (None, None) => self.digits.len(),
             _ => return Err(AkitaError::InvalidProof),
         };
+        if !physical_len.is_multiple_of(D) {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: physical_len,
+            });
+        }
         SuffixWitnessView::from_recursive_witness(
-            digits,
+            self.digits.zero_padded(physical_len)?,
             self.live_coeff_len,
             self.known_balanced_log_basis,
         )
     }
 }
 
-impl AsRef<[i8]> for RecursiveWitnessFlat {
-    fn as_ref(&self) -> &[i8] {
-        self.as_i8_digits()
-    }
-}
-
-/// D-specific zero-copy view over a flat recursive witness digit buffer.
+/// D-specific view over a packed recursive witness digit buffer.
 #[derive(Debug, Clone, Copy)]
 pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
-    coeffs: &'a [[i8; D]],
+    digits: PackedSignedDigitView<'a>,
     live_coeff_len: usize,
     live_ring_elems: usize,
     padded_ring_elems: usize,
@@ -168,22 +175,11 @@ pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
 }
 
 impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
-    pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
-        Self::from_recursive_witness(digits, digits.len(), None)
-    }
-
     fn from_recursive_witness(
-        digits: &'a [i8],
+        digits: PackedSignedDigitView<'a>,
         live_coeff_len: usize,
         known_balanced_log_basis: Option<u32>,
     ) -> Result<Self, AkitaError> {
-        let (coeffs, remainder) = digits.as_chunks::<D>();
-        if !remainder.is_empty() {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: digits.len(),
-            });
-        }
         if live_coeff_len > digits.len() {
             return Err(AkitaError::InvalidSize {
                 expected: digits.len(),
@@ -192,10 +188,10 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
         }
 
         Ok(Self {
-            coeffs,
+            digits,
             live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
-            padded_ring_elems: coeffs.len().next_power_of_two().max(1),
+            padded_ring_elems: (digits.len() / D).next_power_of_two().max(1),
             known_balanced_log_basis,
             _marker: PhantomData,
         })
@@ -207,11 +203,23 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
         block_idx: usize,
         col_idx: usize,
         num_positions_per_block: usize,
-    ) -> Option<&'a [i8; D]> {
+    ) -> Option<[i8; D]> {
         block_idx
             .checked_mul(num_positions_per_block)
             .and_then(|base| base.checked_add(col_idx))
-            .and_then(|index| self.coeffs.get(index))
+            .and_then(|index| self.ring_elem(index))
+    }
+
+    #[inline]
+    fn ring_elem(&self, index: usize) -> Option<[i8; D]> {
+        (index < self.padded_ring_elems)
+            .then(|| self.digits.decode_array(index * D).ok())
+            .flatten()
+    }
+
+    #[inline]
+    fn digit(&self, index: usize) -> Option<i8> {
+        self.digits.get(index)
     }
 
     pub fn num_ring_elems(&self) -> usize {
@@ -220,7 +228,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
 
     #[inline]
     fn num_live_blocks(&self, num_positions_per_block: usize) -> Result<usize, AkitaError> {
-        if num_positions_per_block == 0 || self.coeffs.is_empty() {
+        if num_positions_per_block == 0 || self.digits.len() == 0 {
             return Err(AkitaError::InvalidInput(
                 "recursive witness requires positive exact block geometry".into(),
             ));
@@ -398,9 +406,9 @@ where
         }
 
         let q = (-F::one()).to_canonical_u128() + 1;
-        let coeffs = self.coeffs;
-        let coeff_accum = balanced_tight_digit_fold_partitioned::<F, D>(
-            coeffs,
+        let coeff_accum = packed_tight_digit_fold_partitioned::<F, D>(
+            self.digits,
+            self.live_ring_elems,
             challenges,
             num_positions_per_block,
             self.known_balanced_log_basis,
@@ -448,9 +456,8 @@ where
 
 /// D-free polynomial metadata for the recursive suffix witness (H2 boundary).
 ///
-/// The recursive suffix witness is genuinely D-erased: it owns a flat `Vec<i8>`
-/// digit buffer (one digit per field-element coefficient) and is re-chunked
-/// under the level's ring dimension only inside D-typed kernels. The D-free
+/// The recursive suffix witness is genuinely D-erased. It owns packed signed
+/// digits and decodes D-sized rings only inside D-typed kernels. The D-free
 /// `RootPolyMeta` is what the PCS-facing `ProverOpeningData::to_opening_shape`
 /// requires, so it must expose `num_vars` without a const `D`.
 ///
@@ -474,7 +481,8 @@ where
 
     #[cfg(feature = "response-model-diagnostics")]
     fn exact_integer_coeff_l2_sq(&self) -> Option<u128> {
-        self.digits.iter().try_fold(0u128, |sum, &digit| {
+        (0..self.live_coeff_len).try_fold(0u128, |sum, index| {
+            let digit = self.digit(index)?;
             let magnitude = u128::from(digit.unsigned_abs());
             magnitude
                 .checked_mul(magnitude)
@@ -509,16 +517,11 @@ where
     where
         F: akita_field::CanonicalField,
     {
-        let mut negative_abs_max = 0u128;
-        let mut positive_max = 0u128;
-        for &digit in self.as_ref() {
-            if digit < 0 {
-                negative_abs_max = negative_abs_max.max(u128::from(digit.unsigned_abs()));
-            } else {
-                positive_max = positive_max.max(digit as u128);
-            }
-        }
-        Ok((negative_abs_max, positive_max))
+        let bounds = self.digits.bounds();
+        Ok((
+            u128::from(bounds.negative_abs_max()),
+            u128::from(bounds.positive_max()),
+        ))
     }
 }
 
@@ -588,9 +591,9 @@ where
             .into_iter()
             .map(|source| {
                 let num_live_blocks = source.num_live_blocks(plan.num_positions_per_block)?;
-                let rows = self.recursive_witness_commit_rows(
+                let rows = self.recursive_packed_witness_commit_rows::<F, D>(
                     prepared,
-                    source.coeffs,
+                    source.digits,
                     plan.n_a,
                     plan.num_positions_per_block,
                     num_live_blocks,
@@ -745,25 +748,24 @@ where
                         actual: view.live_ring_elems,
                     });
                 }
-                let coordinates =
-                    crate::backend::coefficient_packing::partials_from_position_source::<
-                        F,
-                        E,
-                        i8,
-                        D,
-                    >(
-                        plan,
-                        view.num_vars(),
-                        |position| view.coeffs.get(position).ok_or(AkitaError::InvalidProof),
-                        |position, coefficient_index, coefficient| {
-                            let flat_index = position * D + coefficient_index;
-                            if flat_index < view.live_coeff_len {
-                                F::from_i8(coefficient)
-                            } else {
-                                F::zero()
-                            }
-                        },
-                    )?;
+                let coordinates = crate::backend::coefficient_packing::partials_from_position_source::<
+                    F,
+                    E,
+                    _,
+                    D,
+                >(
+                    plan,
+                    view.num_vars(),
+                    |position| view.ring_elem(position).ok_or(AkitaError::InvalidProof),
+                    |position, coefficient_index, source| {
+                        let flat_index = position * D + coefficient_index;
+                        if flat_index < view.live_coeff_len {
+                            F::from_i8(source[coefficient_index])
+                        } else {
+                            F::zero()
+                        }
+                    },
+                )?;
                 SubringCoefficientPackingPartials::new(
                     plan.point.geometry(),
                     plan.point.num_live_blocks(),
@@ -780,7 +782,7 @@ mod tests {
     use akita_field::Prime128OffsetA7F7 as F;
 
     #[test]
-    fn suffix_opening_views_borrow_flat_digit_buffer() {
+    fn suffix_opening_views_share_packed_digit_storage() {
         const D: usize = 16;
         let digits: Vec<i8> = (0..64).map(|idx| (idx % 5) as i8 - 2).collect();
         let witness = RecursiveWitnessFlat::from_i8_digits(digits.clone());
@@ -802,6 +804,21 @@ mod tests {
     }
 
     #[test]
+    fn recursive_owner_keeps_only_exact_packed_digits() {
+        const D: usize = 64;
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![-4, -1, 0, 3, 2]);
+        assert_eq!(witness.digits.bit_width(), 3);
+        assert_eq!(witness.digits.encoded_bytes().len(), 2);
+
+        let aligned = witness
+            .align_for_commitment_ring_dim(D)
+            .expect("commitment alignment");
+        assert_eq!(aligned.committed_coeff_len().unwrap(), D);
+        assert_eq!(aligned.digits.encoded_bytes().len(), 2);
+        assert_eq!(aligned.to_i8_digits(), [-4, -1, 0, 3, 2]);
+    }
+
+    #[test]
     fn commitment_padding_does_not_create_live_blocks() {
         const D: usize = 64;
         let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 70 * D])
@@ -810,7 +827,7 @@ mod tests {
         let view = witness.view::<F, D>().expect("aligned view");
 
         assert_eq!(view.live_ring_elems, 70);
-        assert!(view.coeffs.len() >= view.live_ring_elems);
+        assert!(view.padded_ring_elems >= view.live_ring_elems);
         assert_eq!(view.num_live_blocks(10).expect("live blocks"), 7);
     }
 
@@ -824,7 +841,7 @@ mod tests {
         let committed: SuffixWitnessView<'_, F, D> = witness.commit_view().expect("commit view");
         let tensor: SuffixWitnessView<'_, F, D> = witness.tensor_view().expect("tensor view");
 
-        assert_eq!(committed.coeffs.len(), tensor.coeffs.len());
+        assert_eq!(committed.digits.len(), tensor.digits.len());
         assert_eq!(tensor.live_ring_elems, 70);
         assert_eq!(tensor.num_vars(), 13);
     }
@@ -841,10 +858,7 @@ mod tests {
 
         let row = |block_idx: usize| -> Vec<[i8; 2]> {
             (0..num_positions_per_block)
-                .filter_map(|col_idx| {
-                    view.block_elem(block_idx, col_idx, num_positions_per_block)
-                        .copied()
-                })
+                .filter_map(|col_idx| view.block_elem(block_idx, col_idx, num_positions_per_block))
                 .collect()
         };
 

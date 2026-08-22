@@ -7,6 +7,9 @@ use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
+use std::marker::PhantomData;
+
+use crate::backend::packed_digits::PackedSignedDigitView;
 
 impl<F, const D: usize> SuffixWitnessView<'_, F, D>
 where
@@ -30,11 +33,11 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidInput("recursive tensor table length overflow".to_string())
             })?;
-        let flat = self.coeffs.as_flattened();
-        let pack = |tail| {
+        let pack = |tail: usize| {
             E::from_base_fn(|column| {
-                flat.get(tail * width + column)
-                    .copied()
+                tail.checked_mul(width)
+                    .and_then(|start| start.checked_add(column))
+                    .and_then(|index| self.digit(index))
                     .map_or_else(F::zero, F::from_i8)
             })
         };
@@ -92,34 +95,41 @@ where
     }
 }
 
-/// Exact-size lazy field row over live recursive digits plus zero padding.
-pub struct SuffixTensorRow<'a, F> {
-    live: std::slice::Iter<'a, i8>,
-    zero_padding: usize,
-    _field: std::marker::PhantomData<F>,
+#[doc(hidden)]
+pub struct SuffixTensorRow<'a, F: FieldCore> {
+    digits: PackedSignedDigitView<'a>,
+    start: usize,
+    width: usize,
+    offset: usize,
+    _marker: PhantomData<F>,
 }
 
-impl<F: FieldCore + CanonicalField> Iterator for SuffixTensorRow<'_, F> {
+impl<F> Iterator for SuffixTensorRow<'_, F>
+where
+    F: FieldCore + CanonicalField,
+{
     type Item = F;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(&digit) = self.live.next() {
-            return Some(F::from_i8(digit));
-        }
-        if self.zero_padding == 0 {
+        if self.offset == self.width {
             return None;
         }
-        self.zero_padding -= 1;
-        Some(F::zero())
+        let index = self.start.checked_add(self.offset);
+        self.offset += 1;
+        Some(
+            index
+                .and_then(|index| self.digits.get(index))
+                .map_or_else(F::zero, F::from_i8),
+        )
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.live.len() + self.zero_padding;
+        let remaining = self.width - self.offset;
         (remaining, Some(remaining))
     }
 }
 
-impl<F: FieldCore + CanonicalField> ExactSizeIterator for SuffixTensorRow<'_, F> {}
+impl<F> ExactSizeIterator for SuffixTensorRow<'_, F> where F: FieldCore + CanonicalField {}
 
 impl<F, const D: usize> TensorColumnSource<F> for SuffixWitnessView<'_, F, D>
 where
@@ -132,14 +142,12 @@ where
 
     #[inline]
     fn row(&self, tail: usize, width: usize) -> Self::Row<'_> {
-        let flat = self.coeffs.as_flattened();
-        let start = tail * width;
-        let end = start.saturating_add(width).min(flat.len());
-        let live = flat.get(start..end).unwrap_or_default();
         SuffixTensorRow {
-            live: live.iter(),
-            zero_padding: width - live.len(),
-            _field: std::marker::PhantomData,
+            digits: self.digits,
+            start: tail.saturating_mul(width),
+            width,
+            offset: 0,
+            _marker: PhantomData,
         }
     }
 }

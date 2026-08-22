@@ -207,7 +207,7 @@ where
     let (relation_weight_factorization_result, w_result) =
         rayon::join(prepare_relation_weight_factorization, || {
             build_w_evals_compact(
-                w.shared_i8_digits(),
+                w.materialize_shared_i8_digits(),
                 coeff_count,
                 1,
                 live_relation_lane_count,
@@ -217,7 +217,7 @@ where
     let (relation_weight_factorization_result, w_result) = {
         let relation_weight_factorization = prepare_relation_weight_factorization();
         let w_compact = build_w_evals_compact(
-            w.shared_i8_digits(),
+            w.materialize_shared_i8_digits(),
             coeff_count,
             1,
             live_relation_lane_count,

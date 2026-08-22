@@ -1,4 +1,4 @@
-//! Exact packed storage for bounded signed recursive-witness digits.
+//! Exact packed storage for bounded signed prover digits.
 
 mod scalar;
 
@@ -46,7 +46,19 @@ pub(crate) struct PackedSignedDigits {
     bounds: SignedDigitBounds,
 }
 
+impl Default for PackedSignedDigits {
+    fn default() -> Self {
+        Self::from_i8_digits(Vec::new(), 1).expect("one-bit empty digit storage is valid")
+    }
+}
+
 impl PackedSignedDigits {
+    pub(crate) fn from_i8_digits_auto(digits: Vec<i8>) -> Self {
+        let bit_width = minimum_signed_bit_width(&digits);
+        Self::from_i8_digits(digits, bit_width)
+            .expect("the derived signed width represents every source digit")
+    }
+
     pub(crate) fn from_i8_digits(digits: Vec<i8>, bit_width: u8) -> Result<Self, AkitaError> {
         validate_bit_width(bit_width)?;
         let encoded_len = encoded_byte_len(digits.len(), bit_width)?;
@@ -87,6 +99,7 @@ impl PackedSignedDigits {
         self.len == 0
     }
 
+    #[cfg(test)]
     pub(crate) fn bit_width(&self) -> u8 {
         self.bit_width
     }
@@ -95,12 +108,17 @@ impl PackedSignedDigits {
         self.bounds
     }
 
+    #[cfg(test)]
     pub(crate) fn encoded_bytes(&self) -> &[u8] {
         &self.storage[..self.encoded_len]
     }
 
     pub(crate) fn get(&self, index: usize) -> Option<i8> {
         (index < self.len).then(|| scalar::decode_at(&self.storage, index, self.bit_width))
+    }
+
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = i8> + '_ {
+        (0..self.len).map(|index| scalar::decode_at(&self.storage, index, self.bit_width))
     }
 
     pub(crate) fn zero_padded(&self, len: usize) -> Result<PackedSignedDigitView<'_>, AkitaError> {
@@ -130,6 +148,10 @@ impl PackedSignedDigits {
         decode_prefix(self, output);
         Ok(())
     }
+
+    pub(crate) fn shared_decoded(&self) -> Arc<[i8]> {
+        self.decode().into()
+    }
 }
 
 /// A logical zero-padded view without a second allocation of the witness.
@@ -144,10 +166,92 @@ impl PackedSignedDigitView<'_> {
         self.len
     }
 
+    #[cfg(test)]
     pub(crate) fn block_count(self) -> usize {
         self.len.div_ceil(DIGITS_PER_BLOCK)
     }
 
+    pub(crate) fn bounds(self) -> SignedDigitBounds {
+        self.digits.bounds
+    }
+
+    pub(crate) fn get(self, index: usize) -> Option<i8> {
+        if index >= self.len {
+            return None;
+        }
+        Some(self.digits.get(index).unwrap_or(0))
+    }
+
+    pub(crate) fn decode_array<const N: usize>(self, start: usize) -> Result<[i8; N], AkitaError> {
+        let mut output = [0i8; N];
+        self.decode_range(start, &mut output)?;
+        Ok(output)
+    }
+
+    pub(crate) fn decode_rings<const D: usize>(
+        self,
+        start_ring: usize,
+        count: usize,
+    ) -> Result<Vec<[i8; D]>, AkitaError> {
+        let start = checked::product([start_ring, D]).ok_or_else(|| {
+            AkitaError::InvalidInput("packed signed-digit ring offset overflow".into())
+        })?;
+        let mut output = vec![[0i8; D]; count];
+        self.decode_range(start, output.as_flattened_mut())?;
+        Ok(output)
+    }
+
+    pub(crate) fn decode_range(self, start: usize, output: &mut [i8]) -> Result<usize, AkitaError> {
+        let end = start.checked_add(output.len()).ok_or_else(|| {
+            AkitaError::InvalidInput("packed signed-digit decode range overflow".into())
+        })?;
+        if end > self.len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.len,
+                actual: end,
+            });
+        }
+
+        output.fill(0);
+        let live_end = self.digits.len.min(end);
+        if start >= live_end {
+            return Ok(0);
+        }
+        let live = live_end - start;
+        if start.is_multiple_of(DIGITS_PER_BLOCK) {
+            let first_block = start / DIGITS_PER_BLOCK;
+            let full_blocks = live / DIGITS_PER_BLOCK;
+            for (offset, block) in output
+                .chunks_exact_mut(DIGITS_PER_BLOCK)
+                .take(full_blocks)
+                .enumerate()
+            {
+                decode_full_block(
+                    self.digits,
+                    first_block + offset,
+                    block.try_into().expect("exact packed decode block"),
+                );
+            }
+            let decoded = full_blocks * DIGITS_PER_BLOCK;
+            for (offset, slot) in output
+                .iter_mut()
+                .enumerate()
+                .skip(decoded)
+                .take(live - decoded)
+            {
+                *slot =
+                    scalar::decode_at(&self.digits.storage, start + offset, self.digits.bit_width);
+            }
+            return Ok(live);
+        }
+
+        for (offset, slot) in output.iter_mut().take(live).enumerate() {
+            *slot = scalar::decode_at(&self.digits.storage, start + offset, self.digits.bit_width);
+        }
+        Ok(live)
+    }
+
+    #[cfg(test)]
     pub(crate) fn decode_block(
         self,
         block_index: usize,
@@ -252,6 +356,24 @@ fn validate_digit(digit: i8, bit_width: u8) -> Result<(), AkitaError> {
     Err(AkitaError::InvalidInput(format!(
         "digit {digit} does not fit signed {bit_width}-bit storage"
     )))
+}
+
+fn minimum_signed_bit_width(digits: &[i8]) -> u8 {
+    let mut negative_abs_max = 0u8;
+    let mut positive_max = 0u8;
+    for &digit in digits {
+        if digit < 0 {
+            negative_abs_max = negative_abs_max.max(digit.unsigned_abs());
+        } else {
+            positive_max = positive_max.max(digit as u8);
+        }
+    }
+    (1..=8)
+        .find(|&bit_width| {
+            let half = 1u16 << (bit_width - 1);
+            u16::from(negative_abs_max) <= half && u16::from(positive_max) < half
+        })
+        .expect("every i8 value fits signed eight-bit storage")
 }
 
 #[cfg(test)]
