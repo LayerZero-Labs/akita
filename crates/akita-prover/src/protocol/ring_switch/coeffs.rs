@@ -484,13 +484,15 @@ where
     })?;
 
     // Every segment of the generated witness is balanced, but grouped roots
-    // may mix decomposition bases. The whole-buffer certificate and the
-    // physical packed width therefore use the widest emitted basis.
+    // may mix decomposition bases. Z and the quotient tail use the opening
+    // basis, E uses the opening basis, and T uses the outer basis. The inner
+    // basis controls how many Z planes exist; it is not the basis used to
+    // decompose their coefficients. The whole-buffer certificate and physical
+    // packed width therefore use the widest basis that emits coefficients.
     let known_balanced_log_basis = owned
         .iter()
         .flat_map(|group| {
             [
-                group.params.log_basis_inner(),
                 group.params.log_basis_outer(),
                 group.params.log_basis_open(),
             ]
