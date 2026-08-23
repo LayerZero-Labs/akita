@@ -49,7 +49,7 @@ impl RecursiveWitnessFlat {
     }
 
     pub(crate) fn from_witness_layout(
-        digits: Vec<i8>,
+        digits: PackedSignedDigits,
         layout: &WitnessLayout,
         log_basis: u32,
     ) -> Result<Self, AkitaError> {
@@ -60,7 +60,6 @@ impl RecursiveWitnessFlat {
                 actual: digits.len(),
             });
         }
-        let digits = PackedSignedDigits::from_i8_digits_auto(digits);
         if !digits.bounds().fits_balanced_log_basis(log_basis) {
             return Err(AkitaError::InvalidInput(
                 "recursive witness contains digits outside its declared balanced basis".into(),

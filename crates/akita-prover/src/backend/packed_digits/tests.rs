@@ -95,6 +95,50 @@ fn vector_load_padding_is_zero_initialized() {
 }
 
 #[test]
+fn streaming_writer_round_trips_ranges_gaps_and_multiple_batches() {
+    const STAGING_LIMIT: usize = DIGITS_PER_BLOCK * 2;
+    let len = STAGING_LIMIT + 137;
+    let first = (0..STAGING_LIMIT - 19)
+        .map(|index| (index % 16) as i8 - 8)
+        .collect::<Vec<_>>();
+    let second = (0..73)
+        .map(|index| (index % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let second_start = STAGING_LIMIT + 11;
+    let mut expected = vec![0i8; len];
+    expected[..first.len()].copy_from_slice(&first);
+    expected[second_start..second_start + second.len()].copy_from_slice(&second);
+
+    let mut writer =
+        PackedSignedDigitWriter::new_with_staging_limit(len, 5, STAGING_LIMIT).unwrap();
+    writer.write_at(0, &first).unwrap();
+    writer.write_at(second_start, &second).unwrap();
+    assert_eq!(writer.position(), second_start + second.len());
+    let packed = writer.finish().unwrap();
+
+    assert_eq!(packed.decode(), expected);
+    assert_eq!(packed.bounds().negative_abs_max(), 8);
+    assert_eq!(packed.bounds().positive_max(), 7);
+    assert!(packed.storage[packed.encoded_len..]
+        .iter()
+        .all(|&byte| byte == 0));
+}
+
+#[test]
+fn streaming_writer_rejects_overlaps_overflow_and_narrow_widths() {
+    let mut overlap = PackedSignedDigitWriter::new(8, 3).unwrap();
+    overlap.write_at(2, &[1, 2]).unwrap();
+    assert!(overlap.write_at(3, &[1]).is_err());
+
+    let mut overflow = PackedSignedDigitWriter::new(2, 3).unwrap();
+    assert!(overflow.write_at(0, &[1, 2, 3]).is_err());
+
+    let mut narrow = PackedSignedDigitWriter::new(1, 2).unwrap();
+    narrow.write_at(0, &[2]).unwrap();
+    assert!(narrow.finish().is_err());
+}
+
+#[test]
 fn automatic_width_is_the_smallest_exact_signed_width() {
     for (digits, expected_width) in [
         (vec![0], 1),
