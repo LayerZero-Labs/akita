@@ -748,9 +748,9 @@ where
                     |position, coefficient_index, source| {
                         let flat_index = position * D + coefficient_index;
                         if flat_index < view.live_coeff_len {
-                            F::from_i8(source[coefficient_index])
+                            Ok(F::from_i8(source[coefficient_index]))
                         } else {
-                            F::zero()
+                            Ok(F::zero())
                         }
                     },
                 )?;

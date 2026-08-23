@@ -7,9 +7,10 @@ use crate::compute::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::{CanonicalField, Prime128OffsetA7F7 as F};
+use akita_field::{CanonicalField, FpExt4, Prime128OffsetA7F7 as F, Prime32Offset99, RingCore};
 use akita_types::{
-    BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
+    prepare_opening_point, BasisMode, PreparedSubringCoefficientPackingPoint,
+    SubringCoefficientPackingGeometry,
 };
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
@@ -234,12 +235,123 @@ fn prepared_dense_witness_matches_canonical_opening_kernels() {
 
 #[test]
 fn prepared_dense_witness_packs_fast_reconstruction_spans() {
-    const D: usize = 64;
+    type SmallF = Prime32Offset99;
+    type E = FpExt4<SmallF>;
+    const D: usize = 128;
+    const NUM_DIGITS: usize = 8;
+    const LOG_BASIS: u32 = 4;
+    const POSITIONS_PER_BLOCK: usize = 4;
     let evals = (0..1024)
-        .map(|index| F::from_i64((index % 29) as i64 - 14))
+        .map(|index| SmallF::from_i64((index % 29) as i64 - 14))
         .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(10, evals).unwrap();
-    poly.digit_planes_for::<D>(8, 4).unwrap();
+    let canonical = DensePoly::<SmallF>::from_field_evals(10, evals.clone()).unwrap();
+    let poly = DensePoly::<SmallF>::from_field_evals(10, evals).unwrap();
+    poly.digit_planes_for::<D>(NUM_DIGITS, LOG_BASIS).unwrap();
     let prepared = poly.into_prepared_witness().unwrap();
     assert!(matches!(prepared.storage, PreparedDenseStorage::Packed(_)));
+
+    let num_rings = canonical.ring_coeffs::<D>().unwrap().len();
+    let num_blocks = num_rings.div_ceil(POSITIONS_PER_BLOCK);
+    let position_weights = (0..POSITIONS_PER_BLOCK)
+        .map(|index| SmallF::from_u64((index + 2) as u64))
+        .collect::<Vec<_>>();
+    let block_weights = (0..num_blocks)
+        .map(|index| SmallF::from_u64((index + 7) as u64))
+        .collect::<Vec<_>>();
+    let base_plan = OpeningFoldPlan::Base {
+        live_block_weights: &block_weights,
+        position_weights: &position_weights,
+        num_positions_per_block: POSITIONS_PER_BLOCK,
+    };
+    let canonical_base = <CpuBackend as OpeningFoldKernel<_, SmallF, D>>::evaluate_and_fold(
+        &CpuBackend::DEFAULT,
+        None,
+        canonical.opening_view().unwrap(),
+        base_plan,
+    )
+    .unwrap();
+    let prepared_base = <CpuBackend as OpeningFoldKernel<_, SmallF, D>>::evaluate_and_fold(
+        &CpuBackend::DEFAULT,
+        None,
+        prepared.opening_view().unwrap(),
+        base_plan,
+    )
+    .unwrap();
+    assert_eq!(prepared_base, canonical_base);
+
+    let alpha_bits = D.trailing_zeros() as usize;
+    let outer_bits = POSITIONS_PER_BLOCK.trailing_zeros() as usize
+        + num_blocks.next_power_of_two().trailing_zeros() as usize;
+    let extension_point = vec![E::zero(); alpha_bits + outer_bits];
+    let prepared_point = prepare_opening_point::<SmallF, E, D>(
+        &extension_point,
+        BasisMode::Lagrange,
+        POSITIONS_PER_BLOCK,
+        num_blocks,
+        alpha_bits,
+    )
+    .unwrap();
+    let multipliers = prepared_point.ring_multiplier_point.as_subfield().unwrap();
+    let subfield_plan = OpeningFoldPlan::Subfield {
+        multipliers,
+        num_positions_per_block: POSITIONS_PER_BLOCK,
+    };
+    let canonical_subfield = <CpuBackend as OpeningFoldKernel<_, SmallF, D>>::evaluate_and_fold(
+        &CpuBackend::DEFAULT,
+        None,
+        canonical.opening_view().unwrap(),
+        subfield_plan,
+    )
+    .unwrap();
+    let prepared_subfield = <CpuBackend as OpeningFoldKernel<_, SmallF, D>>::evaluate_and_fold(
+        &CpuBackend::DEFAULT,
+        None,
+        prepared.opening_view().unwrap(),
+        subfield_plan,
+    )
+    .unwrap();
+    assert_eq!(prepared_subfield, canonical_subfield);
+
+    let geometry = SubringCoefficientPackingGeometry::try_new(1, D, D).unwrap();
+    let packing_point = PreparedSubringCoefficientPackingPoint::new(
+        geometry,
+        BasisMode::Lagrange,
+        num_rings,
+        POSITIONS_PER_BLOCK,
+        10,
+        &(0..10)
+            .map(|index| SmallF::from_u64((index + 3) as u64))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let canonical_refs = [&canonical];
+    let prepared_refs = [&prepared];
+    let canonical_batch =
+        <DensePoly<SmallF> as RootOpeningSource<SmallF, D>>::opening_batch(&canonical_refs)
+            .unwrap();
+    let prepared_batch =
+        <PreparedDenseWitness<SmallF> as RootOpeningSource<SmallF, D>>::opening_batch(
+            &prepared_refs,
+        )
+        .unwrap();
+    let packing_plan = SubringCoefficientPackingPlan {
+        point: &packing_point,
+    };
+    let canonical_partials =
+        SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            canonical_batch,
+            packing_plan,
+        )
+        .unwrap();
+    let prepared_partials =
+        SubringCoefficientPackingBatchKernel::coefficient_packing_partials_batch(
+            &CpuBackend::DEFAULT,
+            None,
+            prepared_batch,
+            packing_plan,
+        )
+        .unwrap();
+    assert_eq!(prepared_partials, canonical_partials);
 }

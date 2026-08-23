@@ -1,5 +1,8 @@
 //! Schedule-bound packed dense witness used after commitment.
 
+use super::ops::{
+    packed_balanced_fold_blocks, packed_balanced_fold_blocks_ring, PackedBalancedRingReader,
+};
 use super::poly::DensePoly;
 use crate::backend::coefficient_packing::partials_from_position_source;
 use crate::backend::packed_digits::PackedSignedDigits;
@@ -15,7 +18,6 @@ use crate::compute::{
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore};
 
 /// Schedule-bound dense opening witness selected after commitment.
@@ -94,71 +96,25 @@ impl<F: FieldCore> PreparedDenseWitness<F> {
 }
 
 impl<F: FieldCore + CanonicalField> PreparedDenseWitness<F> {
-    fn reconstruct_ring<const D: usize>(
-        &self,
-        ring_index: usize,
-    ) -> Result<CyclotomicRing<F, D>, AkitaError> {
-        debug_assert!(ring_index < self.num_ring_elems_at(D));
-        if let PreparedDenseStorage::Canonical(poly) = &self.storage {
-            return poly
-                .ring_coeffs::<D>()?
-                .get(ring_index)
-                .cloned()
-                .ok_or(AkitaError::InvalidProof);
-        }
-        let PreparedDenseStorage::Packed(digits) = &self.storage else {
-            unreachable!("canonical storage returned above")
-        };
-        let ring_width = self
-            .num_digits
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidInput("prepared dense ring width overflow".into()))?;
-        let start = ring_index.checked_mul(ring_width).ok_or_else(|| {
-            AkitaError::InvalidInput("prepared dense ring offset overflow".into())
-        })?;
-        let end = start.checked_add(ring_width).ok_or_else(|| {
-            AkitaError::InvalidInput("prepared dense ring extent overflow".into())
-        })?;
-        let digit_view = digits.view().slice(start..end)?;
-        let mut digits = digit_view.iter();
-        let digit_span = self
-            .num_digits
-            .checked_mul(self.log_basis as usize)
-            .ok_or_else(|| AkitaError::InvalidInput("prepared dense digit span overflow".into()))?;
-        debug_assert!(digit_span <= 126);
-        let mut signed = [0i128; D];
-        let mut shift = 0usize;
-        for _ in 0..self.num_digits {
-            for value in &mut signed {
-                let digit = digits.next().ok_or(AkitaError::InvalidProof)?;
-                *value += i128::from(digit) << shift;
-            }
-            shift += self.log_basis as usize;
-        }
-        Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
-            |index| F::from_i128(signed[index]),
-        )))
-    }
-
     fn fold_blocks<const D: usize>(
         &self,
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         self.validate_view::<D>()?;
-        let num_rings = self.num_ring_elems_at(D);
-        cfg_into_iter!(0..num_rings.div_ceil(num_positions_per_block))
-            .map(|block_index| {
-                let start = block_index * num_positions_per_block;
-                let end = (start + num_positions_per_block).min(num_rings);
-                let mut accumulator = CyclotomicRing::<F, D>::zero();
-                for (ring_index, &scalar) in (start..end).zip(scalars) {
-                    self.reconstruct_ring::<D>(ring_index)?
-                        .scale_accumulate_into(&mut accumulator, scalar);
-                }
-                Ok(accumulator)
-            })
-            .collect()
+        match &self.storage {
+            PreparedDenseStorage::Packed(digits) => packed_balanced_fold_blocks::<F, D>(
+                digits.view(),
+                self.num_ring_elems_at(D),
+                self.num_digits,
+                self.log_basis,
+                scalars,
+                num_positions_per_block,
+            ),
+            PreparedDenseStorage::Canonical(poly) => {
+                Ok(poly.fold_blocks::<D>(scalars, num_positions_per_block))
+            }
+        }
     }
 
     fn fold_blocks_ring<const D: usize>(
@@ -167,19 +123,19 @@ impl<F: FieldCore + CanonicalField> PreparedDenseWitness<F> {
         num_positions_per_block: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
         self.validate_view::<D>()?;
-        let num_rings = self.num_ring_elems_at(D);
-        cfg_into_iter!(0..num_rings.div_ceil(num_positions_per_block))
-            .map(|block_index| {
-                let start = block_index * num_positions_per_block;
-                let end = (start + num_positions_per_block).min(num_rings);
-                let mut accumulator = CyclotomicRing::<F, D>::zero();
-                for (ring_index, scalar) in (start..end).zip(scalars) {
-                    self.reconstruct_ring::<D>(ring_index)?
-                        .mul_accumulate_sparse_rhs_into(scalar, &mut accumulator);
-                }
-                Ok(accumulator)
-            })
-            .collect()
+        match &self.storage {
+            PreparedDenseStorage::Packed(digits) => packed_balanced_fold_blocks_ring::<F, D>(
+                digits.view(),
+                self.num_ring_elems_at(D),
+                self.num_digits,
+                self.log_basis,
+                scalars,
+                num_positions_per_block,
+            ),
+            PreparedDenseStorage::Canonical(poly) => {
+                Ok(poly.fold_blocks_ring::<D>(scalars, num_positions_per_block))
+            }
+        }
     }
 
     fn evaluate_and_fold<const D: usize>(
@@ -390,12 +346,38 @@ where
                         actual: num_rings,
                     });
                 }
-                let coordinates = partials_from_position_source::<F, E, _, D>(
-                    plan,
-                    RootPolyMeta::<F>::num_vars(*witness),
-                    |position| witness.reconstruct_ring::<D>(position),
-                    |_, coefficient, ring| ring.coefficients()[coefficient],
-                )?;
+                let source_num_vars = RootPolyMeta::<F>::num_vars(*witness);
+                let coordinates = match &witness.storage {
+                    PreparedDenseStorage::Packed(digits) => {
+                        partials_from_position_source::<F, E, _, D>(
+                            plan,
+                            source_num_vars,
+                            |position| {
+                                PackedBalancedRingReader::<F, D>::new(
+                                    digits.view(),
+                                    position,
+                                    witness.num_digits,
+                                    witness.log_basis,
+                                )
+                            },
+                            |_, coefficient, ring| ring.coefficient(coefficient),
+                        )?
+                    }
+                    PreparedDenseStorage::Canonical(poly) => {
+                        let rings = poly.ring_coeffs::<D>()?;
+                        partials_from_position_source::<F, E, _, D>(
+                            plan,
+                            source_num_vars,
+                            |position| {
+                                rings
+                                    .get(position)
+                                    .map(CyclotomicRing::coefficients)
+                                    .ok_or(AkitaError::InvalidProof)
+                            },
+                            |_, coefficient, ring| Ok(ring[coefficient]),
+                        )?
+                    }
+                };
                 SubringCoefficientPackingPartials::new(
                     plan.point.geometry(),
                     plan.point.num_live_blocks(),

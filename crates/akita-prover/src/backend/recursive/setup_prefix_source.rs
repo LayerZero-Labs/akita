@@ -552,7 +552,7 @@ where
                                     .map(CyclotomicRing::coefficients)
                                     .ok_or(AkitaError::InvalidProof)
                             },
-                            |_, coefficient, source| source[coefficient],
+                            |_, coefficient, source| Ok(source[coefficient]),
                         )?;
                     outputs.push(SubringCoefficientPackingPartials::new(
                         plan.point.geometry(),
