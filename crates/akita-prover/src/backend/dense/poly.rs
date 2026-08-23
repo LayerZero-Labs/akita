@@ -1,5 +1,9 @@
 //! Dense polynomial storage and constructors.
 
+use super::prepared::{PreparedDenseStorage, PreparedDenseWitness};
+use crate::backend::packed_digits::{
+    PackedSignedDigitView, PackedSignedDigitWriter, PackedSignedDigits, VECTOR_LOAD_PADDING,
+};
 use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
 use crate::validation::is_i8_log_basis;
@@ -10,10 +14,12 @@ use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use std::borrow::Cow;
-use std::mem::size_of;
 use std::sync::OnceLock;
 
-const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
+/// Bound the unpacked parallel staging area while building the persistent
+/// packed dense decomposition. The packed writer has its own bounded staging
+/// buffer, so peak conversion scratch remains independent of witness size.
+const DENSE_DECOMPOSITION_BATCH_BYTES: usize = 8 * 1024 * 1024;
 
 /// Minimum physical flat coefficient length.
 ///
@@ -27,14 +33,13 @@ const MAX_DENSE_DIGIT_CACHE_BYTES: usize = 512 * 1024 * 1024;
 const MIN_FLAT_COEFF_LEN: usize =
     SUPPORTED_COMMITMENT_RING_DIMS[SUPPORTED_COMMITMENT_RING_DIMS.len() - 1];
 
-/// D-free digit-plane cache: `num_digits` planes of `ring_d` bytes per ring
-/// element, flattened in ring-major order.
+/// Schedule-bound packed digit planes in ring-major, then digit-major order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DenseDigitCache {
     ring_d: usize,
     num_digits: usize,
     log_basis: u32,
-    planes: Vec<i8>,
+    planes: PackedSignedDigits,
 }
 
 /// Dense polynomial: all ring coefficients materialized in memory.
@@ -246,7 +251,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         &self,
         num_digits: usize,
         log_basis: u32,
-    ) -> Option<&[[i8; D]]> {
+    ) -> Option<PackedSignedDigitView<'_>> {
         if !is_i8_log_basis(log_basis) {
             return None;
         }
@@ -257,24 +262,18 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             return (cache.ring_d == D
                 && cache.num_digits == num_digits
                 && cache.log_basis == log_basis)
-                .then(|| {
-                    let (chunks, remainder) = cache.planes.as_chunks::<D>();
-                    debug_assert!(remainder.is_empty());
-                    chunks
-                });
+                .then(|| cache.planes.view());
         }
 
         let num_rings = self.num_ring_elems_at(D);
-        let cache_bytes = num_rings
-            .checked_mul(num_digits)?
-            .checked_mul(size_of::<[i8; D]>())?;
-        if cache_bytes > MAX_DENSE_DIGIT_CACHE_BYTES {
-            return None;
-        }
+        let num_plane_coeffs = num_rings.checked_mul(num_digits)?.checked_mul(D)?;
 
         let _span = tracing::info_span!(
             "dense_digit_cache_build",
-            cache_bytes,
+            packed_bytes = num_plane_coeffs
+                .checked_mul(log_basis as usize)
+                .and_then(|bits| bits.checked_add(7))
+                .map(|bits| bits / 8),
             num_rings,
             num_digits,
             ring_dimension = D,
@@ -283,14 +282,52 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         let rings = self.ring_coeffs::<D>().ok()?;
         let q = (-F::one()).to_canonical_u128() + 1;
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
-        let mut planes = vec![0i8; num_rings * num_digits * D];
-        cfg_chunks_mut!(planes, num_digits * D)
-            .zip(cfg_iter!(rings))
-            .for_each(|(dst, ring)| {
-                let (dst_planes, remainder) = dst.as_chunks_mut::<D>();
-                debug_assert!(remainder.is_empty());
-                ring.balanced_decompose_pow2_i8_into_with_params(dst_planes, &params);
+        let coeffs_per_ring = num_digits.checked_mul(D)?;
+        if log_basis == 8 {
+            let capacity = num_plane_coeffs.checked_add(VECTOR_LOAD_PADDING)?;
+            let mut planes = Vec::with_capacity(capacity);
+            planes.resize(num_plane_coeffs, 0i8);
+            cfg_chunks_mut!(planes, coeffs_per_ring)
+                .zip(cfg_iter!(rings))
+                .for_each(|(dst, ring)| {
+                    let (dst_planes, remainder) = dst.as_chunks_mut::<D>();
+                    debug_assert!(remainder.is_empty());
+                    ring.balanced_decompose_pow2_i8_into_with_params(dst_planes, &params);
+                });
+            let planes = PackedSignedDigits::from_balanced_i8_digits(planes, log_basis).ok()?;
+            let _ = self.digit_cache.set(DenseDigitCache {
+                ring_d: D,
+                num_digits,
+                log_basis,
+                planes,
             });
+            let cache = self.digit_cache.get()?;
+            return (cache.ring_d == D
+                && cache.num_digits == num_digits
+                && cache.log_basis == log_basis)
+                .then(|| cache.planes.view());
+        }
+
+        let mut writer = PackedSignedDigitWriter::new_balanced(num_plane_coeffs, log_basis).ok()?;
+        let rings_per_batch = DENSE_DECOMPOSITION_BATCH_BYTES
+            .checked_div(coeffs_per_ring)?
+            .max(1);
+        for (batch_index, ring_batch) in rings.chunks(rings_per_batch).enumerate() {
+            let mut batch_planes = vec![0i8; ring_batch.len() * coeffs_per_ring];
+            cfg_chunks_mut!(batch_planes, coeffs_per_ring)
+                .zip(cfg_iter!(ring_batch))
+                .for_each(|(dst, ring)| {
+                    let (dst_planes, remainder) = dst.as_chunks_mut::<D>();
+                    debug_assert!(remainder.is_empty());
+                    ring.balanced_decompose_pow2_i8_into_with_params(dst_planes, &params);
+                });
+            debug_assert_eq!(
+                writer.position(),
+                batch_index * rings_per_batch * coeffs_per_ring
+            );
+            writer.write_at(writer.position(), &batch_planes).ok()?;
+        }
+        let planes = writer.finish().ok()?;
         let _ = self.digit_cache.set(DenseDigitCache {
             ring_d: D,
             num_digits,
@@ -298,12 +335,57 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             planes,
         });
         let cache = self.digit_cache.get()?;
-        (cache.ring_d == D && cache.num_digits == num_digits && cache.log_basis == log_basis).then(
-            || {
-                let (chunks, remainder) = cache.planes.as_chunks::<D>();
-                debug_assert!(remainder.is_empty());
-                chunks
-            },
-        )
+        (cache.ring_d == D && cache.num_digits == num_digits && cache.log_basis == log_basis)
+            .then(|| cache.planes.view())
+    }
+
+    /// Consume a committed dense polynomial into its schedule-bound opening witness.
+    ///
+    /// Commitment selects the ring dimension and balanced decomposition, so
+    /// this conversion is available only after a successful dense commitment
+    /// has populated that exact schedule-bound representation. Fast bounded
+    /// spans keep only packed digits; wider spans retain canonical storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this polynomial has not yet been committed with
+    /// an i8 balanced-digit schedule.
+    pub fn into_prepared_witness(self) -> Result<PreparedDenseWitness<F>, AkitaError> {
+        let cache = self.digit_cache.get().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "dense polynomial must be committed before preparing its opening witness".into(),
+            )
+        })?;
+        let num_vars = self.num_vars;
+        let ring_d = cache.ring_d;
+        let num_digits = cache.num_digits;
+        let log_basis = cache.log_basis;
+        let digit_span = num_digits
+            .checked_mul(log_basis as usize)
+            .ok_or_else(|| AkitaError::InvalidInput("dense digit span overflow".into()))?;
+        let storage = if digit_span <= 126 {
+            PreparedDenseStorage::Packed(
+                self.digit_cache
+                    .into_inner()
+                    .expect("dense digit cache was checked above")
+                    .planes,
+            )
+        } else {
+            PreparedDenseStorage::Canonical(self)
+        };
+        Ok(PreparedDenseWitness {
+            num_vars,
+            ring_d,
+            num_digits,
+            log_basis,
+            storage,
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn cached_digit_storage(&self) -> Option<(usize, u8)> {
+        self.digit_cache
+            .get()
+            .map(|cache| (cache.planes.encoded_bytes().len(), cache.planes.bit_width()))
     }
 }

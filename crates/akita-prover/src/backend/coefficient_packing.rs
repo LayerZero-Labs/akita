@@ -19,21 +19,20 @@ fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
 
 /// Construct canonical partials from an A-ring position source.
 ///
-/// The source callback runs once per position. Dense sources borrow their ring
-/// coefficients, while packed recursive sources decode one D-sized ring into an
-/// owned array. The arithmetic loop is shared and reads the prepared position
-/// through `coefficient` without repeating source validation or decoding.
+/// The source callback runs once per position. The arithmetic loop requests
+/// coefficients once in increasing physical order. A source may therefore lend
+/// canonical storage or decode bounded chunks through the mutable `coefficient`
+/// callback without repeating validation.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
 pub(super) fn partials_from_position_source<F, E, P, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
     position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
-    coefficient: impl Fn(usize, usize, &P) -> F + Sync,
+    coefficient: impl Fn(usize, usize, &mut P) -> Result<F, AkitaError> + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F> + FpExtEncoding<F>,
-    P: Sync,
 {
     plan.validate::<D>(source_num_vars)?;
     let point = plan.point;
@@ -68,7 +67,7 @@ where
                 let position = first_position
                     .checked_add(position_in_block)
                     .ok_or(AkitaError::InvalidProof)?;
-                let source_position = position_at(position)?;
+                let mut source_position = position_at(position)?;
                 let position_weight = point.position_weights()[position_in_block];
                 for (subring_index, accumulator) in packed.iter_mut().enumerate() {
                     let subring_offset = subring_index.checked_mul(stride).ok_or_else(|| {
@@ -79,7 +78,8 @@ where
                     let mut packed_position = E::zero();
                     for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
                         let coefficient_index = subring_offset + low_index;
-                        let source = coefficient(position, coefficient_index, &source_position);
+                        let source =
+                            coefficient(position, coefficient_index, &mut source_position)?;
                         packed_position += packing_weight.mul_base(source);
                     }
                     *accumulator += position_weight * packed_position;

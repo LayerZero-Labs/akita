@@ -57,7 +57,9 @@ pub(crate) use fused_quotients::{
     fused_split_eq_quotients_streamed_prover_bounds, FusedQuotientRows,
 };
 use i8_matvec::*;
-pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
+pub(crate) use ntt_matvec::{
+    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_packed_dense_digits_i8,
+};
 pub use ntt_matvec::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,

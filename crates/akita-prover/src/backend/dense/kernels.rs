@@ -147,7 +147,7 @@ where
                             .map(|ring| ring.coefficients())
                             .ok_or(AkitaError::InvalidProof)
                     },
-                    |_, coefficient, source| source[coefficient],
+                    |_, coefficient, source| Ok(source[coefficient]),
                 )?;
                 SubringCoefficientPackingPartials::new(
                     plan.point.geometry(),

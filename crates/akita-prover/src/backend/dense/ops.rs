@@ -4,9 +4,10 @@
 //! a method const generic and views the flat coefficients at kernel entry.
 
 use super::poly::DensePoly;
+use crate::backend::packed_digits::PackedSignedDigitView;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
+    decompose_ring_single_digit, packed_digit_decompose_fold_partitioned, sparse_mul_acc,
     DecomposeParams,
 };
 use crate::DecomposeFoldWitness;
@@ -17,6 +18,193 @@ use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use akita_types::SubfieldMultiplierOpeningPoint;
+
+const PACKED_RECONSTRUCTION_CHUNK: usize = 64;
+
+/// Sequential field-coefficient reader for one balanced ring stored in packed
+/// digit planes.
+///
+/// The reader decodes and reconstructs one SIMD-sized coefficient chunk at a
+/// time. Operation-specific kernels can consume each chunk immediately instead
+/// of materializing a temporary `CyclotomicRing`.
+pub(super) struct PackedBalancedRingReader<'a, F: FieldCore, const D: usize> {
+    digits: PackedSignedDigitView<'a>,
+    num_digits: usize,
+    log_basis: u32,
+    decoded_start: usize,
+    decoded_len: usize,
+    decoded: [F; PACKED_RECONSTRUCTION_CHUNK],
+}
+
+impl<'a, F, const D: usize> PackedBalancedRingReader<'a, F, D>
+where
+    F: FieldCore + CanonicalField,
+{
+    pub(super) fn new(
+        digit_planes: PackedSignedDigitView<'a>,
+        ring_index: usize,
+        num_digits: usize,
+        log_basis: u32,
+    ) -> Result<Self, AkitaError> {
+        let ring_width = num_digits.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidInput("packed balanced ring width overflow".into())
+        })?;
+        let start = ring_index.checked_mul(ring_width).ok_or_else(|| {
+            AkitaError::InvalidInput("packed balanced ring offset overflow".into())
+        })?;
+        let end = start.checked_add(ring_width).ok_or_else(|| {
+            AkitaError::InvalidInput("packed balanced ring extent overflow".into())
+        })?;
+        let digit_span = num_digits.checked_mul(log_basis as usize).ok_or_else(|| {
+            AkitaError::InvalidInput("packed balanced digit span overflow".into())
+        })?;
+        if digit_span > 126 {
+            return Err(AkitaError::InvalidInput(
+                "packed balanced ring exceeds signed-128 reconstruction".into(),
+            ));
+        }
+        Ok(Self {
+            digits: digit_planes.slice(start..end)?,
+            num_digits,
+            log_basis,
+            decoded_start: D,
+            decoded_len: 0,
+            decoded: [F::zero(); PACKED_RECONSTRUCTION_CHUNK],
+        })
+    }
+
+    fn fill_chunk(&mut self, coefficient: usize) -> Result<(), AkitaError> {
+        if coefficient >= D {
+            return Err(AkitaError::InvalidSize {
+                expected: D,
+                actual: coefficient,
+            });
+        }
+        let chunk_start = coefficient / PACKED_RECONSTRUCTION_CHUNK * PACKED_RECONSTRUCTION_CHUNK;
+        let chunk_len = (D - chunk_start).min(PACKED_RECONSTRUCTION_CHUNK);
+        let mut signed = [0i128; PACKED_RECONSTRUCTION_CHUNK];
+        let mut decoded = [0i8; PACKED_RECONSTRUCTION_CHUNK];
+        let mut shift = 0usize;
+        for digit_index in 0..self.num_digits {
+            let digit_start = digit_index
+                .checked_mul(D)
+                .and_then(|offset| offset.checked_add(chunk_start))
+                .ok_or_else(|| {
+                    AkitaError::InvalidInput("packed balanced digit offset overflow".into())
+                })?;
+            self.digits
+                .decode_range(digit_start, &mut decoded[..chunk_len])?;
+            for (accumulator, &digit) in signed[..chunk_len].iter_mut().zip(&decoded) {
+                *accumulator += i128::from(digit) << shift;
+            }
+            shift += self.log_basis as usize;
+        }
+        for (output, &value) in self.decoded[..chunk_len].iter_mut().zip(&signed) {
+            *output = F::from_i128(value);
+        }
+        self.decoded_start = chunk_start;
+        self.decoded_len = chunk_len;
+        Ok(())
+    }
+
+    pub(super) fn coefficient(&mut self, index: usize) -> Result<F, AkitaError> {
+        if index < self.decoded_start || index >= self.decoded_start + self.decoded_len {
+            self.fill_chunk(index)?;
+        }
+        Ok(self.decoded[index - self.decoded_start])
+    }
+
+    fn for_each_chunk(
+        &mut self,
+        mut consume: impl FnMut(usize, &[F]) -> Result<(), AkitaError>,
+    ) -> Result<(), AkitaError> {
+        for start in (0..D).step_by(PACKED_RECONSTRUCTION_CHUNK) {
+            self.fill_chunk(start)?;
+            consume(start, &self.decoded[..self.decoded_len])?;
+        }
+        Ok(())
+    }
+
+    fn materialize(mut self) -> Result<CyclotomicRing<F, D>, AkitaError> {
+        let mut output = CyclotomicRing::zero();
+        self.for_each_chunk(|start, coefficients| {
+            output.coefficients_mut()[start..start + coefficients.len()]
+                .copy_from_slice(coefficients);
+            Ok(())
+        })?;
+        Ok(output)
+    }
+}
+
+pub(super) fn packed_balanced_fold_blocks<F, const D: usize>(
+    digit_planes: PackedSignedDigitView<'_>,
+    num_rings: usize,
+    num_digits: usize,
+    log_basis: u32,
+    scalars: &[F],
+    num_positions_per_block: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    cfg_into_iter!(0..num_rings.div_ceil(num_positions_per_block))
+        .map(|block_index| {
+            let start = block_index * num_positions_per_block;
+            let end = (start + num_positions_per_block).min(num_rings);
+            let mut accumulator = CyclotomicRing::<F, D>::zero();
+            for (ring_index, &scalar) in (start..end).zip(scalars) {
+                let mut ring = PackedBalancedRingReader::<F, D>::new(
+                    digit_planes,
+                    ring_index,
+                    num_digits,
+                    log_basis,
+                )?;
+                ring.for_each_chunk(|coefficient_start, coefficients| {
+                    for (output, &source) in accumulator.coefficients_mut()
+                        [coefficient_start..coefficient_start + coefficients.len()]
+                        .iter_mut()
+                        .zip(coefficients)
+                    {
+                        *output = source.mul_add(scalar, *output);
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(accumulator)
+        })
+        .collect()
+}
+
+pub(super) fn packed_balanced_fold_blocks_ring<F, const D: usize>(
+    digit_planes: PackedSignedDigitView<'_>,
+    num_rings: usize,
+    num_digits: usize,
+    log_basis: u32,
+    scalars: &[CyclotomicRing<F, D>],
+    num_positions_per_block: usize,
+) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    cfg_into_iter!(0..num_rings.div_ceil(num_positions_per_block))
+        .map(|block_index| {
+            let start = block_index * num_positions_per_block;
+            let end = (start + num_positions_per_block).min(num_rings);
+            let mut accumulator = CyclotomicRing::<F, D>::zero();
+            for (ring_index, scalar) in (start..end).zip(scalars) {
+                let ring = PackedBalancedRingReader::<F, D>::new(
+                    digit_planes,
+                    ring_index,
+                    num_digits,
+                    log_basis,
+                )?
+                .materialize()?;
+                ring.mul_accumulate_sparse_rhs_into(scalar, &mut accumulator);
+            }
+            Ok(accumulator)
+        })
+        .collect()
+}
 
 impl<F> DensePoly<F>
 where
@@ -113,8 +301,9 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<F, D>(
+                packed_digit_decompose_fold_partitioned::<F, D>(
                     digit_planes,
+                    n,
                     challenges,
                     num_positions_per_block,
                     num_digits,

@@ -8,10 +8,9 @@ mod decompose_fold_partitioned;
 mod narrow_accum;
 mod rotated_accum;
 
+pub use decompose_fold_partitioned::balanced_ring_decompose_fold_partitioned;
+pub(crate) use decompose_fold_partitioned::packed_digit_decompose_fold_partitioned;
 pub(crate) use decompose_fold_partitioned::packed_tight_digit_fold_partitioned;
-pub use decompose_fold_partitioned::{
-    balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
-};
 
 use crate::kernels::linear::try_centered_i8;
 use crate::DecomposeFoldWitness;

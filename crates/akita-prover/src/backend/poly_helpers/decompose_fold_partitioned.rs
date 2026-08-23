@@ -129,14 +129,14 @@ fn position_tile_len(num_positions_per_block: usize) -> usize {
 }
 
 enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
-    Predecomposed {
-        digit_planes: &'a [[i8; D]],
-        num_rings: usize,
-        digit_abs_bound: u64,
-    },
     LiveRings {
         coeffs: &'a [CyclotomicRing<F, D>],
         params: &'a DecomposeParams,
+    },
+    PackedPredecomposed {
+        digit_planes: PackedSignedDigitView<'a>,
+        num_rings: usize,
+        digit_abs_bound: u64,
     },
     PackedTight {
         digits: PackedSignedDigitView<'a>,
@@ -150,21 +150,37 @@ enum DigitScratch<const D: usize> {
     I16(Vec<[i16; D]>),
 }
 
+fn decode_packed_dense_ring<'a, const D: usize>(
+    digit_planes: PackedSignedDigitView<'_>,
+    ring_idx: usize,
+    num_digits: usize,
+    digit_scratch: Option<&'a mut DigitScratch<D>>,
+) -> &'a [[i8; D]] {
+    let DigitScratch::I8(digit_buf) = digit_scratch.expect("packed dense path requires i8 scratch")
+    else {
+        unreachable!("packed dense digits always use i8 scratch")
+    };
+    digit_planes
+        .decode_range(ring_idx * num_digits * D, digit_buf.as_flattened_mut())
+        .expect("validated packed dense ring");
+    digit_buf
+}
+
 impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     fn num_rings(&self) -> usize {
         match self {
-            Self::Predecomposed { num_rings, .. } => *num_rings,
             Self::LiveRings { coeffs, .. } => coeffs.len(),
+            Self::PackedPredecomposed { num_rings, .. } => *num_rings,
             Self::PackedTight { num_rings, .. } => *num_rings,
         }
     }
 
     fn digit_abs_bound(&self) -> u64 {
         match self {
-            Self::Predecomposed {
+            Self::LiveRings { params, .. } => params.half_b as u64,
+            Self::PackedPredecomposed {
                 digit_abs_bound, ..
             } => *digit_abs_bound,
-            Self::LiveRings { params, .. } => params.half_b as u64,
             Self::PackedTight {
                 digit_abs_bound, ..
             } => *digit_abs_bound,
@@ -191,6 +207,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                     },
                 )
             }
+            Self::PackedPredecomposed { .. } => Some(DigitScratch::I8(vec![[0i8; D]; num_digits])),
             _ => None,
         }
     }
@@ -208,16 +225,6 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     ) {
         let dst_base = local_elem_idx * num_digits;
         match (self, plan) {
-            (Self::Predecomposed { digit_planes, .. }, ChallengePlan::Rotated(rotated)) => {
-                let src_base = ring_idx * num_digits;
-                for digit_idx in 0..num_digits {
-                    accumulate_rotated_digit_plane::<D>(
-                        &digit_planes[src_base + digit_idx],
-                        rotated.as_ref(),
-                        &mut acc[dst_base + digit_idx],
-                    );
-                }
-            }
             (Self::PackedTight { digits, .. }, ChallengePlan::Rotated(rotated)) => {
                 debug_assert_eq!(num_digits, 1);
                 let digit_plane = digits
@@ -249,21 +256,27 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                     | ChallengePlan::NarrowChunked(_) => unreachable!(),
                 }
             }
-            (Self::Predecomposed { digit_planes, .. }, plan) => {
-                let src_base = ring_idx * num_digits;
+            (Self::PackedPredecomposed { digit_planes, .. }, plan) => {
+                let digit_buf =
+                    decode_packed_dense_ring(*digit_planes, ring_idx, num_digits, digit_scratch);
                 for digit_idx in 0..num_digits {
-                    let digit_plane = &digit_planes[src_base + digit_idx];
+                    let digit_plane = &digit_buf[digit_idx];
                     let digit_acc = &mut acc[dst_base + digit_idx];
                     match plan {
+                        ChallengePlan::Rotated(rotated) => accumulate_rotated_digit_plane::<D>(
+                            digit_plane,
+                            rotated.as_ref(),
+                            digit_acc,
+                        ),
                         ChallengePlan::WidePm1(pm1) => {
                             sparse_mul_acc_pm1(digit_plane, &pm1.positive, &pm1.negative, digit_acc)
                         }
                         ChallengePlan::WideGeneric => {
                             sparse_mul_acc(digit_plane, challenge, digit_acc);
                         }
-                        ChallengePlan::Rotated(_)
-                        | ChallengePlan::NarrowFull(_)
-                        | ChallengePlan::NarrowChunked(_) => unreachable!(),
+                        ChallengePlan::NarrowFull(_) | ChallengePlan::NarrowChunked(_) => {
+                            unreachable!()
+                        }
                     }
                 }
             }
@@ -348,22 +361,23 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
     ) {
         let dst_base = local_elem_idx * num_digits;
         match self {
-            Self::Predecomposed { digit_planes, .. } => {
-                let src_base = ring_idx * num_digits;
-                for digit_idx in 0..num_digits {
-                    sparse_mul_acc_narrow(
-                        &digit_planes[src_base + digit_idx],
-                        challenge,
-                        &mut acc[dst_base + digit_idx],
-                    );
-                }
-            }
             Self::PackedTight { digits, .. } => {
                 debug_assert_eq!(num_digits, 1);
                 let digit_plane = digits
                     .decode_array::<D>(ring_idx * D)
                     .expect("validated packed recursive ring");
                 sparse_mul_acc_narrow(&digit_plane, challenge, &mut acc[dst_base]);
+            }
+            Self::PackedPredecomposed { digit_planes, .. } => {
+                let digit_buf =
+                    decode_packed_dense_ring(*digit_planes, ring_idx, num_digits, digit_scratch);
+                for digit_idx in 0..num_digits {
+                    sparse_mul_acc_narrow(
+                        &digit_buf[digit_idx],
+                        challenge,
+                        &mut acc[dst_base + digit_idx],
+                    );
+                }
             }
             Self::LiveRings { coeffs, params } => {
                 match digit_scratch.expect("live narrow path requires signed-digit scratch") {
@@ -418,22 +432,6 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         let narrow = &mut narrow_acc[dst_base..dst_base + num_digits];
         let wide = &mut wide_acc[dst_base..dst_base + num_digits];
         match self {
-            Self::Predecomposed { digit_planes, .. } => {
-                let src_base = ring_idx * num_digits;
-                for term_range in term_ranges {
-                    let positions = &challenge.positions[term_range.clone()];
-                    let coefficients = &challenge.coeffs[term_range.clone()];
-                    for digit_idx in 0..num_digits {
-                        sparse_mul_acc_narrow_terms(
-                            &digit_planes[src_base + digit_idx],
-                            positions,
-                            coefficients,
-                            &mut narrow[digit_idx],
-                        );
-                    }
-                    flush_narrow_accumulator(narrow, wide);
-                }
-            }
             Self::PackedTight { digits, .. } => {
                 debug_assert_eq!(num_digits, 1);
                 let digit_plane = digits
@@ -446,6 +444,23 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                         &challenge.coeffs[term_range.clone()],
                         &mut narrow[0],
                     );
+                    flush_narrow_accumulator(narrow, wide);
+                }
+            }
+            Self::PackedPredecomposed { digit_planes, .. } => {
+                let digit_buf =
+                    decode_packed_dense_ring(*digit_planes, ring_idx, num_digits, digit_scratch);
+                for term_range in term_ranges {
+                    let positions = &challenge.positions[term_range.clone()];
+                    let coefficients = &challenge.coeffs[term_range.clone()];
+                    for digit_idx in 0..num_digits {
+                        sparse_mul_acc_narrow_terms(
+                            &digit_buf[digit_idx],
+                            positions,
+                            coefficients,
+                            &mut narrow[digit_idx],
+                        );
+                    }
                     flush_narrow_accumulator(narrow, wide);
                 }
             }
@@ -648,20 +663,20 @@ fn element_partitioned_decompose_fold<F: CanonicalField, const D: usize>(
     out
 }
 
-/// Element-partitioned accumulation for predecomposed dense digit caches.
-pub fn cached_digit_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
-    digit_planes: &[[i8; D]],
+/// Element-partitioned accumulation for packed dense digit caches.
+pub(crate) fn packed_digit_decompose_fold_partitioned<F: CanonicalField, const D: usize>(
+    digit_planes: PackedSignedDigitView<'_>,
+    num_rings: usize,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
     num_digits: usize,
     log_basis: u32,
 ) -> Vec<[i32; D]> {
-    let num_rings = digit_planes.len() / num_digits;
     let digit_abs_bound = akita_types::balanced_signed_digit_abs_bound(log_basis)
         .expect("cached decompose-fold basis must be validated")
         .min(u64::from(i8::MIN.unsigned_abs()));
     element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::Predecomposed {
+        ElementFoldSource::PackedPredecomposed {
             digit_planes,
             num_rings,
             digit_abs_bound,

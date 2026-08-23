@@ -7,9 +7,11 @@ mod commit;
 mod kernels;
 mod ops;
 mod poly;
+mod prepared;
 #[cfg(test)]
 mod tests;
 mod views;
 
 pub use poly::DensePoly;
+pub use prepared::{PreparedDenseBatchView, PreparedDenseView, PreparedDenseWitness};
 pub use views::{DenseBatchView, DenseView};

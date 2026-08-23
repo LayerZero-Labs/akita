@@ -2,11 +2,12 @@ use super::rotated_accum::{
     decompose_ring_full_challenge_accumulate, should_use_rotated_challenge,
 };
 use super::{
-    balanced_ring_decompose_fold_partitioned, cached_digit_decompose_fold_partitioned,
-    decompose_ring_interleaved, fill_rotated_challenge, sparse_mul_acc, sparse_mul_acc_i16,
+    balanced_ring_decompose_fold_partitioned, decompose_ring_interleaved, fill_rotated_challenge,
+    packed_digit_decompose_fold_partitioned, sparse_mul_acc, sparse_mul_acc_i16,
     sparse_mul_acc_i16_pm1, sparse_mul_acc_i16_scalar, sparse_mul_acc_pm1, sparse_mul_acc_scalar,
     DecomposeParams,
 };
+use crate::backend::packed_digits::PackedSignedDigits;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_field::CanonicalField;
@@ -67,8 +68,10 @@ fn partitioned_fold_matches_scalar_for_embedded_subring_challenges() {
     for (ring, planes) in rings.iter().zip(digit_planes.chunks_exact_mut(num_digits)) {
         decompose_ring_interleaved(ring, planes, num_digits, &params);
     }
-    let cached = cached_digit_decompose_fold_partitioned::<F, D>(
-        &digit_planes,
+    let packed = PackedSignedDigits::from_i8_digits_auto(digit_planes.as_flattened().to_vec());
+    let cached = packed_digit_decompose_fold_partitioned::<F, D>(
+        packed.view(),
+        rings.len(),
         &challenges,
         POSITIONS,
         num_digits,

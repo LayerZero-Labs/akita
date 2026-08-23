@@ -1,5 +1,6 @@
 use super::CpuPreparedSetup;
 use crate::backend::packed_digits::PackedSignedDigitView;
+use crate::compute::PackedDenseCommitInput;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 #[allow(unused_imports)]
@@ -47,8 +48,8 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-#[tracing::instrument(skip_all, name = "dense_commit_cached_digit_rows_exact_i16")]
-pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "dense_commit_byte_digit_rows_exact_i16")]
+pub(super) fn dense_commit_byte_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
     row_width: usize,
@@ -72,9 +73,43 @@ pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, cons
                 .map(|block| {
                     if block.len() > row_width {
                         return Err(AkitaError::InvalidSetup(
-                            "cached digit block exceeds dense commitment row width".into(),
+                            "dense byte digit block exceeds its row width".into(),
                         ));
                     }
+                    let mut rhs = Vec::with_capacity(row_width);
+                    rhs.extend(block.iter().map(|digits| from_fn(|k| i16::from(digits[k]))));
+                    rhs.resize(row_width, [0i16; D]);
+                    ntt.mat_vec_i16::<F>(log_basis_inner, n_a, &rhs)
+                })
+                .collect()
+        },
+    )
+}
+
+#[tracing::instrument(skip_all, name = "dense_commit_packed_digit_rows_exact_i16")]
+pub(super) fn dense_commit_packed_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F>,
+    n_a: usize,
+    source: PackedDenseCommitInput<'_>,
+    log_basis_inner: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let row_width = source.row_width()?;
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    prepared.with_shared_ntt::<D, _>(
+        NttCacheKey::from_matrix_shape(
+            D,
+            n_a,
+            row_width,
+            NttTransformDomain::ExactNegacyclicI16 {
+                width: row_width,
+                rhs_abs_bound,
+            },
+        )?,
+        |ntt| {
+            cfg_into_iter!(0..source.num_live_blocks())
+                .map(|block_index| {
+                    let block = source.decode_block::<D>(block_index)?;
                     let mut rhs = Vec::with_capacity(row_width);
                     rhs.extend(block.iter().map(|digits| from_fn(|k| i16::from(digits[k]))));
                     rhs.resize(row_width, [0i16; D]);
