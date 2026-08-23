@@ -136,7 +136,6 @@ impl PackedSignedDigits {
         self.len == 0
     }
 
-    #[cfg(test)]
     pub(crate) fn bit_width(&self) -> u8 {
         self.bit_width
     }

@@ -14,7 +14,10 @@ mod recursive;
 mod ring_switch;
 pub(crate) mod sparse_ring;
 
-pub use dense::{DenseBatchView, DensePoly, DenseView};
+pub use dense::{
+    DenseBatchView, DensePoly, DenseView, PreparedDenseBatchView, PreparedDenseView,
+    PreparedDenseWitness,
+};
 pub use field_reduction::tensor_pack_recursive_witness;
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,

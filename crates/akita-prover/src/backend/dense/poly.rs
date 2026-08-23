@@ -1,5 +1,6 @@
 //! Dense polynomial storage and constructors.
 
+use super::prepared::PreparedDenseWitness;
 use crate::backend::packed_digits::{
     PackedSignedDigitView, PackedSignedDigitWriter, PackedSignedDigits,
 };
@@ -13,6 +14,7 @@ use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use std::borrow::Cow;
+use std::marker::PhantomData;
 use std::sync::OnceLock;
 
 /// Bound the unpacked parallel staging area while building the persistent
@@ -311,6 +313,32 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         let cache = self.digit_cache.get()?;
         (cache.ring_d == D && cache.num_digits == num_digits && cache.log_basis == log_basis)
             .then(|| cache.planes.view())
+    }
+
+    /// Consume a committed dense polynomial into its packed opening witness.
+    ///
+    /// Commitment selects the ring dimension and balanced decomposition, so
+    /// this conversion is available only after a successful packed dense
+    /// commitment has populated that exact schedule-bound representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when this polynomial has not yet been committed with
+    /// an i8 balanced-digit schedule.
+    pub fn into_prepared_witness(self) -> Result<PreparedDenseWitness<F>, AkitaError> {
+        let cache = self.digit_cache.into_inner().ok_or_else(|| {
+            AkitaError::InvalidInput(
+                "dense polynomial must be committed before preparing its opening witness".into(),
+            )
+        })?;
+        Ok(PreparedDenseWitness {
+            num_vars: self.num_vars,
+            ring_d: cache.ring_d,
+            num_digits: cache.num_digits,
+            log_basis: cache.log_basis,
+            digits: cache.planes,
+            _field: PhantomData,
+        })
     }
 
     #[cfg(test)]

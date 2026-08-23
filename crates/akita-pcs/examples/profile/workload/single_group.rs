@@ -42,12 +42,14 @@ fn run_prove<
     FF,
     const D: usize,
     Cfg: CommitmentConfig<Field = FF>,
-    P: RuntimeRootProvePoly<FF> + RuntimeCommitSource<FF>,
+    CommitP: RuntimeCommitSource<FF>,
+    OpeningP: RuntimeRootProvePoly<FF>,
 >(
     label: &str,
     setup: &AkitaProverSetup<Cfg::Field>,
     stack: &akita_prover::UniformProverStack<'_, FF, CpuBackend>,
-    poly: &P,
+    poly: CommitP,
+    prepare_opening: impl FnOnce(CommitP) -> OpeningP,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     group_layout: PolynomialGroupLayout,
@@ -79,12 +81,11 @@ fn run_prove<
         + HasOptimizedFold
         + AkitaSerialize
         + Valid,
-    CpuBackend: RuntimeCommitBackendFor<FF, P>
-        + RecursiveProveBackend<FF, P, Cfg::ExtField>
-        + RuntimeCoefficientPackingBackendFor<FF, P, Cfg::ExtField>,
+    CpuBackend: RuntimeCommitBackendFor<FF, CommitP>
+        + RecursiveProveBackend<FF, OpeningP, Cfg::ExtField>
+        + RuntimeCoefficientPackingBackendFor<FF, OpeningP, Cfg::ExtField>,
 {
     let pools = ProfileThreadPools::get();
-    let poly_refs: [&P; 1] = [poly];
     let openings = [opening];
     let setup_contribution_mode = profile_setup_contribution_mode();
     tracing::info!(
@@ -101,12 +102,14 @@ fn run_prove<
             hint,
         } = AkitaCommitmentScheme::<Cfg>::commit(
             setup,
-            std::slice::from_ref(poly),
+            std::slice::from_ref(&poly),
             stack,
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
         .unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
+        let opening_poly = prepare_opening(poly);
+        let poly_refs: [&OpeningP; 1] = [&opening_poly];
 
         let commitments = [commitment];
         let selection = Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
@@ -367,11 +370,15 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
             .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
-    run_prove::<FF, D, Cfg, DensePoly<FF>>(
+    run_prove::<FF, D, Cfg, DensePoly<FF>, akita_prover::PreparedDenseWitness<FF>>(
         label,
         &setup,
         &stack,
-        &poly,
+        poly,
+        |poly| {
+            poly.into_prepared_witness()
+                .expect("prepared dense witness")
+        },
         &original_pt,
         opening,
         PolynomialGroupLayout::singleton(nv),
@@ -455,11 +462,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
             .shared_ntt_profile(layout.d_a())
             .expect("prepared setup CRT profile"),
     );
-    run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
+    run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>, OneHotPoly<FF, u8>>(
         label,
         &setup,
         &stack,
-        &onehot_poly,
+        onehot_poly,
+        std::convert::identity,
         &pt,
         opening,
         PolynomialGroupLayout::new(nv, 1),
