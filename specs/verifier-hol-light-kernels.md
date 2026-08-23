@@ -158,12 +158,19 @@ already close to the s2n-bignum proof surface.
 
 ### What s2n-bignum already provides
 
-The pinned s2n-bignum revision is
-`ac31a43db30953037abd1b64b540e65cf31f4c67`. It contains complete HOL Light
-proofs for AVX2 ML-DSA NTT and pointwise kernels, AArch64 NEON ML-KEM and ML-DSA
-NTT kernels, and variable-time rejection samplers on both architectures. It
-also contains the byte import, instruction simulation, ABI, memory framing, and
-SIMD arithmetic support that Akita needs.
+Until the model extensions merge upstream, the pinned s2n-bignum source is
+[`quangvdao/s2n-bignum` at commit
+`db6d2002554d02a78cb4d6c183f16ecd75395691`](https://github.com/quangvdao/s2n-bignum/tree/db6d2002554d02a78cb4d6c183f16ecd75395691).
+This commit is the head of the neutral
+[`integration/simd-instruction-models`](https://github.com/quangvdao/s2n-bignum/tree/integration/simd-instruction-models)
+branch. It preserves each standalone model commit in its history and is based on
+upstream commit `ac31a43db30953037abd1b64b540e65cf31f4c67`.
+
+The upstream base contains complete HOL Light proofs for AVX2 ML-DSA NTT and
+pointwise kernels, AArch64 NEON ML-KEM and ML-DSA NTT kernels, and variable-time
+rejection samplers on both architectures. It also contains the byte import,
+instruction simulation, ABI, memory framing, and SIMD arithmetic support that
+Akita needs. The pinned fork adds the instruction semantics listed below.
 
 This is strong prior evidence, but it is not a proof of Akita. Akita uses
 different primes, transforms, layouts, bounds, and instruction sequences.
@@ -171,16 +178,21 @@ different primes, transforms, layouts, bounds, and instruction sequences.
 ### Known instruction gaps
 
 The current Akita intrinsics mostly map to instructions already present in the
-s2n-bignum models. A source and model audit found the following gaps at the
-pinned revisions.
+s2n-bignum models. The pinned fork closes the four initial AVX2 and NEON model
+gaps found by the source audit.
 
-| Akita operation | Likely instruction | Current model result | Required action |
+| Akita operation | Likely instruction | Pinned model result | Remaining action |
 |---|---|---|---|
-| AVX2 i16 lane shuffles | `VPSHUFHW`, `VPSHUFLW` | No instruction or decoder entry was found | Add and test semantics, or replace with an already modeled byte shuffle and benchmark it |
-| AVX2 i8 to i16 widening | `VPMOVSXBW` | No instruction or decoder entry was found | Add semantics, or keep this prover-only path outside the first verifier target |
-| NEON four-way deinterleaved load and store | `LD4`, `ST4` | The model has `LD2`, `LD3`, `ST2`, and `ST3`, but no four-register form was found | Add `LD4` and `ST4` semantics, decoding, and simulator tests, or rewrite the layout code |
-| NEON halving subtract | `SHSUB` | No instruction or decoder entry was found | Add and test semantics, or express the reduction with modeled shifts and subtracts |
+| AVX2 i16 lane shuffles | `VPSHUFHW`, `VPSHUFLW` | Decoder, lane semantics, proof expansion, and simulator coverage are present in [fork PR #4](https://github.com/quangvdao/s2n-bignum/pull/4) | Audit the final object, use the pinned semantics in the kernel theorem, and obtain upstream review |
+| AVX2 i8 to i16 widening | `VPMOVSXBW` | Decoder, signed widening semantics, proof expansion, and simulator coverage are present in [fork PR #3](https://github.com/quangvdao/s2n-bignum/pull/3) | Confirm that the final verifier object uses it, compose it into the kernel theorem, and obtain upstream review |
+| NEON four-way deinterleaved load and store | `LD4`, `ST4` | Decoding, lane interleaving, memory events, writeback, proof expansion, and simulator coverage are present in [fork PR #2](https://github.com/quangvdao/s2n-bignum/pull/2) | Audit the final object, prove the complete load and transform use, and obtain upstream review |
+| NEON halving subtract | `SHSUB` | Decoder, signed halving semantics, proof expansion, and simulator coverage are present in [fork PR #1](https://github.com/quangvdao/s2n-bignum/pull/1) | Audit the final object, compose the instruction into the Montgomery theorem, and obtain upstream review |
 | AVX-512 IFMA52 multiply-add | EVEX `VPMADD52` family | No EVEX or IFMA52 instruction semantics were found | Keep it outside the verified verifier profile |
+
+These four PRs add instruction semantics. They do not prove an NTT,
+Montgomery multiplication, ABI subroutine, object identity, final linkage, or
+dispatch route. The instruction acceptance criteria remain open until the final
+objects are audited and the complete kernel theorems use these definitions.
 
 `VPMOVSXBD`, AVX2 vector multiply, add, subtract, compare, blend, permute,
 logical operations, and vector shifts are present. The AArch64 model already
@@ -430,11 +442,10 @@ conditions. The mathematical definition should be short enough to review by
 hand. An independently stated lane or memory-layout lemma must connect that
 definition to the expanded form used by proof automation.
 
-The first expected x86 extensions are `VPSHUFHW`, `VPSHUFLW`, and, if the
-verifier's final object contains it, `VPMOVSXBW`. The first expected AArch64
-extensions are `LD4`, `ST4`, and `SHSUB`. The exact production disassembly is the
-source of truth. Compiler intrinsic names alone do not establish which model
-extensions are needed.
+The pinned fork provides `VPSHUFHW`, `VPSHUFLW`, `VPMOVSXBW`, `LD4`, `ST4`, and
+`SHSUB`. The exact production disassembly remains the source of truth. Compiler
+intrinsic names alone do not establish that these six definitions are sufficient
+for the final objects.
 
 Every extension must be proposed upstream to s2n-bignum as a generic processor
 model change. Akita may pin a reviewed fork while the upstream change is pending,
@@ -614,14 +625,15 @@ is visible.
 
 Create the proof harness, generated target manifest, exact object imports, final
 binary linkage audit, and explicit verified verifier policy. Prove the scalar and
-AVX2 D64 terminal matrix path. Add the small x86 model extensions needed by the
-shipping object.
+AVX2 D64 terminal matrix path. Audit the shipping object against the pinned x86
+model extensions and move those extensions upstream.
 
 ### Milestone 2
 
-Prove the AArch64 D64 terminal matrix path. Add reviewed `LD4`, `ST4`, and `SHSUB`
-semantics if the final object uses them. Complete all remaining schedule-reachable
-ring dimensions and the scalar fallbacks.
+Prove the AArch64 D64 terminal matrix path. Audit the final object against the
+pinned `LD4`, `ST4`, and `SHSUB` semantics and move the required extensions
+upstream. Complete all remaining schedule-reachable ring dimensions and the
+scalar fallbacks.
 
 ### Milestone 3
 
@@ -720,7 +732,8 @@ exist. Do not document proposed commands there before they work.
 
 ## References
 
-- [s2n-bignum at the audited revision](https://github.com/awslabs/s2n-bignum/tree/ac31a43db30953037abd1b64b540e65cf31f4c67)
+- [Pinned s2n-bignum umbrella revision](https://github.com/quangvdao/s2n-bignum/tree/db6d2002554d02a78cb4d6c183f16ecd75395691)
+- [Upstream s2n-bignum base revision](https://github.com/awslabs/s2n-bignum/tree/ac31a43db30953037abd1b64b540e65cf31f4c67)
 - [x86 ML-DSA NTT proof](https://github.com/awslabs/s2n-bignum/blob/ac31a43db30953037abd1b64b540e65cf31f4c67/x86/proofs/mldsa_ntt.ml)
 - [x86 ML-DSA pointwise proof](https://github.com/awslabs/s2n-bignum/blob/ac31a43db30953037abd1b64b540e65cf31f4c67/x86/proofs/mldsa_pointwise.ml)
 - [AArch64 ML-KEM NTT proof](https://github.com/awslabs/s2n-bignum/blob/ac31a43db30953037abd1b64b540e65cf31f4c67/arm/proofs/mlkem_ntt.ml)
