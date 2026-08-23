@@ -14,20 +14,6 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
     mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(ntt_mat, blocks, log_basis, params)
 }
 
-pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
-    blocks: &[&[[i8; D]]],
-    log_basis: u32,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(ntt_mat, blocks, log_basis, params)
-}
-
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -208,6 +194,7 @@ enum PackedI8Lift<W: PrimeWidth, const K: usize> {
         log_basis: u32,
         digit_bound: u64,
         lut: DigitMontLut<W, K>,
+        check_zero_planes: bool,
     },
     Raw {
         rhs_bound: u64,
@@ -266,6 +253,7 @@ where
                     PackedI8Lift::Balanced {
                         log_basis,
                         digit_bound,
+                        check_zero_planes,
                         ..
                     } => {
                         debug_assert!(digit_rows_within_digit_bound(
@@ -273,12 +261,21 @@ where
                             row_width.min(block.len()),
                             *digit_bound,
                         ));
-                        let mut rows = mat_vec_mul_digits_i8_with_params(
-                            ntt_mat,
-                            &[block.as_slice()],
-                            *log_basis,
-                            params,
-                        );
+                        let mut rows = if *check_zero_planes {
+                            mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(
+                                ntt_mat,
+                                &[block.as_slice()],
+                                *log_basis,
+                                params,
+                            )
+                        } else {
+                            mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(
+                                ntt_mat,
+                                &[block.as_slice()],
+                                *log_basis,
+                                params,
+                            )
+                        };
                         rows.pop().ok_or(AkitaError::InvalidProof)
                     }
                     PackedI8Lift::Raw { .. } => {
@@ -315,7 +312,10 @@ where
             let mut out = vec![CyclotomicRing::<F, D>::zero(); n_a];
             match &lift {
                 PackedI8Lift::Balanced {
-                    digit_bound, lut, ..
+                    digit_bound,
+                    lut,
+                    check_zero_planes,
+                    ..
                 } => {
                     debug_assert!(digit_rows_within_digit_bound(
                         &block,
@@ -327,15 +327,27 @@ where
                         let chunk_end =
                             (chunk_start + safe_width).min(block.len().min(inner_width));
                         let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); n_a];
-                        accumulate_i8_columns::<W, K, D, true>(
-                            &mut accs,
-                            ntt_mat,
-                            chunk_start,
-                            &block[chunk_start..chunk_end],
-                            params,
-                            lut,
-                            &mut scratch,
-                        );
+                        if *check_zero_planes {
+                            accumulate_i8_columns::<W, K, D, true>(
+                                &mut accs,
+                                ntt_mat,
+                                chunk_start,
+                                &block[chunk_start..chunk_end],
+                                params,
+                                lut,
+                                &mut scratch,
+                            );
+                        } else {
+                            accumulate_i8_columns::<W, K, D, false>(
+                                &mut accs,
+                                ntt_mat,
+                                chunk_start,
+                                &block[chunk_start..chunk_end],
+                                params,
+                                lut,
+                                &mut scratch,
+                            );
+                        }
                         for (dst, acc) in out.iter_mut().zip(accs) {
                             *dst += acc.to_ring(params);
                         }
@@ -408,6 +420,45 @@ where
             log_basis,
             digit_bound,
             lut,
+            check_zero_planes: true,
+        },
+    )
+}
+
+/// Dense counterpart of [`mat_vec_mul_packed_digits_i8_with_params`].
+///
+/// Dense decompositions overwhelmingly contain live planes, so this preserves
+/// the dense kernel policy of skipping the otherwise redundant all-zero scan.
+pub(super) fn mat_vec_mul_packed_dense_digits_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    Decode,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    num_live_blocks: usize,
+    row_width: usize,
+    decode_block: &Decode,
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
+    let digit_bound = balanced_digit_abs_bound(log_basis);
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
+    mat_vec_mul_packed_i8_with_params(
+        ntt_mat,
+        num_live_blocks,
+        row_width,
+        decode_block,
+        params,
+        PackedI8Lift::Balanced {
+            log_basis,
+            digit_bound,
+            lut,
+            check_zero_planes: false,
         },
     )
 }

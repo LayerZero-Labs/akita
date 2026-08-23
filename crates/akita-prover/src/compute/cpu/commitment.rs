@@ -1,5 +1,5 @@
 use super::exact_i16::{
-    dense_commit_cached_digit_rows as dense_commit_cached_digit_rows_i16,
+    dense_commit_packed_digit_rows as dense_commit_packed_digit_rows_i16,
     dense_commit_rows as dense_commit_rows_i16,
     recursive_packed_witness_commit_rows as recursive_packed_witness_commit_rows_i16,
 };
@@ -7,8 +7,8 @@ use super::{CpuBackend, CpuPreparedSetup};
 use crate::backend::packed_digits::PackedSignedDigitView;
 use crate::compute::plans::DenseCommitInput;
 use crate::kernels::linear::{
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
-    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_packed_digits_i8,
+    mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
+    mat_vec_mul_ntt_packed_dense_digits_i8, mat_vec_mul_ntt_packed_digits_i8,
     mat_vec_mul_ntt_packed_raw_i8,
 };
 use crate::validation::signed_digit_kernel_for_setup;
@@ -33,20 +33,21 @@ impl CpuBackend {
         F: FieldCore + CanonicalField,
     {
         match input {
-            DenseCommitInput::CachedDigits {
-                digit_block_slices,
+            DenseCommitInput::PackedDigits {
+                source,
                 log_basis_inner,
             } => {
-                let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
+                let row_width = source.row_width()?;
+                let num_live_blocks = source.num_live_blocks();
                 if dense_i8_exact_ifma52_preferred::<F, D>(row_width, log_basis_inner)? {
-                    return dense_commit_cached_digit_rows_i16(
+                    return dense_commit_packed_digit_rows_i16(
                         prepared,
                         n_a,
-                        row_width,
-                        &digit_block_slices,
+                        source,
                         log_basis_inner,
                     );
                 }
+                let decode_block = |block_index: usize| source.decode_block::<D>(block_index);
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
@@ -55,11 +56,12 @@ impl CpuBackend {
                         NttTransformDomain::Negacyclic,
                     )?,
                     |ntt| {
-                        mat_vec_mul_ntt_dense_digits_i8(
+                        mat_vec_mul_ntt_packed_dense_digits_i8(
                             ntt,
                             n_a,
                             row_width,
-                            &digit_block_slices,
+                            num_live_blocks,
+                            &decode_block,
                             log_basis_inner,
                         )
                     },

@@ -49,8 +49,8 @@ pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
-pub(crate) use plans::DenseCommitInput;
 pub use plans::RingSwitchRelationRows;
+pub(crate) use plans::{DenseCommitInput, PackedDenseCommitInput};
 pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{

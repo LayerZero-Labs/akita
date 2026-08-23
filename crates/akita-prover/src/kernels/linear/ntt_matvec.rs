@@ -171,30 +171,33 @@ where
     )
 }
 
-/// Dense pre-decomposed digit mat-vec for the backend-owned digit cache.
-///
-/// The generic pre-decomposed digit kernel skips all-zero planes, which is
-/// profitable for sparse witnesses. Dense witnesses pay that scan on almost
-/// every plane, so this kernel uses the same math without the zero checks. The
-/// cache is produced by Akita's validated decomposer and does not need a second
-/// full scan at each commit.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
-pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+/// Dense packed-digit mat-vec without sparse all-zero plane scans.
+pub(crate) fn mat_vec_mul_ntt_packed_dense_digits_i8<
+    F: FieldCore + CanonicalField,
+    Decode,
+    const D: usize,
+>(
     slot: &PreparedNttCache<D>,
     num_rows: usize,
-    num_cols: usize,
-    blocks: &[&[[i8; D]]],
+    row_width: usize,
+    num_live_blocks: usize,
+    decode_block: &Decode,
     log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
     validate_i8_log_basis(log_basis)?;
-    Ok(dispatch_slot!(
+    dispatch_slot!(
         slot,
         num_rows,
-        num_cols,
-        mat_vec_mul_dense_digits_i8_with_params,
-        blocks,
+        row_width,
+        mat_vec_mul_packed_dense_digits_i8_with_params,
+        num_live_blocks,
+        row_width,
+        decode_block,
         log_basis
-    ))
+    )
 }
 
 /// Fold-major (block) direct-signed-i8 variant for recursive witnesses.

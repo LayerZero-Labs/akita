@@ -1,4 +1,5 @@
 use super::poly::DensePoly;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
 
@@ -63,4 +64,38 @@ fn dense_source_has_exact_views_across_supported_ring_dimensions() {
     assert_view::<256>(&poly, &evals);
     assert_view::<512>(&poly, &evals);
     assert_view::<1024>(&poly, &evals);
+}
+
+#[test]
+fn dense_digit_cache_is_exact_and_bit_packed() {
+    const D: usize = 64;
+    const NUM_DIGITS: usize = 32;
+    const LOG_BASIS: u32 = 4;
+
+    let evals = (0..128)
+        .map(|index| F::from_u64((index * 17 + 9) as u64))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_field_evals(7, evals).unwrap();
+    let packed = poly
+        .digit_planes_for::<D>(NUM_DIGITS, LOG_BASIS)
+        .expect("i8 decomposition is packed");
+
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let params = BalancedDecomposePow2Params::new(NUM_DIGITS, LOG_BASIS, q);
+    let mut expected = vec![0i8; packed.len()];
+    for (ring, planes) in poly
+        .ring_coeffs::<D>()
+        .unwrap()
+        .iter()
+        .zip(expected.chunks_exact_mut(NUM_DIGITS * D))
+    {
+        let (planes, remainder) = planes.as_chunks_mut::<D>();
+        assert!(remainder.is_empty());
+        ring.balanced_decompose_pow2_i8_into_with_params(planes, &params);
+    }
+
+    assert_eq!(packed.iter().collect::<Vec<_>>(), expected);
+    let (encoded_bytes, bit_width) = poly.cached_digit_storage().unwrap();
+    assert_eq!(bit_width, LOG_BASIS as u8);
+    assert_eq!(encoded_bytes, packed.len() * LOG_BASIS as usize / 8);
 }

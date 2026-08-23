@@ -6,7 +6,7 @@
 use super::poly::DensePoly;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness,
-    cached_digit_decompose_fold_partitioned, decompose_ring_single_digit, sparse_mul_acc,
+    decompose_ring_single_digit, packed_digit_decompose_fold_partitioned, sparse_mul_acc,
     DecomposeParams,
 };
 use crate::DecomposeFoldWitness;
@@ -113,8 +113,9 @@ where
         if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits, log_basis) {
             let coeff_accum = {
                 let _span = tracing::info_span!("dense_cached_digit_accumulate").entered();
-                cached_digit_decompose_fold_partitioned::<F, D>(
+                packed_digit_decompose_fold_partitioned::<F, D>(
                     digit_planes,
+                    n,
                     challenges,
                     num_positions_per_block,
                     num_digits,

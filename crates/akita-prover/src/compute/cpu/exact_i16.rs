@@ -1,5 +1,6 @@
 use super::CpuPreparedSetup;
 use crate::backend::packed_digits::PackedSignedDigitView;
+use crate::compute::PackedDenseCommitInput;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 #[allow(unused_imports)]
@@ -47,14 +48,14 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-#[tracing::instrument(skip_all, name = "dense_commit_cached_digit_rows_exact_i16")]
-pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "dense_commit_packed_digit_rows_exact_i16")]
+pub(super) fn dense_commit_packed_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
-    row_width: usize,
-    digit_block_slices: &[&[[i8; D]]],
+    source: PackedDenseCommitInput<'_>,
     log_basis_inner: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let row_width = source.row_width()?;
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     prepared.with_shared_ntt::<D, _>(
@@ -68,13 +69,9 @@ pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, cons
             },
         )?,
         |ntt| {
-            cfg_iter!(digit_block_slices)
-                .map(|block| {
-                    if block.len() > row_width {
-                        return Err(AkitaError::InvalidSetup(
-                            "cached digit block exceeds dense commitment row width".into(),
-                        ));
-                    }
+            cfg_into_iter!(0..source.num_live_blocks())
+                .map(|block_index| {
+                    let block = source.decode_block::<D>(block_index)?;
                     let mut rhs = Vec::with_capacity(row_width);
                     rhs.extend(block.iter().map(|digits| from_fn(|k| i16::from(digits[k]))));
                     rhs.resize(row_width, [0i16; D]);
