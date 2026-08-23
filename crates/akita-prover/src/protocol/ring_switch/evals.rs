@@ -14,12 +14,11 @@ use crate::backend::packed_digits::PackedSignedDigits;
 /// Returns an error if the witness length is not divisible by the ring
 /// dimension.
 pub(crate) fn build_w_evals_compact(
-    w: impl Into<PackedSignedDigits>,
+    w: PackedSignedDigits,
     d: usize,
     extension_degree: usize,
     opening_source_len: usize,
 ) -> Result<(PackedSignedDigits, usize, usize), AkitaError> {
-    let w = w.into();
     if d == 0 || !w.len().is_multiple_of(d) {
         return Err(AkitaError::InvalidSize {
             expected: d,

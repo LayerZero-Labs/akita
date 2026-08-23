@@ -23,7 +23,6 @@ fn recursive_commit_selects_exact_i16_from_inner_basis() {
                 1,
                 1,
                 log_basis_inner,
-                Some(2),
             )
             .expect("recursive commit rows")
     };

@@ -17,14 +17,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     /// width overflows, or if the witness or `tau0` length disagrees with
     /// the declared `(live_x_cols, col_bits, ring_bits)` shape.
     pub(crate) fn new(
-        digit_witness: impl Into<PackedSignedDigits>,
+        digit_witness: PackedSignedDigits,
         tau0: &[E],
         plan: DigitRangePlan,
         live_x_cols: usize,
         col_bits: usize,
         ring_bits: usize,
     ) -> Result<Self, AkitaError> {
-        let digit_witness = digit_witness.into();
         if !plan.product_stage_arities().is_empty() {
             return Err(AkitaError::InvalidInput(
                 "direct range prover requires basis 4 or 8".to_string(),

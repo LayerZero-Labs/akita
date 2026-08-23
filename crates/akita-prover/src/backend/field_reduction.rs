@@ -31,7 +31,7 @@ where
 {
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
     let packed = pack_tensor_base_lift_i8_digits::<D>(logical_w.digits(), E::EXT_DEGREE, width)?;
-    RecursiveWitnessFlat::from_packed_i8_digits(packed, logical_w.live_coeff_len())?
+    RecursiveWitnessFlat::from_tensor_packed_i8_digits(packed, logical_w.live_coeff_len())?
         .align_for_commitment_ring_dim(D)
 }
 

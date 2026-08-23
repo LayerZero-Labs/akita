@@ -143,7 +143,6 @@ impl CpuBackend {
         num_live_blocks: usize,
         num_digits_inner: usize,
         log_basis_inner: u32,
-        known_balanced_log_basis: Option<u32>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -183,11 +182,9 @@ impl CpuBackend {
                 let live = (ring_elems - start_ring).min(num_positions_per_block);
                 digits.decode_rings::<D>(start_ring, live)
             };
-            let known_balanced = known_balanced_log_basis
-                .is_some_and(|source_log_basis| log_basis_inner >= source_log_basis);
             let bounds = digits.bounds();
             let stored_is_balanced = bounds.fits_balanced_log_basis(log_basis_inner);
-            if known_balanced || stored_is_balanced {
+            if stored_is_balanced {
                 prepared.with_shared_ntt::<D, _>(
                     NttCacheKey::from_matrix_shape(
                         D,
