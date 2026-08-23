@@ -16,8 +16,7 @@ use akita_types::{
     CompressionRelationWeights, FpExtEncoding, RingVec,
 };
 use akita_types::{
-    CoefficientPackingBatchSemantics, DigitBlocks, OpeningFamily, RelationRangeImagePlan,
-    RingRelationInstance,
+    CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
 
 mod coeffs;

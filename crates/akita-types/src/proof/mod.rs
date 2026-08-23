@@ -127,7 +127,7 @@ pub use tail_segments::{
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
-    TerminalResponseShape,
+    TerminalResponseShape, WitnessCoefficientSink,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 

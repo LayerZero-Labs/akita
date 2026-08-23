@@ -1088,9 +1088,8 @@ pub fn validate_terminal_response_z_payload<F: FieldCore>(
 /// Emit one group's role-native E planes at canonical witness addresses.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_witness_e_planes<const D_ROLE: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
+    out: &mut impl WitnessCoefficientSink,
+    unit: &WitnessUnitLayout,
     source_physical_width: usize,
     num_claims: usize,
     depth_open: usize,
@@ -1116,31 +1115,28 @@ pub fn emit_witness_e_planes<const D_ROLE: usize>(
         });
     }
     let flat = digits.typed_planes::<D_ROLE>()?;
-    for unit in layout.units_for_group(group_id)? {
-        if unit.e_geometry().physical_coefficient_width() != source_physical_width {
-            return Err(AkitaError::InvalidSetup(
-                "witness E source width disagrees with resolved geometry".into(),
-            ));
-        }
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                let semantic = claim * source_num_live_blocks + global_block;
-                for role_subcolumn in 0..role_subcolumns {
-                    for digit in 0..depth_open {
-                        let source =
-                            (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
-                        let destination = unit.e_coefficient_index(
-                            D_ROLE,
-                            num_claims,
-                            depth_open,
-                            claim,
-                            global_block,
-                            role_subcolumn,
-                            digit,
-                            0,
-                        )?;
-                        write_witness_coefficients(out, destination, &flat[source])?;
-                    }
+    if unit.e_geometry().physical_coefficient_width() != source_physical_width {
+        return Err(AkitaError::InvalidSetup(
+            "witness E source width disagrees with resolved geometry".into(),
+        ));
+    }
+    for claim in 0..num_claims {
+        for global_block in unit.global_block_range() {
+            let semantic = claim * source_num_live_blocks + global_block;
+            for role_subcolumn in 0..role_subcolumns {
+                for digit in 0..depth_open {
+                    let source = (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
+                    let destination = unit.e_coefficient_index(
+                        D_ROLE,
+                        num_claims,
+                        depth_open,
+                        claim,
+                        global_block,
+                        role_subcolumn,
+                        digit,
+                        0,
+                    )?;
+                    write_witness_coefficients(out, destination, &flat[source])?;
                 }
             }
         }
@@ -1151,9 +1147,8 @@ pub fn emit_witness_e_planes<const D_ROLE: usize>(
 /// Emit one group's role-native T planes at canonical witness addresses.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
+    out: &mut impl WitnessCoefficientSink,
+    unit: &WitnessUnitLayout,
     num_claims: usize,
     n_a: usize,
     depth_outer: usize,
@@ -1184,31 +1179,29 @@ pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
         .checked_mul(role_subcolumns)
         .and_then(|n| n.checked_mul(depth_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
-    for unit in layout.units_for_group(group_id)? {
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                for a_row in 0..n_a {
-                    for role_subcolumn in 0..role_subcolumns {
-                        for digit in 0..depth_outer {
-                            let source = (claim * source_num_live_blocks + global_block)
-                                * planes_per_block
-                                + (a_row * role_subcolumns + role_subcolumn) * depth_outer
-                                + digit;
-                            let destination = unit.t_coefficient_index(
-                                D_A,
-                                D_ROLE,
-                                num_claims,
-                                n_a,
-                                depth_outer,
-                                claim,
-                                global_block,
-                                a_row,
-                                role_subcolumn,
-                                digit,
-                                0,
-                            )?;
-                            write_witness_coefficients(out, destination, &flat[source])?;
-                        }
+    for claim in 0..num_claims {
+        for global_block in unit.global_block_range() {
+            for a_row in 0..n_a {
+                for role_subcolumn in 0..role_subcolumns {
+                    for digit in 0..depth_outer {
+                        let source = (claim * source_num_live_blocks + global_block)
+                            * planes_per_block
+                            + (a_row * role_subcolumns + role_subcolumn) * depth_outer
+                            + digit;
+                        let destination = unit.t_coefficient_index(
+                            D_A,
+                            D_ROLE,
+                            num_claims,
+                            n_a,
+                            depth_outer,
+                            claim,
+                            global_block,
+                            a_row,
+                            role_subcolumn,
+                            digit,
+                            0,
+                        )?;
+                        write_witness_coefficients(out, destination, &flat[source])?;
                     }
                 }
             }
@@ -1217,23 +1210,41 @@ pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
     Ok(())
 }
 
+/// Destination for canonical witness coefficient emission.
+pub trait WitnessCoefficientSink {
+    /// Write one contiguous coefficient plane at its physical witness offset.
+    fn write_coefficients(&mut self, start: usize, coefficients: &[i8]) -> Result<(), AkitaError>;
+}
+
+impl WitnessCoefficientSink for [i8] {
+    fn write_coefficients(&mut self, start: usize, coefficients: &[i8]) -> Result<(), AkitaError> {
+        let end = start
+            .checked_add(coefficients.len())
+            .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
+        self.get_mut(start..end)
+            .ok_or(AkitaError::InvalidProof)?
+            .copy_from_slice(coefficients);
+        Ok(())
+    }
+}
+
+impl WitnessCoefficientSink for Vec<i8> {
+    fn write_coefficients(&mut self, start: usize, coefficients: &[i8]) -> Result<(), AkitaError> {
+        self.as_mut_slice().write_coefficients(start, coefficients)
+    }
+}
+
 fn write_witness_coefficients(
-    out: &mut [i8],
+    out: &mut impl WitnessCoefficientSink,
     start: usize,
     coefficients: &[i8],
 ) -> Result<(), AkitaError> {
-    let end = start
-        .checked_add(coefficients.len())
-        .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
-    out.get_mut(start..end)
-        .ok_or(AkitaError::InvalidProof)?
-        .copy_from_slice(coefficients);
-    Ok(())
+    out.write_coefficients(start, coefficients)
 }
 
 /// Emit one ownership unit's replicated Z planes at canonical addresses.
 pub fn emit_witness_z_planes<const D_SOURCE: usize>(
-    out: &mut [i8],
+    out: &mut impl WitnessCoefficientSink,
     unit: &WitnessUnitLayout,
     num_positions_per_block: usize,
     depth_commit: usize,
@@ -1276,7 +1287,7 @@ pub fn emit_witness_z_planes<const D_SOURCE: usize>(
 
 /// Emit the shared R planes at canonical witness addresses.
 pub fn emit_witness_r_planes<const D: usize>(
-    out: &mut [i8],
+    out: &mut impl WitnessCoefficientSink,
     layout: &WitnessLayout,
     quotient_depth: usize,
     planes: &[[i8; D]],
