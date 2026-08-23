@@ -1,8 +1,8 @@
 //! Dense polynomial storage and constructors.
 
-use super::prepared::PreparedDenseWitness;
+use super::prepared::{PreparedDenseStorage, PreparedDenseWitness};
 use crate::backend::packed_digits::{
-    PackedSignedDigitView, PackedSignedDigitWriter, PackedSignedDigits,
+    PackedSignedDigitView, PackedSignedDigitWriter, PackedSignedDigits, VECTOR_LOAD_PADDING,
 };
 use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
@@ -14,7 +14,6 @@ use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use akita_types::{RingVec, SUPPORTED_COMMITMENT_RING_DIMS};
 use std::borrow::Cow;
-use std::marker::PhantomData;
 use std::sync::OnceLock;
 
 /// Bound the unpacked parallel staging area while building the persistent
@@ -283,8 +282,33 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         let rings = self.ring_coeffs::<D>().ok()?;
         let q = (-F::one()).to_canonical_u128() + 1;
         let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
-        let mut writer = PackedSignedDigitWriter::new(num_plane_coeffs, log_basis as u8).ok()?;
         let coeffs_per_ring = num_digits.checked_mul(D)?;
+        if log_basis == 8 {
+            let capacity = num_plane_coeffs.checked_add(VECTOR_LOAD_PADDING)?;
+            let mut planes = Vec::with_capacity(capacity);
+            planes.resize(num_plane_coeffs, 0i8);
+            cfg_chunks_mut!(planes, coeffs_per_ring)
+                .zip(cfg_iter!(rings))
+                .for_each(|(dst, ring)| {
+                    let (dst_planes, remainder) = dst.as_chunks_mut::<D>();
+                    debug_assert!(remainder.is_empty());
+                    ring.balanced_decompose_pow2_i8_into_with_params(dst_planes, &params);
+                });
+            let planes = PackedSignedDigits::from_balanced_i8_digits(planes, log_basis).ok()?;
+            let _ = self.digit_cache.set(DenseDigitCache {
+                ring_d: D,
+                num_digits,
+                log_basis,
+                planes,
+            });
+            let cache = self.digit_cache.get()?;
+            return (cache.ring_d == D
+                && cache.num_digits == num_digits
+                && cache.log_basis == log_basis)
+                .then(|| cache.planes.view());
+        }
+
+        let mut writer = PackedSignedDigitWriter::new_balanced(num_plane_coeffs, log_basis).ok()?;
         let rings_per_batch = DENSE_DECOMPOSITION_BATCH_BYTES
             .checked_div(coeffs_per_ring)?
             .max(1);
@@ -315,29 +339,46 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             .then(|| cache.planes.view())
     }
 
-    /// Consume a committed dense polynomial into its packed opening witness.
+    /// Consume a committed dense polynomial into its schedule-bound opening witness.
     ///
     /// Commitment selects the ring dimension and balanced decomposition, so
-    /// this conversion is available only after a successful packed dense
-    /// commitment has populated that exact schedule-bound representation.
+    /// this conversion is available only after a successful dense commitment
+    /// has populated that exact schedule-bound representation. Fast bounded
+    /// spans keep only packed digits; wider spans retain canonical storage.
     ///
     /// # Errors
     ///
     /// Returns an error when this polynomial has not yet been committed with
     /// an i8 balanced-digit schedule.
     pub fn into_prepared_witness(self) -> Result<PreparedDenseWitness<F>, AkitaError> {
-        let cache = self.digit_cache.into_inner().ok_or_else(|| {
+        let cache = self.digit_cache.get().ok_or_else(|| {
             AkitaError::InvalidInput(
                 "dense polynomial must be committed before preparing its opening witness".into(),
             )
         })?;
+        let num_vars = self.num_vars;
+        let ring_d = cache.ring_d;
+        let num_digits = cache.num_digits;
+        let log_basis = cache.log_basis;
+        let digit_span = num_digits
+            .checked_mul(log_basis as usize)
+            .ok_or_else(|| AkitaError::InvalidInput("dense digit span overflow".into()))?;
+        let storage = if digit_span <= 126 {
+            PreparedDenseStorage::Packed(
+                self.digit_cache
+                    .into_inner()
+                    .expect("dense digit cache was checked above")
+                    .planes,
+            )
+        } else {
+            PreparedDenseStorage::Canonical(self)
+        };
         Ok(PreparedDenseWitness {
-            num_vars: self.num_vars,
-            ring_d: cache.ring_d,
-            num_digits: cache.num_digits,
-            log_basis: cache.log_basis,
-            digits: cache.planes,
-            _field: PhantomData,
+            num_vars,
+            ring_d,
+            num_digits,
+            log_basis,
+            storage,
         })
     }
 

@@ -171,10 +171,31 @@ where
     )
 }
 
+/// Dense byte-aligned digit mat-vec without sparse all-zero plane scans.
+#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
+pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &PreparedNttCache<D>,
+    num_rows: usize,
+    num_cols: usize,
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    validate_i8_log_basis(log_basis)?;
+    Ok(dispatch_slot!(
+        slot,
+        num_rows,
+        num_cols,
+        mat_vec_mul_dense_digits_i8_with_params,
+        blocks,
+        log_basis
+    ))
+}
+
 /// Dense packed-digit mat-vec without sparse all-zero plane scans.
 pub(crate) fn mat_vec_mul_ntt_packed_dense_digits_i8<
     F: FieldCore + CanonicalField,
     Decode,
+    Block,
     const D: usize,
 >(
     slot: &PreparedNttCache<D>,
@@ -185,7 +206,8 @@ pub(crate) fn mat_vec_mul_ntt_packed_dense_digits_i8<
     log_basis: u32,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+    Decode: Fn(usize) -> Result<Block, AkitaError> + Sync,
+    Block: AsRef<[[i8; D]]>,
 {
     validate_i8_log_basis(log_basis)?;
     dispatch_slot!(

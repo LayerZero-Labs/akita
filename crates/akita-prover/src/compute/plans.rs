@@ -2,7 +2,7 @@ use akita_algebra::CyclotomicRing;
 use akita_error::{checked, AkitaError};
 use akita_field::FieldCore;
 
-use crate::backend::packed_digits::PackedSignedDigitView;
+use crate::backend::packed_digits::{PackedSignedDigitBlock, PackedSignedDigitView};
 
 /// Checked block geometry over one packed dense decomposition.
 #[derive(Clone, Copy)]
@@ -50,10 +50,41 @@ impl<'a> PackedDenseCommitInput<'a> {
         self.num_rings.div_ceil(self.num_positions_per_block)
     }
 
+    /// Borrow block slices when each stored byte is already one signed digit.
+    pub(crate) fn borrowed_blocks<const D: usize>(
+        self,
+    ) -> Result<Option<Vec<&'a [[i8; D]]>>, AkitaError> {
+        let Some(bytes) = self.digits.as_i8_slice() else {
+            return Ok(None);
+        };
+        let (rings, remainder) = bytes.as_chunks::<D>();
+        if !remainder.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "dense byte digits are not ring aligned".into(),
+            ));
+        }
+        let mut blocks = Vec::with_capacity(self.num_live_blocks());
+        for block_index in 0..self.num_live_blocks() {
+            let start_ring = checked::product([block_index, self.num_positions_per_block])
+                .ok_or_else(|| AkitaError::InvalidSetup("dense block offset overflow".into()))?;
+            let live_rings = (self.num_rings - start_ring).min(self.num_positions_per_block);
+            let start = checked::product([start_ring, self.num_digits_inner]).ok_or_else(|| {
+                AkitaError::InvalidSetup("dense digit block offset overflow".into())
+            })?;
+            let len = checked::product([live_rings, self.num_digits_inner]).ok_or_else(|| {
+                AkitaError::InvalidSetup("dense digit block length overflow".into())
+            })?;
+            let end = checked::sum([start, len])
+                .ok_or_else(|| AkitaError::InvalidSetup("dense digit extent overflow".into()))?;
+            blocks.push(rings.get(start..end).ok_or(AkitaError::InvalidProof)?);
+        }
+        Ok(Some(blocks))
+    }
+
     pub(crate) fn decode_block<const D: usize>(
         self,
         block_index: usize,
-    ) -> Result<Vec<[i8; D]>, AkitaError> {
+    ) -> Result<PackedSignedDigitBlock<'a, D>, AkitaError> {
         if block_index >= self.num_live_blocks() {
             return Err(AkitaError::InvalidSize {
                 expected: self.num_live_blocks(),
@@ -63,10 +94,26 @@ impl<'a> PackedDenseCommitInput<'a> {
         let start_ring = checked::product([block_index, self.num_positions_per_block])
             .ok_or_else(|| AkitaError::InvalidSetup("dense block offset overflow".into()))?;
         let live_rings = (self.num_rings - start_ring).min(self.num_positions_per_block);
-        self.digits.decode_rings::<D>(
-            start_ring * self.num_digits_inner,
-            live_rings * self.num_digits_inner,
-        )
+        let start_digit_ring = checked::product([start_ring, self.num_digits_inner])
+            .ok_or_else(|| AkitaError::InvalidSetup("dense digit block offset overflow".into()))?;
+        let digit_rings = checked::product([live_rings, self.num_digits_inner])
+            .ok_or_else(|| AkitaError::InvalidSetup("dense digit block length overflow".into()))?;
+        let start = checked::product([start_digit_ring, D])
+            .ok_or_else(|| AkitaError::InvalidSetup("dense digit offset overflow".into()))?;
+        let len = checked::product([digit_rings, D])
+            .ok_or_else(|| AkitaError::InvalidSetup("dense digit length overflow".into()))?;
+        let end = checked::sum([start, len])
+            .ok_or_else(|| AkitaError::InvalidSetup("dense digit extent overflow".into()))?;
+        let block = self.digits.slice(start..end)?;
+        if let Some(bytes) = block.as_i8_slice() {
+            let (rings, remainder) = bytes.as_chunks::<D>();
+            debug_assert!(remainder.is_empty());
+            return Ok(PackedSignedDigitBlock::Borrowed(rings));
+        }
+        Ok(PackedSignedDigitBlock::Decoded(
+            self.digits
+                .decode_rings::<D>(start_digit_ring, digit_rings)?,
+        ))
     }
 }
 

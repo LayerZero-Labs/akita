@@ -14,6 +14,20 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
     mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(ntt_mat, blocks, log_basis, params)
 }
 
+pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
+    blocks: &[&[[i8; D]]],
+    log_basis: u32,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(ntt_mat, blocks, log_basis, params)
+}
+
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -232,6 +246,7 @@ fn mat_vec_mul_packed_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     Decode,
+    Block,
     const K: usize,
     const D: usize,
 >(
@@ -243,12 +258,14 @@ fn mat_vec_mul_packed_i8_with_params<
     lift: PackedI8Lift<W, K>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+    Decode: Fn(usize) -> Result<Block, AkitaError> + Sync,
+    Block: AsRef<[[i8; D]]>,
 {
     if num_live_blocks < DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS {
         return cfg_into_iter!(0..num_live_blocks)
             .map(|block_index| {
                 let block = decode_block(block_index)?;
+                let block = block.as_ref();
                 match &lift {
                     PackedI8Lift::Balanced {
                         log_basis,
@@ -257,21 +274,21 @@ where
                         ..
                     } => {
                         debug_assert!(digit_rows_within_digit_bound(
-                            &block,
+                            block,
                             row_width.min(block.len()),
                             *digit_bound,
                         ));
                         let mut rows = if *check_zero_planes {
                             mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, true>(
                                 ntt_mat,
-                                &[block.as_slice()],
+                                &[block],
                                 *log_basis,
                                 params,
                             )
                         } else {
                             mat_vec_mul_digits_i8_with_params_impl::<F, W, K, D, false>(
                                 ntt_mat,
-                                &[block.as_slice()],
+                                &[block],
                                 *log_basis,
                                 params,
                             )
@@ -279,11 +296,8 @@ where
                         rows.pop().ok_or(AkitaError::InvalidProof)
                     }
                     PackedI8Lift::Raw { .. } => {
-                        let mut rows = mat_vec_mul_raw_digits_i8_with_params(
-                            ntt_mat,
-                            &[block.as_slice()],
-                            params,
-                        )?;
+                        let mut rows =
+                            mat_vec_mul_raw_digits_i8_with_params(ntt_mat, &[block], params)?;
                         rows.pop().ok_or(AkitaError::InvalidProof)
                     }
                 }
@@ -306,6 +320,7 @@ where
     cfg_into_iter!(0..num_live_blocks)
         .map(|block_index| {
             let block = decode_block(block_index)?;
+            let block = block.as_ref();
             if block.len() > row_width {
                 return Err(AkitaError::InvalidSetup(lift.width_error().into()));
             }
@@ -318,7 +333,7 @@ where
                     ..
                 } => {
                     debug_assert!(digit_rows_within_digit_bound(
-                        &block,
+                        block,
                         inner_width.min(block.len()),
                         *digit_bound,
                     ));
@@ -433,6 +448,7 @@ pub(super) fn mat_vec_mul_packed_dense_digits_i8_with_params<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
     Decode,
+    Block,
     const K: usize,
     const D: usize,
 >(
@@ -444,7 +460,8 @@ pub(super) fn mat_vec_mul_packed_dense_digits_i8_with_params<
     params: &CrtNttParamSet<W, K, D>,
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
 where
-    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+    Decode: Fn(usize) -> Result<Block, AkitaError> + Sync,
+    Block: AsRef<[[i8; D]]>,
 {
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);

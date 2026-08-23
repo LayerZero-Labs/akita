@@ -1,5 +1,5 @@
 use super::poly::DensePoly;
-use super::prepared::PreparedDenseWitness;
+use super::prepared::{PreparedDenseStorage, PreparedDenseWitness};
 use crate::compute::{
     CpuBackend, DecomposeFoldPlan, OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource,
     SubringCoefficientPackingBatchKernel, SubringCoefficientPackingPlan,
@@ -7,7 +7,7 @@ use crate::compute::{
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::Prime128OffsetA7F7 as F;
+use akita_field::{CanonicalField, Prime128OffsetA7F7 as F};
 use akita_types::{
     BasisMode, PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
@@ -117,7 +117,12 @@ fn prepared_dense_witness_matches_canonical_opening_kernels() {
     const POSITIONS_PER_BLOCK: usize = 4;
 
     let evals = (0..1024)
-        .map(|index| F::from_i64((index % 29) as i64 - 14))
+        .map(|index| match index % 4 {
+            0 => F::from_i64((index % 29) as i64 - 14),
+            1 => F::from_canonical_u128_reduced(u128::MAX - index as u128),
+            2 => -F::from_u64((index + 1) as u64),
+            _ => F::from_canonical_u128_reduced((1u128 << 127) + index as u128),
+        })
         .collect::<Vec<_>>();
     let canonical = DensePoly::<F>::from_field_evals(10, evals.clone()).unwrap();
     let packed_source = DensePoly::<F>::from_field_evals(10, evals).unwrap();
@@ -125,6 +130,10 @@ fn prepared_dense_witness_matches_canonical_opening_kernels() {
         .digit_planes_for::<D>(NUM_DIGITS, LOG_BASIS)
         .expect("prepare packed digits");
     let prepared = packed_source.into_prepared_witness().unwrap();
+    assert!(matches!(
+        &prepared.storage,
+        PreparedDenseStorage::Canonical(_)
+    ));
 
     let num_rings = canonical.ring_coeffs::<D>().unwrap().len();
     let num_blocks = num_rings.div_ceil(POSITIONS_PER_BLOCK);
@@ -221,4 +230,16 @@ fn prepared_dense_witness_matches_canonical_opening_kernels() {
         )
         .unwrap();
     assert_eq!(prepared_partials, canonical_partials);
+}
+
+#[test]
+fn prepared_dense_witness_packs_fast_reconstruction_spans() {
+    const D: usize = 64;
+    let evals = (0..1024)
+        .map(|index| F::from_i64((index % 29) as i64 - 14))
+        .collect::<Vec<_>>();
+    let poly = DensePoly::<F>::from_field_evals(10, evals).unwrap();
+    poly.digit_planes_for::<D>(8, 4).unwrap();
+    let prepared = poly.into_prepared_witness().unwrap();
+    assert!(matches!(prepared.storage, PreparedDenseStorage::Packed(_)));
 }
