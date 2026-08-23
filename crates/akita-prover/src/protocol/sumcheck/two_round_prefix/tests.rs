@@ -863,7 +863,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         .expect("stage1 bivariate-skip state should build");
 
     let mut prover = LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from(w_compact.as_slice()),
+        packed(&w_compact),
         &tau0,
         akita_types::DigitRangePlan::new(b).unwrap(),
         live_x_cols,

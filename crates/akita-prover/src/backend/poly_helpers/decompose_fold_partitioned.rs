@@ -694,17 +694,13 @@ pub(crate) fn packed_tight_digit_fold_partitioned<F: CanonicalField, const D: us
     num_rings: usize,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-    known_balanced_log_basis: Option<u32>,
 ) -> Vec<[i32; D]> {
-    let stored_bound = u64::from(
+    let digit_abs_bound = u64::from(
         digits
             .bounds()
             .negative_abs_max()
             .max(digits.bounds().positive_max()),
     );
-    let digit_abs_bound = known_balanced_log_basis
-        .and_then(akita_types::balanced_signed_digit_abs_bound)
-        .map_or(stored_bound, |declared| declared.min(stored_bound));
     element_partitioned_decompose_fold::<F, D>(
         ElementFoldSource::PackedTight {
             digits,

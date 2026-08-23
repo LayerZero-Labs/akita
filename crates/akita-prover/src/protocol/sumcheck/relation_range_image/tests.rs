@@ -94,7 +94,7 @@ fn new_stage2_test_prover(
     );
     RelationRangeImageProver::new(
         batching_coeff,
-        compact_witness,
+        packed(&compact_witness),
         params.stage1_point,
         direct.range_image,
         params.b,
@@ -158,7 +158,7 @@ pub(super) fn new_stage2_test_prover_with_linear_terms(
     );
     RelationRangeImageProver::new(
         batching_coeff,
-        compact_witness,
+        packed(&compact_witness),
         params.stage1_point,
         direct.range_image,
         params.b,

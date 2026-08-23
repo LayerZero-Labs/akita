@@ -60,7 +60,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
     pub(crate) fn new(
         batching_coeff: E,
-        w_evals_compact: impl Into<PackedSignedDigits>,
+        w_evals_compact: PackedSignedDigits,
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
@@ -74,7 +74,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         linear_opening_claim: E,
         additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     ) -> Result<Self, AkitaError> {
-        let w_evals_compact = w_evals_compact.into();
         let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;

@@ -111,7 +111,6 @@ fn recursive_commit_ignores_commitment_padding_blocks() {
             2,
             1,
             3,
-            Some(3),
         )
         .expect("recursive commit rows");
 
@@ -135,7 +134,6 @@ fn packed_recursive_commit_matches_predecoded_block_parallel_kernel() {
             20,
             1,
             3,
-            Some(3),
         )
         .unwrap();
     let blocks = coeffs.chunks(2).collect::<Vec<_>>();
@@ -165,7 +163,6 @@ fn packed_recursive_raw_commit_matches_predecoded_kernel() {
             20,
             1,
             3,
-            None,
         )
         .unwrap();
     let blocks = coeffs.chunks(2).collect::<Vec<_>>();

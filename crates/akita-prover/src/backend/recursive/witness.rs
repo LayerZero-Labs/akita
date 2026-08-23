@@ -33,7 +33,6 @@ pub struct RecursiveWitnessFlat {
     live_coeff_len: usize,
     committed_coeff_len: Option<usize>,
     commitment_ring_dim: Option<usize>,
-    known_balanced_log_basis: Option<u32>,
 }
 
 impl RecursiveWitnessFlat {
@@ -44,7 +43,6 @@ impl RecursiveWitnessFlat {
             live_coeff_len,
             committed_coeff_len: None,
             commitment_ring_dim: None,
-            known_balanced_log_basis: None,
         }
     }
 
@@ -70,11 +68,10 @@ impl RecursiveWitnessFlat {
             live_coeff_len: expected,
             committed_coeff_len: None,
             commitment_ring_dim: None,
-            known_balanced_log_basis: Some(log_basis),
         })
     }
 
-    pub(crate) fn from_packed_i8_digits(
+    pub(crate) fn from_tensor_packed_i8_digits(
         digits: Vec<i8>,
         live_coeff_len: usize,
     ) -> Result<Self, AkitaError> {
@@ -89,7 +86,6 @@ impl RecursiveWitnessFlat {
             live_coeff_len,
             committed_coeff_len: None,
             commitment_ring_dim: None,
-            known_balanced_log_basis: None,
         })
     }
 
@@ -156,7 +152,6 @@ impl RecursiveWitnessFlat {
         SuffixWitnessView::from_recursive_witness(
             self.digits.zero_padded(physical_len)?,
             self.live_coeff_len,
-            self.known_balanced_log_basis,
         )
     }
 }
@@ -168,7 +163,6 @@ pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     live_coeff_len: usize,
     live_ring_elems: usize,
     padded_ring_elems: usize,
-    known_balanced_log_basis: Option<u32>,
     _marker: PhantomData<F>,
 }
 
@@ -176,7 +170,6 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
     fn from_recursive_witness(
         digits: PackedSignedDigitView<'a>,
         live_coeff_len: usize,
-        known_balanced_log_basis: Option<u32>,
     ) -> Result<Self, AkitaError> {
         if live_coeff_len > digits.len() {
             return Err(AkitaError::InvalidSize {
@@ -190,7 +183,6 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
             live_coeff_len,
             live_ring_elems: live_coeff_len.div_ceil(D),
             padded_ring_elems: (digits.len() / D).next_power_of_two().max(1),
-            known_balanced_log_basis,
             _marker: PhantomData,
         })
     }
@@ -409,7 +401,6 @@ where
             self.live_ring_elems,
             challenges,
             num_positions_per_block,
-            self.known_balanced_log_basis,
         );
         Ok(build_decompose_fold_witness::<F, D>(coeff_accum, q))
     }
@@ -597,7 +588,6 @@ where
                     num_live_blocks,
                     plan.num_digits_inner,
                     plan.log_basis_inner,
-                    source.known_balanced_log_basis,
                 )?;
                 Ok(CommitInnerWitness::from_rows(rows))
             })

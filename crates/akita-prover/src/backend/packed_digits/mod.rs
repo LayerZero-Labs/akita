@@ -79,12 +79,6 @@ impl Default for PackedSignedDigits {
     }
 }
 
-impl From<Vec<i8>> for PackedSignedDigits {
-    fn from(digits: Vec<i8>) -> Self {
-        Self::from_i8_digits_auto(digits)
-    }
-}
-
 #[cfg(test)]
 impl From<Arc<[i8]>> for PackedSignedDigits {
     fn from(digits: Arc<[i8]>) -> Self {
