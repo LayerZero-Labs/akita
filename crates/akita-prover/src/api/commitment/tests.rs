@@ -1,6 +1,6 @@
 use super::*;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx};
+use crate::compute::{CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{AkitaProverSetup, CpuBackend, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -285,26 +285,6 @@ fn slice_fixture_num_digits_inner() -> usize {
     akita_types::sis::compute_num_digits_field_width(32, 2)
 }
 
-/// Full-field balanced-digit contract matching the slice fixture's geometry.
-///
-/// `log_commit_bound == field_bits` is the unbounded endpoint, so the accepted
-/// interval is representability alone and the fixture keeps committing arbitrary
-/// field elements. The balanced-digit class imposes no structural requirement, so
-/// the dense fixture source is admissible. Both restrictive paths — a bounded
-/// declaration and the unit one-hot class — are covered by the `fp128` e2e tests,
-/// which own real catalogs.
-fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
-    akita_types::sis::CommittedSourceContract::try_new(
-        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
-        akita_types::DecompositionParams {
-            log_basis: 2,
-            log_commit_bound: 32,
-            log_open_bound: Some(32),
-        },
-    )
-    .expect("full-field slice fixture contract")
-}
-
 fn commitment_params_for_slice_count(
     slice_count: akita_types::CommitmentSliceCount,
 ) -> CommittedGroupParams {
@@ -448,9 +428,8 @@ fn commit_fixture_with_profile(
     polys: &[DensePoly<F>],
     ctx: &OperationCtx<'_, F, CpuBackend>,
     profile: GroupCommitPhaseParams,
-    contract: akita_types::sis::CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError> {
-    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile, contract)?;
+    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile)?;
     let CommitmentCompressionOutput {
         payload,
         witness,
@@ -497,7 +476,6 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         std::slice::from_ref(&poly),
         &ctx,
         GroupCommitPhaseParams::try_from_params(params.group(), &params).expect("S=1 profile"),
-        slice_fixture_contract(),
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -541,7 +519,6 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
                 .unwrap_or_else(|error| {
                     panic!("real S={} profile failed: {error}", slice_count.get())
                 }),
-            slice_fixture_contract(),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
@@ -618,19 +595,16 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .collect::<Vec<_>>();
     let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
     validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
-    let contract = akita_config::proof_optimized::fp64::Dense::committed_source_contract().unwrap();
     let raw = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
         GroupCommitPhaseParams::try_from_params(canonical.group(), &canonical).unwrap(),
-        contract,
     )
     .unwrap();
     let raw_under_other_method = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
         GroupCommitPhaseParams::try_from_params(packing_plan.group(), &packing_plan).unwrap(),
-        contract,
     )
     .unwrap();
     assert_eq!(raw, raw_under_other_method);

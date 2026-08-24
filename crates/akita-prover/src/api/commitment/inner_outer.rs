@@ -1,4 +1,3 @@
-use super::ensure_sources_fit_accepted_interval;
 use crate::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
     RootCommitSource, RuntimeCommitBackendFor, RuntimeCommitSource,
@@ -9,7 +8,6 @@ use akita_algebra::ring::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
-use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, CommitmentRingDims, CommitmentSliceGeometry, DigitBlocks,
     GroupCommitPhaseParams, RingVec,
@@ -123,7 +121,6 @@ pub(super) fn compute_inner_outer_commitment<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
     profile: GroupCommitPhaseParams,
-    contract: CommittedSourceContract,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -149,7 +146,6 @@ where
         F,
         dims.d_a(),
         |D_A| {
-            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, contract)?;
             let views = polys
                 .iter()
                 .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))

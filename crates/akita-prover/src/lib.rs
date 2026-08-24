@@ -19,7 +19,7 @@ use akita_field::FieldCore;
 use akita_types::RingVec;
 
 pub use api::{
-    commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
+    commit, commit_setup_prefix, resolve_polynomial_group_layout, AkitaProverSetup, CommitOutput,
     GroupContext, PreparedGroupProveOps, PreparedProverGroup,
 };
 
