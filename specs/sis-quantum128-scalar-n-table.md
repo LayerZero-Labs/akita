@@ -58,10 +58,12 @@ The canonical role coverage has Inner/A dimensions `64, 128, 256, 512, 1024,
 q128. Outer/B and Open/D have dimensions `64, 128, 256`. The separate fixed
 compression cells use their protocol-specific dimensions. Every
 commitment-matrix cell has maximum module rank `20`. Inner/A uses the explicit
-planner bucket set
+planner bucket union
 `2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
-16777215, 33554431, 67108863, 134217727, 268435455`.
+16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
+2147483647, 4294967295`. The q32 profile stops at `268435455`; the q64 and
+q128 profiles admit the full union through `4294967295`.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
@@ -73,9 +75,8 @@ each ring origin, including its accepted and rejected boundary witnesses. The
 runtime projection takes the minimum scalar cutoff when different ring origins
 map to the same scalar key.
 
-The q128 Inner/512 cell adds 700 direct estimator requests: 35 coefficient
-buckets times 20 module ranks. The distinct extension digest gates these
-slices; the original digest cannot authorize D512.
+The q128 Inner/512 cell has 640 direct estimator requests: 32 coefficient
+buckets times 20 module ranks.
 
 ## Intent
 
@@ -415,16 +416,8 @@ Each file is encoded as an unsigned little endian 64-bit byte length, its
 UTF-8 filename, a NUL byte, and its exact bytes. This encoding is independent
 of host word size, map iteration order, and parallel generation order.
 
-The additive q128 Inner/512 coverage uses a separate digest without replacing
-the base artifact identity. SHA3-256 commits to the domain tag
-`akita-sis-table-q128-inner-d512-direct-v1\0`, the 32-byte base digest, the
-exact q128 modulus as a little-endian `u128`, then `(d, search_cap, max_rank)`
-as little-endian `(u32, u64, u32)`, followed by the coefficient-bucket count as
-an unsigned little-endian `u64`,
-the buckets as little-endian `u128`s, and all widths in bucket/rank order as
-little-endian `u64`s. The resulting digest is
-`267f1d1fd2cd64fac57fb61d2a2ece92eb0e7b7dc22af4dd0229c0f28a9e1d8b`.
-Existing schedules retain the base digest.
+The q128 Inner/512 cells are part of the unified artifact and its shared table
+digest. Dependent schedule catalogs embed that same digest.
 
 ## Invariants
 

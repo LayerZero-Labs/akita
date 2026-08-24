@@ -167,10 +167,9 @@ pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
-/// Coefficient-`L∞` collision buckets for norm-bound sizing.
+/// Union of coefficient-`L∞` collision buckets for norm-bound sizing.
 ///
-/// Keep in lockstep with `COEFF_LINF_BUCKETS` in
-/// `crates/akita-sis-estimator/src/width_table.rs`.
+/// Canonical role coverage may restrict this union by modulus profile.
 pub const COEFF_LINF_BUCKETS: &[u128] = &[
     2,
     3,
@@ -200,6 +199,10 @@ pub const COEFF_LINF_BUCKETS: &[u128] = &[
     67_108_863,
     134_217_727,
     268_435_455,
+    536_870_911,
+    1_073_741_823,
+    2_147_483_647,
+    4_294_967_295,
 ];
 
 /// Canonical key for a generated SIS floor row.

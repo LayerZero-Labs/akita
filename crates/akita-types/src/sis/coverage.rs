@@ -37,6 +37,9 @@ pub const SIS_MAX_MODULE_RANK: u32 = 20;
 /// Per-cell scalar-width search cap used by the production generator.
 pub const SIS_REQUIRED_MAX_WIDTH: u64 = 6_400_000_000_000;
 
+const Q32_MAX_INNER_COEFF_LINF_BOUND: u128 = 268_435_455;
+const LARGE_FIELD_MAX_INNER_COEFF_LINF_BOUND: u128 = 4_294_967_295;
+
 const fn dispatch_role(role: SisMatrixRole) -> RingRole {
     match role {
         SisMatrixRole::Inner => RingRole::Inner,
@@ -50,6 +53,25 @@ fn role_bounds(role: SisMatrixRole) -> &'static [u128] {
         SisMatrixRole::Inner => COEFF_LINF_BUCKETS,
         SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS,
     }
+}
+
+const fn max_inner_coeff_linf_bound(modulus_profile: SisModulusProfileId) -> u128 {
+    match modulus_profile {
+        SisModulusProfileId::Q32Offset99 => Q32_MAX_INNER_COEFF_LINF_BOUND,
+        SisModulusProfileId::Q64Offset59 | SisModulusProfileId::Q128OffsetA7F7 => {
+            LARGE_FIELD_MAX_INNER_COEFF_LINF_BOUND
+        }
+    }
+}
+
+fn role_bound_supported(
+    role: SisMatrixRole,
+    modulus_profile: SisModulusProfileId,
+    coeff_linf_bound: u128,
+) -> bool {
+    role_bounds(role).contains(&coeff_linf_bound)
+        && (role != SisMatrixRole::Inner
+            || coeff_linf_bound <= max_inner_coeff_linf_bound(modulus_profile))
 }
 
 /// Whether generated SIS security floors cover one role/profile/dimension.
@@ -77,10 +99,9 @@ pub fn sis_role_cell(
     ring_dimension: u32,
     coeff_linf_bound: u128,
 ) -> Option<SisRoleCell> {
-    let bounds = role_bounds(role);
     let trivial_collision_bound = (modulus_profile.modulus() - 1) / 2;
     if !sis_role_dimension_supported(role, modulus_profile, ring_dimension)
-        || !bounds.contains(&coeff_linf_bound)
+        || !role_bound_supported(role, modulus_profile, coeff_linf_bound)
         || coeff_linf_bound >= trivial_collision_bound
     {
         return None;
