@@ -1,4 +1,4 @@
-use super::{ensure_sources_fit_accepted_interval, CommitmentGeometry};
+use super::ensure_sources_fit_accepted_interval;
 use crate::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
     RootCommitSource, RuntimeCommitBackendFor, RuntimeCommitSource,
@@ -11,7 +11,8 @@ use akita_field::parallel::*;
 use akita_field::{CanonicalField, FieldCore};
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
-    dispatch_for_field, CommitmentRingDims, CommitmentSliceGeometry, DigitBlocks, RingVec,
+    dispatch_for_field, CommitmentRingDims, CommitmentSliceGeometry, DigitBlocks,
+    GroupCommitPhaseParams, RingVec,
 };
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
@@ -121,8 +122,7 @@ where
 pub(super) fn compute_inner_outer_commitment<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    geometry: CommitmentGeometry,
-    slice_geometry: &CommitmentSliceGeometry,
+    profile: GroupCommitPhaseParams,
     contract: CommittedSourceContract,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
@@ -132,16 +132,17 @@ where
 {
     let backend = ctx.backend();
     let prepared = ctx.prepared();
+    let slice_geometry = profile.derive_slice_geometry()?;
     let dims = CommitmentRingDims {
-        inner: geometry.inner_matrix.ring_dimension(),
-        outer: geometry.outer_matrix.ring_dimension(),
-        opening: geometry.outer_matrix.ring_dimension(),
+        inner: profile.inner.matrix.ring_dimension(),
+        outer: profile.outer.matrix.ring_dimension(),
+        opening: profile.outer.matrix.ring_dimension(),
     };
     let plan = CommitInnerPlan {
-        n_a: geometry.inner_matrix.output_rank(),
-        num_positions_per_block: geometry.num_positions_per_block,
-        num_digits_inner: geometry.num_digits_inner,
-        log_basis_inner: geometry.log_basis_inner,
+        n_a: profile.inner.matrix.output_rank(),
+        num_positions_per_block: profile.blocks.positions_per_block,
+        num_digits_inner: profile.inner.digits.num_digits,
+        log_basis_inner: profile.inner.digits.log_basis,
     };
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
@@ -164,11 +165,11 @@ where
                     inners,
                     polys.len(),
                     plan.n_a,
-                    geometry.num_live_blocks,
-                    geometry.num_digits_outer,
-                    geometry.log_basis_outer,
-                    geometry.outer_matrix.output_rank(),
-                    slice_geometry,
+                    profile.blocks.live_blocks,
+                    profile.outer.digits.num_digits,
+                    profile.outer.digits.log_basis,
+                    profile.outer.matrix.output_rank(),
+                    &slice_geometry,
                 )
             )
         }

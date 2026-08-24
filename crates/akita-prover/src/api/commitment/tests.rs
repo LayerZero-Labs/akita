@@ -444,26 +444,24 @@ fn commit_unsliced_reference(
     Ok(((Commitment::new(payload), hint), compression_plan))
 }
 
-fn commit_fixture_with_geometry(
+fn commit_fixture_with_profile(
     polys: &[DensePoly<F>],
     ctx: &OperationCtx<'_, F, CpuBackend>,
-    geometry: CommitmentGeometry,
-    slice_geometry: &akita_types::CommitmentSliceGeometry,
+    profile: GroupCommitPhaseParams,
     contract: akita_types::sis::CommittedSourceContract,
 ) -> Result<CommitmentWithHint<F>, AkitaError> {
-    let (inner_rows, source) =
-        compute_inner_outer_commitment(polys, ctx, geometry, slice_geometry, contract)?;
+    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile, contract)?;
     let CommitmentCompressionOutput {
         payload,
         witness,
         quotients,
     } = compute_commitment_compression(
         ctx,
-        geometry.outer_matrix.sis_table_key().modulus_profile,
+        profile.outer.matrix.sis_table_key().modulus_profile,
         source,
     )?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
-        geometry.inner_matrix.ring_dimension(),
+        profile.inner.matrix.ring_dimension(),
         inner_rows,
         &witness,
         &quotients,
@@ -493,14 +491,12 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
 
-    let production_geometry =
-        validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
-            .expect("production S=1 geometry");
-    let production = commit_fixture_with_geometry(
+    validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
+        .expect("production S=1 geometry");
+    let production = commit_fixture_with_profile(
         std::slice::from_ref(&poly),
         &ctx,
-        (&params).into(),
-        &production_geometry,
+        GroupCommitPhaseParams::try_from_params(params.group(), &params).expect("S=1 profile"),
         slice_fixture_contract(),
     )
     .expect("production S=1 commitment");
@@ -534,16 +530,17 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
 
     for slice_count in akita_types::CommitmentSliceCount::ALL {
         let sliced_params = commitment_params_for_slice_count(slice_count);
-        let slice_geometry =
-            validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
-                .unwrap_or_else(|error| {
-                    panic!("real S={} geometry failed: {error}", slice_count.get())
-                });
-        let (commitment, hint) = commit_fixture_with_geometry(
+        validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
+            .unwrap_or_else(|error| {
+                panic!("real S={} geometry failed: {error}", slice_count.get())
+            });
+        let (commitment, hint) = commit_fixture_with_profile(
             std::slice::from_ref(&poly),
             &ctx,
-            (&sliced_params).into(),
-            &slice_geometry,
+            GroupCommitPhaseParams::try_from_params(sliced_params.group(), &sliced_params)
+                .unwrap_or_else(|error| {
+                    panic!("real S={} profile failed: {error}", slice_count.get())
+                }),
             slice_fixture_contract(),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
@@ -620,22 +617,19 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .map(|index| F::from_u64((index * 17 + 9) as u64))
         .collect::<Vec<_>>();
     let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
-    let slice_geometry =
-        validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
+    validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
     let contract = akita_config::proof_optimized::fp64::Dense::committed_source_contract().unwrap();
-    let raw = commit_fixture_with_geometry(
+    let raw = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
-        (&canonical).into(),
-        &slice_geometry,
+        GroupCommitPhaseParams::try_from_params(canonical.group(), &canonical).unwrap(),
         contract,
     )
     .unwrap();
-    let raw_under_other_method = commit_fixture_with_geometry(
+    let raw_under_other_method = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
-        (&packing_plan).into(),
-        &slice_geometry,
+        GroupCommitPhaseParams::try_from_params(packing_plan.group(), &packing_plan).unwrap(),
         contract,
     )
     .unwrap();
