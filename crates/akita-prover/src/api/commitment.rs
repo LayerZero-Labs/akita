@@ -1,6 +1,5 @@
 //! Prover-owned commitment kernels.
 
-use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{
     CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor,
     RuntimeCommitSource, UniformProverStack,
@@ -15,19 +14,21 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling};
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
-    dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims,
-    CommitmentSliceCount, CommittedGroup, CommittedGroupParams, CommittedSourceEncoding,
-    CompressionChainPlan, FpExtEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PrecommittedGroupProfiles, RingVec,
+    validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
+    AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup,
+    CommittedGroupParams, CommittedSourceEncoding, FpExtEncoding, GroupCommitPhaseParams,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PrecommittedGroupProfiles,
 };
 
-mod inner;
+mod compression;
+mod inner_outer;
+use compression::{compute_compression_chain, CompressionChainOutput};
+use inner_outer::commit_inner_outer;
+pub(crate) use inner_outer::validate_commit_inner_shape;
+pub(crate) use inner_outer::{commit_outer_slices, for_each_outer_slice_input};
 #[cfg(test)]
-use inner::outer_slice_inputs;
-use inner::prepare_inner_commit_group;
-pub(crate) use inner::validate_commit_inner_shape;
-pub(crate) use inner::{commit_outer_slices, for_each_outer_slice_input};
+use inner_outer::{compute_inner_commitment, outer_slice_inputs};
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
 ///
@@ -417,105 +418,23 @@ where
     P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
-    let backend = ctx.backend();
-    let prepared = ctx.prepared();
-    // Per-role ring dimensions for this level: the inner commit digits are
-    // A-role data, the outer `B·t̂` rows are B-role data. The mixed-row spec
-    // feeds diverging dims here (uniform today).
-    let dims = CommitmentRingDims {
-        inner: geometry.inner_matrix.ring_dimension(),
-        outer: geometry.outer_matrix.ring_dimension(),
-        opening: geometry.outer_matrix.ring_dimension(),
-    };
-    let plan = CommitInnerPlan {
-        n_a: geometry.inner_matrix.output_rank(),
-        num_positions_per_block: geometry.num_positions_per_block,
-        num_digits_inner: geometry.num_digits_inner,
-        log_basis_inner: geometry.log_basis_inner,
-    };
-    let num_live_blocks = geometry.num_live_blocks;
-    let num_digits_open = geometry.num_digits_outer;
-    let log_basis = geometry.log_basis_outer;
-    let n_b = geometry.outer_matrix.output_rank();
-    let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        dims.d_a(),
-        |D_A| {
-            ensure_sources_fit_accepted_interval::<F, P, D_A>(polys, plan, contract)?;
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Outer),
-                F,
-                dims.d_b(),
-                |D_B| {
-                    // The whole group multiplies the same A matrix, so the
-                    // backend can stream it once across every polynomial.
-                    let views = polys
-                        .iter()
-                        .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let prepared_polynomials = prepare_inner_commit_group::<F, _, _, D_A, D_B>(
-                        backend,
-                        prepared,
-                        views,
-                        plan,
-                        num_live_blocks,
-                        num_digits_open,
-                        log_basis,
-                    )?;
-                    let u = commit_outer_slices::<F, _, D_B>(
-                        backend,
-                        prepared,
-                        n_b,
-                        prepared_polynomials.iter().map(|(_, digits)| digits),
-                        slice_geometry,
-                        log_basis,
-                    )?;
-                    let source = RingVec::from_ring_elems(&u);
-                    let plan = CompressionChainPlan::for_complete_source(
-                        geometry.outer_matrix.sis_table_key().modulus_profile,
-                        source.coeff_len(),
-                    )?;
-                    let (mut outputs, _) = execute_compression_chains(
-                        ctx,
-                        vec![CompressionExecutionInput {
-                            id: (),
-                            plan,
-                            coefficients: source.into_coeffs(),
-                        }],
-                    )?;
-                    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
-                    let terminal_ring_dim = output
-                        .witness
-                        .plan()
-                        .maps()
-                        .last()
-                        .ok_or(AkitaError::InvalidProof)?
-                        .ring_dimension();
-                    let payload = RingVec::from_coeffs_with_ring_dim(
-                        output.terminal.into_coefficients(),
-                        terminal_ring_dim,
-                    )?;
-                    Ok::<_, AkitaError>((
-                        Commitment::new(payload),
-                        prepared_polynomials
-                            .into_iter()
-                            .map(|(rows, _)| rows)
-                            .collect::<Vec<_>>(),
-                        output.witness,
-                        output.quotients,
-                    ))
-                }
-            )
-        }
+    let (inner_rows, source) = commit_inner_outer(polys, ctx, geometry, slice_geometry, contract)?;
+    let CompressionChainOutput {
+        payload,
+        witness,
+        quotients,
+    } = compute_compression_chain(
+        ctx,
+        geometry.outer_matrix.sis_table_key().modulus_profile,
+        source,
     )?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
-        dims.d_a(),
+        geometry.inner_matrix.ring_dimension(),
         inner_rows,
-        &compression_witness,
-        &compression_quotients,
+        &witness,
+        &quotients,
     )?;
-    Ok((commitment, hint))
+    Ok((Commitment::new(payload), hint))
 }
 
 fn validate_explicit_context(
