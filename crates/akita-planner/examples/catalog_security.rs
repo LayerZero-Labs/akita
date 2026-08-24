@@ -7,10 +7,6 @@ use akita_planner::generated_families::{GeneratedFamily, ALL_GENERATED_FAMILIES}
 use akita_sis_estimator::{
     estimate_schedule_security, ScheduleSisBound, ScheduleSisInstanceEstimate, SisSecurityPolicy,
 };
-use akita_types::{
-    FoldParams, GroupOpenPhaseParams, InnerCommitMatrixParams, InnerCommitSecurityRoute,
-    TerminalFoldParams,
-};
 
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-security \
@@ -73,114 +69,6 @@ fn bound_label(instance: &ScheduleSisInstanceEstimate) -> String {
         ScheduleSisBound::Linf(bound) => format!("linf:{bound}"),
         ScheduleSisBound::L2Squared(bound) => format!("l2sq:{bound}"),
     }
-}
-
-fn inner_route_label(matrix: &InnerCommitMatrixParams) -> String {
-    match matrix.security_route() {
-        InnerCommitSecurityRoute::Linf(key) => format!("linf:{}", key.coeff_linf_bound),
-        InnerCommitSecurityRoute::L2 {
-            table_key,
-            response_l2_sq_cap,
-            norm_proof_shape,
-        } => format!(
-            "l2sq:{};response-cap:{};proof:{norm_proof_shape:?}",
-            table_key.collision_l2_sq, response_l2_sq_cap
-        ),
-    }
-}
-
-fn print_group_details(level: &str, kind: &str, fold: &FoldParams, group: &GroupOpenPhaseParams) {
-    let profile = &group.profile;
-    let opening = group.opening;
-    let inner = &profile.inner;
-    let outer = &profile.outer;
-    let open = &fold.params.open_matrix;
-    let columns = [
-        level.to_string(),
-        kind.to_string(),
-        format!(
-            "{}x{}",
-            profile.group.num_vars(),
-            profile.group.num_polynomials()
-        ),
-        fold.input_witness_len.to_string(),
-        fold.output_witness_len.to_string(),
-        profile.blocks.live_ring_elements_per_claim.to_string(),
-        profile.blocks.positions_per_block.to_string(),
-        format!("{:?}", fold.params.payload_mode),
-        format!("{:?}", fold.params.source_encoding),
-        format!(
-            "{}+{}",
-            fold.params.witness_chunk.num_chunks, fold.params.witness_chunk.num_activated_levels
-        ),
-        profile.blocks.live_blocks.to_string(),
-        profile.outer_slice_count.get().to_string(),
-        inner.digits.log_basis.to_string(),
-        inner.digits.num_digits.to_string(),
-        format!("{:?}", inner.matrix.sis_modulus_profile()),
-        inner.matrix.ring_dimension().to_string(),
-        inner.matrix.output_rank().to_string(),
-        inner.matrix.input_width().to_string(),
-        inner_route_label(&inner.matrix),
-        outer.digits.log_basis.to_string(),
-        outer.digits.num_digits.to_string(),
-        format!("{:?}", outer.matrix.sis_modulus_profile()),
-        outer.matrix.ring_dimension().to_string(),
-        outer.matrix.output_rank().to_string(),
-        outer.matrix.input_width().to_string(),
-        outer.matrix.coeff_linf_bound().to_string(),
-        opening.log_basis_open.to_string(),
-        opening.num_digits_open.to_string(),
-        format!("{:?}", open.sis_modulus_profile()),
-        open.ring_dimension().to_string(),
-        open.output_rank().to_string(),
-        open.input_width().to_string(),
-        open.coeff_linf_bound().to_string(),
-        opening.num_digits_fold.to_string(),
-        opening.fold_challenge_config.count_pm1.to_string(),
-        opening.fold_challenge_config.count_pm2.to_string(),
-        format!("{:?}", group.setup_natural_len),
-    ];
-    println!("level\t{}", columns.join("\t"));
-    println!("opening\t{level}\t{kind}\t{:?}", opening.opening_method);
-}
-
-fn print_fold_details(level: &str, fold: &FoldParams) {
-    for (index, group) in fold.params.preceding_group_iter().enumerate() {
-        let kind = if group.setup_natural_len.is_some() {
-            "setup-prefix".to_string()
-        } else {
-            format!("precommitted-{index}")
-        };
-        print_group_details(level, &kind, fold, group);
-    }
-    print_group_details(level, "final", fold, fold.params.own_group());
-}
-
-fn print_terminal_details(terminal: &TerminalFoldParams) {
-    let inner = &terminal.inner;
-    let columns = [
-        terminal.input_witness_len.to_string(),
-        terminal.blocks.live_ring_elements_per_claim.to_string(),
-        terminal.blocks.positions_per_block.to_string(),
-        terminal.blocks.live_blocks.to_string(),
-        inner.digits.log_basis.to_string(),
-        inner.digits.num_digits.to_string(),
-        format!("{:?}", inner.matrix.sis_modulus_profile()),
-        inner.matrix.ring_dimension().to_string(),
-        inner.matrix.output_rank().to_string(),
-        inner.matrix.input_width().to_string(),
-        inner_route_label(&inner.matrix),
-        terminal.fold.log_basis.to_string(),
-        terminal.fold.num_digits.to_string(),
-        format!(
-            "{}+{}",
-            terminal.fold_challenge_config.count_pm1, terminal.fold_challenge_config.count_pm2
-        ),
-        terminal.response_shape.layout.logical_num_elems.to_string(),
-        format!("{:?}", terminal.response_shape.layout.groups),
-    ];
-    println!("terminal\t{}", columns.join("\t"));
 }
 
 fn main() -> Result<(), String> {
@@ -280,17 +168,7 @@ fn main() -> Result<(), String> {
                 ));
             }
             if details {
-                println!(
-                    "level\tlevel\tgroup-kind\tgroup\twitness-in\twitness-out\tN\tM\tpayload\tsource\tchunks+active-levels\tB\touter-slices\tA-log-basis\tA-digits\tA-modulus\tA-d\tA-rank\tA-width\tA-bound\tB-log-basis\tB-digits\tB-modulus\tB-d\tB-rank\tB-width\tB-bound\tD-log-basis\tD-digits\tD-modulus\tD-d\tD-rank\tD-width\tD-bound\tfold-digits\tchallenge-pm1\tchallenge-pm2\tsetup-natural-len"
-                );
-                print_fold_details("root", &schedule.root);
-                for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-                    print_fold_details(&format!("recursive-{index}"), fold);
-                }
-                println!(
-                    "terminal\twitness-in\tN\tM\tB\tA-log-basis\tA-digits\tA-modulus\tA-d\tA-rank\tA-width\tA-bound\tfold-log-basis\tfold-digits\tchallenge-pm1+pm2\tlogical-response-elems\tresponse-groups"
-                );
-                print_terminal_details(&schedule.terminal);
+                println!("schedule\t{schedule:#?}");
                 println!("instance\tlocation\trole\tmodulus_profile\tnorm_bound\td\trank\twidth\tattack_cost_bits");
                 for (index, instance) in estimate.instances().iter().enumerate() {
                     println!(
