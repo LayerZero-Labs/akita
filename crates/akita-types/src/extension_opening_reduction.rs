@@ -165,17 +165,37 @@ where
 /// Read-only source of the base-field column runs consumed by the
 /// extension-opening tensor partials fold.
 ///
-/// `row(tail, width)` yields one tail-major row as base-field values. Dense
-/// sources can return a copied slice iterator, while compact sources can
-/// convert their values lazily without first copying a flat field buffer.
+/// `row(tail, width)` must yield exactly `width` base-field values for one
+/// tail-major row. Dense sources can return a copied slice iterator, while
+/// compact sources can convert their values lazily without first copying a
+/// flat field buffer.
 pub trait TensorColumnSource<F: FieldCore>: Sync {
-    /// Iterator over one tail row.
-    type Row<'a>: Iterator<Item = F>
+    /// Exact-size iterator over one tail row.
+    type Row<'a>: ExactSizeIterator<Item = F>
     where
         Self: 'a;
 
-    /// Yield the `width` coefficients at flat tail index `tail`.
+    /// Yield exactly `width` coefficients at flat tail index `tail`.
+    ///
+    /// Implementors must uphold this exact-length invariant. The contraction
+    /// path checks it with a debug assertion so malformed implementations fail
+    /// during development instead of being silently truncated by `zip`.
     fn row(&self, tail: usize, width: usize) -> Self::Row<'_>;
+}
+
+#[inline]
+fn checked_tensor_row<F, S>(source: &S, tail: usize, width: usize) -> S::Row<'_>
+where
+    F: FieldCore,
+    S: TensorColumnSource<F>,
+{
+    let row = source.row(tail, width);
+    debug_assert_eq!(
+        row.len(),
+        width,
+        "tensor column source row must yield exactly width items"
+    );
+    row
 }
 
 /// Column source backed by a flat tail-major base-evaluation slice.
@@ -266,7 +286,11 @@ fn partials_out_contribution<F, E, S>(
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
         let mut inner = vec![<E as HasUnreducedOps>::ProductAccum::zero(); width];
         for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
-            for (slot, coeff) in inner.iter_mut().zip(source.row(row_base + x_in, width)) {
+            for (slot, coeff) in
+                inner
+                    .iter_mut()
+                    .zip(checked_tensor_row::<F, S>(source, row_base + x_in, width))
+            {
                 *slot += e_in.mul_base_to_product_accum(coeff);
             }
         }
@@ -276,7 +300,11 @@ fn partials_out_contribution<F, E, S>(
     } else {
         let mut inner = vec![E::zero(); width];
         for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
-            for (slot, coeff) in inner.iter_mut().zip(source.row(row_base + x_in, width)) {
+            for (slot, coeff) in
+                inner
+                    .iter_mut()
+                    .zip(checked_tensor_row::<F, S>(source, row_base + x_in, width))
+            {
                 *slot += e_in.mul_base(coeff);
             }
         }
@@ -820,4 +848,42 @@ pub fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {
         });
     }
     Ok(len.trailing_zeros() as usize)
+}
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::*;
+    use akita_field::{Ext2, Prime64Offset59};
+
+    struct MalformedSource {
+        row_len: usize,
+    }
+
+    impl TensorColumnSource<Prime64Offset59> for MalformedSource {
+        type Row<'a> = std::vec::IntoIter<Prime64Offset59>;
+
+        fn row(&self, _tail: usize, _width: usize) -> Self::Row<'_> {
+            vec![Prime64Offset59::one(); self.row_len].into_iter()
+        }
+    }
+
+    fn contract_malformed_source(row_len: usize) {
+        type F = Prime64Offset59;
+        type E = Ext2<F>;
+        let split = SplitEqEvals::<E>::new(&[]).unwrap();
+        let source = MalformedSource { row_len };
+        let _ = tensor_column_partials_split_fold::<F, E, _>(&split, 2, &source);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor column source row must yield exactly width items")]
+    fn tensor_column_source_rejects_short_rows_in_debug_builds() {
+        contract_malformed_source(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor column source row must yield exactly width items")]
+    fn tensor_column_source_rejects_long_rows_in_debug_builds() {
+        contract_malformed_source(3);
+    }
 }

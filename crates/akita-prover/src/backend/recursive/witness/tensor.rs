@@ -92,10 +92,34 @@ where
     }
 }
 
-type SuffixTensorRow<'a, F> = std::iter::Chain<
-    std::iter::Map<std::iter::Copied<std::slice::Iter<'a, i8>>, fn(i8) -> F>,
-    std::iter::RepeatN<F>,
->;
+/// Exact-size lazy field row over live recursive digits plus zero padding.
+pub struct SuffixTensorRow<'a, F> {
+    live: std::slice::Iter<'a, i8>,
+    zero_padding: usize,
+    _field: std::marker::PhantomData<F>,
+}
+
+impl<F: FieldCore + CanonicalField> Iterator for SuffixTensorRow<'_, F> {
+    type Item = F;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(&digit) = self.live.next() {
+            return Some(F::from_i8(digit));
+        }
+        if self.zero_padding == 0 {
+            return None;
+        }
+        self.zero_padding -= 1;
+        Some(F::zero())
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.live.len() + self.zero_padding;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<F: FieldCore + CanonicalField> ExactSizeIterator for SuffixTensorRow<'_, F> {}
 
 impl<F, const D: usize> TensorColumnSource<F> for SuffixWitnessView<'_, F, D>
 where
@@ -112,10 +136,11 @@ where
         let start = tail * width;
         let end = start.saturating_add(width).min(flat.len());
         let live = flat.get(start..end).unwrap_or_default();
-        live.iter()
-            .copied()
-            .map(F::from_i8 as fn(i8) -> F)
-            .chain(std::iter::repeat_n(F::zero(), width - live.len()))
+        SuffixTensorRow {
+            live: live.iter(),
+            zero_padding: width - live.len(),
+            _field: std::marker::PhantomData,
+        }
     }
 }
 

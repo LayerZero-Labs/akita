@@ -4,7 +4,7 @@ use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
 use akita_field::{Ext2, ExtField, FieldCore, Prime128Offset275, Prime64Offset59};
 use akita_prover::protocol::extension_opening_reduction::{
-    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
+    ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels as tr_labels;
@@ -20,6 +20,17 @@ use akita_types::{
 };
 
 type F = Prime128Offset275;
+
+fn eor_group<E: FieldCore>(
+    witness: Vec<E>,
+    factor: Vec<E>,
+    coeff: E,
+) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError> {
+    ExtensionOpeningReductionGroup::new(
+        vec![ExtensionOpeningReductionTerm::new(witness, coeff)],
+        factor,
+    )
+}
 
 fn new_transcript() -> AkitaTranscript<F> {
     <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
@@ -248,10 +259,8 @@ fn extension_opening_reduction_proves_witness_factor_claim() {
     let factor_evals: Vec<F> = (0..16).map(|i| F::from_u64((7 * i + 11) as u64)).collect();
     let expected_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], expected_claim).unwrap();
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
     assert_eq!(prover.input_claim(), expected_claim);
 
@@ -284,15 +293,15 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
         * extension_opening_reduction_claim(&witness_a, &factor_a).unwrap()
         + coeff_b * extension_opening_reduction_claim(&witness_b, &factor_b).unwrap();
 
-    let terms = vec![
-        ExtensionOpeningReductionTerm::new(witness_a.clone(), factor_a.clone(), coeff_a).unwrap(),
-        ExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b).unwrap(),
+    let groups = vec![
+        eor_group(witness_a.clone(), factor_a.clone(), coeff_a).unwrap(),
+        eor_group(witness_b.clone(), factor_b.clone(), coeff_b).unwrap(),
     ];
     assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap(),
+        ExtensionOpeningReductionProver::input_claim_from_groups(&groups).unwrap(),
         expected_claim
     );
-    let mut prover = ExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(groups, expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
 
@@ -335,31 +344,28 @@ fn shared_dense_factor_preserves_batched_proof() {
     let input_claim = coeff_a * extension_opening_reduction_claim(&witness_a, &factor).unwrap()
         + coeff_b * extension_opening_reduction_claim(&witness_b, &factor).unwrap();
 
-    let owned_terms = vec![
-        ExtensionOpeningReductionTerm::new(witness_a.clone(), factor.clone(), coeff_a).unwrap(),
-        ExtensionOpeningReductionTerm::new(witness_b.clone(), factor.clone(), coeff_b).unwrap(),
+    let separate_groups = vec![
+        eor_group(witness_a.clone(), factor.clone(), coeff_a).unwrap(),
+        eor_group(witness_b.clone(), factor.clone(), coeff_b).unwrap(),
     ];
-    let shared_factor = std::sync::Arc::new(factor);
-    let shared_terms = vec![
-        ExtensionOpeningReductionTerm::new_with_shared_factor(
-            witness_a,
-            std::sync::Arc::clone(&shared_factor),
-            coeff_a,
-        )
-        .unwrap(),
-        ExtensionOpeningReductionTerm::new_with_shared_factor(witness_b, shared_factor, coeff_b)
-            .unwrap(),
-    ];
+    let shared_group = ExtensionOpeningReductionGroup::new(
+        vec![
+            ExtensionOpeningReductionTerm::new(witness_a, coeff_a),
+            ExtensionOpeningReductionTerm::new(witness_b, coeff_b),
+        ],
+        factor,
+    )
+    .unwrap();
 
-    let prove = |terms| {
-        let mut prover = ExtensionOpeningReductionProver::new(terms, input_claim).unwrap();
+    let prove = |groups| {
+        let mut prover = ExtensionOpeningReductionProver::new(groups, input_claim).unwrap();
         let mut transcript = new_transcript();
         let result = prover
             .prove::<F, _, _>(&mut transcript, sample_round)
             .unwrap();
         (result, prover.final_terms().unwrap())
     };
-    assert_eq!(prove(shared_terms), prove(owned_terms));
+    assert_eq!(prove(vec![shared_group]), prove(separate_groups));
 }
 
 #[test]
@@ -389,10 +395,8 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
     let factor_evals = factor.evals().unwrap();
     let expected_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
@@ -419,9 +423,8 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
     let factor_evals = factor.evals().unwrap();
     let input_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -461,9 +464,8 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
     let factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 9) as u64)).collect();
 
     let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -479,10 +481,8 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
     let witness_evals: Vec<F> = (0..4).map(|i| F::from_u64((5 * i + 1) as u64)).collect();
     let factor_evals: Vec<F> = (0..4).map(|i| F::from_u64((13 * i + 2) as u64)).collect();
     let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
 
     let mut prover_transcript = new_transcript();
     let (proof, challenges, final_claim) = prover
@@ -512,7 +512,7 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
 fn extension_opening_reduction_rejects_malformed_table_lengths() {
     let witness_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
     let factor_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
-    assert!(ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, F::one()).is_err());
+    assert!(eor_group(witness_evals, factor_evals, F::one()).is_err());
 
     let witness_evals = vec![F::one(), F::from_u64(2)];
     let factor_evals = vec![F::one()];
@@ -526,7 +526,7 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 // ---------------------------------------------------------------------------
 // Regression: EOR round messages must honor `DELAYED_PRODUCT_SUM_IS_EXACT`.
 //
-// `accumulate_dense_round` and `fused_fold_and_accumulate` sum
+// `accumulate_dense_round` and `fused_fold_witness_and_accumulate` sum
 // `mul_to_product_accum` products and reduce once. That is only sound when the
 // field's accumulator is exact w.r.t. per-term `Mul`. For a field that leaves
 // `DELAYED_PRODUCT_SUM_IS_EXACT` at its conservative `false` default, the
@@ -810,7 +810,7 @@ mod delayed_product_sum_contract {
     }
 
     // Dense path: round 0 exercises `accumulate_dense_round`; later rounds use
-    // the cache filled by `fused_fold_and_accumulate`. Both must reduce per term
+    // the cache filled by `fused_fold_witness_and_accumulate`. Both must reduce per term
     // for this field, so every round message matches the per-term reference.
     #[test]
     fn dense_round_messages_honor_delayed_product_flag() {
@@ -824,10 +824,8 @@ mod delayed_product_sum_contract {
         assert_inputs_are_hazardous(&witness, &factor);
 
         let input_claim = extension_opening_reduction_claim(&witness, &factor).unwrap();
-        let term =
-            ExtensionOpeningReductionTerm::new(witness.clone(), factor.clone(), LossyField::one())
-                .unwrap();
-        let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+        let group = eor_group(witness.clone(), factor.clone(), LossyField::one()).unwrap();
+        let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
         let mut claim = prover.input_claim();
 
         let eval_points = [zero, one, two, LossyField::from_u64(3)];

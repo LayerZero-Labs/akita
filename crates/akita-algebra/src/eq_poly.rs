@@ -149,6 +149,14 @@ impl<E: FieldCore> EqPolynomial<E> {
             const PARALLEL_SLAB_MIN_VARS: usize = 14;
             const PARALLEL_SLAB_MAX_VARS: usize = 16;
             if rayon::current_num_threads() > 1 {
+                if r.len() < PARALLEL_SLAB_MIN_VARS {
+                    return Self::evals_serial_with_final_map(
+                        "mapped eq evaluation table",
+                        r,
+                        E::one(),
+                        map,
+                    );
+                }
                 if (PARALLEL_SLAB_MIN_VARS..=PARALLEL_SLAB_MAX_VARS).contains(&r.len()) {
                     return Self::evals_mapped_parallel_slabs(r, map);
                 }
@@ -676,7 +684,7 @@ mod tests {
     #[test]
     fn mapped_parallel_paths_match_serial_table_order() {
         let mut rng = StdRng::seed_from_u64(0xA11C_E5AB);
-        for n in [14, 15, 16, 17] {
+        for n in [13, 14, 15, 16, 17] {
             let point: Vec<F> = (0..n).map(|_| F::random(&mut rng)).collect();
             let map = |value: F| value.square() + F::from_u64(17);
             let expected = EqPolynomial::evals_serial(&point, None)

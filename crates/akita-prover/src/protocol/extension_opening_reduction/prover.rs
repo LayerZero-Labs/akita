@@ -2,18 +2,19 @@ use super::*;
 
 /// Prover state for a degree-two extension-opening reduction sumcheck.
 ///
-/// Holds one or more terms `coeff_i * sum_x witness_i(x) * factor_i(x)` sharing
-/// a common Boolean domain and a single round challenge sequence. A single
-/// dense opening is the degenerate one-term case.
+/// Holds one or more groups
+/// `sum_i coeff_i * sum_x witness_i(x) * factor_group(x)` sharing a common
+/// Boolean domain and a single round challenge sequence. Each group folds its
+/// transparent factor once per challenge, regardless of its member count.
 #[derive(Debug, Clone)]
 pub struct ExtensionOpeningReductionProver<E: FieldCore> {
-    terms: Vec<ExtensionOpeningReductionTerm<E>>,
+    groups: Vec<ExtensionOpeningReductionGroup<E>>,
     input_claim: E,
     num_rounds: usize,
 }
 
 impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
-    /// Construct a prover from terms sharing one Boolean domain.
+    /// Construct a prover from groups sharing one Boolean domain.
     ///
     /// The caller supplies the claimed input sum. This avoids recomputing it
     /// in protocol paths that already derived the claim while preparing the
@@ -21,31 +22,28 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     ///
     /// # Errors
     ///
-    /// Returns an error if there are no terms or their table lengths differ.
+    /// Returns an error if there are no groups or their table lengths differ.
     pub fn new(
-        terms: Vec<ExtensionOpeningReductionTerm<E>>,
+        groups: Vec<ExtensionOpeningReductionGroup<E>>,
         input_claim: E,
     ) -> Result<Self, AkitaError> {
-        let first = terms.first().ok_or_else(|| {
+        let first = groups.first().ok_or_else(|| {
             AkitaError::InvalidInput(
-                "extension-opening reduction requires at least one term".to_string(),
+                "extension-opening reduction requires at least one group".to_string(),
             )
         })?;
-        let table_len = first.tables.len();
+        let table_len = first.domain_len();
         let num_rounds = num_rounds_from_table_len(table_len)?;
-        for term in &terms {
-            // Each term's witness/factor lengths agree by construction (the
-            // table pairing is built equal-length); only the cross-term domain
-            // needs checking here.
-            if term.tables.len() != table_len {
+        for group in &groups {
+            if group.domain_len() != table_len {
                 return Err(AkitaError::InvalidSize {
                     expected: table_len,
-                    actual: term.tables.len(),
+                    actual: group.domain_len(),
                 });
             }
         }
         Ok(Self {
-            terms,
+            groups,
             input_claim,
             num_rounds,
         })
@@ -63,23 +61,24 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
         factor_evals: Vec<E>,
     ) -> Result<Self, AkitaError> {
         let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals)?;
-        let term = ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, E::one())?;
-        Self::new(vec![term], input_claim)
+        let term = ExtensionOpeningReductionTerm::new(witness_evals, E::one());
+        let group = ExtensionOpeningReductionGroup::new(vec![term], factor_evals)?;
+        Self::new(vec![group], input_claim)
     }
 
-    /// Compute the input sum represented by a set of terms.
+    /// Compute the input sum represented by a set of groups.
     ///
     /// This is useful for tests and standalone callers that do not already
     /// have an independently derived input claim.
     ///
     /// # Errors
     ///
-    /// Returns an error if any term has malformed witness/factor tables.
-    pub fn input_claim_from_terms(
-        terms: &[ExtensionOpeningReductionTerm<E>],
+    /// Returns an error if any group has malformed witness/factor tables.
+    pub fn input_claim_from_groups(
+        groups: &[ExtensionOpeningReductionGroup<E>],
     ) -> Result<E, AkitaError> {
-        terms.iter().try_fold(E::zero(), |acc, term| {
-            term.tables.claim().map(|claim| acc + term.coeff * claim)
+        groups.iter().try_fold(E::zero(), |acc, group| {
+            group.claim().map(|claim| acc + claim)
         })
     }
 
@@ -95,13 +94,10 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
 
     /// Final folded `(coeff, witness(rho), factor(rho))` tuples.
     pub fn final_terms(&self) -> Option<Vec<(E, E, E)>> {
-        self.terms
-            .iter()
-            .map(|term| {
-                term.final_witness_and_factor_evals()
-                    .map(|(witness, factor)| (term.coeff, witness, factor))
-            })
-            .collect()
+        self.groups.iter().try_fold(Vec::new(), |mut out, group| {
+            out.extend(group.final_terms()?);
+            Some(out)
+        })
     }
 
     /// Final folded `(witness(rho), factor(rho))` for a single-term prover.
@@ -109,8 +105,11 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     /// Returns `None` for multi-term provers or before all challenges have been
     /// ingested.
     pub fn final_witness_and_factor_evals(&self) -> Option<(E, E)> {
-        match self.terms.as_slice() {
-            [term] => term.final_witness_and_factor_evals(),
+        match self.groups.as_slice() {
+            [group] => match group.final_terms()?.as_slice() {
+                [(_, witness, factor)] => Some((*witness, *factor)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -136,10 +135,9 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E
         let mut constant = E::zero();
         let mut quadratic = E::zero();
 
-        for term in &mut self.terms {
-            debug_assert_eq!(term.tables.len(), expected_len);
-
-            term.accumulate_into(&mut constant, &mut quadratic);
+        for group in &mut self.groups {
+            debug_assert_eq!(group.domain_len(), expected_len);
+            group.accumulate_into(&mut constant, &mut quadratic);
         }
 
         let linear = previous_claim - constant - constant - quadratic;
@@ -147,8 +145,8 @@ impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {
-        for term in &mut self.terms {
-            term.ingest_challenge(r_round);
+        for group in &mut self.groups {
+            group.ingest_challenge(r_round);
         }
     }
 }
