@@ -49,6 +49,40 @@ For the Euclidean table, the scalar SIS dimensions are `n = rank * D` and
 norm. The complete norm already includes every scalar coordinate, so the
 planner does not multiply it by the matrix width again.
 
+### Inspect the modeled cost of generated schedules
+
+The generated tables establish that each scheduled SIS instance meets the
+policy threshold. Maintainers can also run the estimator directly at every
+matrix coordinate in an expanded schedule. The report includes A, B, shared D,
+terminal A, precommitted and setup-prefix groups, and both maps in each
+compressed payload chain.
+
+Run the summary for every checked-in catalog row:
+
+```bash
+cargo run --release -p akita-planner \
+  --features catalog-security \
+  --example catalog_security -- --check
+```
+
+The command prints one tab-separated row per schedule. `--check` returns an
+error if a row falls below the target named by its SIS policy. Add `--details`
+to print the expanded schedule and every SIS occurrence. Restrict the report
+with a family name, `--final-group NUM_VARSxNUM_POLYNOMIALS`, or the exact
+`--row-digest HEX` identity printed by the summary.
+
+These numbers are derived diagnostics. They are not fields of the generated
+schedule, schedule digest, proof, or verifier configuration, and the repository
+does not track a perpetually regenerated report. A security- or schedule-review
+PR may retain a head-pinned TSV under `specs/evidence/`, but that snapshot is
+review evidence rather than runtime authority.
+
+The reported value is the minimum scalarized SIS attack cost under the
+policy's ADPS16 quantum/LGSA model. It is not an unqualified concrete-security
+claim: the scalar estimator does not price attacks that exploit ring or module
+structure, CRT splitting, subfield projection, or role-specific matrix
+structure.
+
 The production lookup is table-only. Verifier-reachable code must reject a
 missing table row or unsupported floor with `AkitaError`; it must not run the
 estimator at verification time.

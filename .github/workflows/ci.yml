@@ -205,6 +205,11 @@ jobs:
             crates/akita-schedules/src/generated \
             specs/evidence/subring-coefficient-packing/head.tsv \
             specs/evidence/subring-coefficient-packing/comparison.tsv
+      - name: Direct modeled SIS cost for every schedule
+        run: |
+          cargo run --release -p akita-planner \
+            --features catalog-security \
+            --example catalog_security -- --check
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
