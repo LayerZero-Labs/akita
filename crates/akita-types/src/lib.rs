@@ -159,7 +159,8 @@ pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
     FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, TerminalFoldParams,
+    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, ScheduleSisBound,
+    ScheduleSisOccurrence, ScheduleSisRole, TerminalFoldParams,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};

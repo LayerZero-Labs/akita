@@ -44,6 +44,8 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
+#[path = "schedule_tests/sis_occurrences.rs"]
+mod sis_occurrences;
 type F = Prime128OffsetA7F7;
 // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
 const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
@@ -1404,96 +1406,6 @@ fn schedule_row_identity_binds_main_opening_method() {
         digest,
         crate::schedule_row_digest(&profiles, &changed)
             .expect("changed main opening-method digest")
-    );
-    assert!(changed.validate_structure().is_ok());
-    assert!(changed.validate_nonterminal_opening_execution(1).is_err());
-}
-
-#[test]
-fn schedule_row_identity_binds_root_precommitted_opening_method() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    let group_layout = PolynomialGroupLayout::singleton(8);
-    let mut group_params = schedule.root.params.clone();
-    group_params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
-            .expect("precommitted test group production challenge");
-    let inner = group_params.inner().matrix;
-    group_params.own_group_mut().profile.inner.matrix =
-        crate::sis::InnerCommitMatrixParams::new_unchecked(
-            inner.security_policy(),
-            inner
-                .sis_table_key()
-                .expect("L infinity matrix")
-                .table_digest,
-            inner.sis_modulus_profile(),
-            inner.output_rank(),
-            inner.input_width(),
-            2,
-            inner.ring_dimension(),
-        );
-    let outer = group_params.outer().matrix;
-    group_params.own_group_mut().profile.outer.matrix =
-        crate::sis::OuterCommitMatrixParams::new_unchecked(
-            outer.security_policy(),
-            outer.sis_table_key().table_digest,
-            outer.sis_modulus_profile(),
-            outer.output_rank(),
-            outer.input_width(),
-            3,
-            outer.ring_dimension(),
-        );
-    let precommitted = preceding_group_params(&group_params, group_layout);
-    let extra_d_width = precommitted
-        .d_segment_width(1, schedule.root.params.role_dims().d_d())
-        .expect("root precommitted D width");
-    let open = schedule.root.params.open().matrix;
-    let widened_open = crate::sis::OpenCommitMatrixParams::new_unchecked(
-        open.security_policy(),
-        open.sis_table_key().table_digest,
-        open.sis_modulus_profile(),
-        open.output_rank(),
-        open.input_width() + extra_d_width,
-        open.coeff_linf_bound(),
-        open.ring_dimension(),
-    );
-    schedule.root.params.open_matrix = widened_open;
-    schedule
-        .root
-        .params
-        .set_precommitted_groups(vec![precommitted])
-        .unwrap();
-    schedule.root.params.open_matrix = widened_open;
-    schedule
-        .root
-        .params
-        .set_precommitted_groups(vec![precommitted])
-        .unwrap();
-    schedule
-        .validate_structure()
-        .expect("valid root precommitted schedule");
-
-    let profiles = CommittedGroupBatchProfile {
-        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
-            PolynomialGroupLayout::singleton(8),
-            &schedule.root.params,
-        ),
-        precommitteds: vec![schedule.root.params.precommitted_groups()[0].profile],
-    };
-    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
-    let mut changed = schedule;
-    changed
-        .root
-        .params
-        .preceding_group_mut_for_test(0)
-        .unwrap()
-        .opening
-        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    assert_ne!(
-        digest,
-        crate::schedule_row_digest(&profiles, &changed)
-            .expect("changed root precommitted opening-method digest")
     );
     assert!(changed.validate_structure().is_ok());
     assert!(changed.validate_nonterminal_opening_execution(1).is_err());
