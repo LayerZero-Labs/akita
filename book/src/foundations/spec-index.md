@@ -12,7 +12,6 @@ policy and the checker use the same live set in
 | Spec | Status | Why it remains live |
 |------|--------|---------------------|
 | [`akita-compute-backend-metal`](../../../specs/akita-compute-backend-metal.md) | active | Metal and hybrid backend work remains open. |
-| [`commitment-stage-boundaries`](../../../specs/commitment-stage-boundaries.md) | active | Defines the inner/outer commitment stage split and dimension-erased compression boundary now being implemented. |
 | [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | implemented | Defines the current witness chunk partition contract. |
 | [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
