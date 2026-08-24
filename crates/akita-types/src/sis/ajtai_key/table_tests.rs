@@ -102,6 +102,14 @@ fn coeff_linf_bucket_ladder_matches_main_ceiling() {
 }
 
 #[test]
+fn coeff_linf_bucket_ladder_reaches_two_to_28_minus_one() {
+    assert_eq!(ceil_coeff_linf_bucket(67_108_864), Some(134_217_727));
+    assert_eq!(ceil_coeff_linf_bucket(134_217_728), Some(268_435_455));
+    assert_eq!(ceil_coeff_linf_bucket(268_435_455), Some(268_435_455));
+    assert_eq!(ceil_coeff_linf_bucket(268_435_456), None);
+}
+
+#[test]
 fn tier_max_dimension_coverage_is_inner_only() {
     for (profile, dimension) in [
         (SisModulusProfileId::Q32Offset99, 2048),

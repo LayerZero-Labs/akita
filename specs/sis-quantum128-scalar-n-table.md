@@ -53,15 +53,15 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
 
-The canonical role coverage has Inner/A dimensions `64, 128, 256` for every
-modulus profile, plus q128 Inner/A dimension `512`. Outer/B and Open/D have
-dimensions `64, 128, 256`. The separate fixed compression cells use their
-protocol-specific dimensions. Every commitment-matrix cell has maximum module
-rank `20`. Inner/A uses the explicit planner bucket set
+The canonical role coverage has Inner/A dimensions `64, 128, 256, 512, 1024,
+2048` for q32, `64, 128, 256, 512, 1024` for q64, and `64, 128, 256, 512` for
+q128. Outer/B and Open/D have dimensions `64, 128, 256`. The separate fixed
+compression cells use their protocol-specific dimensions. Every
+commitment-matrix cell has maximum module rank `20`. Inner/A uses the explicit
+planner bucket set
 `2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
-16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
-2147483647, 4294967295, 8589934591, 17179869183, 34359738367`.
+16777215, 33554431, 67108863, 134217727, 268435455`.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 

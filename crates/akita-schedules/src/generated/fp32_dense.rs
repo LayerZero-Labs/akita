@@ -31,7 +31,7 @@ pub(crate) static FP32_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             num_digits_inner: 6,
             precommitted_groups: &[
                 // balanced signed digit: 4 x base-2^8 digits, span 32 bits, representable envelope about +/-2^31; the producer's declared log_commit_bound may be tighter
-                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(20, 1), blocks: BlockGeometry::new(512, 16, 32), outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(8, 4), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([22, 196, 139, 17, 121, 119, 87, 106, 106, 190, 16, 17, 22, 21, 39, 139, 90, 62, 146, 246, 53, 40, 0, 253, 141, 23, 57, 225, 113, 196, 71, 153]), SisModulusProfileId::Q32Offset99, 1, 64, 67108863, 2048)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 11), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([22, 196, 139, 17, 121, 119, 87, 106, 106, 190, 16, 17, 22, 21, 39, 139, 90, 62, 146, 246, 53, 40, 0, 253, 141, 23, 57, 225, 113, 196, 71, 153]), SisModulusProfileId::Q32Offset99, 1, 352, 7, 256)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 }, num_digits_fold: 6 } },
+                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(20, 1), blocks: BlockGeometry::new(512, 16, 32), outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(8, 4), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([59, 237, 142, 204, 242, 240, 235, 255, 223, 34, 215, 135, 94, 228, 59, 226, 251, 109, 53, 22, 126, 7, 62, 227, 154, 102, 245, 24, 183, 158, 138, 3]), SisModulusProfileId::Q32Offset99, 1, 64, 67108863, 2048)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 11), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([59, 237, 142, 204, 242, 240, 235, 255, 223, 34, 215, 135, 94, 228, 59, 226, 251, 109, 53, 22, 126, 7, 62, 227, 154, 102, 245, 24, 183, 158, 138, 3]), SisModulusProfileId::Q32Offset99, 1, 352, 7, 256)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 }, num_digits_fold: 6 } },
             ],
         },
         recursive_folds: &[
@@ -102,7 +102,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q32Offset99,
     sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
-    sis_table_digest: SisTableDigest([0x16, 0xc4, 0x8b, 0x11, 0x79, 0x77, 0x57, 0x6a, 0x6a, 0xbe, 0x10, 0x11, 0x16, 0x15, 0x27, 0x8b, 0x5a, 0x3e, 0x92, 0xf6, 0x35, 0x28, 0x00, 0xfd, 0x8d, 0x17, 0x39, 0xe1, 0x71, 0xc4, 0x47, 0x99]),
+    sis_table_digest: SisTableDigest([0x3b, 0xed, 0x8e, 0xcc, 0xf2, 0xf0, 0xeb, 0xff, 0xdf, 0x22, 0xd7, 0x87, 0x5e, 0xe4, 0x3b, 0xe2, 0xfb, 0x6d, 0x35, 0x16, 0x7e, 0x07, 0x3e, 0xe3, 0x9a, 0x66, 0xf5, 0x18, 0xb7, 0x9e, 0x8a, 0x03]),
     sis_l2_table_digest: SisL2TableDigest([0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26, 0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a]),
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 32, log_open_bound: None },
     claim_ext_degree: 4,
@@ -115,5 +115,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 17970171637396625756,
     key_count: 5,
-    key_digest: 12196837279630009927,
+    key_digest: 16030474964951286383,
 };

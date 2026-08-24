@@ -172,9 +172,34 @@ pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SI
 /// Keep in lockstep with `COEFF_LINF_BUCKETS` in
 /// `crates/akita-sis-estimator/src/width_table.rs`.
 pub const COEFF_LINF_BUCKETS: &[u128] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
-    262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
+    2,
+    3,
+    7,
+    15,
+    31,
+    63,
+    127,
+    255,
+    511,
+    1023,
+    2047,
+    4095,
+    8191,
+    16383,
+    32767,
+    65535,
+    131_071,
+    262_143,
+    524_287,
+    1_048_575,
+    2_097_151,
+    4_194_303,
+    8_388_607,
+    16_777_215,
+    33_554_431,
     67_108_863,
+    134_217_727,
+    268_435_455,
 ];
 
 /// Canonical key for a generated SIS floor row.
