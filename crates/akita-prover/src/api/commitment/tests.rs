@@ -1,6 +1,6 @@
 use super::*;
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
-use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
+use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{AkitaProverSetup, CpuBackend, DensePoly};
 use akita_challenges::SparseChallengeConfig;
@@ -444,6 +444,33 @@ fn commit_unsliced_reference(
     Ok(((Commitment::new(payload), hint), compression_plan))
 }
 
+fn commit_fixture_with_geometry(
+    polys: &[DensePoly<F>],
+    ctx: &OperationCtx<'_, F, CpuBackend>,
+    geometry: CommitmentGeometry,
+    slice_geometry: &akita_types::CommitmentSliceGeometry,
+    contract: akita_types::sis::CommittedSourceContract,
+) -> Result<CommitmentWithHint<F>, AkitaError> {
+    let (inner_rows, source) =
+        compute_inner_outer_commitment(polys, ctx, geometry, slice_geometry, contract)?;
+    let CommitmentCompressionOutput {
+        payload,
+        witness,
+        quotients,
+    } = compute_commitment_compression(
+        ctx,
+        geometry.outer_matrix.sis_table_key().modulus_profile,
+        source,
+    )?;
+    let hint = AkitaCommitmentHint::new_with_outer_compression(
+        geometry.inner_matrix.ring_dimension(),
+        inner_rows,
+        &witness,
+        &quotients,
+    )?;
+    Ok((Commitment::new(payload), hint))
+}
+
 #[test]
 fn s1_matches_real_unsliced_commitment_pipeline() {
     const NUM_VARS: usize = 10;
@@ -469,7 +496,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
     let production_geometry =
         validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
             .expect("production S=1 geometry");
-    let production = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    let production = commit_fixture_with_geometry(
         std::slice::from_ref(&poly),
         &ctx,
         (&params).into(),
@@ -512,7 +539,7 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
                 .unwrap_or_else(|error| {
                     panic!("real S={} geometry failed: {error}", slice_count.get())
                 });
-        let (commitment, hint) = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        let (commitment, hint) = commit_fixture_with_geometry(
             std::slice::from_ref(&poly),
             &ctx,
             (&sliced_params).into(),
@@ -596,7 +623,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
     let slice_geometry =
         validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
     let contract = akita_config::proof_optimized::fp64::Dense::committed_source_contract().unwrap();
-    let raw = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    let raw = commit_fixture_with_geometry(
         std::slice::from_ref(&polynomial),
         &ctx,
         (&canonical).into(),
@@ -604,7 +631,7 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         contract,
     )
     .unwrap();
-    let raw_under_other_method = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    let raw_under_other_method = commit_fixture_with_geometry(
         std::slice::from_ref(&polynomial),
         &ctx,
         (&packing_plan).into(),

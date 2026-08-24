@@ -118,10 +118,10 @@ where
 }
 
 /// Compute the inner and outer commitment stages behind runtime role dispatch.
-pub(super) fn commit_inner_outer<F, P, B>(
+pub(super) fn compute_inner_outer_commitment<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    geometry: CommitmentGeometry<'_>,
+    geometry: CommitmentGeometry,
     slice_geometry: &CommitmentSliceGeometry,
     contract: CommittedSourceContract,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>

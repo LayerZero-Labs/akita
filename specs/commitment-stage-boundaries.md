@@ -18,19 +18,22 @@ construction and compression of the outer image inside nested role-dimension
 dispatches. This obscures the two commitment stages and keeps dimension-erased
 compression inside macros whose dimensions it does not use. Split the path into
 canonical `compute_inner_commitment` and `compute_outer_commitment` stages under
-one dimension-free `commit_inner_outer` orchestration entry point, erase the
-outer ring dimension at the end of the outer stage, and execute compression
-through a separate `compute_compression_chain` entry point. The refactor changes
-neither the commitment, hint, proof shape, validation behavior, nor the
-computational work performed.
+one dimension-free `compute_inner_outer_commitment` orchestration entry point,
+erase the outer ring dimension at the end of the outer stage, and execute
+compression through a separate `compute_commitment_compression` entry point.
+Move validated parameter and geometry resolution behind
+`get_commitment_geometry` and remove the intermediate
+`commit_with_validated_geometry` layer. The refactor changes neither the
+commitment, hint, proof shape, validation behavior, nor the computational work
+performed.
 
 ## Intent
 
 ### Goal
 
-Make `commit_with_validated_geometry` compose exactly two named operations:
-`commit_inner_outer` for all role-dispatched commitment work and
-`compute_compression_chain` for dimension-erased compression.
+Make `commit` read as four operations: `get_commitment_geometry`,
+`compute_inner_outer_commitment`, `compute_commitment_compression`, and final
+`CommitOutput` assembly.
 
 ### Invariants
 
@@ -39,7 +42,10 @@ Make `commit_with_validated_geometry` compose exactly two named operations:
   `CommitInnerWitness` values in source order.
 - `compute_outer_commitment` validates the backend's group length and every
   inner witness shape before using its rows.
-- `commit_inner_outer` owns both role dispatches, source admission,
+- `get_commitment_geometry` owns input-layout validation, explicit or scheduled
+  parameter resolution, setup admission, committed-source class admission,
+  commitment geometry validation, and source-encoding validation.
+- `compute_inner_outer_commitment` owns both role dispatches, source admission,
   commit-view construction, and the ordered calls to the inner and outer stage
   functions. It returns only dimension-erased values.
 - Commit views remain source-typed and borrowed until they are moved into
@@ -56,9 +62,9 @@ Make `commit_with_validated_geometry` compose exactly two named operations:
 - Compression consumes exactly the coefficients of that outer `RingVec`; its
   plan, terminal payload, witness, and quotient images remain byte-for-byte
   unchanged.
-- `compute_compression_chain` owns compression-plan derivation, executor input
-  construction, compression execution, terminal ring-dimension recovery, and
-  terminal payload construction.
+- `compute_commitment_compression` owns compression-plan derivation, executor
+  input construction, compression execution, terminal ring-dimension recovery,
+  and terminal payload construction.
 - Inner work depends on `D_A` but not `D_B`. Outer decomposition and matrix work
   depend on `D_A` and `D_B`. Compression depends on neither role dimension.
 - No new clones, full-size buffers, backend calls, or serial iteration are
@@ -81,6 +87,8 @@ Make `commit_with_validated_geometry` compose exactly two named operations:
 - Do not retain the current combined preparation helper as a compatibility
   alias. This repository provides no backward-compatibility guarantee, and
   retaining it would create a second entry point for the same operation.
+- Do not retain `commit_with_validated_geometry`; `commit` is the single owner
+  of root commitment composition and final output assembly.
 
 ## Evaluation
 
@@ -95,16 +103,19 @@ Make `commit_with_validated_geometry` compose exactly two named operations:
 - [x] `compute_outer_commitment` owns group-length validation, parallel witness
       validation and decomposition, outer-slice commitment, collection of the
       persistent inner rows, and conversion of typed outer rows to `RingVec<F>`.
-- [x] `commit_inner_outer` owns the `D_A` and `D_B` dispatches and
+- [x] `compute_inner_outer_commitment` owns the `D_A` and `D_B` dispatches and
       returns `(inner_rows, outer_source)` with no const-generic ring dimension
       in its return type.
-- [x] `commit_with_validated_geometry` contains no inner-role or outer-role
-      dispatch and calls `commit_inner_outer` exactly once.
-- [x] `compute_compression_chain` lives in
+- [x] `get_commitment_geometry` owns parameter selection and all validation
+      needed before commitment computation.
+- [x] `commit_with_validated_geometry` is removed.
+- [x] `commit` contains no inner-role or outer-role dispatch and calls
+      `compute_inner_outer_commitment` exactly once.
+- [x] `compute_commitment_compression` lives in
       `crates/akita-prover/src/api/commitment/compression.rs` and owns the
       complete compression block.
-- [x] `commit_with_validated_geometry` calls `compute_compression_chain` exactly
-      once after `commit_inner_outer` returns.
+- [x] `commit` calls `compute_commitment_compression` exactly once after
+      `compute_inner_outer_commitment` returns.
 - [x] The former `inner.rs` module is renamed to `inner_outer.rs`, and focused
       shape and slice unit tests live with that module.
 - [x] The compression plan continues to use the outer matrix's SIS modulus
@@ -196,7 +207,10 @@ The intended data flow is:
 polynomial sources
     |
     v
-commit_inner_outer
+get_commitment_geometry
+    |
+    v
+compute_inner_outer_commitment
     |
     | owns D_A dispatch
     v
@@ -210,7 +224,7 @@ compute_outer_commitment
     | Vec<RingVec<F>>         | RingVec<F>
     | persistent t_i rows     | dimension-erased outer image
     |                         v
-    |              compute_compression_chain
+    |           compute_commitment_compression
     |                         |
     +-------------------------+
                   |
@@ -218,18 +232,23 @@ compute_outer_commitment
        Commitment + AkitaCommitmentHint
 ```
 
-`commit_inner_outer` lives in
-`crates/akita-prover/src/api/commitment/inner_outer.rs`. It is called by
-`commit_with_validated_geometry` in
-`crates/akita-prover/src/api/commitment.rs` and is the only function called by
-that caller for the uncompressed inner and outer commitment stages. Its
-conceptual interface is:
+`get_commitment_geometry` lives beside `commit` in
+`crates/akita-prover/src/api/commitment.rs`. It returns a
+`ResolvedCommitmentGeometry` containing owned copy-sized A/B geometry, checked
+slice geometry, the admitted source contract, and the final group profile. The
+owned matrices avoid cloning `CommittedGroupParams` while allowing a scheduled
+row to be dropped before arithmetic begins.
+
+`compute_inner_outer_commitment` lives in
+`crates/akita-prover/src/api/commitment/inner_outer.rs`. It is called directly
+by `commit` and is the only function called there for the uncompressed inner
+and outer commitment stages. Its conceptual interface is:
 
 ```rust,ignore
-fn commit_inner_outer<F, P, B>(
+fn compute_inner_outer_commitment<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    geometry: CommitmentGeometry<'_>,
+    geometry: CommitmentGeometry,
     slice_geometry: &CommitmentSliceGeometry,
     contract: CommittedSourceContract,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
@@ -305,23 +324,23 @@ The outer stage includes `commit_outer_slices`; otherwise a helper named
 `compute_outer_commitment` would only prepare digits and the call site would
 still expose a third, unnamed part of the outer commitment stage.
 
-`compute_compression_chain` lives in
+`compute_commitment_compression` lives in
 `crates/akita-prover/src/api/commitment/compression.rs`. It accepts the
 dimension-erased outer source and returns the terminal payload together with
 the witness and quotient rows needed by the hint:
 
 ```rust,ignore
-fn compute_compression_chain<F, B>(
+fn compute_commitment_compression<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     modulus_profile: SisModulusProfileId,
     source: RingVec<F>,
-) -> Result<CompressionChainOutput<F>, AkitaError>;
+) -> Result<CommitmentCompressionOutput<F>, AkitaError>;
 ```
 
 The conversion from typed outer rows to `RingVec<F>` stays at the end of
 `compute_outer_commitment`, because typed `u` cannot cross the runtime `D_B`
 dispatch. All subsequent compression logic belongs to
-`compute_compression_chain`.
+`compute_commitment_compression`.
 
 ### Before
 
@@ -359,30 +378,38 @@ dispatch D_A {
 
 ### After
 
-The orchestration helper owns all typed role work and returns an entirely
-dimension-erased result. `commit_with_validated_geometry` contains no role
-dispatch:
+`commit` resolves checked geometry, invokes the two arithmetic stages, and
+assembles the public result. It contains no role dispatch or inline compression
+implementation:
 
 ```rust,ignore
-let (inner_rows, outer_source) = commit_inner_outer(
-    polys,
-    ctx,
+let ResolvedCommitmentGeometry {
     geometry,
     slice_geometry,
     contract,
+    profile,
+} = get_commitment_geometry(polys, expanded, context)?;
+let ctx = stack.commit();
+
+let (inner_rows, outer_source) = compute_inner_outer_commitment(
+    polys,
+    ctx,
+    geometry,
+    &slice_geometry,
+    contract,
 )?;
 
-let CompressionChainOutput { payload, witness, quotients } =
-    compute_compression_chain(
+let CommitmentCompressionOutput { payload, witness, quotients } =
+    compute_commitment_compression(
     ctx,
     geometry.outer_matrix.sis_table_key().modulus_profile,
     outer_source,
 )?;
 
-// Final Commitment and AkitaCommitmentHint assembly remains here.
+// Assemble AkitaCommitmentHint and CommitOutput, then return.
 ```
 
-The body of `commit_inner_outer` contains the staged dispatch:
+The body of `compute_inner_outer_commitment` contains the staged dispatch:
 
 ```rust,ignore
 let (inner_rows, outer_source) = dispatch D_A {
@@ -439,11 +466,9 @@ additional alias is not acceptable.
 2. **Leave compression inside `D_B`.** This is type-correct but preserves a
    false dependency and repeats dimension-independent control flow in generated
    role branches. Rejected because `RingVec` is the existing erasure boundary.
-3. **Keep role dispatch directly in `commit_with_validated_geometry`.** This is
-   type-correct but leaves protocol-stage orchestration mixed with compression
-   and final output assembly. Rejected because a dimension-free orchestration
-   function gives the caller one clear boundary without hiding the two typed
-   stage functions internally.
+3. **Retain `commit_with_validated_geometry` as an intermediate composer.**
+   Rejected because it only sequences two already named, dimension-erased
+   operations and hides the simple root commitment flow from `commit`.
 4. **Combine all work into one function and remove the two stage helpers.**
    Rejected because the orchestration entry point and the two mathematical
    stages have different responsibilities: runtime role selection versus the
@@ -472,18 +497,22 @@ Keep this spec synchronized with `specs/PRUNING.md`,
    helper.
 2. Update imports and the independent commitment reference in
    `crates/akita-prover/src/api/commitment/tests.rs`.
-3. Add `commit_inner_outer` to `inner_outer.rs`; move both role dispatches,
-   source admission, commit-view construction, and the ordered stage calls into
-   it.
-4. Replace the nested dispatch in `commit_with_validated_geometry` with one
-   `commit_inner_outer` call returning `(Vec<RingVec<F>>, RingVec<F>)`.
-5. Add commitment-level `compression.rs` with `compute_compression_chain`, and
-   replace inline compression with one call after `commit_inner_outer`.
-6. Move shape and slice unit tests into `inner_outer.rs`; keep end-to-end
+3. Add `compute_inner_outer_commitment` to `inner_outer.rs`; move both role
+   dispatches, source admission, commit-view construction, and the ordered
+   stage calls into it.
+4. Add commitment-level `compression.rs` with
+   `compute_commitment_compression`.
+5. Add `get_commitment_geometry` to own parameter selection and pre-computation
+   validation, using owned copy-sized matrix geometry rather than cloning full
+   parameters.
+6. Remove `commit_with_validated_geometry` and compose
+   `get_commitment_geometry`, `compute_inner_outer_commitment`, and
+   `compute_commitment_compression` directly in `commit`.
+7. Move shape and slice unit tests into `inner_outer.rs`; keep end-to-end
    composition tests in the parent commitment test module.
-7. Run focused correctness tests, release performance comparison, repository
+8. Run focused correctness tests, release performance comparison, repository
    preflight, applicable CI feature graphs, and documentation guardrails.
-8. When implementation begins, change the status to `active`; when it lands,
+9. When implementation begins, change the status to `active`; when it lands,
    complete the acceptance list, record the PR, and follow the fold/archive
    policy.
 

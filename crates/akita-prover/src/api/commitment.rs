@@ -1,8 +1,8 @@
 //! Prover-owned commitment kernels.
 
 use crate::compute::{
-    CommitInnerPlan, OperationCtx, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor,
-    RuntimeCommitSource, UniformProverStack,
+    CommitInnerPlan, RootCommitSource, RootPolyMeta, RuntimeCommitBackendFor, RuntimeCommitSource,
+    UniformProverStack,
 };
 use crate::validation::{signed_digit_kernel_for_setup, validate_i8_setup_log_basis};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -15,16 +15,16 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField, Ran
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommitmentSliceCount, CommittedGroup,
-    CommittedGroupParams, CommittedSourceEncoding, FpExtEncoding, GroupCommitPhaseParams,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PrecommittedGroupProfiles,
+    AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommitmentSliceCount,
+    CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams, CommittedSourceEncoding,
+    FpExtEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PrecommittedGroupProfiles,
 };
 
 mod compression;
 mod inner_outer;
-use compression::{compute_compression_chain, CompressionChainOutput};
-use inner_outer::commit_inner_outer;
+use compression::{compute_commitment_compression, CommitmentCompressionOutput};
+use inner_outer::compute_inner_outer_commitment;
 pub(crate) use inner_outer::validate_commit_inner_shape;
 pub(crate) use inner_outer::{commit_outer_slices, for_each_outer_slice_input};
 #[cfg(test)]
@@ -124,38 +124,38 @@ pub struct CommitOutput<F: FieldCore> {
 }
 
 #[derive(Clone, Copy)]
-struct CommitmentGeometry<'a> {
+struct CommitmentGeometry {
     context: &'static str,
     num_positions_per_block: usize,
     num_live_blocks: usize,
     log_basis_inner: u32,
     num_digits_inner: usize,
-    inner_matrix: &'a InnerCommitMatrixParams,
+    inner_matrix: InnerCommitMatrixParams,
     log_basis_outer: u32,
     num_digits_outer: usize,
-    outer_matrix: &'a OuterCommitMatrixParams,
+    outer_matrix: OuterCommitMatrixParams,
     outer_slice_count: CommitmentSliceCount,
 }
 
-impl<'a> From<&'a CommittedGroupParams> for CommitmentGeometry<'a> {
-    fn from(params: &'a CommittedGroupParams) -> Self {
+impl From<&CommittedGroupParams> for CommitmentGeometry {
+    fn from(params: &CommittedGroupParams) -> Self {
         Self {
             context: "commit params",
             num_positions_per_block: params.blocks().positions_per_block,
             num_live_blocks: params.blocks().live_blocks,
             log_basis_inner: params.inner().digits.log_basis,
             num_digits_inner: params.inner().digits.num_digits,
-            inner_matrix: &params.inner().matrix,
+            inner_matrix: params.inner().matrix,
             log_basis_outer: params.outer().digits.log_basis,
             num_digits_outer: params.outer().digits.num_digits,
-            outer_matrix: &params.outer().matrix,
+            outer_matrix: params.outer().matrix,
             outer_slice_count: params.outer_slice_count(),
         }
     }
 }
 
 fn validate_commitment_geometry<F>(
-    geometry: CommitmentGeometry<'_>,
+    geometry: CommitmentGeometry,
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
@@ -201,8 +201,8 @@ where
     }
 
     let required = akita_types::commit_only_setup_field_elements(
-        geometry.inner_matrix,
-        geometry.outer_matrix,
+        &geometry.inner_matrix,
+        &geometry.outer_matrix,
         geometry.outer_slice_count,
     )?;
     let available = setup.shared_matrix.num_field_elements();
@@ -399,44 +399,6 @@ where
     Ok(())
 }
 
-fn commit_with_validated_geometry<F, P, B>(
-    polys: &[P],
-    ctx: &OperationCtx<'_, F, B>,
-    geometry: CommitmentGeometry<'_>,
-    slice_geometry: &akita_types::CommitmentSliceGeometry,
-    contract: CommittedSourceContract,
-) -> Result<CommitmentWithHint<F>, AkitaError>
-where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RuntimeCommitSource<F>,
-    B: RuntimeCommitBackendFor<F, P>,
-{
-    let (inner_rows, source) = commit_inner_outer(polys, ctx, geometry, slice_geometry, contract)?;
-    let CompressionChainOutput {
-        payload,
-        witness,
-        quotients,
-    } = compute_compression_chain(
-        ctx,
-        geometry.outer_matrix.sis_table_key().modulus_profile,
-        source,
-    )?;
-    let hint = AkitaCommitmentHint::new_with_outer_compression(
-        geometry.inner_matrix.ring_dimension(),
-        inner_rows,
-        &witness,
-        &quotients,
-    )?;
-    Ok((Commitment::new(payload), hint))
-}
-
 fn validate_explicit_context(
     group_layout: akita_types::PolynomialGroupLayout,
     precommitted_groups: PrecommittedGroupContext<'_>,
@@ -486,6 +448,75 @@ fn validate_explicit_context(
     GroupCommitPhaseParams::try_from_params(group_layout, params)
 }
 
+/// Fully validated parameters and geometry for one root commitment.
+struct ResolvedCommitmentGeometry {
+    geometry: CommitmentGeometry,
+    slice_geometry: CommitmentSliceGeometry,
+    contract: CommittedSourceContract,
+    profile: GroupCommitPhaseParams,
+}
+
+fn get_commitment_geometry<Cfg, P>(
+    polys: &[P],
+    expanded: &AkitaExpandedSetup<Cfg::Field>,
+    context: GroupContext<'_>,
+) -> Result<ResolvedCommitmentGeometry, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField,
+    P: RootPolyMeta<Cfg::Field>,
+{
+    let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
+    let group_layout = opening_layout.root_final_group_layout()?;
+
+    let scheduled_row;
+    let (params, profile): (&CommittedGroupParams, GroupCommitPhaseParams) =
+        if let GroupParameterSource::Explicit(params) = context.parameter_source {
+            let profile =
+                validate_explicit_context(group_layout, context.precommitted_groups, params)?;
+            (params, profile)
+        } else {
+            let key = AkitaScheduleLookupKey {
+                final_group: group_layout,
+                precommitteds: context.precommitted_groups.as_slice().to_vec(),
+            };
+            scheduled_row = Cfg::resolve_catalog_row_for_key(&key)?;
+
+            // A final group with precommitted groups consumes the row's whole
+            // schedule. A standalone group is admitted on its own A/B footprint.
+            if matches!(
+                context.precommitted_groups,
+                PrecommittedGroupContext::WithPrecommittedGroups(_)
+            ) {
+                ensure_prover_schedule_fits_setup::<Cfg>(
+                    expanded,
+                    scheduled_row.schedule(),
+                    &key.opening_layout()?,
+                )?;
+            }
+
+            let params = &scheduled_row.schedule().root.params;
+            (params, scheduled_row.profiles().final_group)
+        };
+
+    let contract = Cfg::committed_source_contract()?;
+    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
+    let slice_geometry =
+        validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
+    if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
+        return Err(AkitaError::InvalidSetup(
+            "root commitments require canonical coefficient-table source encoding".into(),
+        ));
+    }
+
+    Ok(ResolvedCommitmentGeometry {
+        geometry: params.into(),
+        slice_geometry,
+        contract,
+        profile,
+    })
+}
+
 /// Commit one homogeneous polynomial group in its complete parameter context.
 ///
 /// Scheduler contexts select an existing S or G catalog row. Explicit
@@ -516,64 +547,33 @@ where
     P: RuntimeCommitSource<Cfg::Field>,
     B: RuntimeCommitBackendFor<Cfg::Field, P>,
 {
-    let opening_layout = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
-    let group_layout = opening_layout.root_final_group_layout()?;
-
-    let scheduled_row;
-    let (params, profile): (&CommittedGroupParams, GroupCommitPhaseParams) =
-        if let GroupParameterSource::Explicit(params) = context.parameter_source {
-            let profile =
-                validate_explicit_context(group_layout, context.precommitted_groups, params)?;
-            (params, profile)
-        } else {
-            let key = AkitaScheduleLookupKey {
-                final_group: group_layout,
-                precommitteds: context.precommitted_groups.as_slice().to_vec(),
-            };
-            scheduled_row = Cfg::resolve_catalog_row_for_key(&key)?;
-
-            // A group with precommitted groups is the final group of the batch this
-            // row opens, so the setup must carry the row's whole schedule. A
-            // group without precommitted groups may instead be opened later under a
-            // grouped row, so it is admitted on its own A/B footprint alone.
-            if matches!(
-                context.precommitted_groups,
-                PrecommittedGroupContext::WithPrecommittedGroups(_)
-            ) {
-                ensure_prover_schedule_fits_setup::<Cfg>(
-                    expanded,
-                    scheduled_row.schedule(),
-                    &key.opening_layout()?,
-                )?;
-            }
-
-            // `audit_resolved_schedule` already proved this row's profile
-            // agrees with its parameters, so no re-derivation happens here.
-            let params = &scheduled_row.schedule().root.params;
-            (params, scheduled_row.profiles().final_group)
-        };
-
-    let contract = Cfg::committed_source_contract()?;
-    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
-
-    let slice_geometry =
-        validate_commit_level_params::<Cfg::Field>(params, expanded, 0, polys.len())?;
-    let geometry: CommitmentGeometry<'_> = params.into();
-    if params.source_encoding != CommittedSourceEncoding::CanonicalCoefficientTable {
-        return Err(AkitaError::InvalidSetup(
-            "root commitments require canonical coefficient-table source encoding".into(),
-        ));
-    }
-    let (commitment, hint) = commit_with_validated_geometry::<Cfg::Field, P, B>(
-        polys,
-        stack.commit(),
+    let ResolvedCommitmentGeometry {
         geometry,
-        &slice_geometry,
+        slice_geometry,
         contract,
+        profile,
+    } = get_commitment_geometry::<Cfg, P>(polys, expanded, context)?;
+    let ctx = stack.commit();
+    let (inner_rows, uncompressed_commitment) =
+        compute_inner_outer_commitment(polys, ctx, geometry, &slice_geometry, contract)?;
+    let CommitmentCompressionOutput {
+        payload,
+        witness,
+        quotients,
+    } = compute_commitment_compression(
+        ctx,
+        geometry.outer_matrix.sis_table_key().modulus_profile,
+        uncompressed_commitment,
+    )?;
+    let hint = AkitaCommitmentHint::new_with_outer_compression(
+        geometry.inner_matrix.ring_dimension(),
+        inner_rows,
+        &witness,
+        &quotients,
     )?;
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(profile, commitment),
+        committed_group: CommittedGroup::new(profile, Commitment::new(payload)),
         hint,
     })
 }

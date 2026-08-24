@@ -7,18 +7,18 @@ use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{CompressionChainPlan, CompressionChainWitness, RingVec, SisModulusProfileId};
 
 /// Dimension-erased output of one complete commitment compression chain.
-pub(super) struct CompressionChainOutput<F: FieldCore> {
+pub(super) struct CommitmentCompressionOutput<F: FieldCore> {
     pub(super) payload: RingVec<F>,
     pub(super) witness: CompressionChainWitness,
     pub(super) quotients: Vec<RingVec<F>>,
 }
 
 /// Compute the complete compression chain for one outer commitment image.
-pub(super) fn compute_compression_chain<F, B>(
+pub(super) fn compute_commitment_compression<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     modulus_profile: SisModulusProfileId,
     source: RingVec<F>,
-) -> Result<CompressionChainOutput<F>, AkitaError>
+) -> Result<CommitmentCompressionOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
@@ -42,7 +42,7 @@ where
         .ring_dimension();
     let payload =
         RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
-    Ok(CompressionChainOutput {
+    Ok(CommitmentCompressionOutput {
         payload,
         witness: output.witness,
         quotients: output.quotients,
