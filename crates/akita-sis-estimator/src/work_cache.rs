@@ -1,4 +1,4 @@
-//! Content-addressed storage for deterministic offline work results.
+//! Integrity-checked storage for deterministic offline work results.
 
 use sha2::{Digest, Sha256};
 use std::{
@@ -10,7 +10,8 @@ use std::{
 
 use crate::error::{EstimatorError, Result};
 
-const RESULT_HEADER: &str = "akita-work-result-v1";
+const RESULT_HEADER: &str = "akita-work-result-v2";
+const PAYLOAD_DIGEST_DOMAIN: &[u8] = b"akita-work-result-payload-v1\0";
 static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// Content address of one canonical offline work specification.
@@ -33,7 +34,7 @@ impl WorkId {
     /// Lowercase hexadecimal identifier used for cache paths and plans.
     #[must_use]
     pub fn hex(self) -> String {
-        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+        lowercase_hex(&self.0)
     }
 
     /// Stable zero-based shard assignment.
@@ -70,7 +71,7 @@ impl WorkCache {
         Self { root: root.into() }
     }
 
-    /// Read and authenticate a cached payload.
+    /// Read a cached payload and verify its storage integrity.
     ///
     /// # Errors
     ///
@@ -161,7 +162,13 @@ impl WorkCache {
 }
 
 fn encode_envelope(id: WorkId, payload: &[u8]) -> Vec<u8> {
-    let mut encoded = format!("{RESULT_HEADER}\nwork_id={}\n\n", id.hex()).into_bytes();
+    let payload_digest_hex = lowercase_hex(&payload_digest(id, payload));
+    let mut encoded = format!(
+        "{RESULT_HEADER}\nwork_id={}\npayload_length={}\npayload_sha256={payload_digest_hex}\n\n",
+        id.hex(),
+        payload.len()
+    )
+    .into_bytes();
     encoded.extend_from_slice(payload);
     encoded
 }
@@ -174,14 +181,33 @@ fn decode_envelope(id: WorkId, encoded: &[u8]) -> Result<Vec<u8>> {
         .ok_or_else(|| cache_error_value("work-result envelope is missing its payload"))?;
     let header = std::str::from_utf8(&encoded[..split])
         .map_err(|error| cache_error_value(format!("work-result header is not UTF-8: {error}")))?;
-    let expected = format!("{RESULT_HEADER}\nwork_id={}", id.hex());
+    let payload = &encoded[split + separator.len()..];
+    let payload_digest_hex = lowercase_hex(&payload_digest(id, payload));
+    let expected = format!(
+        "{RESULT_HEADER}\nwork_id={}\npayload_length={}\npayload_sha256={payload_digest_hex}",
+        id.hex(),
+        payload.len()
+    );
     if header != expected {
         return cache_error(format!(
-            "work-result envelope does not match requested work item {}",
+            "work-result envelope or payload does not match requested work item {}",
             id.hex()
         ));
     }
-    Ok(encoded[split + separator.len()..].to_vec())
+    Ok(payload.to_vec())
+}
+
+fn payload_digest(id: WorkId, payload: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(PAYLOAD_DIGEST_DOMAIN);
+    hasher.update(id.0);
+    hasher.update((payload.len() as u64).to_le_bytes());
+    hasher.update(payload);
+    hasher.finalize().into()
+}
+
+fn lowercase_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn cache_error<T>(reason: impl Into<String>) -> Result<T> {
@@ -237,6 +263,20 @@ mod tests {
         let path = cache.path(id);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, b"not an envelope").unwrap();
+        assert!(cache.load(id).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupted_payload_fails_closed() {
+        let root = test_root("corrupt-payload");
+        let cache = WorkCache::new(&root);
+        let id = WorkId::new(b"test", b"one");
+        cache.store(id, b"result").unwrap();
+        let path = cache.path(id);
+        let mut encoded = fs::read(&path).unwrap();
+        *encoded.last_mut().unwrap() ^= 1;
+        fs::write(&path, encoded).unwrap();
         assert!(cache.load(id).is_err());
         fs::remove_dir_all(root).unwrap();
     }
