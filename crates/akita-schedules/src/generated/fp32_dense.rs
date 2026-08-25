@@ -31,7 +31,7 @@ pub(crate) static FP32_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
             num_digits_inner: 6,
             precommitted_groups: &[
                 // balanced signed digit: 4 x base-2^8 digits, span 32 bits, representable envelope about +/-2^31; the producer's declared log_commit_bound may be tighter
-                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(20, 1), blocks: BlockGeometry::new(512, 16, 32), outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(8, 4), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([133, 58, 205, 18, 108, 111, 80, 43, 45, 101, 254, 115, 171, 95, 217, 149, 62, 60, 254, 157, 89, 242, 27, 165, 117, 8, 233, 122, 51, 235, 136, 137]), SisModulusProfileId::Q32Offset99, 1, 64, 67108863, 2048)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 11), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([133, 58, 205, 18, 108, 111, 80, 43, 45, 101, 254, 115, 171, 95, 217, 149, 62, 60, 254, 157, 89, 242, 27, 165, 117, 8, 233, 122, 51, 235, 136, 137]), SisModulusProfileId::Q32Offset99, 1, 352, 7, 256)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 }, num_digits_fold: 6 } },
+                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(20, 1), blocks: BlockGeometry::new(512, 16, 32), outer_slice_count: akita_types::CommitmentSliceCount::EIGHT, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(8, 4), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16V2, SisTableDigest([247, 61, 155, 209, 206, 14, 41, 219, 242, 92, 104, 236, 214, 46, 252, 206, 66, 81, 86, 66, 27, 117, 190, 163, 128, 11, 220, 178, 96, 235, 145, 202]), SisModulusProfileId::Q32Offset99, 1, 64, 67108863, 2048)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 11), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16V2, SisTableDigest([247, 61, 155, 209, 206, 14, 41, 219, 242, 92, 104, 236, 214, 46, 252, 206, 66, 81, 86, 66, 27, 117, 190, 163, 128, 11, 220, 178, 96, 235, 145, 202]), SisModulusProfileId::Q32Offset99, 1, 352, 7, 256)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 }, num_digits_fold: 6 } },
             ],
         },
         recursive_folds: &[
@@ -101,8 +101,8 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     setup_field_budget: None,
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q32Offset99,
-    sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
-    sis_table_digest: SisTableDigest([0x85, 0x3a, 0xcd, 0x12, 0x6c, 0x6f, 0x50, 0x2b, 0x2d, 0x65, 0xfe, 0x73, 0xab, 0x5f, 0xd9, 0x95, 0x3e, 0x3c, 0xfe, 0x9d, 0x59, 0xf2, 0x1b, 0xa5, 0x75, 0x08, 0xe9, 0x7a, 0x33, 0xeb, 0x88, 0x89]),
+    sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16V2,
+    sis_table_digest: SisTableDigest([0xf7, 0x3d, 0x9b, 0xd1, 0xce, 0x0e, 0x29, 0xdb, 0xf2, 0x5c, 0x68, 0xec, 0xd6, 0x2e, 0xfc, 0xce, 0x42, 0x51, 0x56, 0x42, 0x1b, 0x75, 0xbe, 0xa3, 0x80, 0x0b, 0xdc, 0xb2, 0x60, 0xeb, 0x91, 0xca]),
     sis_l2_table_digest: SisL2TableDigest([0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26, 0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a]),
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 32, log_open_bound: None },
     claim_ext_degree: 4,
@@ -115,5 +115,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 17970171637396625756,
     key_count: 5,
-    key_digest: 18064692137110355551,
+    key_digest: 13647865129858360479,
 };

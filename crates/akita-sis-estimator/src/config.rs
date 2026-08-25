@@ -44,8 +44,8 @@ pub struct SisSecurityConstraint {
 /// SIS security policy understood by the offline estimator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SisSecurityPolicy {
-    /// ADPS16 quantum LGSA gate at 128 bits.
-    Quantum128BitADPS16,
+    /// Corrected ADPS16 quantum LGSA gate at 128 bits.
+    Quantum128BitADPS16V2,
 }
 
 impl SisSecurityPolicy {
@@ -53,7 +53,7 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+            Self::Quantum128BitADPS16V2 => "Quantum128BitADPS16V2",
         }
     }
 
@@ -61,7 +61,7 @@ impl SisSecurityPolicy {
     #[must_use]
     pub const fn adps16_quantum_constraint(self) -> SisSecurityConstraint {
         match self {
-            Self::Quantum128BitADPS16 => SisSecurityConstraint {
+            Self::Quantum128BitADPS16V2 => SisSecurityConstraint {
                 reduction_model: ReductionCostModel::Adps16 {
                     mode: Adps16Mode::Quantum,
                 },
@@ -215,7 +215,7 @@ impl EstimateConfig {
     /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
-        let constraint = SisSecurityPolicy::Quantum128BitADPS16.adps16_quantum_constraint();
+        let constraint = SisSecurityPolicy::Quantum128BitADPS16V2.adps16_quantum_constraint();
         Self {
             red_cost_model: constraint.reduction_model,
             optimizer: OptimizerConfig::OptimizeZeta {
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn quantum_policy_pins_the_single_adps16_gate() {
-        let policy = SisSecurityPolicy::Quantum128BitADPS16;
+        let policy = SisSecurityPolicy::Quantum128BitADPS16V2;
         assert_eq!(
             policy.adps16_quantum_constraint(),
             SisSecurityConstraint {

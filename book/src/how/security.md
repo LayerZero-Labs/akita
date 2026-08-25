@@ -9,7 +9,7 @@ model. Keep the marketing claim separate from audited reality. See
 
 Production Ajtai key sizing uses generated Module-SIS width tables. The
 generator certifies scalar cutoffs `(B, n) -> max m` under
-`Quantum128BitADPS16`, and the checked-in runtime artifact stores the
+`Quantum128BitADPS16V2`, and the checked-in runtime artifact stores the
 Module-SIS projection:
 
 ```text
@@ -19,7 +19,7 @@ Module-SIS projection:
 
 where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
-The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
+The shipped policy is `Quantum128BitADPS16V2`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
 above-target lower bound of at least 128 bits. The decision threshold is an
 explicit estimator configuration value supplied by the policy profile. The
@@ -51,11 +51,11 @@ certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
 
-The estimator hardening described above changes the acceptance model. Its
-runtime policy-ID revision and table digest update must land atomically with
-the next full SIS-table and dependent-schedule regeneration. Until that
-cutover, the checked-in generated artifacts retain their existing identity and
-do not constitute regeneration evidence for the hardened estimator.
+The estimator hardening described above changes the acceptance model. The
+checked-in SIS table and dependent schedules therefore use the revisioned
+`Quantum128BitADPS16V2` policy ID and one regenerated table digest. The q32
+coefficient ladder stops at `2^28 - 1`; q64 reaches `2^41 - 1`; q128 reaches
+`2^44 - 1`.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These

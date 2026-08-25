@@ -214,12 +214,9 @@ fn deserialize_sis_security_policy<R: Read>(
 ) -> Result<SisSecurityPolicyId, SerializationError> {
     let mut tag = [0u8; 1];
     reader.read_exact(&mut tag)?;
-    match tag[0] {
-        1 => Ok(SisSecurityPolicyId::Quantum128BitADPS16),
-        _ => Err(SerializationError::InvalidData(
-            "invalid SIS security policy tag".to_string(),
-        )),
-    }
+    SisSecurityPolicyId::from_tag(tag[0]).ok_or_else(|| {
+        SerializationError::InvalidData("invalid SIS security policy tag".to_string())
+    })
 }
 
 fn serialize_sis_matrix_role<W: Write>(

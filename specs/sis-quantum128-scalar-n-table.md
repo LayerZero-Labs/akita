@@ -40,7 +40,7 @@ they produce the same scalar SIS key.
 Policy identifier:
 
 ```text
-Quantum128BitADPS16
+Quantum128BitADPS16V2
 ```
 
 The old policy identity and scalar `min_security_bits` identity are removed in
@@ -66,8 +66,11 @@ planner bucket union
 `2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
 16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
-2147483647, 4294967295`. The q32 profile stops at `268435455`; the q64 and
-q128 profiles admit the full union through `4294967295`.
+2147483647, 4294967295, 8589934591, 17179869183, 34359738367, 68719476735,
+137438953471, 274877906943, 549755813887, 1099511627775, 2199023255551,
+4398046511103, 8796093022207, 17592186044415`. The q32 profile stops at
+`268435455`, q64 stops at `2199023255551 = 2^41 - 1`, and q128 stops at
+`17592186044415 = 2^44 - 1`.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
@@ -79,8 +82,9 @@ each ring origin, including its accepted and rejected boundary witnesses. The
 runtime projection takes the minimum scalar cutoff when different ring origins
 map to the same scalar key.
 
-The q128 Inner/512 cell has 640 direct estimator requests: 32 coefficient
-buckets times 20 module ranks.
+The checked-in production audit contains 10,980 ring-origin rows: 3,360 for
+q32, 4,100 for q64, and 3,520 for q128. The q128 Inner/512 cell has 880 direct
+estimator requests: 44 coefficient buckets times 20 module ranks.
 
 ### Quantum cost-model disposition
 
@@ -251,11 +255,10 @@ passes requires a new policy ID and regenerated artifacts. A change to the
 search profile for a table extension requires a new table digest.
 
 The active-dimension correction, complete pre-stable search, and explicit
-Euclidean candidate in this hardening patch can change that decision. The next
-full regeneration must therefore introduce a revisioned runtime policy ID and
-new table digest, then regenerate every dependent schedule in the same atomic
-cutover. A pre-regeneration estimator commit is intentionally not regeneration
-evidence for the currently identified checked-in table.
+Euclidean candidate in this hardening patch can change that decision. This
+regeneration therefore introduces the revisioned `Quantum128BitADPS16V2`
+runtime policy ID and a new table digest. Every dependent schedule is
+regenerated in the same atomic cutover.
 
 The table digest is separate. It commits to the exact modulus profiles, role
 coverage, coefficient bound cells, rank limits, search caps, certificates, and
@@ -573,7 +576,7 @@ digest. Dependent schedule catalogs embed that same digest.
 
 ### Acceptance criteria
 
-- [x] The only production security policy is `Quantum128BitADPS16`.
+- [x] The only production security policy is `Quantum128BitADPS16V2`.
 - [x] The estimator accepts only certified ADPS16 quantum scores at or above
       128.
 - [x] Generic infinite and failed estimates stop generation.
@@ -636,7 +639,7 @@ offline; runtime never invokes the estimator.
 ### Architecture
 
 ```text
-Quantum128BitADPS16
+Quantum128BitADPS16V2
         |
         +-- hard gate: ADPS16 quantum score >= 128
         |

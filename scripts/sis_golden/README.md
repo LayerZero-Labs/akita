@@ -178,9 +178,11 @@ Production SIS table generation uses the planner-shaped infinity key:
 ```
 
 The checked-in production policy is
-`Quantum128BitADPS16`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
+`Quantum128BitADPS16V2`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
 scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
-The role-specific coverage declaration is the source of reachable cells.
+The role-specific coverage declaration is the source of reachable cells. The
+Inner/A ladder stops at `2^28 - 1` for q32, `2^41 - 1` for q64, and
+`2^44 - 1` for q128.
 
 The production Rust split table is compiled from
 `crates/akita-types/src/sis/generated_sis_table/`; this directory also contains
@@ -191,7 +193,7 @@ Run a small smoke table:
 
 ```bash
 cargo run -p akita-sis-estimator --example infinity_width_table -- \
-  --profiles q32 --dims 32 --bounds 15 --max-rank 2 --search-cap 8
+  --profiles q32 --dims 64 --bounds 15 --max-rank 2 --search-cap 8
 ```
 
 Regenerate the committed smoke artifact:
@@ -199,7 +201,7 @@ Regenerate the committed smoke artifact:
 ```bash
 cargo run -p akita-sis-estimator --example infinity_width_table -- \
   --output scripts/sis_golden/infinity_width_table_smoke.csv \
-  --profiles q32,q64,q128 --dims 32 --bounds 15,255 --max-rank 3 --search-cap 8
+  --profiles q32,q64,q128 --dims 64 --bounds 15,255 --max-rank 3 --search-cap 8
 ```
 
 Run the full comparison domain as a local CSV artifact:
@@ -252,7 +254,7 @@ cargo run -p akita-sis-estimator --release --features parallel \
 ```
 
 Assembly fails closed on a missing, malformed, conflicting, stale, or
-mis-keyed row, then applies the ordinary whole-table certificate and
+incorrectly keyed row, then applies the ordinary whole-table certificate and
 monotonicity validation. Changing a security-relevant evaluator behavior must
 change `INFINITY_WIDTH_EVALUATOR_ID`; existing results then remain as history
 but no longer satisfy the new plan. The result cache is an incremental build

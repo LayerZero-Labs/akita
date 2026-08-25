@@ -214,7 +214,7 @@ in generated data and its digest.
 
 The 128-bit value is a claim inside a specific attack model. It is not a count
 of physical qubits or a claim that every possible future attack has been
-classified. The exact policy name is `Quantum128BitADPS16`.
+classified. The exact policy name is `Quantum128BitADPS16V2`.
 
 ## What the verifier enforces
 

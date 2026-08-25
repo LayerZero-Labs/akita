@@ -102,14 +102,23 @@ fn coeff_linf_bucket_ladder_matches_main_ceiling() {
 }
 
 #[test]
-fn coeff_linf_bucket_ladder_reaches_two_to_32_minus_one() {
+fn coeff_linf_bucket_ladder_reaches_two_to_44_minus_one() {
     assert_eq!(ceil_coeff_linf_bucket(67_108_864), Some(134_217_727));
     assert_eq!(ceil_coeff_linf_bucket(134_217_728), Some(268_435_455));
     assert_eq!(ceil_coeff_linf_bucket(268_435_455), Some(268_435_455));
     assert_eq!(ceil_coeff_linf_bucket(268_435_456), Some(536_870_911));
     assert_eq!(ceil_coeff_linf_bucket(2_147_483_648), Some(4_294_967_295));
     assert_eq!(ceil_coeff_linf_bucket(4_294_967_295), Some(4_294_967_295));
-    assert_eq!(ceil_coeff_linf_bucket(4_294_967_296), None);
+    assert_eq!(ceil_coeff_linf_bucket(4_294_967_296), Some(8_589_934_591));
+    assert_eq!(
+        ceil_coeff_linf_bucket(2_199_023_255_552),
+        Some(4_398_046_511_103)
+    );
+    assert_eq!(
+        ceil_coeff_linf_bucket(17_592_186_044_415),
+        Some(17_592_186_044_415)
+    );
+    assert_eq!(ceil_coeff_linf_bucket(17_592_186_044_416), None);
 }
 
 #[test]
@@ -134,23 +143,61 @@ fn inner_bucket_reach_is_profile_specific() {
         ),
         None
     );
-    for profile in [
+    assert!(sis_role_cell(
+        SisMatrixRole::Inner,
         SisModulusProfileId::Q64Offset59,
+        64,
+        2_199_023_255_551,
+    )
+    .is_some());
+    assert!(sis_role_cell(
+        SisMatrixRole::Inner,
+        SisModulusProfileId::Q64Offset59,
+        64,
+        4_398_046_511_103,
+    )
+    .is_none());
+    assert_eq!(
+        ceil_supported_linf_bound(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q64Offset59,
+            SisMatrixRole::Inner,
+            64,
+            2_199_023_255_551,
+        ),
+        Some(2_199_023_255_551)
+    );
+    assert_eq!(
+        ceil_supported_linf_bound(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q64Offset59,
+            SisMatrixRole::Inner,
+            64,
+            2_199_023_255_552,
+        ),
+        None
+    );
+
+    assert!(sis_role_cell(
+        SisMatrixRole::Inner,
         SisModulusProfileId::Q128OffsetA7F7,
-    ] {
-        assert!(sis_role_cell(SisMatrixRole::Inner, profile, 64, 4_294_967_295).is_some());
-        assert_eq!(
-            ceil_supported_linf_bound(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                profile,
-                SisMatrixRole::Inner,
-                64,
-                4_294_967_295,
-            ),
-            Some(4_294_967_295)
-        );
-    }
+        64,
+        17_592_186_044_415,
+    )
+    .is_some());
+    assert_eq!(
+        ceil_supported_linf_bound(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            SisMatrixRole::Inner,
+            64,
+            17_592_186_044_415,
+        ),
+        Some(17_592_186_044_415)
+    );
 }
 
 #[test]

@@ -70,32 +70,45 @@ impl SisMatrixRole {
 /// Policy identity used by SIS sizing and generated artifacts.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisSecurityPolicyId {
-    /// ADPS16 quantum LGSA estimator at a 128-bit target.
+    /// Corrected ADPS16 quantum LGSA estimator at a 128-bit target.
     #[default]
-    Quantum128BitADPS16,
+    Quantum128BitADPS16V2,
 }
 
 impl SisSecurityPolicyId {
     /// Stable wire/catalog tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::Quantum128BitADPS16 => 1,
+            Self::Quantum128BitADPS16V2 => 2,
         }
     }
 
     /// Descriptive policy name used in diagnostics and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+            Self::Quantum128BitADPS16V2 => "Quantum128BitADPS16V2",
         }
     }
 
     /// Parse the stable wire/catalog tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            1 => Some(Self::Quantum128BitADPS16),
+            2 => Some(Self::Quantum128BitADPS16V2),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_id_tests {
+    use super::SisSecurityPolicyId;
+
+    #[test]
+    fn corrected_policy_has_a_new_stable_tag() {
+        let policy = SisSecurityPolicyId::Quantum128BitADPS16V2;
+        assert_eq!(policy.tag(), 2);
+        assert_eq!(SisSecurityPolicyId::from_tag(2), Some(policy));
+        assert_eq!(SisSecurityPolicyId::from_tag(1), None);
     }
 }
 
@@ -162,7 +175,7 @@ impl SisModulusProfileId {
 
 /// Default policy used by production presets.
 pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
-    SisSecurityPolicyId::Quantum128BitADPS16;
+    SisSecurityPolicyId::Quantum128BitADPS16V2;
 
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
@@ -203,6 +216,18 @@ pub const COEFF_LINF_BUCKETS: &[u128] = &[
     1_073_741_823,
     2_147_483_647,
     4_294_967_295,
+    8_589_934_591,
+    17_179_869_183,
+    34_359_738_367,
+    68_719_476_735,
+    137_438_953_471,
+    274_877_906_943,
+    549_755_813_887,
+    1_099_511_627_775,
+    2_199_023_255_551,
+    4_398_046_511_103,
+    8_796_093_022_207,
+    17_592_186_044_415,
 ];
 
 /// Canonical key for a generated SIS floor row.

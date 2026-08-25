@@ -148,7 +148,7 @@ fn runtime_table_emits_direct_q128_d512_rows() {
             rank: u32::try_from(index + 1).unwrap(),
             coeff_linf_bound: 2,
             max_width,
-            policy: SisSecurityPolicy::Quantum128BitADPS16,
+            policy: SisSecurityPolicy::Quantum128BitADPS16V2,
             search_cap: DEFAULT_SEARCH_CAP,
             hit_cap: false,
             profile: InfinityWidthProfile::LocalMinimum,
@@ -169,7 +169,7 @@ fn runtime_table_emits_direct_q128_d512_rows() {
 }
 
 #[test]
-fn generation_filters_to_canonical_production_and_compression_cells() {
+fn generation_filters_to_production_and_documented_diagnostic_cells() {
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         64,
@@ -220,17 +220,17 @@ fn generation_filters_to_canonical_production_and_compression_cells() {
         32,
         1
     ));
-    assert!(!scalar_origin_is_canonical(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         32,
         1
     ));
-    assert!(!scalar_origin_is_canonical(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         64,
         1
     ));
-    assert!(!scalar_origin_is_canonical(
+    assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q32Offset99,
         128,
         1

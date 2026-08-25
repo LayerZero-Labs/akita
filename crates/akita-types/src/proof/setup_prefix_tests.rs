@@ -9,6 +9,19 @@ use jolt_field::Zero;
 use std::collections::{BTreeSet, HashSet};
 
 #[test]
+fn setup_prefix_policy_wire_tag_tracks_policy_identity() {
+    let policy = SisSecurityPolicyId::Quantum128BitADPS16V2;
+    let mut wire = Vec::new();
+    serialize_sis_security_policy(policy, &mut wire).expect("serialize SIS security policy");
+    assert_eq!(wire, vec![2]);
+    assert_eq!(
+        deserialize_sis_security_policy(wire.as_slice()).expect("deserialize current policy"),
+        policy
+    );
+    assert!(deserialize_sis_security_policy(&[1u8][..]).is_err());
+}
+
+#[test]
 fn setup_prefix_domain_is_the_smallest_covering_power_of_two() {
     validate_setup_prefix_domain(65, 128).expect("exact ragged prefix domain");
     validate_setup_prefix_domain(65, 256).expect_err("overpadded prefix domain");

@@ -38,7 +38,8 @@ pub const SIS_MAX_MODULE_RANK: u32 = 20;
 pub const SIS_REQUIRED_MAX_WIDTH: u64 = 6_400_000_000_000;
 
 const Q32_MAX_INNER_COEFF_LINF_BOUND: u128 = 268_435_455;
-const LARGE_FIELD_MAX_INNER_COEFF_LINF_BOUND: u128 = 4_294_967_295;
+const Q64_MAX_INNER_COEFF_LINF_BOUND: u128 = 2_199_023_255_551;
+const Q128_MAX_INNER_COEFF_LINF_BOUND: u128 = 17_592_186_044_415;
 
 const fn dispatch_role(role: SisMatrixRole) -> RingRole {
     match role {
@@ -58,9 +59,8 @@ fn role_bounds(role: SisMatrixRole) -> &'static [u128] {
 const fn max_inner_coeff_linf_bound(modulus_profile: SisModulusProfileId) -> u128 {
     match modulus_profile {
         SisModulusProfileId::Q32Offset99 => Q32_MAX_INNER_COEFF_LINF_BOUND,
-        SisModulusProfileId::Q64Offset59 | SisModulusProfileId::Q128OffsetA7F7 => {
-            LARGE_FIELD_MAX_INNER_COEFF_LINF_BOUND
-        }
+        SisModulusProfileId::Q64Offset59 => Q64_MAX_INNER_COEFF_LINF_BOUND,
+        SisModulusProfileId::Q128OffsetA7F7 => Q128_MAX_INNER_COEFF_LINF_BOUND,
     }
 }
 
