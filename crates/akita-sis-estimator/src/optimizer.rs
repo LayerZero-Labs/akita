@@ -249,12 +249,12 @@ fn local_minimum<F>(start: u64, stop: u64, precision: u64, mut f: F) -> Result<O
 where
     F: FnMut(u64) -> Result<LatticeCost>,
 {
-    if stop < start || precision == 0 {
+    if stop <= start || precision == 0 {
         return Ok(None);
     }
 
     let mut search_start = ceil_div(start, precision);
-    let mut search_stop = stop / precision;
+    let mut search_stop = ceil_div(stop, precision);
     if search_stop == 0 {
         return Ok(None);
     }
@@ -554,6 +554,38 @@ mod tests {
             },
             ..EstimateConfig::default()
         }
+    }
+
+    fn local_minimum_test_cost(beta: u64) -> LatticeCost {
+        LatticeCost {
+            rop: CostValue::finite_log2(1_000.0 - beta as f64),
+            red: None,
+            sieve: None,
+            delta: None,
+            beta: Some(u32::try_from(beta).unwrap()),
+            eta: None,
+            zeta: None,
+            d: 0,
+            prob: None,
+            repetitions: None,
+            tag: Default::default(),
+        }
+    }
+
+    #[test]
+    fn local_minimum_checks_only_candidate_in_narrow_strided_range() {
+        let best = local_minimum(40, 41, 2, |beta| Ok(local_minimum_test_cost(beta)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(best.beta, Some(40));
+    }
+
+    #[test]
+    fn local_minimum_checks_last_strided_candidate_below_exclusive_stop() {
+        let best = local_minimum(40, 45, 2, |beta| Ok(local_minimum_test_cost(beta)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(best.beta, Some(44));
     }
 
     #[test]
