@@ -1,7 +1,16 @@
 use std::array::from_fn;
 use std::marker::PhantomData;
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+use std::mem::size_of;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::avx;
+use crate::ntt::butterfly::forward_ntt;
+#[cfg(target_arch = "aarch64")]
+use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+#[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
+use crate::ntt::NttTwiddles;
 
 use super::CrtNttParamSet;
 
@@ -100,6 +109,17 @@ pub(super) fn centered_prime_residue_i128<W: PrimeWidth>(prime: NttPrime<W>, val
 }
 
 impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
+    #[inline(always)]
+    fn debug_assert_active_digits<const D: usize>(&self, digits: &[i8; D]) {
+        debug_assert!(
+            digits.iter().all(|&digit| {
+                let idx = i16::from(digit) + self.offset;
+                idx >= 0 && (idx as usize) < self.len
+            }),
+            "digit LUT conversion outside active balanced range"
+        );
+    }
+
     /// Build a lookup table for the active balanced range `[-bound, bound)`.
     ///
     /// This keeps the fixed non-monomorphized LUT type while avoiding needless
@@ -143,6 +163,114 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             "digit LUT lookup outside active balanced range"
         );
         self.vals[k][idx & (self.len - 1)]
+    }
+
+    /// Fill one CRT limb with Montgomery representations of signed digits.
+    #[inline]
+    pub(super) fn fill_limb<const D: usize>(
+        &self,
+        k: usize,
+        digits: &[i8; D],
+        _params: &CrtNttParamSet<W, K, D>,
+        dst: &mut [MontCoeff<W>; D],
+    ) {
+        self.debug_assert_active_digits(digits);
+        #[cfg(target_arch = "aarch64")]
+        if _params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
+            let prime = _params.primes[k];
+            // SAFETY: the width check proves the transparent i32
+            // representation, and both arrays contain D elements.
+            unsafe {
+                neon::centered_i8_to_mont_i32(
+                    dst.as_mut_ptr().cast::<i32>(),
+                    digits.as_ptr(),
+                    D,
+                    prime.p.to_i64() as i32,
+                    prime.pinv.to_i64() as i32,
+                    prime.montsq.to_i64() as i32,
+                );
+            }
+            return;
+        }
+
+        for (dst, &digit) in dst.iter_mut().zip(digits) {
+            *dst = self.get(k, digit);
+        }
+    }
+
+    /// Convert one signed-digit limb and apply its forward negacyclic NTT.
+    #[inline]
+    pub(super) fn fill_negacyclic_limb<const D: usize>(
+        &self,
+        k: usize,
+        digits: &[i8; D],
+        params: &CrtNttParamSet<W, K, D>,
+        dst: &mut [MontCoeff<W>; D],
+    ) {
+        self.debug_assert_active_digits(digits);
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i32>() {
+            let prime = params.primes[k];
+            let tw = &params.twiddles[k];
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i32. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both arrays contain D
+            // elements, do not overlap, and the prepared plan proves AVX2.
+            unsafe {
+                avx::forward_ntt_i8_i32(
+                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
+                    digits,
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        if params.kernel_plan().uses_x86_transform() && size_of::<W>() == size_of::<i16>() {
+            let prime = params.primes[k];
+            let tw = &params.twiddles[k];
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i16. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both arrays contain D
+            // elements, do not overlap, and the prepared plan proves AVX2.
+            unsafe {
+                avx::forward_ntt_i8_i16(
+                    &mut *(dst as *mut _ as *mut [MontCoeff<i16>; D]),
+                    digits,
+                    *(&prime as *const _ as *const NttPrime<i16>),
+                    &*(tw as *const _ as *const NttTwiddles<i16, D>),
+                );
+            }
+            return;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        if params.kernel_plan().uses_neon() && size_of::<W>() == size_of::<i32>() {
+            let prime = params.primes[k];
+            let tw = &params.twiddles[k];
+            // SAFETY: PrimeWidth is sealed to i16 and i32, so the width check
+            // identifies W as i32. MontCoeff is transparent, while NttPrime
+            // and NttTwiddles have stable C layouts. Both input arrays have D
+            // elements and do not overlap.
+            unsafe {
+                neon::forward_ntt_i8_i32(
+                    &mut *(dst as *mut _ as *mut [MontCoeff<i32>; D]),
+                    digits,
+                    *(&prime as *const _ as *const NttPrime<i32>),
+                    &*(tw as *const _ as *const NttTwiddles<i32, D>),
+                );
+            }
+            return;
+        }
+
+        self.fill_limb(k, digits, params, dst);
+        forward_ntt(
+            dst,
+            params.primes[k],
+            &params.twiddles[k],
+            params.kernel_plan(),
+        );
     }
 }
 

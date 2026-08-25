@@ -5,7 +5,7 @@ use jolt_field::{CanonicalEncoding, Ext2Config, Field, Fp128, Fp32, Fp64, FpExt2
 use crate::{AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate};
 
 macro_rules! impl_prime_serialization {
-    ($field:ident, $modulus:ty, $bytes:expr, $canonical:ident, $to_canonical:ident) => {
+    ($field:ident, $modulus:ty, $bytes:expr, $to_canonical:ident) => {
         impl<const P: $modulus> Valid for $field<P> {
             fn check(&self) -> Result<(), SerializationError> {
                 if (self.$to_canonical() as u128) < P as u128 {
@@ -49,19 +49,27 @@ macro_rules! impl_prime_serialization {
                         concat!(stringify!($field), " out of range").into(),
                     ));
                 }
-                Ok(if validate == Validate::Yes {
-                    $field::<P>::$canonical(value)
+                if validate == Validate::Yes {
+                    <$field<P> as CanonicalEncoding>::from_u128_checked(value as u128).ok_or_else(
+                        || {
+                            SerializationError::InvalidData(
+                                concat!(stringify!($field), " out of range").into(),
+                            )
+                        },
+                    )
                 } else {
-                    <$field<P> as CanonicalEncoding>::from_u128_reduced(value as u128)
-                })
+                    Ok(<$field<P> as CanonicalEncoding>::from_u128_reduced(
+                        value as u128,
+                    ))
+                }
             }
         }
     };
 }
 
-impl_prime_serialization!(Fp32, u32, 4, from_canonical_u32, to_canonical_u32);
-impl_prime_serialization!(Fp64, u64, 8, from_canonical_u64, to_canonical_u64);
-impl_prime_serialization!(Fp128, u128, 16, from_canonical_u128, to_canonical_u128);
+impl_prime_serialization!(Fp32, u32, 4, to_canonical_u32);
+impl_prime_serialization!(Fp64, u64, 8, to_canonical_u64);
+impl_prime_serialization!(Fp128, u128, 16, to_canonical_u128);
 
 impl<F, C> Valid for FpExt2<F, C>
 where
@@ -186,7 +194,7 @@ impl_extension_serialization!(FpExt8, 8);
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::Ring;
+    use jolt_field::{CanonicalEncoding, Ring};
     use jolt_field::{Fp64, FpExt8, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     use crate::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
@@ -211,8 +219,8 @@ mod tests {
             [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]
         );
 
-        let fp128 =
-            Prime128Offset275::from_canonical_u128(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10);
+        let fp128 = Prime128Offset275::from_u128_checked(0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10)
+            .unwrap();
         assert_eq!(
             serialized(&fp128),
             [

@@ -14,10 +14,7 @@ use akita_algebra::{
 use akita_error::AkitaError;
 #[allow(unused_imports)]
 use jolt_field::solinas::parallel::*;
-use jolt_field::{
-    cfg_iter, CanonicalEncoding, Field, Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7,
-    PseudoMersenne,
-};
+use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -35,7 +32,7 @@ mod prepared_artifact;
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
 pub use exact::ntt_cache_requires_i16_tail;
-use exact::{exact_cache_plan, prepare_exact_ntt_cache};
+use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
 pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
 pub use prepared_artifact::{
     build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
@@ -218,8 +215,6 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let modulus = field_modulus::<F>();
-    let split_only_q128_modulus = u128::MAX - (<Prime128Offset159 as PseudoMersenne>::OFFSET - 1);
-    let ntt_q128_modulus = u128::MAX - (<Prime128Offset2355 as PseudoMersenne>::OFFSET - 1);
     let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {
@@ -234,11 +229,7 @@ fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usiz
         }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
-    if modulus == Q128_MODULUS
-        || modulus == split_only_q128_modulus
-        || modulus == ntt_q128_modulus
-        || modulus == a7f7_q128_modulus
-    {
+    if modulus == Q128_MODULUS || modulus == a7f7_q128_modulus {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         }
@@ -305,6 +296,44 @@ pub fn centered_quotient_requires_i16_tail(
     Err(AkitaError::InvalidSetup(format!(
         "centered quotient term exceeds base plus i16-tail capacity for D={ring_dimension}, rhs_abs_bound={rhs_abs_bound}"
     )))
+}
+
+fn dense_i8_exact_ifma52_is_profitable(
+    field_modulus: u128,
+    ring_dimension: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+    ifma52_cache_enabled: bool,
+) -> bool {
+    if field_modulus <= Q64_MODULUS as u128 || !ifma52_cache_enabled {
+        return false;
+    }
+    let capacity = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from));
+    !capacity.supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
+        && capacity
+            .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+            .supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
+}
+
+/// Whether a dense signed-i8 commitment should use one exact AVX-512 IFMA52
+/// accumulation instead of bounded portable CRT chunks.
+///
+/// This selects only q128 rows that need the 14-bit tail for a complete IFMA52
+/// accumulation. AVX2, NEON, scalar execution, and rows that fit the base
+/// IFMA52 product retain the chunked i8 kernel.
+pub fn dense_i8_commit_prefers_exact_ifma52(
+    field_modulus: u128,
+    ring_dimension: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> bool {
+    dense_i8_exact_ifma52_is_profitable(
+        field_modulus,
+        ring_dimension,
+        width,
+        rhs_abs_bound,
+        ifma52_cache_enabled_for_ring_dimension(ring_dimension),
+    )
 }
 
 /// Field-typed form of [`centered_quotient_requires_i16_tail`] used by the

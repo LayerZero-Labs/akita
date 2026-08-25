@@ -106,7 +106,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             core::mem::size_of::<W>() == core::mem::size_of::<i32>()
                 && self.kernel_plan.uses_avx2_i32_dot()
         }
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(target_arch = "aarch64")]
+        {
+            core::mem::size_of::<W>() == core::mem::size_of::<i32>() && self.kernel_plan.uses_neon()
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
         {
             false
         }

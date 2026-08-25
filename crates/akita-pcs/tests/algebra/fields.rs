@@ -2,9 +2,9 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use akita_algebra::{Module, VectorModule};
 use jolt_field::{
-    pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset159,
-    Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne,
-    Ring, Zero, PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,
+    pseudo_mersenne_modulus, Field, Fp32, Fp64, FpExt2, FpExt4, One, Prime128Offset275,
+    Prime128OffsetA7F7, PrimeOffsetSpec, PseudoMersenne, Ring, Zero, PRIME_OFFSET_MAX,
+    PRIME_OFFSET_SPECS,
 };
 
 use super::fixtures::{check_solinas_prime, NR};
@@ -42,14 +42,10 @@ fn fp128_basic_arith() {
 
 #[test]
 fn fp128_primes_match_biguint_oracle() {
-    const P159: u128 = 0xffffffffffffffffffffffffffffff61u128;
     const P275: u128 = 0xfffffffffffffffffffffffffffffeedu128;
-    const P2355: u128 = 0xfffffffffffffffffffffffffffff6cdu128;
     // p_A7F7 = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
     const P_A7F7: u128 = u128::MAX - 0xFFFFA7F7u128 + 1;
-    check_solinas_prime::<Prime128Offset159>(P159, 2_000, 159);
     check_solinas_prime::<Prime128Offset275>(P275, 2_000, 275);
-    check_solinas_prime::<Prime128Offset2355>(P2355, 2_000, 2355);
     check_solinas_prime::<Prime128OffsetA7F7>(P_A7F7, 2_000, 0xA7F7);
 }
 

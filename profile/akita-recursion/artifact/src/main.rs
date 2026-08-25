@@ -229,7 +229,6 @@ fn build_statement<'a>(
 
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenne>::OFFSET {
-        2355 => "q=2^128-2355".to_string(),
         0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
         offset => format!("q=2^128-{offset:#x}"),
     }

@@ -546,12 +546,18 @@ fn commit_unsliced_reference(
     }
 
     let n_b = params.outer().matrix.output_rank();
-    let reference_b_image = backend.digit_rows::<D>(
+    let mut reference_b_batches = backend.digit_rows::<D>(
         prepared,
         n_b,
-        &reference_b_input,
+        &[reference_b_input.as_slice()],
         params.outer().digits.log_basis,
     )?;
+    if reference_b_batches.len() != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "single B input did not produce one row batch".into(),
+        ));
+    }
+    let reference_b_image = reference_b_batches.pop().expect("length checked");
     let production_b_image = commit_outer_slices::<F, _, D>(
         backend,
         prepared,

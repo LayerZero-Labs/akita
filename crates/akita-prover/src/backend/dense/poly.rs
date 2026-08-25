@@ -275,6 +275,14 @@ impl<F: Field + CanonicalEncoding> DensePoly<F> {
             return None;
         }
 
+        let _span = tracing::info_span!(
+            "dense_digit_cache_build",
+            cache_bytes,
+            num_rings,
+            num_digits,
+            ring_dimension = D,
+        )
+        .entered();
         let rings = self.ring_coeffs::<D>().ok()?;
         let q = (-F::one())
             .to_u128_checked()

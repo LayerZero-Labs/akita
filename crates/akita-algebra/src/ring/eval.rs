@@ -171,7 +171,7 @@ where
 mod tests {
     use super::*;
     use crate::poly::multilinear_eval;
-    use jolt_field::{One, Prime128OffsetA7F7};
+    use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 64;
@@ -181,7 +181,7 @@ mod tests {
             let x = seed
                 .wrapping_mul(0x9E37_79B9_7F4A_7C15_1234_5678_9ABC_DEF1)
                 .wrapping_add((i as u128).wrapping_mul(0x100_0000_01B3));
-            F::from_canonical_u128(x & ((1u128 << 120) - 1))
+            F::from_u128_checked(x & ((1u128 << 120) - 1)).unwrap()
         }))
     }
 
@@ -192,9 +192,10 @@ mod tests {
     fn deferred_matches_per_term_fp128_d64() {
         for seed in 0..128u128 {
             let ring = sample(seed.wrapping_add(1));
-            let alpha = F::from_canonical_u128(
+            let alpha = F::from_u128_checked(
                 seed.wrapping_mul(0x1234_5678_9ABC).wrapping_add(7) & ((1u128 << 120) - 1),
-            );
+            )
+            .unwrap();
             let mut pows = [F::zero(); D];
             let mut p = F::one();
             for slot in pows.iter_mut() {
@@ -216,10 +217,10 @@ mod tests {
 
     #[test]
     fn power_sequence_mle_matches_materialized_table() {
-        let base = F::from_canonical_u128(7);
+        let base = F::from_u128_checked(7).unwrap();
         for num_vars in 0..8 {
             let point = (0..num_vars)
-                .map(|index| F::from_canonical_u128(11 + index as u128))
+                .map(|index| F::from_u128_checked(11 + index as u128).unwrap())
                 .collect::<Vec<_>>();
             let table = scalar_powers(base, 1usize << num_vars);
             assert_eq!(
@@ -231,7 +232,7 @@ mod tests {
 
     #[test]
     fn strided_scalar_powers_match_materialized_subsequence() {
-        let alpha = F::from_canonical_u128(13);
+        let alpha = F::from_u128_checked(13).unwrap();
         for stride in [1usize, 2, 7, 64] {
             for len in 0..8usize {
                 let full = scalar_powers(alpha, stride.saturating_mul(len));

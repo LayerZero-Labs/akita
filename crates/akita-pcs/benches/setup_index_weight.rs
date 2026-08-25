@@ -13,7 +13,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     SamplingMode,
 };
-use jolt_field::{Prime128OffsetA7F7, Zero};
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;
@@ -27,7 +27,7 @@ struct SetupIndexWeightBenchCase {
 }
 
 fn test_scalar(value: u128) -> F {
-    F::from_canonical_u128(value)
+    F::from_u128_checked(value).expect("benchmark scalar must be canonical")
 }
 
 fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {

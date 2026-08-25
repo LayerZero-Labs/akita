@@ -39,7 +39,7 @@ schedules-default = ["akita-config/schedules-default"]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "4a0d4a33265c6fc7c1dc0e97046b67773a8320ea", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba36f6d53a51d6fb724d5c27fb4b48604975f1a4", default-features = false, features = [
   "solinas",
 ] }
 akita-prover = { version = "0.1.0", path = "../akita-prover", default-features = false }

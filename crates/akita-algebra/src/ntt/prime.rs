@@ -15,7 +15,7 @@ use std::fmt;
 
 /// Largest raw i32 Montgomery dot batch whose signed reduction is safe for
 /// every supported prime below `2^30`.
-pub(crate) const I32_LAZY_DOT_BATCH: usize = 6;
+pub const I32_LAZY_DOT_BATCH: usize = 6;
 
 mod sealed {
     pub trait Sealed {}
@@ -209,7 +209,12 @@ impl<W: PrimeWidth> fmt::Debug for MontCoeff<W> {
 ///
 /// Generic over `W: PrimeWidth` — use `i16` for primes below 2^14 (R = 2^16),
 /// or `i32` for primes below 2^30 (R = 2^32).
+///
+/// The C representation is part of the SIMD dispatch contract. `PrimeWidth`
+/// is sealed to `i16` and `i32`, and architecture-specific kernels reinterpret
+/// a value after checking which of those two widths is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct NttPrime<W: PrimeWidth> {
     /// Prime modulus.
     pub p: W,

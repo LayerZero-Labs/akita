@@ -165,14 +165,14 @@ pub trait DigitRowsComputeBackend<F>:
 where
     F: Field + CanonicalEncoding,
 {
-    /// Negacyclic single-input digit mat-vec rows.
+    /// Negacyclic digit mat-vec rows for an equal-width input batch.
     fn digit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
         row_len: usize,
-        digits: &[[i8; D]],
+        digit_vectors: &[&[[i8; D]]],
         log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

@@ -5,12 +5,10 @@
 //!
 //! # Setting
 //!
-//! The protocol primes [`jolt_field::Prime128Offset2355`]
-//! and [`jolt_field::Prime128OffsetA7F7`] are pseudo-Mersenne, so
+//! The protocol prime [`jolt_field::Prime128OffsetA7F7`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
-//! - `p = 2^128 − 2355`: smooth order `14_700 = 2² · 3 · 5² · 7²`
 //! - `p = 2^128 − 2^32 + 22_537`: smooth order `17_496 = 2³ · 3⁷`
 //!
 //! FFT domain sizes are divisors of that smooth order; there is no
@@ -62,9 +60,7 @@
 //! FFT — see [`SmoothDomain::coset_forward`]
 //! and [`SmoothDomain::rs_extend_batch`].
 
-use jolt_field::{
-    CanonicalEncoding, Field, Prime128Offset2355, Prime128OffsetA7F7, PseudoMersenne,
-};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 
 /// Field with a precomputed primitive root of a supported smooth subgroup.
 ///
@@ -76,13 +72,6 @@ pub trait SmoothFftField: Field + CanonicalEncoding + PseudoMersenne {
 
     /// Canonical representation of its primitive root.
     const SMOOTH_OMEGA: u128;
-}
-
-impl SmoothFftField for Prime128Offset2355 {
-    const SMOOTH_SUBGROUP_ORDER: usize = 14_700;
-    /// `2 ^ ((p − 1) / 14_700)` where `g = 2` is a primitive root of `p`.
-    /// Verified by `prime_2355_tests::smooth_omega_matches_search` below.
-    const SMOOTH_OMEGA: u128 = 0x2ecd_18d0_8238_2c0c_818c_c05f_446a_8075;
 }
 
 impl SmoothFftField for Prime128OffsetA7F7 {
@@ -820,11 +809,8 @@ pub fn rs_extend_fft<F: Field + std::fmt::Debug>(
 mod test_support {
     //! Prime-agnostic helpers shared by per-prime FFT parity tests.
     //!
-    //! The two protocol primes (`Prime128Offset2355`, `Prime128OffsetA7F7`)
-    //! have different smooth-subgroup factorizations, but the parity
-    //! properties under test (FFT vs naive DFT, forward/inverse roundtrip,
-    //! RS-extend consistency) are identical. Factor them out here so the
-    //! per-prime modules carry only the size lattice that actually differs.
+    //! The parity properties under test are FFT vs naive DFT,
+    //! forward/inverse roundtrip, and RS-extend consistency.
     //!
     //! All omegas come from [`super::primitive_nth_root`] (i.e. the
     //! field's `SmoothFftField::SMOOTH_OMEGA`); the scanner
@@ -923,81 +909,6 @@ mod test_support {
 }
 
 #[cfg(test)]
-mod prime_2355_tests {
-    //! `Prime128Offset2355` (`p = 2^128 - 2355`) has smooth multiplicative
-    //! subgroup of order `14_700 = 2^2 * 3 * 5^2 * 7^2`, drawing sizes from
-    //! the `{2, 3, 5, 7}` lattice.
-    use super::test_support::*;
-    use super::*;
-
-    type F = Prime128Offset2355;
-
-    /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
-    /// root of unity from a base scan and assert it equals the literal
-    /// declared in this module. Also validates the
-    /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
-    #[test]
-    fn smooth_omega_matches_search() {
-        let p_minus_1 = u128::MAX - F::OFFSET;
-        assert_eq!(
-            p_minus_1 % (F::SMOOTH_SUBGROUP_ORDER as u128),
-            0,
-            "SMOOTH_SUBGROUP_ORDER must divide p − 1",
-        );
-        let derived = find_primitive_nth_root::<F>(p_minus_1, F::SMOOTH_SUBGROUP_ORDER);
-        let declared = F::from_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
-        assert_eq!(
-            derived, declared,
-            "SMOOTH_OMEGA literal has drifted from the scanner's primitive root"
-        );
-    }
-
-    #[test]
-    fn primitive_nth_root_has_correct_order_for_every_divisor() {
-        // Every `n | SMOOTH_SUBGROUP_ORDER` should yield a primitive
-        // n-th root via the trait derivation.
-        for &n in &[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
-            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
-            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
-        ] {
-            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
-                continue;
-            }
-            let omega = primitive_nth_root::<F>(n);
-            let factors = distinct_prime_factors(n);
-            assert!(
-                is_primitive_nth_root(omega, n, &factors),
-                "primitive_nth_root failed primitivity check for n={n}"
-            );
-        }
-    }
-
-    #[test]
-    fn small_fft_matches_naive_dft() {
-        assert_fft_matches_naive_dft::<F>(&[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50,
-        ]);
-    }
-
-    #[test]
-    fn forward_inverse_roundtrip_300() {
-        assert_forward_inverse_roundtrip::<F>(300);
-    }
-
-    #[test]
-    fn forward_inverse_roundtrip_1470() {
-        assert_forward_inverse_roundtrip::<F>(1470);
-    }
-
-    #[test]
-    fn rs_extend_consistency() {
-        // k = 300 = 2^2 * 3 * 5^2, blowup = 7, so n = 2_100 | 14_700.
-        assert_rs_extend_consistency::<F>(300, 7);
-    }
-}
-
-#[cfg(test)]
 mod prime_a7f7_tests {
     //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
     //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
@@ -1043,7 +954,7 @@ mod prime_a7f7_tests {
         );
     }
 
-    /// Drift guard: see `prime_2355_tests::smooth_omega_matches_search`.
+    /// Drift guard for the production A7F7 smooth-subgroup constants.
     #[test]
     fn smooth_omega_matches_search() {
         let p_minus_1 = u128::MAX - F::OFFSET;

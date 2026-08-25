@@ -7,6 +7,7 @@ use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
+#[tracing::instrument(skip_all, name = "dense_commit_rows_exact_i16")]
 pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
@@ -38,6 +39,44 @@ pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
                             log_basis_inner,
                         );
                     }
+                    ntt.mat_vec_i16::<F>(log_basis_inner, n_a, &rhs)
+                })
+                .collect()
+        },
+    )
+}
+
+#[tracing::instrument(skip_all, name = "dense_commit_cached_digit_rows_exact_i16")]
+pub(super) fn dense_commit_cached_digit_rows<F: Field + CanonicalEncoding, const D: usize>(
+    prepared: &CpuPreparedSetup<F>,
+    n_a: usize,
+    row_width: usize,
+    digit_block_slices: &[&[[i8; D]]],
+    log_basis_inner: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    prepared.with_shared_ntt::<D, _>(
+        NttCacheKey::from_matrix_shape(
+            D,
+            n_a,
+            row_width,
+            NttTransformDomain::ExactNegacyclicI16 {
+                width: row_width,
+                rhs_abs_bound,
+            },
+        )?,
+        |ntt| {
+            cfg_iter!(digit_block_slices)
+                .map(|block| {
+                    if block.len() > row_width {
+                        return Err(AkitaError::InvalidSetup(
+                            "cached digit block exceeds dense commitment row width".into(),
+                        ));
+                    }
+                    let mut rhs = Vec::with_capacity(row_width);
+                    rhs.extend(block.iter().map(|digits| from_fn(|k| i16::from(digits[k]))));
+                    rhs.resize(row_width, [0i16; D]);
                     ntt.mat_vec_i16::<F>(log_basis_inner, n_a, &rhs)
                 })
                 .collect()

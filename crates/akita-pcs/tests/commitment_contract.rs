@@ -142,10 +142,10 @@ where
         &self,
         prepared: &Self::PreparedSetup,
         row_len: usize,
-        digits: &[[i8; RING_D]],
+        digit_vectors: &[&[[i8; RING_D]]],
         log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
-        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
     }
 }
 

@@ -10,7 +10,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
-use jolt_field::{One, Prime128OffsetA7F7, Zero};
+use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
 mod address_spans;
 mod direct_evaluation_regressions;
@@ -52,7 +52,7 @@ impl TestSetupInputs {
     }
 }
 fn test_scalar(value: u128) -> F {
-    F::from_canonical_u128(value)
+    F::from_u128_checked(value).expect("test scalar must be canonical")
 }
 
 fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: CommitmentRingDims) {

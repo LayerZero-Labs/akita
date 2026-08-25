@@ -5,6 +5,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 type F64 = Fp64<4294967197>;
+type F64Wide = Fp64<{ u64::MAX - 58 }>;
 type F128 = Prime128Offset275;
 type F32 = Prime32Offset99;
 const D: usize = 64;
@@ -318,6 +319,61 @@ fn fp32_i8_decomposition_matches_scalar_at_centering_boundaries() {
                 value
                     .to_u128_checked()
                     .expect("Akita field element must fit in u128"),
+                q,
+                threshold,
+                mask,
+                half_b,
+                b,
+                log_basis,
+            );
+            expected[coefficient] = first as i8;
+            for level in 1..levels {
+                let raw = quotient & mask;
+                let digit = if raw >= half_b { raw - b } else { raw };
+                quotient = (quotient - digit) >> log_basis;
+                expected[level * D + coefficient] = digit as i8;
+            }
+        }
+        assert_eq!(actual, expected, "log_basis={log_basis}");
+    }
+}
+
+#[test]
+fn fp64_i8_decomposition_matches_generic_at_centering_boundaries() {
+    let q = (-F64Wide::one())
+        .to_u128_checked()
+        .expect("Fp64 values fit in u128")
+        + 1;
+    for log_basis in 1..=8 {
+        let levels = 64usize.div_ceil(log_basis as usize);
+        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+        let threshold = decompose_centering_threshold(levels, log_basis, q);
+        let boundary_values = [
+            0,
+            1,
+            threshold.saturating_sub(1),
+            threshold,
+            threshold + 1,
+            q / 2,
+            q / 2 + 1,
+            q - (i64::MAX as u128) - 1,
+            q - (i64::MAX as u128),
+            q - 2,
+            q - 1,
+        ];
+        let coefficients: [F64Wide; D] = from_fn(|index| {
+            F64Wide::from_u128_reduced(boundary_values[index % boundary_values.len()])
+        });
+        let mut actual = vec![0i8; D * levels];
+        balanced_decompose_coefficients_pow2_i8_into(&coefficients, &mut actual, &params);
+
+        let b = 1i128 << log_basis;
+        let half_b = b >> 1;
+        let mask = b - 1;
+        let mut expected = vec![0i8; D * levels];
+        for (coefficient, value) in coefficients.iter().enumerate() {
+            let (mut quotient, first) = peel_first_balanced_digit(
+                value.to_u128_checked().expect("Fp64 values fit in u128"),
                 q,
                 threshold,
                 mask,
