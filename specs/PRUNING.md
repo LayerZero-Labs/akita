@@ -79,22 +79,23 @@ The root live set is deliberately small and is synchronized with
 `book/src/foundations/spec-index.md` and `scripts/check-spec-references.sh`:
 
 1. `akita-compute-backend-metal.md`
-2. `dyadic-chunk-partition.md`
-3. `flat-public-matrix-and-exact-ntt-cache.md`
-4. `fold-linf-rejection.md`
-5. `heterogeneous-group-source-contracts.md`
-6. `large-digit-ntt-infrastructure.md`
-7. `packed-sumcheck.md`
-8. `role-native-projected-digit-layout.md`
-9. `runtime-ring-cutover.md`
-10. `selective-l2-fold-security-sizing.md`
-11. `setup-offloading-planner.md`
-12. `sis-quantum128-scalar-n-table.md`
-13. `structured-e-term.md`
-14. `subring-coefficient-packing.md`
-15. `transcript-grinding.md`
+2. `quotient-free-tail-ring-relations.md`
+3. `dyadic-chunk-partition.md`
+4. `flat-public-matrix-and-exact-ntt-cache.md`
+5. `fold-linf-rejection.md`
+6. `heterogeneous-group-source-contracts.md`
+7. `large-digit-ntt-infrastructure.md`
+8. `packed-sumcheck.md`
+9. `role-native-projected-digit-layout.md`
+10. `runtime-ring-cutover.md`
+11. `selective-l2-fold-security-sizing.md`
+12. `setup-offloading-planner.md`
+13. `sis-quantum128-scalar-n-table.md`
+14. `structured-e-term.md`
+15. `subring-coefficient-packing.md`
+16. `transcript-grinding.md`
 
-All 15 live specifications must pass the default dead-symbol scan. A record
+All 16 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 
