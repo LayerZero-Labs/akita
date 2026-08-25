@@ -9,6 +9,7 @@ use crate::{
     cost::{CostValue, LatticeCost},
     error::{EstimatorError, Result},
     estimate,
+    work_cache::WorkId,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -96,8 +97,16 @@ pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
     "with ADPS16 best-cost and 128-bit decision lower-bound early stops; ",
     "for each visited beta, ",
     "every pre-stable LGSA dimension plus both stable-tail endpoints, ",
+    "plus both sides of any active-dimension probability transition, ",
     "restricted to the tall q-ary domain 0 <= zeta < d - n"
 );
+
+/// Semantic identity of the current infinity-width evaluator.
+///
+/// Change this value whenever an estimator or certification change can alter
+/// a work result. Operational changes such as parallelism and progress output
+/// do not change it.
+pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v2";
 
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +129,16 @@ impl InfinityWidthProfile {
             Self::LatticeEstimatorParity => "lattice-estimator-local-minimum",
             Self::ExhaustiveSerial => "exhaustive-serial",
             Self::ExhaustiveParallel => "exhaustive-parallel",
+        }
+    }
+
+    fn parse_label(label: &str) -> Result<Self> {
+        match label {
+            "local-minimum+proven-pruned-certification" => Ok(Self::LocalMinimum),
+            "lattice-estimator-local-minimum" => Ok(Self::LatticeEstimatorParity),
+            "exhaustive-serial" => Ok(Self::ExhaustiveSerial),
+            "exhaustive-parallel" => Ok(Self::ExhaustiveParallel),
+            _ => invalid_config("work_result", "unknown infinity-width profile label"),
         }
     }
 
@@ -153,6 +172,50 @@ impl InfinityWidthProfile {
                 ..EstimateConfig::default()
             },
         }
+    }
+}
+
+/// One independently evaluable infinity-width table row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InfinityWidthWorkItem {
+    /// Exact modulus profile.
+    pub modulus_profile: AkitaModulusProfileId,
+    /// Ring dimension of the semantic origin.
+    pub d: u32,
+    /// Module rank of the semantic origin.
+    pub rank: u32,
+    /// Coefficient infinity bound.
+    pub coeff_linf_bound: u64,
+}
+
+impl InfinityWidthWorkItem {
+    /// Content address under one complete table-generation configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table search cap is malformed.
+    pub fn work_id(self, config: &InfinityWidthTableConfig) -> Result<WorkId> {
+        let search_cap = row_search_cap(self.d, config.search_cap)?;
+        let target_bits = config
+            .policy
+            .adps16_quantum_constraint()
+            .minimum_log2_rop
+            .to_bits();
+        let canonical = format!(
+            "evaluator={INFINITY_WIDTH_EVALUATOR_ID}\npolicy={}\ntarget_bits={target_bits:016x}\nprofile={}\ncertificate_domain={PRODUCTION_CERTIFICATE_DOMAIN}\nmodulus_profile={}\nmodulus={}\nd={}\nrank={}\ncoeff_linf_bound={}\nsearch_cap={}\n",
+            config.policy.label(),
+            config.profile.label(),
+            self.modulus_profile.label(),
+            self.modulus_profile.modulus(),
+            self.d,
+            self.rank,
+            self.coeff_linf_bound,
+            search_cap,
+        );
+        Ok(WorkId::new(
+            b"akita-sis-estimator/infinity-width-row",
+            canonical.as_bytes(),
+        ))
     }
 }
 
@@ -206,11 +269,32 @@ pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConf
         && config.profile == InfinityWidthProfile::LocalMinimum
 }
 
-/// ADPS16 quantum certificate costs for one accepted or rejected boundary.
+/// Compact attack certificate for one accepted or rejected boundary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InfinityWidthCertificate {
+    /// Total attack cost or certified lower bound.
+    pub rop: CostValue,
+    /// BKZ block size selected by the attack.
+    pub beta: Option<u32>,
+    /// Number of projected coordinates selected by the attack.
+    pub zeta: Option<u64>,
+}
+
+impl From<LatticeCost> for InfinityWidthCertificate {
+    fn from(cost: LatticeCost) -> Self {
+        Self {
+            rop: cost.rop,
+            beta: cost.beta,
+            zeta: cost.zeta,
+        }
+    }
+}
+
+/// ADPS16 quantum certificate for one accepted or rejected boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InfinityWidthPolicyCosts {
     /// The only hard model.
-    pub adps16_quantum: LatticeCost,
+    pub adps16_quantum: InfinityWidthCertificate,
 }
 
 /// One generated ring-origin row. The emitted artifact deduplicates these rows
@@ -242,6 +326,8 @@ pub struct InfinityWidthRow {
 }
 
 impl InfinityWidthRow {
+    const WORK_RESULT_SCHEMA: &'static str = "akita-infinity-width-row-result-v1";
+
     /// CSV header for the single hard model and both certificates.
     pub const fn csv_header() -> &'static str {
         "policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind"
@@ -249,6 +335,10 @@ impl InfinityWidthRow {
 
     /// Format a deterministic audit row.
     pub fn to_csv_record(&self) -> String {
+        self.to_record(cost_log2_text)
+    }
+
+    fn to_record(&self, format_cost: fn(Option<CostValue>) -> String) -> String {
         let n = u64::from(self.d) * u64::from(self.rank);
         let kind = if self.hit_cap { "AtLeast" } else { "Exact" };
         format!(
@@ -264,12 +354,12 @@ impl InfinityWidthRow {
             self.hit_cap,
             self.profile.label(),
             self.policy.adps16_quantum_constraint().minimum_log2_rop,
-            cost_log2_text(
+            format_cost(
                 self.max_costs
                     .as_ref()
                     .map(|costs| costs.adps16_quantum.rop)
             ),
-            cost_log2_text(
+            format_cost(
                 self.next_costs
                     .as_ref()
                     .map(|costs| costs.adps16_quantum.rop)
@@ -293,14 +383,85 @@ impl InfinityWidthRow {
             kind,
         )
     }
+
+    /// Encode one self-describing immutable work-result payload.
+    #[must_use]
+    pub fn to_work_result(&self) -> String {
+        format!(
+            "{}\n{}\n",
+            Self::WORK_RESULT_SCHEMA,
+            self.to_record(cost_log2_work_text)
+        )
+    }
+
+    /// Decode one immutable work-result payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the schema or row is malformed.
+    pub fn from_work_result(payload: &[u8]) -> Result<Self> {
+        let text = std::str::from_utf8(payload).map_err(|error| {
+            invalid_config_value("work_result", format!("result is not UTF-8: {error}"))
+        })?;
+        let mut lines = text.lines();
+        if lines.next() != Some(Self::WORK_RESULT_SCHEMA) {
+            return invalid_config("work_result", "unknown infinity-width result schema");
+        }
+        let record = lines
+            .next()
+            .ok_or_else(|| invalid_config_value("work_result", "result row is missing"))?;
+        if lines.next().is_some() {
+            return invalid_config("work_result", "result contains more than one row");
+        }
+        parse_csv_record(record)
+    }
+
+    /// Validate that a cached row satisfies exactly one planned work item.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row belongs to another item or configuration,
+    /// or when its certificates fail normal table validation.
+    pub fn validate_for_work_item(
+        &self,
+        item: InfinityWidthWorkItem,
+        config: &InfinityWidthTableConfig,
+    ) -> Result<()> {
+        if self.modulus_profile != item.modulus_profile
+            || self.d != item.d
+            || self.rank != item.rank
+            || self.coeff_linf_bound != item.coeff_linf_bound
+            || self.policy != config.policy
+            || self.profile != config.profile
+            || self.search_cap != row_search_cap(item.d, config.search_cap)?
+        {
+            return invalid_config(
+                "work_result",
+                "cached infinity-width row does not match its planned work item",
+            );
+        }
+        validate_infinity_width_rows(std::slice::from_ref(self))
+    }
 }
 
 /// Generate ring-origin rows under the ADPS16 quantum policy.
 pub fn generate_infinity_width_rows(
     config: &InfinityWidthTableConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
+    let work = infinity_width_work_items(config)?;
+    generate_rows_from_work(work, config, &config.profile.config())
+}
+
+/// Resolve the deterministic work set for one table-generation request.
+///
+/// # Errors
+///
+/// Returns an error when the request is malformed or selects no canonical
+/// coverage cells.
+pub fn infinity_width_work_items(
+    config: &InfinityWidthTableConfig,
+) -> Result<Vec<InfinityWidthWorkItem>> {
     validate_table_config(config)?;
-    let estimator_config = config.profile.config();
     let mut work = Vec::new();
     for (modulus_profile, d, bound) in canonical_scalar_origins() {
         if !config.profiles.contains(&modulus_profile)
@@ -310,7 +471,12 @@ pub fn generate_infinity_width_rows(
             continue;
         }
         for rank in 1..=config.max_rank {
-            work.push((modulus_profile, d, rank, bound));
+            work.push(InfinityWidthWorkItem {
+                modulus_profile,
+                d,
+                rank,
+                coeff_linf_bound: bound,
+            });
         }
     }
     if work.is_empty() {
@@ -319,12 +485,50 @@ pub fn generate_infinity_width_rows(
             "the requested dimensions and coefficient bounds contain no canonical SIS role cells",
         );
     }
-    generate_rows_from_work(work, config, &estimator_config)
+    work.sort_unstable();
+    Ok(work)
+}
+
+/// Evaluate one planned infinity-width work item.
+///
+/// # Errors
+///
+/// Returns an error when the item is outside the requested canonical coverage
+/// or when estimation or boundary certification fails.
+pub fn generate_infinity_width_row(
+    item: InfinityWidthWorkItem,
+    config: &InfinityWidthTableConfig,
+) -> Result<InfinityWidthRow> {
+    validate_table_config(config)?;
+    if !config.profiles.contains(&item.modulus_profile)
+        || !config.ring_dims.contains(&item.d)
+        || !config.coeff_linf_bounds.contains(&item.coeff_linf_bound)
+        || item.rank == 0
+        || item.rank > config.max_rank
+        || !canonical_scalar_origins().contains(&(
+            item.modulus_profile,
+            item.d,
+            item.coeff_linf_bound,
+        ))
+    {
+        return invalid_config(
+            "work_item",
+            "infinity-width work item is outside the requested canonical coverage",
+        );
+    }
+    max_secure_width_row(
+        item.modulus_profile,
+        item.d,
+        item.rank,
+        item.coeff_linf_bound,
+        config,
+        &config.profile.config(),
+    )
 }
 
 #[cfg(feature = "parallel")]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusProfileId, u32, u32, u64)>,
+    work: Vec<InfinityWidthWorkItem>,
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
@@ -334,10 +538,10 @@ fn generate_rows_from_work(
         .into_par_iter()
         .map(|request| {
             let row = max_secure_width_row(
-                request.0,
-                request.1,
-                request.2,
-                request.3,
+                request.modulus_profile,
+                request.d,
+                request.rank,
+                request.coeff_linf_bound,
                 config,
                 estimator_config,
             )
@@ -345,10 +549,10 @@ fn generate_rows_from_work(
                 field: "width_table_row",
                 reason: format!(
                     "profile={} d={} rank={} bound={}: {error}",
-                    request.0.label(),
-                    request.1,
-                    request.2,
-                    request.3
+                    request.modulus_profile.label(),
+                    request.d,
+                    request.rank,
+                    request.coeff_linf_bound
                 ),
             });
             report_progress(config.progress_every, &completed, total);
@@ -362,25 +566,32 @@ fn generate_rows_from_work(
 
 #[cfg(not(feature = "parallel"))]
 fn generate_rows_from_work(
-    work: Vec<(AkitaModulusProfileId, u32, u32, u64)>,
+    work: Vec<InfinityWidthWorkItem>,
     config: &InfinityWidthTableConfig,
     estimator_config: &EstimateConfig,
 ) -> Result<Vec<InfinityWidthRow>> {
     let total = work.len();
     let mut rows = Vec::with_capacity(work.len());
-    for (completed, (modulus_profile, d, rank, bound)) in work.into_iter().enumerate() {
+    for (completed, request) in work.into_iter().enumerate() {
         rows.push(
-            max_secure_width_row(modulus_profile, d, rank, bound, config, estimator_config)
-                .map_err(|error| EstimatorError::InvalidConfig {
-                    field: "width_table_row",
-                    reason: format!(
-                        "profile={} d={} rank={} bound={}: {error}",
-                        modulus_profile.label(),
-                        d,
-                        rank,
-                        bound
-                    ),
-                })?,
+            max_secure_width_row(
+                request.modulus_profile,
+                request.d,
+                request.rank,
+                request.coeff_linf_bound,
+                config,
+                estimator_config,
+            )
+            .map_err(|error| EstimatorError::InvalidConfig {
+                field: "width_table_row",
+                reason: format!(
+                    "profile={} d={} rank={} bound={}: {error}",
+                    request.modulus_profile.label(),
+                    request.d,
+                    request.rank,
+                    request.coeff_linf_bound
+                ),
+            })?,
         );
         report_progress(config.progress_every, completed + 1, total);
     }
@@ -582,7 +793,9 @@ fn max_secure_width_row(
             )
         })
         .transpose()?
-        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
+        .map(|cost| InfinityWidthPolicyCosts {
+            adps16_quantum: cost.into(),
+        });
     let next_costs = next_width
         .map(|width| {
             estimate_width(
@@ -595,7 +808,9 @@ fn max_secure_width_row(
             )
         })
         .transpose()?
-        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
+        .map(|cost| InfinityWidthPolicyCosts {
+            adps16_quantum: cost.into(),
+        });
     Ok(InfinityWidthRow {
         modulus_profile,
         d,
@@ -762,6 +977,159 @@ fn cost_log2_text(value: Option<CostValue>) -> String {
         Some(CostValue::Infinity) => "unclassified-infinity".to_string(),
         Some(CostValue::Finite(_)) => "non-finite".to_string(),
         None => String::new(),
+    }
+}
+
+fn cost_log2_work_text(value: Option<CostValue>) -> String {
+    match value {
+        Some(CostValue::Finite(cost)) if cost.log2.is_finite() => cost.log2.to_string(),
+        Some(CostValue::ProvenAboveTarget(lower_bound)) => {
+            format!("above-target:{}", lower_bound.log2)
+        }
+        Some(CostValue::Infinity) => "unclassified-infinity".to_string(),
+        Some(CostValue::Finite(_)) => "non-finite".to_string(),
+        None => String::new(),
+    }
+}
+
+fn parse_csv_record(record: &str) -> Result<InfinityWidthRow> {
+    let fields = record.split(',').collect::<Vec<_>>();
+    if fields.len() != 18 {
+        return invalid_config(
+            "work_result",
+            "infinity-width result row must contain exactly 18 fields",
+        );
+    }
+    let policy = match fields[0] {
+        "Quantum128BitADPS16" => SisSecurityPolicy::Quantum128BitADPS16,
+        _ => return invalid_config("work_result", "unknown SIS policy label"),
+    };
+    let modulus_profile = AkitaModulusProfileId::parse(fields[1])?;
+    let d = parse_field(fields[2], "d")?;
+    let rank = parse_field(fields[3], "rank")?;
+    let coeff_linf_bound = parse_field(fields[4], "coeff_linf_bound")?;
+    let max_width = parse_field(fields[5], "max_width")?;
+    let scalar_n: u64 = parse_field(fields[6], "scalar_n")?;
+    let expected_n = u64::from(d)
+        .checked_mul(u64::from(rank))
+        .ok_or_else(|| invalid_config_value("work_result", "d * rank overflowed"))?;
+    if scalar_n != expected_n {
+        return invalid_config("work_result", "scalar_n does not equal d * rank");
+    }
+    let search_cap = parse_field(fields[7], "search_cap")?;
+    let hit_cap = parse_field(fields[8], "hit_cap")?;
+    let profile = InfinityWidthProfile::parse_label(fields[9])?;
+    let target: f64 = parse_field(fields[10], "target_bits")?;
+    if target.to_bits()
+        != policy
+            .adps16_quantum_constraint()
+            .minimum_log2_rop
+            .to_bits()
+    {
+        return invalid_config("work_result", "target does not match the SIS policy");
+    }
+    let max_costs = parse_certificate(fields[11], fields[13], fields[14])?
+        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
+    let next_costs = parse_certificate(fields[12], fields[15], fields[16])?
+        .map(|adps16_quantum| InfinityWidthPolicyCosts { adps16_quantum });
+    let cutoff_hit_cap = match fields[17] {
+        "Exact" => false,
+        "AtLeast" => true,
+        _ => return invalid_config("work_result", "unknown scalar cutoff kind"),
+    };
+    if cutoff_hit_cap != hit_cap {
+        return invalid_config("work_result", "cutoff kind disagrees with hit_cap");
+    }
+    if max_width > search_cap || hit_cap != (max_width == search_cap) {
+        return invalid_config("work_result", "cutoff is inconsistent with search_cap");
+    }
+    if (max_width > 0) != max_costs.is_some() {
+        return invalid_config(
+            "work_result",
+            "accepted cutoff and accepted certificate disagree",
+        );
+    }
+    if hit_cap == next_costs.is_some() {
+        return invalid_config(
+            "work_result",
+            "rejected-successor certificate disagrees with cutoff kind",
+        );
+    }
+    Ok(InfinityWidthRow {
+        modulus_profile,
+        d,
+        rank,
+        coeff_linf_bound,
+        max_width,
+        policy,
+        search_cap,
+        hit_cap,
+        profile,
+        max_costs,
+        next_costs,
+    })
+}
+
+fn parse_certificate(
+    cost: &str,
+    beta: &str,
+    zeta: &str,
+) -> Result<Option<InfinityWidthCertificate>> {
+    if cost.is_empty() {
+        if !beta.is_empty() || !zeta.is_empty() {
+            return invalid_config(
+                "work_result",
+                "empty cost has non-empty optimizer coordinates",
+            );
+        }
+        return Ok(None);
+    }
+    let rop = if let Some(lower_bound) = cost.strip_prefix("above-target:") {
+        CostValue::ProvenAboveTarget(crate::cost::LogCost::new(parse_field(
+            lower_bound,
+            "above_target_cost",
+        )?))
+    } else if cost == "unclassified-infinity" {
+        CostValue::Infinity
+    } else if cost == "non-finite" {
+        return invalid_config("work_result", "non-finite cost is not cacheable");
+    } else {
+        CostValue::finite_log2(parse_field(cost, "cost")?)
+    };
+    let beta = parse_optional_field(beta, "beta")?;
+    let zeta = parse_optional_field(zeta, "zeta")?;
+    Ok(Some(InfinityWidthCertificate { rop, beta, zeta }))
+}
+
+fn parse_field<T>(value: &str, field: &'static str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    value
+        .parse()
+        .map_err(|error| EstimatorError::InvalidConfig {
+            field: "work_result",
+            reason: format!("invalid {field}: {error}"),
+        })
+}
+
+fn parse_optional_field<T>(value: &str, field: &'static str) -> Result<Option<T>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        parse_field(value, field).map(Some)
+    }
+}
+
+fn invalid_config_value(field: &'static str, reason: impl Into<String>) -> EstimatorError {
+    EstimatorError::InvalidConfig {
+        field,
+        reason: reason.into(),
     }
 }
 

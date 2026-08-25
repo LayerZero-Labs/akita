@@ -23,6 +23,7 @@ pub mod reduction;
 pub mod schedule_security;
 pub mod simulator;
 pub mod width_table;
+pub mod work_cache;
 
 pub use akita::{
     scalar_sis_from_ring, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide,

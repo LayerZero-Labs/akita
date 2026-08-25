@@ -217,6 +217,47 @@ cargo run -p akita-sis-estimator --release --features parallel \
   --format rust-split --profile local-minimum --progress-every 500
 ```
 
+For a long or multi-machine regeneration, give the same generator a durable
+result directory. Each independently expensive row has a content address that
+commits to the evaluator identity and its complete semantic input. Completed
+rows are written atomically and reused on later invocations; operational
+settings such as progress output and parallelism do not change their IDs.
+
+Inspect the complete plan without evaluating anything:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel \
+  --example infinity_width_table -- \
+  --results-dir /tmp/akita-sis-results --plan-only --profile local-minimum
+```
+
+Run any one-based shard. Shard runs checkpoint their selected missing rows and
+never publish a partial table:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel \
+  --example infinity_width_table -- \
+  --results-dir /tmp/akita-sis-results --shard 1/16 \
+  --profile local-minimum --progress-every 100
+```
+
+After all shards have been unioned into the same result directory, assemble
+without invoking the estimator:
+
+```bash
+cargo run -p akita-sis-estimator --release --features parallel \
+  --example infinity_width_table -- \
+  --results-dir /tmp/akita-sis-results --assemble-only \
+  --format rust-split --profile local-minimum
+```
+
+Assembly fails closed on a missing, malformed, conflicting, stale, or
+mis-keyed row, then applies the ordinary whole-table certificate and
+monotonicity validation. Changing a security-relevant evaluator behavior must
+change `INFINITY_WIDTH_EVALUATOR_ID`; existing results then remain as history
+but no longer satisfy the new plan. The result cache is an incremental build
+input, not a runtime table and not a second source of security policy.
+
 Regenerate the nine diagnostic compressed-commitment cells. The compression
 certificate contains only the **nine rank-one cells** used by the
 **1--16 KiB diagnostic ladder**. The established six cells retain their exact
@@ -254,8 +295,9 @@ cargo run --release -p akita-planner --features catalog-gen \
 ```
 
 The production `rust-split` mode requires the complete production keyspace.
-Partial jobs must use CSV output. Rows with `hit_cap=true` are lower bounds, not
-tight cutoffs. Full `rust-split` generation writes the compact runtime modules
+Partial one-shot jobs must use CSV output; resumable shard jobs write only to a
+result directory until complete assembly. Rows with `hit_cap=true` are lower
+bounds, not tight cutoffs. Full `rust-split` assembly writes the compact runtime modules
 and the canonical policy audit under
 `crates/akita-types/src/sis/generated_sis_table/`. The runtime modules store
 the Module-SIS projection `(d, B) -> widths[rank]`. `policy_audit.csv` and

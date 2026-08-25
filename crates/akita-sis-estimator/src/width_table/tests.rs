@@ -66,6 +66,68 @@ fn csv_has_no_classical_columns() {
 }
 
 #[test]
+fn work_identifiers_track_semantics_but_not_progress_output() {
+    let mut config = InfinityWidthTableConfig {
+        profiles: vec![AkitaModulusProfileId::Q32Offset99],
+        ring_dims: vec![64],
+        coeff_linf_bounds: vec![2],
+        max_rank: 1,
+        search_cap: Some(100),
+        ..InfinityWidthTableConfig::default()
+    };
+    let item = infinity_width_work_items(&config).unwrap()[0];
+    let id = item.work_id(&config).unwrap();
+    config.progress_every = Some(1);
+    assert_eq!(item.work_id(&config).unwrap(), id);
+    config.search_cap = Some(101);
+    assert_ne!(item.work_id(&config).unwrap(), id);
+}
+
+#[test]
+fn work_results_round_trip_and_bind_the_planned_item() {
+    let config = InfinityWidthTableConfig {
+        profiles: vec![AkitaModulusProfileId::Q32Offset99],
+        ring_dims: vec![64],
+        coeff_linf_bounds: vec![2],
+        max_rank: 1,
+        search_cap: Some(100),
+        ..InfinityWidthTableConfig::default()
+    };
+    let item = infinity_width_work_items(&config).unwrap()[0];
+    let row = InfinityWidthRow {
+        modulus_profile: item.modulus_profile,
+        d: item.d,
+        rank: item.rank,
+        coeff_linf_bound: item.coeff_linf_bound,
+        max_width: 7,
+        policy: config.policy,
+        search_cap: 100,
+        hit_cap: false,
+        profile: config.profile,
+        max_costs: Some(InfinityWidthPolicyCosts {
+            adps16_quantum: InfinityWidthCertificate {
+                rop: CostValue::finite_log2(130.123_456_789_012_35),
+                beta: Some(490),
+                zeta: Some(2),
+            },
+        }),
+        next_costs: Some(InfinityWidthPolicyCosts {
+            adps16_quantum: InfinityWidthCertificate {
+                rop: CostValue::finite_log2(127.0),
+                beta: Some(479),
+                zeta: Some(3),
+            },
+        }),
+    };
+    let decoded = InfinityWidthRow::from_work_result(row.to_work_result().as_bytes()).unwrap();
+    assert_eq!(decoded, row);
+    decoded.validate_for_work_item(item, &config).unwrap();
+
+    let other = InfinityWidthWorkItem { rank: 2, ..item };
+    assert!(decoded.validate_for_work_item(other, &config).is_err());
+}
+
+#[test]
 fn production_config_requires_the_certified_profile() {
     let mut config = InfinityWidthTableConfig::default();
     assert!(is_production_infinity_width_table_config(&config));

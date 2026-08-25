@@ -516,6 +516,15 @@ Generation provenance includes:
 - coefficient cell rules and role coverage;
 - search caps and review margins.
 
+Long generation may be split into deterministic, content-addressed work items.
+Each completed result is immutable and commits to the evaluator identity and
+canonical evaluator input. Partial runs may checkpoint or exchange any subset
+of these results, but they are not tables. Runtime artifacts may be assembled
+only after every work item required by the requested coverage is present and
+the complete row set passes certificate, monotonicity, and coverage validation.
+Changing security-relevant evaluator behavior changes the evaluator identity,
+so results from the prior computation cannot silently satisfy the new plan.
+
 The checked in table and audit artifact must have a shared digest. The audit
 records accepted and rejected beta and zeta witnesses for every generated ring
 origin. Role admission remains canonical runtime data and is committed
