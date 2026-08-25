@@ -45,6 +45,13 @@ pub fn zgsa_squared_norms(
     let log_q = log2_biguint(q) * std::f64::consts::LN_2;
     let log_xi = XI.ln();
     let num_q_vec = d_i - n;
+    if num_q_vec > n {
+        return Err(EstimatorError::InvalidParameter {
+            field: "identity_vectors",
+            reason: "ZGSA's symmetric transition requires at least as many identity vectors as q-vectors; the pinned lattice-estimator profile does not preserve determinant outside that domain"
+                .to_string(),
+        });
+    }
 
     let mut l_log = vec![0.0_f64; d as usize];
     for entry in &mut l_log[..num_q_vec as usize] {
@@ -136,6 +143,43 @@ mod tests {
             assert!(
                 (r0_log2 - expected_r0_log2).abs() < 1e-9,
                 "d={d} beta={beta}: actual={r0_log2}, expected={expected_r0_log2}"
+            );
+        }
+    }
+
+    #[test]
+    fn zgsa_rejects_q_vector_majority_that_breaks_volume() {
+        let q = BigUint::from(18_446_744_073_709_551_557_u64);
+        let error = zgsa_squared_norms(1_810, 786, &q, 494).unwrap_err();
+        assert!(matches!(
+            error,
+            EstimatorError::InvalidParameter {
+                field: "identity_vectors",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn zgsa_preserves_qary_volume_on_supported_profiles() {
+        let cases = [
+            (64_u32, 32_i64, BigUint::from(4_294_967_197_u64), 63_u32),
+            (
+                4_096_u32,
+                3_072_i64,
+                (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64),
+                651_u32,
+            ),
+        ];
+        for (d, identity_vectors, q, beta) in cases {
+            let profile = zgsa_squared_norms(d, identity_vectors, &q, beta).unwrap();
+            let actual_log2_volume = profile.iter().map(|value| 0.5 * value.log2()).sum::<f64>();
+            let q_vectors = i64::from(d) - identity_vectors;
+            let expected_log2_volume = q_vectors as f64 * log2_biguint(&q);
+            assert!(
+                (actual_log2_volume - expected_log2_volume).abs()
+                    <= 1e-10 * expected_log2_volume.abs().max(1.0),
+                "d={d} beta={beta}: actual={actual_log2_volume}, expected={expected_log2_volume}"
             );
         }
     }

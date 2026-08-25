@@ -52,6 +52,10 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 `0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
+Production arithmetic otherwise uses the documented `f64` backend. Integer
+small-box branch boundaries are compared exactly, with a fast log-space
+precheck away from equality. The unimplemented high-precision backend fails
+closed rather than silently executing in `f64`.
 
 The canonical role coverage has Inner/A dimensions `64, 128, 256, 512, 1024,
 2048` for q32, `64, 128, 256, 512, 1024` for q64, and `64, 128, 256, 512` for
@@ -78,6 +82,85 @@ map to the same scalar key.
 The q128 Inner/512 cell has 640 direct estimator requests: 32 coefficient
 buckets times 20 module ranks.
 
+### Quantum cost-model disposition
+
+The `0.2650` exponent is a deliberate conventional Core-SVP policy, not an
+oversight about newer asymptotic quantum sieves. BCSS23 reports
+`2^(0.2563 * beta + o(beta))` time by reusing quantum walks across collision
+searches. Akita does not promote that exponent to the production gate because
+the transfer assumes heuristic asymptotics, exponential reusable-sieve
+storage, writable QRAQM with coherent reads and writes, unit-cost or
+polylogarithmic-cost coherent access, and then a transfer from the idealized
+SVP oracle to BKZ and repeated infinity-norm short-vector generation. It is not
+a concrete fault-tolerant resource estimate.
+
+This disposition was evaluated rather than inferred by exponent rescaling. At
+commit `00bc2210877c8a8f6bbc46bdbef300f9fa437457`, the generator independently
+optimized the ADPS16 classical, ADPS16 quantum, and idealized BCSS23 models for
+6,240 table rows. It used 124 bits as the BCSS review line because
+`128 * 0.2563 / 0.2650 = 123.80...`; zero accepted ADPS16-quantum rows fell
+below that review line. Commit `6384b57756b9116127c70ea397388096b2a420da`
+then removed the non-gating BCSS implementation and audit columns as unused
+production scaffolding. Regeneration under an additional BCSS gate is therefore
+not required by this policy.
+
+Promoting BCSS23 or another idealized quantum sieve to a hard constraint
+requires a new policy identifier. The review must address finite-dimensional
+costs, quantum memory size and access, fault-tolerant implementation, the BKZ
+oracle transfer, and measured rank or proof-size impact; a smaller asymptotic
+exponent alone is insufficient. The ADPS16 paranoid `0.2075 * beta` list-size
+line is likewise not an end-to-end attack-time estimate.
+
+### Shape-model disposition
+
+LGSA models an attacker rerandomizing the q-ary basis so BKZ forgets the
+canonical q-vectors. It is the production shape because the attacker may choose
+that basis and, in the small-box branch used by the widened q64 and q128 rows,
+LGSA's clipped profile has a first Gram-Schmidt vector no longer than ordinary
+GSA at the same `(beta, zeta)`. A shorter first vector only increases the
+modeled coefficient-wise success probability. When the LGSA unit tail
+disappears, LGSA and GSA coincide exactly.
+
+The pinned Sage estimator at
+`c667a48546f140c3a5454c7503c3ca44a264cce2` was also used for an offline
+profile comparison on the proposed widened representative rows. Independent
+local beta and zeta optimization produced:
+
+| Scalar SIS row | LGSA | GSA | CN11 | CN11 after forgetting q-structure |
+|---|---:|---:|---:|---:|
+| q64, `n=1024`, `m=1810`, `B=2^41-1` | 130.910 (`beta=494`, `zeta=0`) | 130.910 | 132.235 (`beta=499`, `zeta=0`) | 132.235 |
+| q128, `n=1024`, `m=4096`, `B=2^44-1` | 172.515 (`beta=651`, `zeta=1`) | 172.515 | 173.045 (`beta=653`, `zeta=0`) | 173.045 |
+
+Thus LGSA is the cheapest modeled attack among those determinant-preserving
+profiles on both representative rows. CN11 remains an offline audit oracle: a
+single full local q128 optimization took about 85 seconds while its
+forget-q-structure variant took about 107 seconds on the audit machine, making
+either inappropriate for the production table sweep.
+
+The pinned ZGSA implementation is not a valid counterexample on arbitrary
+unbalanced shapes. Its symmetric transition preserves determinant only when
+there are at least as many identity vectors as q-vectors. On the q64 row above,
+the profile loses 5,485.85 bits of log2 lattice volume at `beta=494` and creates
+a spurious 90.895-bit result. The Rust compatibility path must reject that
+domain rather than treat it as an attack. On supported ZGSA inputs, generated
+profiles must preserve `log2(det Lambda) = n * log2(q)`.
+
+The probability regime is also defined on the reduced instance. After the
+attacker projects away `zeta` coordinates, the active dimension is
+`d_eff = d - zeta`; therefore the small-box test is
+`sqrt(d_eff) * B <= q`, not `sqrt(d) * B <= q`. The pinned Sage implementation
+uses the original dimension at this branch. That is not a conservative choice
+in general: an audit of 2,562 representative q32 cells found 35 cells where
+the original-dimension branch reported a lower trial probability and hence a
+higher attack cost. For example, `n=1024`, `d=65537`, `B=2^24-1`,
+`beta=343`, and `zeta=57345` has `d_eff=8192` and a corrected quantum attack
+cost of 118.916 bits. A separate audit of the 40 current exact q32 table
+boundaries exposed to this branch change found no accepted/rejected boundary
+reversal. The tables must nevertheless be regenerated after the search and
+reach changes because that boundary sample is not a replacement for full
+generation and certification. For integer production bounds, the corrected
+branch comparison falls back to exact integer arithmetic at the boundary.
+
 ## Intent
 
 ### Goal
@@ -100,13 +183,30 @@ norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
 
 Base-table generation uses `local-minimum` discovery, then certifies its
 accepted boundary and immediate rejected successor with proven-pruned beta and
-full-domain zeta search. The beta search visits values from 40 through the
-capped Euclidean baseline and stops once the monotone ADPS16 reduction-cost
-lower bound exceeds the best complete candidate. For fixed beta under ADPS16/LGSA,
-the modeled attack minimum occurs at the complete-profile transition or its
-immediate predecessor, with the zero-coordinate boundary represented by
-`zeta = 0` and `zeta = 1`. Checking those candidates covers the wide D512
-domain without changing its width policy.
+full-valid-domain zeta search. The valid tall q-ary domain is
+`0 <= zeta < d - n`; an effective dimension `d - zeta <= n` is not an SIS
+lattice instance priced by this attack model. The decision threshold is an
+explicit estimator configuration value supplied by the policy profile. The
+beta search visits values from 40 through the capped Euclidean baseline and
+stops once the monotone ADPS16 reduction-cost lower bound exceeds the best
+complete candidate. When the best visited attack and the lower bound for every
+unvisited beta both exceed 128 bits, the estimator returns a classified
+above-target result instead of representing the much larger exact cost. For
+`B > 1`, the global infinity estimate explicitly takes the minimum with that
+ordinary Euclidean SIS attack: any vector with `L2 <= B` also has
+`L-infinity <= B`. Thus the Euclidean beta is both included as a real attack
+and provides the monotone upper endpoint for the beta sweep; it is not merely
+used as a heuristic search cutoff. For `B <= 1`, Euclidean dimension optimization is
+undefined. The separate diagnostic compression table contains the production
+`B = 1` instances of this edge case; those cells omit the Euclidean candidate
+without substituting `B = 2` and sweep the full supported beta range instead.
+For fixed beta under ADPS16/LGSA,
+the search scans every effective dimension before the profile stabilizes; the
+modeled stable tail adds only unit vectors and is minimized at one of its two
+endpoints within either probability regime. If the active-dimension small-box
+condition changes inside that tail, the search also checks the two dimensions
+straddling the transition. This covers the wide D512 domain without changing
+its width policy.
 
 A candidate passes only when the certified estimate returns a finite score or
 an explicit above-target lower bound. A finite score or represented lower bound
@@ -122,6 +222,11 @@ infinite result stops generation. If the estimator can prove that a cost is
 above the target without representing the full value, it returns the distinct
 `CostValue::ProvenAboveTarget` result with a supporting lower bound. That result
 may pass only when its bound is at least 128 bits.
+
+The scalar cutoff search starts at the first tall Module-SIS geometry
+`width = rank + 1`. If that instance fails, the row records cutoff zero rather
+than assigning an attack cost to a square or wide matrix. If it passes, smaller
+widths inherit security from the certified tall instance by column restriction.
 
 For each scalar key `(modulus_profile, B, n)`, store the largest certified `m`
 within the search range. Security cannot increase as `m` grows because an
@@ -144,6 +249,13 @@ The policy ID names the complete acceptance rule. It includes:
 Any change to the hard model that can change whether the same scalar SIS cell
 passes requires a new policy ID and regenerated artifacts. A change to the
 search profile for a table extension requires a new table digest.
+
+The active-dimension correction, complete pre-stable search, and explicit
+Euclidean candidate in this hardening patch can change that decision. The next
+full regeneration must therefore introduce a revisioned runtime policy ID and
+new table digest, then regenerate every dependent schedule in the same atomic
+cutover. A pre-regeneration estimator commit is intentionally not regeneration
+evidence for the currently identified checked-in table.
 
 The table digest is separate. It commits to the exact modulus profiles, role
 coverage, coefficient bound cells, rank limits, search caps, certificates, and
@@ -582,6 +694,16 @@ Durable narrative belongs in `book/src/how/security.md`.
 
 - ADPS16 reduction and quantum cost implementation in the pinned
   `third_party/lattice-estimator` checkout used by the estimator goldens.
+- Bonnetain, Chailloux, Schrottenloher, Shen, *Finding Many Collisions via
+  Reusable Quantum Walks*, [IACR ePrint 2022/676](https://eprint.iacr.org/2022/676).
+- Cho, Hhan, Kim, Lee, Shen, *Does Quantum Lattice Sieving Require Quantum
+  RAM?*, [IACR ePrint 2024/1700](https://eprint.iacr.org/2024/1700).
+- Ducas et al., *CRYSTALS-Dilithium*,
+  [round-3 specification](https://pq-crystals.org/dilithium/data/dilithium-specification-round3-20210208.pdf),
+  Appendix C.3.
+- Chen, Nguyen, *BKZ 2.0: Better Lattice Security Estimates*, ASIACRYPT 2011.
+- Ducas, van Woerden, *NTRU Fatigue*,
+  [IACR ePrint 2021/999](https://eprint.iacr.org/2021/999).
 - Langlois, Stehle, *Worst Case to Average Case Reductions for Module Lattices*,
   [IACR ePrint 2012/090](https://eprint.iacr.org/2012/090).
 - `crates/akita-sis-estimator/` — Rust infinity estimator profiles and

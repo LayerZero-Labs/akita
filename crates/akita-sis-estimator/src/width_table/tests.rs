@@ -32,7 +32,7 @@ fn certificate_search_brackets_distant_boundaries() {
         (1_000_000, 3, 1_000_000),
     ] {
         let mut probes = 0;
-        let result = certified_boundary_from_hint(cap, hint, |value| {
+        let result = certified_boundary_from_hint(1, cap, hint, |value| {
             probes += 1;
             Ok(value <= boundary)
         })
@@ -45,6 +45,13 @@ fn certificate_search_brackets_distant_boundaries() {
             "hint={hint} boundary={boundary} probes={probes}"
         );
     }
+}
+
+#[test]
+fn certificate_search_respects_nonzero_start() {
+    let result = certified_boundary_from_hint(7, 32, 20, |value| Ok(value <= 5)).unwrap();
+    assert_eq!(result.max_value, 0);
+    assert_eq!(result.next_value, Some(7));
 }
 
 #[test]

@@ -93,8 +93,10 @@ pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
 /// Search domain recorded for production boundary certificates.
 pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
     "proven-pruned beta from 40 to the capped Euclidean baseline, ",
-    "with ADPS16 lower-bound early stop; for each visited beta, ",
-    "LGSA complete-profile transition and predecessor plus zeta 0 and 1"
+    "with ADPS16 best-cost and 128-bit decision lower-bound early stops; ",
+    "for each visited beta, ",
+    "every pre-stable LGSA dimension plus both stable-tail endpoints, ",
+    "restricted to the tall q-ary domain 0 <= zeta < d - n"
 );
 
 /// Optimizer profile used to discover and certify scalar boundaries.
@@ -527,12 +529,10 @@ fn max_secure_width_row(
     estimator_config: &EstimateConfig,
 ) -> Result<InfinityWidthRow> {
     let search_cap = row_search_cap(d, table_config.search_cap)?;
+    let first_tall_width = u64::from(rank).saturating_add(1);
     let policy = table_config.policy;
     let target = policy.adps16_quantum_constraint().minimum_log2_rop;
     let discovery = |width| {
-        if width < u64::from(rank) {
-            return Ok(true);
-        }
         let cost = estimate_width(
             modulus_profile,
             d,
@@ -543,7 +543,7 @@ fn max_secure_width_row(
         )?;
         secure_or_error(cost.rop, target)
     };
-    let discovered = max_true_in_prefix(1, search_cap, discovery)?;
+    let discovered = max_true_in_prefix(first_tall_width, search_cap, discovery)?;
     let (max_width, next_width, hit_cap) =
         if table_config.profile == InfinityWidthProfile::LocalMinimum {
             certify_boundary(
@@ -551,6 +551,7 @@ fn max_secure_width_row(
                 d,
                 rank,
                 coeff_linf_bound,
+                first_tall_width,
                 search_cap,
                 discovered.max_value,
                 &EstimateConfig::akita_infinity_table(),
@@ -616,12 +617,13 @@ fn certify_boundary(
     d: u32,
     rank: u32,
     bound: u64,
+    start: u64,
     cap: u64,
     discovered: u64,
     config: &EstimateConfig,
     target: f64,
 ) -> Result<(u64, Option<u64>, bool)> {
-    let result = certified_boundary_from_hint(cap, discovered, |width| {
+    let result = certified_boundary_from_hint(start, cap, discovered, |width| {
         let cost = estimate_width(modulus_profile, d, rank, width, bound, config)?;
         secure_or_error(cost.rop, target)
     })?;

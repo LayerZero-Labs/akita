@@ -10,6 +10,7 @@ pub(super) struct PrefixSearchResult {
 }
 
 pub(super) fn certified_boundary_from_hint<F>(
+    start: u64,
     cap: u64,
     hint: u64,
     mut predicate: F,
@@ -19,13 +20,13 @@ where
 {
     // The predicate must be true on one prefix and false thereafter. This
     // search is not valid for non-monotone projected security rows.
-    if cap == 0 {
+    if start == 0 || cap < start {
         return Err(EstimatorError::InvalidConfig {
-            field: "search_cap",
-            reason: "search cap must be positive".to_string(),
+            field: "search range",
+            reason: "must satisfy 0 < start <= cap".to_string(),
         });
     }
-    let hint = hint.clamp(1, cap);
+    let hint = hint.clamp(start, cap);
     if predicate(hint)? {
         if hint == cap {
             return Ok(PrefixSearchResult {
@@ -62,10 +63,10 @@ where
         }
     }
 
-    if hint == 1 {
+    if hint == start {
         return Ok(PrefixSearchResult {
             max_value: 0,
-            next_value: Some(1),
+            next_value: Some(start),
             hit_cap: false,
         });
     }
@@ -80,14 +81,14 @@ where
     let mut high = previous;
     let mut step = 1u64;
     loop {
-        let low = high.saturating_sub(step).max(1);
+        let low = high.saturating_sub(step).max(start);
         if predicate(low)? {
             return binary_boundary(low, high, predicate);
         }
-        if low == 1 {
+        if low == start {
             return Ok(PrefixSearchResult {
                 max_value: 0,
-                next_value: Some(1),
+                next_value: Some(start),
                 hit_cap: false,
             });
         }

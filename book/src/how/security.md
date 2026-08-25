@@ -21,18 +21,41 @@ where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. The beta search checks values
-from 40 through the capped Euclidean baseline and stops once the monotone
-ADPS16 lower bound exceeds the best complete candidate. For each visited beta,
-the LGSA profile transition proves that the checked zeta endpoints cover the
-full zeta domain. A lookup for an unsupported policy, exact modulus profile,
-role, or scalar cell fails closed.
+above-target lower bound of at least 128 bits. The decision threshold is an
+explicit estimator configuration value supplied by the policy profile. The
+beta search checks values from 40 through the capped Euclidean baseline and
+stops once the monotone ADPS16 lower bound exceeds the best complete candidate.
+It also returns a classified above-target result once both the best visited
+attack and the lower bound for all unvisited beta values exceed 128 bits. For
+`B > 1`, the global infinity estimate includes the Euclidean baseline
+explicitly because `L2 <= B` implies `L-infinity <= B`; the baseline is
+therefore an attack, not only a search cap. The diagnostic compression cells
+with `B = 1` are the production instance of the `B <= 1` edge case, where this
+model has no defined Euclidean-dimension optimization. They do not substitute
+another bound: they omit that attack and sweep through the estimator's full
+supported beta range. For each visited beta,
+the optimizer exhausts every valid effective dimension before the LGSA profile
+stabilizes, checks both endpoints of the stable unit-vector tail, and checks
+both sides of any probability-regime transition inside that tail. The full
+valid tall-lattice domain is `0 <= zeta < d - n`. Fixed and exhaustive estimates
+reject an effective dimension `d - zeta <= n` instead of pricing a non-tall
+q-ary embedding. Width generation starts at the first tall ring width
+`width = rank + 1`. Narrower widths inherit a cutoff only when that tall
+instance is certified; if it already fails, the row emits cutoff zero and
+runtime must choose a higher rank. A lookup for an unsupported policy, exact
+modulus profile, role, or scalar cell fails closed.
 
 The checked-in policy table may use `local-minimum` only to discover a candidate
 boundary. Every emitted boundary and its immediate rejected successor are
 certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
+
+The estimator hardening described above changes the acceptance model. Its
+runtime policy-ID revision and table digest update must land atomically with
+the next full SIS-table and dependent-schedule regeneration. Until that
+cutover, the checked-in generated artifacts retain their existing identity and
+do not constitute regeneration evidence for the hardened estimator.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These
@@ -92,6 +115,28 @@ estimator at verification time.
 The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
+
+The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
+previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
+independently optimized diagnostic over 6,240 generated rows. Its reusable
+quantum walks assume exponential sieve storage and writable coherent QRAQM;
+zero accepted ADPS16 rows fell below the corresponding 124-bit review line.
+The idealized model therefore remains documented sensitivity evidence rather
+than a production constraint.
+
+LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
+BKZ forgets its canonical q-vectors. On representative widened q64 and q128
+rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
+determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
+ZGSA compatibility path rejects q-vector-majority profiles because the pinned
+generalization does not preserve their lattice determinant.
+
+Infinity-norm probabilities are priced on the coordinates that remain after
+the attacker's `zeta` projection. In particular, the small-box condition uses
+`sqrt(d - zeta) * B <= q`. Using the original dimension can select the wrong
+probability formula and overstate security; this active-dimension rule is
+regression tested, and integer production bounds use an exact boundary
+comparison. Requests for the unimplemented high-precision backend fail closed.
 
 The complete decision, assumptions, claim language, certificates, and
 implementation acceptance criteria live in

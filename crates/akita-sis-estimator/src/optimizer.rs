@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use crate::{
     config::{EstimateConfig, OptimizerConfig, ReductionCostModel, SearchMode, ShapeModel},
-    cost::{CostValue, LatticeCost},
+    cost::{CostValue, LatticeCost, LogCost},
     error::{EstimatorError, Result},
-    lattice::cost_infinity_fixed,
+    lattice::{cost_infinity_fixed, infinity_lattice_domain, infinity_uses_small_box},
     math::{log2_biguint, log2_positive},
     params::{Bound, SisParameters},
     reduction::{
@@ -15,7 +15,7 @@ use crate::{
     },
     simulator::lgsa_stable_dimension,
 };
-use num_traits::{One, ToPrimitive};
+use num_traits::ToPrimitive;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -24,7 +24,7 @@ const SAGE_SANITY_MAX_LOG2: f64 = 10_000.0;
 
 /// Estimate the best infinity-norm attack under the configured optimizer.
 pub fn estimate_infinity(params: &SisParameters, config: &EstimateConfig) -> Result<LatticeCost> {
-    let cost = match config.optimizer {
+    let mut cost = match config.optimizer {
         OptimizerConfig::Fixed { beta, zeta } => cost_infinity_fixed(beta, params, zeta, config),
         OptimizerConfig::OptimizeBeta { zeta, beta } => {
             cost_zeta_with_mode(zeta, beta, params, config)
@@ -33,6 +33,19 @@ pub fn estimate_infinity(params: &SisParameters, config: &EstimateConfig) -> Res
             cost_zeta_search(beta, zeta, params, config)
         }
     }?;
+    // The ordinary L2 attack is also a valid L-infinity attack at the same
+    // bound. Include it explicitly when it is defined; this makes the beta
+    // cap derived from that baseline a complete upper-bound argument rather
+    // than relying on the coordinate-probability heuristic to rediscover it.
+    if matches!(config.optimizer, OptimizerConfig::OptimizeZeta { .. })
+        && matches!(config.red_cost_model, ReductionCostModel::Adps16 { .. })
+        && params.length_bound.log2() > 0.0
+    {
+        let euclidean = crate::euclidean::cost_euclidean(params, config)?;
+        if cost_lt(&euclidean, &cost) {
+            cost = euclidean;
+        }
+    }
     Ok(sage_sanity_check(cost))
 }
 
@@ -69,7 +82,12 @@ fn cost_zeta_search(
     params: &SisParameters,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
-    let zeta_stop = zeta_search_stop(params, config)?;
+    let (lattice_dimension, valid_zeta_stop) = infinity_lattice_domain(params, config)?;
+    let zeta_stop = if zeta_mode == SearchMode::PythonLocalMinimum {
+        lattice_dimension
+    } else {
+        valid_zeta_stop
+    };
     match zeta_mode {
         SearchMode::PythonLocalMinimum => {
             let best = local_minimum(0, zeta_stop, 1, |zeta| {
@@ -105,6 +123,13 @@ fn proven_pruned_zeta_search(
     params: &SisParameters,
     config: &EstimateConfig,
 ) -> Result<LatticeCost> {
+    let target_log2_rop =
+        config
+            .proven_pruned_target_log2_rop
+            .ok_or(EstimatorError::InvalidConfig {
+                field: "proven_pruned_target_log2_rop",
+                reason: "proven-pruned zeta search requires a decision target".to_string(),
+            })?;
     let adps16_mode = match config.red_cost_model {
         ReductionCostModel::Adps16 { mode } => mode,
         _ => {
@@ -124,9 +149,11 @@ fn proven_pruned_zeta_search(
         });
     }
 
-    let m = explicit_m(params)?;
-    let lattice_dimension = config.lattice_dimension.unwrap_or(m).min(m);
+    let (lattice_dimension, _) = infinity_lattice_domain(params, config)?;
     let beta_stop = beta_search_stop(params, config)?;
+    if beta_stop <= MIN_BETA {
+        return cost_infinity_fixed(MIN_BETA, params, 0, config);
+    }
     let beta_start = MIN_BETA.min(beta_stop);
     let mut best = None::<LatticeCost>;
 
@@ -134,44 +161,112 @@ fn proven_pruned_zeta_search(
         // ADPS16's fixed-beta reduction price is a lower bound on the total
         // attack cost. Once it exceeds the best complete candidate, every
         // larger beta is provably unable to win.
+        if let Some(current) = best.as_ref() {
+            let reduction_lower_bound = adps16_log2_cost(beta, adps16_mode);
+            let current_cost = cost_order(current.rop);
+            if reduction_lower_bound > current_cost {
+                break;
+            }
+            // Width-table certification needs only the 128-bit decision. If
+            // both the best visited attack and the lower bound for every
+            // unvisited beta clear the target, classify the global result
+            // without spending minutes representing a much larger exact cost.
+            if reduction_lower_bound > target_log2_rop && current_cost > target_log2_rop {
+                let mut classified = current.clone();
+                classified.rop = CostValue::ProvenAboveTarget(LogCost::new(
+                    reduction_lower_bound.min(current_cost),
+                ));
+                classified.red = None;
+                classified.sieve = None;
+                classified.beta = Some(beta);
+                classified.eta = None;
+                classified.zeta = None;
+                classified.d = lattice_dimension;
+                classified.prob = None;
+                classified.repetitions = None;
+                return Ok(classified);
+            }
+        }
+        // Before LGSA stabilizes, the modeled cost can have an interior
+        // minimum, so scan every valid effective dimension. After the stable
+        // transition, added coordinates are unit vectors: the Dilithium branch
+        // is constant, while the small-box branch has a single interior maximum
+        // in attack cost. Its minimum is therefore at a stable-tail endpoint.
+        let candidate = proven_pruned_fixed_beta_cost(beta, params, config, lattice_dimension)?;
         if best
             .as_ref()
-            .is_some_and(|current| adps16_log2_cost(beta, adps16_mode) > cost_order(current.rop))
+            .is_none_or(|current| cost_leq(&candidate, current))
         {
-            break;
-        }
-        // For fixed beta, LGSA has two dimension regimes. Before the stable
-        // dimension its q-ary/GSA prefix grows to the complete profile; after
-        // it, added coordinates are unit vectors. In the first regime the
-        // modeled attack cost is minimized at the complete-profile endpoint.
-        // In the stable regime the Dilithium branch is constant, while the
-        // Matzov branch has a single interior maximum in attack cost, so its
-        // minimum is at one of the two endpoints. Therefore the stable
-        // transition and its immediate predecessor, together with zeta=0 and
-        // zeta=1, cover the complete zeta domain for each beta. The predecessor
-        // points retain the q-vector transition used by lattice-estimator.
-        let stable_dimension = lgsa_stable_dimension(u64::from(params.n), &params.q, beta)?
-            .clamp(u64::from(beta), lattice_dimension);
-        let before_stable = stable_dimension.saturating_sub(1).max(u64::from(beta));
-        let before_full = lattice_dimension.saturating_sub(1).max(u64::from(beta));
-        for effective_dimension in [
-            before_stable,
-            stable_dimension,
-            before_full,
-            lattice_dimension,
-        ] {
-            let zeta = lattice_dimension - effective_dimension;
-            let candidate = cost_infinity_fixed(beta, params, zeta, config)?;
-            if best
-                .as_ref()
-                .is_none_or(|current| cost_leq(&candidate, current))
-            {
-                best = Some(candidate);
-            }
+            best = Some(candidate);
         }
     }
 
     best.ok_or_else(empty_range_error("zeta"))
+}
+
+fn proven_pruned_fixed_beta_cost(
+    beta: u32,
+    params: &SisParameters,
+    config: &EstimateConfig,
+    lattice_dimension: u64,
+) -> Result<LatticeCost> {
+    let minimum_effective_dimension = u64::from(params.n).saturating_add(1).max(u64::from(beta));
+    let stable_dimension = lgsa_stable_dimension(u64::from(params.n), &params.q, beta)?
+        .clamp(minimum_effective_dimension, lattice_dimension);
+    let mut best = None::<LatticeCost>;
+    for effective_dimension in minimum_effective_dimension..=stable_dimension {
+        let candidate = cost_infinity_fixed(
+            beta,
+            params,
+            lattice_dimension - effective_dimension,
+            config,
+        )?;
+        if best
+            .as_ref()
+            .is_none_or(|current| cost_leq(&candidate, current))
+        {
+            best = Some(candidate);
+        }
+    }
+    let mut stable_tail_candidates = vec![
+        lattice_dimension.saturating_sub(1).max(stable_dimension),
+        lattice_dimension,
+    ];
+    if infinity_uses_small_box(params, stable_dimension)?
+        && !infinity_uses_small_box(params, lattice_dimension)?
+    {
+        // The active-dimension probability branch can change inside the LGSA
+        // unit-vector tail. The two formulas need not meet continuously, so
+        // retain the points immediately on both sides of that transition.
+        let mut low = stable_dimension;
+        let mut high = lattice_dimension;
+        while low + 1 < high {
+            let middle = low + (high - low) / 2;
+            if infinity_uses_small_box(params, middle)? {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        stable_tail_candidates.extend([low, high]);
+    }
+    stable_tail_candidates.sort_unstable();
+    stable_tail_candidates.dedup();
+    for effective_dimension in stable_tail_candidates {
+        let candidate = cost_infinity_fixed(
+            beta,
+            params,
+            lattice_dimension - effective_dimension,
+            config,
+        )?;
+        if best
+            .as_ref()
+            .is_none_or(|current| cost_leq(&candidate, current))
+        {
+            best = Some(candidate);
+        }
+    }
+    best.ok_or_else(empty_range_error("effective_dimension"))
 }
 
 fn cost_zeta_with_mode(
@@ -424,18 +519,6 @@ fn explicit_m(params: &SisParameters) -> Result<u64> {
     })
 }
 
-fn zeta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u64> {
-    let m = explicit_m(params)?;
-    let lattice_dimension = config.lattice_dimension.unwrap_or(m);
-    if lattice_dimension == 0 {
-        return Err(EstimatorError::InvalidParameter {
-            field: "lattice_dimension",
-            reason: "zeta search requires a positive lattice dimension".to_string(),
-        });
-    }
-    Ok(lattice_dimension.min(m))
-}
-
 fn beta_search_stop(params: &SisParameters, config: &EstimateConfig) -> Result<u32> {
     euclidean_baseline_beta(params, config).map(|beta| beta.saturating_add(1))
 }
@@ -462,7 +545,7 @@ fn euclidean_baseline_beta(params: &SisParameters, config: &EstimateConfig) -> R
 fn euclidean_default_dimension(params: &SisParameters, m: u64) -> Result<u64> {
     let length_bound = euclidean_baseline_length_bound(&params.length_bound)?;
     let log_bound = log2_positive(length_bound);
-    if !log_bound.is_finite() || log_bound == 0.0 {
+    if !log_bound.is_finite() || log_bound <= 0.0 {
         return Ok(m);
     }
 
@@ -486,9 +569,7 @@ fn euclidean_target_delta(params: &SisParameters, d: u64, length_bound: f64) -> 
 
 fn euclidean_baseline_length_bound(bound: &Bound) -> Result<f64> {
     let value = match bound {
-        Bound::Integer(value) if value.is_one() => 2.0,
         Bound::Integer(value) => value.to_f64().unwrap_or(f64::INFINITY),
-        Bound::Float(value) if *value == 1.0 => 2.0,
         Bound::Float(value) => *value,
         Bound::Rational {
             numerator,
@@ -552,6 +633,7 @@ mod tests {
                 beta: SearchMode::Exhaustive,
                 zeta,
             },
+            proven_pruned_target_log2_rop: (zeta == SearchMode::ProvenPruned).then_some(128.0),
             ..EstimateConfig::default()
         }
     }
@@ -589,14 +671,17 @@ mod tests {
     }
 
     #[test]
-    fn proven_pruned_matches_finite_exhaustive_domains() {
+    fn proven_pruned_matches_full_valid_exhaustive_domains() {
         let cases = [
             (32, akita_q32(), 384, 2),
+            (32, akita_q32(), 384, 1_000_000_000),
             (64, akita_q32(), 768, 127),
             (64, akita_q64(), 768, 32_767),
+            (64, akita_q64(), 768, (1_u64 << 62) - 1),
             (128, akita_q64(), 1_024, 1_048_575),
             (64, akita_q128(), 768, 67_108_863),
             (128, akita_q128(), 1_024, 536_870_911),
+            (192, akita_q128(), 2_048, 255),
         ];
         for (n, q, m, bound) in cases {
             let params =
@@ -606,11 +691,158 @@ mod tests {
                 estimate_infinity(&params, &exhaustive_config(SearchMode::Exhaustive)).unwrap();
             let pruned =
                 estimate_infinity(&params, &exhaustive_config(SearchMode::ProvenPruned)).unwrap();
-            assert_eq!(
-                cost_order(pruned.rop),
-                cost_order(exhaustive.rop),
-                "n={n} m={m} bound={bound}: pruned={pruned:?}, exhaustive={exhaustive:?}"
-            );
+            match pruned.rop {
+                CostValue::ProvenAboveTarget(lower_bound) => assert!(
+                    lower_bound.log2 >= 128.0 && cost_order(exhaustive.rop) >= lower_bound.log2,
+                    "n={n} m={m} bound={bound}: pruned={pruned:?}, exhaustive={exhaustive:?}"
+                ),
+                _ => assert_eq!(
+                    cost_order(pruned.rop),
+                    cost_order(exhaustive.rop),
+                    "n={n} m={m} bound={bound}: pruned={pruned:?}, exhaustive={exhaustive:?}"
+                ),
+            }
         }
+    }
+
+    #[test]
+    fn proven_pruned_fixed_beta_search_matches_full_valid_zeta_domains() {
+        let cases = [
+            (32, akita_q32(), 384, 15),
+            (32, akita_q32(), 384, 1_000_000_000),
+            (64, akita_q64(), 512, 255),
+            (64, akita_q64(), 512, (1_u64 << 62) - 1),
+            (128, akita_q64(), 1_024, 15),
+            (64, akita_q128(), 768, u32::MAX as u64),
+            (192, akita_q128(), 2_048, (1_u64 << 44) - 1),
+        ];
+        for (n, q, m, bound) in cases {
+            let params =
+                SisParameters::try_new(n, q, Some(m), Bound::from_u64(bound), SisNorm::Infinity)
+                    .unwrap();
+            let config = exhaustive_config(SearchMode::Exhaustive);
+            let (lattice_dimension, zeta_stop) = infinity_lattice_domain(&params, &config).unwrap();
+            for beta in [40, 41, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1_024]
+                .into_iter()
+                .filter(|beta| u64::from(*beta) <= lattice_dimension)
+            {
+                let exhaustive =
+                    best_in_range(0, exhaustive_zeta_stop(zeta_stop).unwrap(), |zeta| {
+                        cost_infinity_fixed(beta, &params, u64::from(zeta), &config)
+                    })
+                    .unwrap()
+                    .unwrap();
+                let pruned =
+                    proven_pruned_fixed_beta_cost(beta, &params, &config, lattice_dimension)
+                        .unwrap();
+                assert_eq!(
+                    cost_order(pruned.rop),
+                    cost_order(exhaustive.rop),
+                    "n={n} m={m} bound={bound} beta={beta}: pruned={pruned:?}, exhaustive={exhaustive:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn proven_pruned_checks_probability_transition_inside_stable_tail() {
+        let beta = 343;
+        let lattice_dimension = 100_000;
+        let params = SisParameters::try_new(
+            1_024,
+            akita_q32(),
+            Some(lattice_dimension),
+            Bound::from_u64((1_u64 << 24) - 1),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        let config = exhaustive_config(SearchMode::Exhaustive);
+        let stable_dimension = lgsa_stable_dimension(u64::from(params.n), &params.q, beta).unwrap();
+        assert!(stable_dimension < lattice_dimension);
+        assert!(infinity_uses_small_box(&params, stable_dimension).unwrap());
+        assert!(!infinity_uses_small_box(&params, lattice_dimension).unwrap());
+
+        let (_, zeta_stop) = infinity_lattice_domain(&params, &config).unwrap();
+        let exhaustive = best_in_range(0, exhaustive_zeta_stop(zeta_stop).unwrap(), |zeta| {
+            cost_infinity_fixed(beta, &params, u64::from(zeta), &config)
+        })
+        .unwrap()
+        .unwrap();
+        let pruned =
+            proven_pruned_fixed_beta_cost(beta, &params, &config, lattice_dimension).unwrap();
+
+        assert_eq!(cost_order(pruned.rop), cost_order(exhaustive.rop));
+        assert!((65_536..=65_537).contains(&pruned.d), "pruned={pruned:?}");
+    }
+
+    #[test]
+    fn capped_infinity_search_does_not_exceed_finite_euclidean_baseline() {
+        let cases = [
+            (32, akita_q32(), 384, 15_u64),
+            (32, akita_q32(), 384, (1_u64 << 24) - 1),
+            (32, akita_q32(), 384, 1_000_000_000),
+            (64, akita_q64(), 512, (1_u64 << 32) - 1),
+            (64, akita_q64(), 512, (1_u64 << 40) - 1),
+            (64, akita_q128(), 768, (1_u64 << 44) - 1),
+        ];
+        for (n, q, m, bound) in cases {
+            let params =
+                SisParameters::try_new(n, q, Some(m), Bound::from_u64(bound), SisNorm::Infinity)
+                    .unwrap();
+            let config = exhaustive_config(SearchMode::ProvenPruned);
+            let infinity = estimate_infinity(&params, &config).unwrap();
+            let euclidean = crate::euclidean::cost_euclidean(&params, &config).unwrap();
+            if euclidean.rop != CostValue::Infinity {
+                assert!(
+                    cost_order(infinity.rop) <= cost_order(euclidean.rop),
+                    "n={n} m={m} bound={bound}: infinity={infinity:?}, euclidean={euclidean:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unit_infinity_bound_uses_the_full_supported_beta_range() {
+        let params = SisParameters::try_new(
+            32,
+            akita_q32(),
+            Some(u64::from(BETA_SEARCH_MAX) + 1),
+            Bound::from_u64(1),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        let config = exhaustive_config(SearchMode::ProvenPruned);
+
+        assert_eq!(
+            euclidean_baseline_beta(&params, &config).unwrap(),
+            BETA_SEARCH_MAX
+        );
+        assert_eq!(
+            beta_search_stop(&params, &config).unwrap(),
+            BETA_SEARCH_MAX + 1
+        );
+
+        let subunit_params = SisParameters::try_new(
+            32,
+            akita_q32(),
+            Some(u64::from(BETA_SEARCH_MAX) + 1),
+            Bound::Float(0.5),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        assert_eq!(
+            euclidean_baseline_beta(&subunit_params, &config).unwrap(),
+            BETA_SEARCH_MAX
+        );
+
+        let small_params = SisParameters::try_new(
+            32,
+            akita_q32(),
+            Some(64),
+            Bound::from_u64(1),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        assert!(estimate_infinity(&small_params, &config).is_ok());
     }
 }

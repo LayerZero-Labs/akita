@@ -212,28 +212,16 @@ mod tests {
     use super::*;
     use num_bigint::BigUint;
 
-    #[test]
-    fn lgsa_profile_has_expected_length() {
-        let q = BigUint::from(31u32);
-        let profile = lgsa_squared_norms(12, 6, &q, 3).unwrap();
-        assert_eq!(profile.len(), 12);
-        assert!(profile
-            .iter()
-            .all(|value| value.is_finite() && *value > 0.0));
-    }
-
-    #[test]
-    fn lgsa_summary_matches_dense_profile_observables() {
-        let q = BigUint::from(4_294_967_197u64);
-        let profile = lgsa_squared_norms(96, 64, &q, 40).unwrap();
-        let summary = lgsa_summary(96, 64, &q, 40).unwrap();
+    fn assert_summary_matches_dense(d: u32, n: u32, q: &BigUint, beta: u32) {
+        let profile = lgsa_squared_norms(d, i64::from(d - n), q, beta).unwrap();
+        let summary = lgsa_summary(u64::from(d), i128::from(d - n), q, beta).unwrap();
         assert!((profile[0] - summary.first_squared_norm).abs() <= 1e-8 * profile[0]);
         assert!(
             (profile[0].sqrt().log2() - summary.first_log2_norm).abs()
                 <= 1e-8 * profile[0].sqrt().log2().abs().max(1.0)
         );
 
-        let q_f = log2_biguint(&q).exp2();
+        let q_f = log2_biguint(q).exp2();
         let idx_start = if (profile[0].sqrt() - q_f).abs() < 1e-8 {
             profile
                 .iter()
@@ -256,5 +244,71 @@ mod tests {
             (profile[idx_start].sqrt().log2() - summary.log2_vector_length_at_idx_start).abs()
                 <= 1e-8 * profile[idx_start].sqrt().log2().abs().max(1.0)
         );
+    }
+
+    #[test]
+    fn lgsa_profile_has_expected_length() {
+        let q = BigUint::from(31u32);
+        let profile = lgsa_squared_norms(12, 6, &q, 3).unwrap();
+        assert_eq!(profile.len(), 12);
+        assert!(profile
+            .iter()
+            .all(|value| value.is_finite() && *value > 0.0));
+    }
+
+    #[test]
+    fn lgsa_summary_matches_dense_profile_observables() {
+        let q = BigUint::from(4_294_967_197u64);
+        assert_summary_matches_dense(96, 32, &q, 40);
+    }
+
+    #[test]
+    fn lgsa_summary_matches_dense_across_akita_shapes() {
+        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64);
+        let cases = [
+            (96_u32, 32_u32, BigUint::from(4_294_967_197_u64)),
+            (384, 32, BigUint::from(4_294_967_197_u64)),
+            (768, 64, BigUint::from(18_446_744_073_709_551_557_u64)),
+            (768, 128, q128),
+        ];
+        for (d, n, q) in cases {
+            for beta in [40_u32, 63, 128, 256, 343, 484, 651]
+                .into_iter()
+                .filter(|beta| *beta <= d)
+            {
+                assert_summary_matches_dense(d, n, &q, beta);
+            }
+        }
+    }
+
+    #[test]
+    fn lgsa_first_vector_is_no_longer_than_gsa_across_akita_shapes() {
+        let q128 = (BigUint::from(1_u8) << 128) - BigUint::from(4_294_944_759_u64);
+        let cases = [
+            (64_u32, 32_i64, BigUint::from(4_294_967_197_u64)),
+            (96_u32, 64_i64, BigUint::from(4_294_967_197_u64)),
+            (
+                1_810_u32,
+                786_i64,
+                BigUint::from(18_446_744_073_709_551_557_u64),
+            ),
+            (4_096_u32, 3_072_i64, q128),
+        ];
+        for (d, identity_vectors, q) in cases {
+            for beta in [40_u32, 63, 128, 256, 343, 484, 494, 500, 651]
+                .into_iter()
+                .filter(|beta| *beta <= d)
+            {
+                let lgsa = lgsa_squared_norms(d, identity_vectors, &q, beta).unwrap();
+                let gsa =
+                    crate::simulator::gsa_squared_norms(d, identity_vectors, &q, beta).unwrap();
+                assert!(
+                    lgsa[0] <= gsa[0] * (1.0 + 1e-10),
+                    "d={d} beta={beta}: LGSA r0={} exceeds GSA r0={}",
+                    lgsa[0],
+                    gsa[0]
+                );
+            }
+        }
     }
 }

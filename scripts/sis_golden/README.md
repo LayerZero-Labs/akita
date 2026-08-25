@@ -142,9 +142,9 @@ cargo bench -p akita-sis-estimator --bench infinity_optimizer
 By default the optimizer bench uses an explicit representative trusted-row
 ladder from `scripts/sis_golden/infinity_golden.csv`: one small q32 row, one
 q128 row, and two q64 rows that cover medium and larger exhaustive searches.
-It runs the serial local-minimum and serial exhaustive profiles. With
-`--features parallel`, it also runs the parallel exhaustive profile in the same
-Criterion group:
+It runs the serial local-minimum and certified-pruned profiles. With
+`--features parallel`, it also runs the full parallel exhaustive profile in the
+same Criterion group:
 
 ```bash
 cargo bench -p akita-sis-estimator --features parallel --bench infinity_optimizer
@@ -155,7 +155,7 @@ The durable benchmark controls are environment variables:
 | Variable | Values | Default |
 |---|---|---|
 | `AKITA_SIS_INFINITY_BENCH_SET` | `representative`, `exhaustive-ci`, `all-trusted` | `representative` |
-| `AKITA_SIS_INFINITY_BENCH_PROFILES` | comma-separated `local-minimum`, `exhaustive-serial`, `exhaustive-parallel` | serial profiles, plus parallel when the feature is enabled |
+| `AKITA_SIS_INFINITY_BENCH_PROFILES` | comma-separated `local-minimum`, `certified-pruned`, `full-exhaustive-serial`, `full-exhaustive-parallel` | local and certified profiles, plus full parallel exhaustive when the feature is enabled |
 | `AKITA_SIS_INFINITY_BENCH_CSV` | CSV with `family`, `d`, `rank`, `width`, `coeff_linf_bound` columns | committed infinity golden CSV |
 | `AKITA_SIS_INFINITY_BENCH_SAMPLE_SIZE` | Criterion sample size, minimum 10 | Criterion default |
 | `AKITA_SIS_INFINITY_BENCH_WARM_UP_MS` | Criterion warm-up milliseconds | Criterion default |
@@ -265,16 +265,29 @@ Other full CSV jobs are local comparison artifacts and must not be committed.
 The checked-in policy table may use `--profile local-minimum` for candidate
 discovery. The accepted width and immediate rejected successor are then
 certified by proven-pruned ADPS16/LGSA beta and zeta search. For each visited
-beta, the search checks the complete-profile transition and the zeta boundary.
-Those points cover the full zeta domain without iterating up to
-multi-trillion-column widths.
+beta, the search checks every valid dimension before the LGSA profile
+stabilizes, then checks the stable tail's endpoints and both sides of any
+small-box/Dilithium probability transition. This covers the valid zeta domain
+without iterating up to multi-trillion-column widths.
+
+The proven-pruned decision threshold comes from the selected estimator policy
+configuration. For `B > 1`, the ordinary Euclidean attack is included and its
+required beta caps the sweep. For `B <= 1`, including the diagnostic `B = 1`
+compression cells, Euclidean dimension optimization is undefined; generation
+does not replace the bound with `B = 2`, omits that attack, and sweeps the full
+supported beta range instead.
+
 Building with `--features parallel` parallelizes independent rows, but does not
 change the certificate domain or output ordering.
 
-The exhaustive profiles scan the full finite `zeta` range and the full finite
-`beta` range for each row. They are more conservative if they find a cheaper
-attack that local-minimum skipped. They are also much slower for the full
-production keyspace.
+The full exhaustive profiles scan every `zeta` in the valid tall q-ary domain
+`0 <= zeta < d - n` and the full finite `beta` range for each row. The
+certified-pruned profile scans the potentially non-monotone pre-stable LGSA
+region and prunes each stable unit-vector-tail probability regime to its
+endpoints. Full exhaustive search is the slower audit oracle and is not a
+default serial Criterion profile. The `local-minimum` benchmark remains an upstream
+lattice-estimator parity baseline, including its original wider zeta search;
+it is not a production certificate profile.
 
 For Rust-vs-Sage single-shot timing, run:
 
