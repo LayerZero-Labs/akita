@@ -930,7 +930,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=ba36f6d53a51d6fb724d5c27fb4b48604975f1a4#ba36f6d53a51d6fb724d5c27fb4b48604975f1a4"
+source = "git+https://github.com/a16z/jolt?rev=9af4548682d37aeb88c6eb62ec36f07f06140bdb#9af4548682d37aeb88c6eb62ec36f07f06140bdb"
 dependencies = [
  "cc",
  "num-traits",

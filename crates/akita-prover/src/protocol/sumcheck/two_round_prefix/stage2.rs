@@ -3,8 +3,7 @@ use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
 use jolt_field::solinas::parallel::*;
-use jolt_field::Unreduced;
-use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Field, Ring, Unreduced, Zero};
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +212,7 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
 )]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring + Unreduced>(
-    w_compact: &[i8],
+    w_compact: crate::backend::packed_digits::PackedSignedDigitView<'_>,
     alpha_evals_y: &[E],
     relation_matrix_col_evals: &[E],
     linear_terms: &PreparedProverLinearTerms<E>,
@@ -286,19 +285,19 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring +
             )
         },
         |(mut norm_pos, mut norm_neg, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
-            let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
+            let column_start = x_idx * y_len;
+            let mut column = w_compact
+                .slice(column_start..column_start + y_len)
+                .expect("stage-2 compact column is in bounds")
+                .iter();
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
             let mut x_rel_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
                 let base = 4 * y_quad;
-                let lookup_idx = lookup_index_fn([
-                    w_digit_fn(column[base]),
-                    w_digit_fn(column[base + 1]),
-                    w_digit_fn(column[base + 2]),
-                    w_digit_fn(column[base + 3]),
-                ]);
+                let quad = column.next_array::<4>().expect("compact quad digits");
+                let lookup_idx = lookup_index_fn(quad.map(w_digit_fn));
                 let norm_weight = eq_y_weight * eq_x_weight;
                 accum_lookup_vector_signed_selected(
                     &mut norm_pos,

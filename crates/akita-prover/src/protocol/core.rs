@@ -1,8 +1,7 @@
 //! Prover core state shared by root orchestration during crate extraction.
 
 use crate::protocol::extension_opening_reduction::{
-    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,

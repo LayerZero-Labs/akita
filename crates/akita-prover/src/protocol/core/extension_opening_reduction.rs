@@ -1,9 +1,7 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
-    TensorProjectionKernel,
+    ComputeBackendSetup, RootTensorSource, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
-use std::ops::Range;
 
 pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: Field> {
     pub(in crate::protocol::core) reduction: ExtensionOpeningReduction<E>,
@@ -34,7 +32,7 @@ pub(in crate::protocol::core) fn prepare_extension_opening_group<F, E, P, B, con
     point: &[E],
 ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
@@ -87,7 +85,7 @@ pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B
     path: &'static str,
 ) -> Result<ProvedExtensionOpeningReduction<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
     <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + Unreduced + Fold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
@@ -182,8 +180,7 @@ where
             acc + coefficient * claim
         });
 
-    let mut terms = Vec::new();
-    let mut term_ranges = Vec::<Range<usize>>::with_capacity(group_inputs.len());
+    let mut groups = Vec::with_capacity(group_inputs.len());
     for group_index in 0..group_inputs.len() {
         let claim_range = opening_batch.root_group_claim_range(group_index)?;
         let input = group_inputs
@@ -194,9 +191,9 @@ where
         let extra_vars = max_tail_vars
             .checked_sub(tail_point.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let group_terms = input
+        let group = input
             .group
-            .extension_opening_terms(
+            .extension_opening_group(
                 tensor_backend,
                 tensor_prepared,
                 input.ring_dimension,
@@ -208,38 +205,42 @@ where
             )
             .map_err(|error| {
                 AkitaError::InvalidInput(format!(
-                    "extension-opening group {group_index} terms failed: {error:?}"
+                    "extension-opening group {group_index} construction failed: {error:?}"
                 ))
             })?;
-        let start = terms.len();
         let expected_domain_len = reduction_table_len(max_tail_vars)?;
-        for term in group_terms {
-            let term = term.extend_cylindrically(vec![E::zero(); extra_vars])?;
-            if term.domain_len() != expected_domain_len {
-                return Err(AkitaError::InvalidInput(format!(
-                    "extension-opening group {group_index} domain mismatch: expected \
-                     {expected_domain_len}, actual {}",
-                    term.domain_len()
-                )));
-            }
-            terms.push(term);
+        let group = group.extend_cylindrically(vec![E::zero(); extra_vars])?;
+        if group.domain_len() != expected_domain_len {
+            return Err(AkitaError::InvalidInput(format!(
+                "extension-opening group {group_index} domain mismatch: expected \
+                 {expected_domain_len}, actual {}",
+                group.domain_len()
+            )));
         }
-        if terms.len() != claim_range.end {
+        if group.num_terms() != claim_range.len() {
             return Err(AkitaError::InvalidProof);
         }
-        term_ranges.push(start..terms.len());
+        groups.push(group);
     }
 
-    if terms.len() != num_claims || true_input_claims.len() != num_claims {
+    if groups
+        .iter()
+        .map(ExtensionOpeningReductionGroup::num_terms)
+        .sum::<usize>()
+        != num_claims
+        || true_input_claims.len() != num_claims
+    {
         return Err(AkitaError::InvalidProof);
     }
-    let prover_claim = ExtensionOpeningReductionProver::input_claim_from_terms(&terms)?;
-    if prover_claim != true_input_claim {
-        return Err(AkitaError::InvalidInput(
-            "extension-opening reduction input claim mismatch".to_string(),
-        ));
+    #[cfg(debug_assertions)]
+    {
+        let prover_claim = ExtensionOpeningReductionProver::input_claim_from_groups(&groups)?;
+        debug_assert_eq!(
+            prover_claim, true_input_claim,
+            "extension-opening reduction input claim mismatch"
+        );
     }
-    let mut prover = ExtensionOpeningReductionProver::new(terms, prover_claim)?;
+    let mut prover = ExtensionOpeningReductionProver::new(groups, true_input_claim)?;
     let (sumcheck, rho, batched_final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
         sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
     })?;
@@ -281,10 +282,7 @@ where
         {
             factor *= E::one() - extra_challenge;
         }
-        let term_range = term_ranges
-            .get(group_index)
-            .cloned()
-            .ok_or(AkitaError::InvalidProof)?;
+        let term_range = opening_batch.root_group_claim_range(group_index)?;
         if final_terms
             .get(term_range)
             .ok_or(AkitaError::InvalidProof)?
@@ -321,7 +319,7 @@ where
     })
 }
 
-pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
+pub(in crate::protocol::core) fn build_extension_opening_reduction_group<
     F,
     E,
     P,
@@ -334,72 +332,31 @@ pub(in crate::protocol::core) fn build_extension_opening_reduction_terms<
     claim_coefficients: &[E],
     tail_point: &[E],
     eta: &[E],
-) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>
+) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError>
 where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + MulBaseUnreduced<F>,
     P: RootTensorSource<F, D>,
-    B: ComputeBackendSetup<F>
-        + for<'a> TensorProjectionBatchKernel<P::TensorBatchView<'a>, F, E, D>
-        + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
+    B: ComputeBackendSetup<F> + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     let _span =
-        tracing::info_span!("extension_opening_reduction_terms", num_terms = polys.len()).entered();
+        tracing::info_span!("extension_opening_reduction_group", num_terms = polys.len()).entered();
     if polys.len() != claim_coefficients.len() {
         return Err(AkitaError::InvalidSize {
             expected: polys.len(),
             actual: claim_coefficients.len(),
         });
     }
-    polys
-        .iter()
-        .zip(claim_coefficients)
-        .map(|(poly, &coefficient)| {
-            let witness = {
-                let _s = tracing::info_span!("eor_packed_witness").entered();
-                TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
-            };
-            extension_opening_term_from_packed_witness::<F, E>(
-                witness,
-                tail_point,
-                eta,
-                coefficient,
-            )
-        })
-        .collect()
-}
-
-fn extension_opening_term_from_packed_witness<F, E>(
-    witness: TensorPackedWitness<E>,
-    tail_point: &[E],
-    eta: &[E],
-    coeff: E,
-) -> Result<ExtensionOpeningReductionTerm<E>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    E: ExtField<F>,
-{
-    match witness {
-        TensorPackedWitness::Dense(witness_evals) => {
-            let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-            ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, coeff)
-        }
-        TensorPackedWitness::Sparse(witness) => {
-            let lazy_rounds = tail_point.len().min(SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS);
-            if lazy_rounds == 0 {
-                let factor_evals = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
-                ExtensionOpeningReductionTerm::new_sparse(witness, factor_evals, coeff)
-            } else {
-                ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<F>(
-                    witness,
-                    tail_point.to_vec(),
-                    eta.to_vec(),
-                    coeff,
-                    lazy_rounds,
-                )
-            }
-        }
+    let factor = tensor_equality_factor_evals::<F, E>(tail_point, eta)?;
+    let mut terms = Vec::with_capacity(polys.len());
+    for (poly, &coefficient) in polys.iter().zip(claim_coefficients) {
+        let witness = {
+            let _span = tracing::info_span!("eor_packed_witness").entered();
+            TensorProjectionKernel::packed_witness(backend, prepared, poly.tensor_view()?)?
+        };
+        terms.push(ExtensionOpeningReductionTerm::new(witness, coefficient));
     }
+    ExtensionOpeningReductionGroup::new(terms, factor)
 }
 
 pub(in crate::protocol::core) type FoldedClaimEvals<F, const D: usize> =

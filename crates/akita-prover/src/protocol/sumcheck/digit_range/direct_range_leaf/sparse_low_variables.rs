@@ -10,9 +10,9 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         skip_all,
         name = "LowBasisRangeCheckProver::compute_round_compact_sparse_x_y"
     )]
-    pub(super) fn compute_round_compact_sparse_x_y<V: CompactRangeImageValue>(
+    pub(super) fn compute_round_compact_sparse_x_y<S: CompactRangeImageSource + ?Sized>(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = compact_range_image.len() / self.live_x_cols;
@@ -28,8 +28,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 let y_pair = j % y_pairs;
                 let top = x * y_len + 2 * y_pair;
                 (
-                    compact_range_image[top].range_image_value(),
-                    compact_range_image[top + 1].range_image_value(),
+                    compact_range_image.range_image_value(top),
+                    compact_range_image.range_image_value(top + 1),
                 )
             },
         )

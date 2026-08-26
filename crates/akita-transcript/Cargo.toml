@@ -16,7 +16,7 @@ repository = "https://github.com/LayerZero-Labs/akita"
 readme = "../../README.md"
 
 [dependencies]
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba36f6d53a51d6fb724d5c27fb4b48604975f1a4", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9af4548682d37aeb88c6eb62ec36f07f06140bdb", default-features = false, features = [
   "solinas",
 ] }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }

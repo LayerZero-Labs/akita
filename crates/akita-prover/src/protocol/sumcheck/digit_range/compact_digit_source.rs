@@ -3,6 +3,8 @@ use akita_types::{DigitRangePlan, FlatBooleanDomain};
 use jolt_field::{Field, Ring};
 use std::sync::Arc;
 
+use crate::backend::packed_digits::PackedSignedDigits;
+
 /// Collision class of one balanced digit under `digit * (digit + 1)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RangeImageClass(u8);
@@ -40,7 +42,7 @@ impl RangeImageClass {
 /// layout and derives range-image classes without rescanning honest-prover digits.
 #[derive(Clone)]
 pub(in crate::protocol::sumcheck) struct CompactDigitSource {
-    digits: Arc<[i8]>,
+    digits: PackedSignedDigits,
     ordered_range_class_pairs: Arc<[u16]>,
     domain: FlatBooleanDomain,
     class_count: usize,
@@ -48,7 +50,7 @@ pub(in crate::protocol::sumcheck) struct CompactDigitSource {
 
 impl CompactDigitSource {
     pub(super) fn new(
-        digits: Arc<[i8]>,
+        digits: PackedSignedDigits,
         domain: FlatBooleanDomain,
         plan: DigitRangePlan,
     ) -> Result<Self, AkitaError> {
@@ -85,25 +87,25 @@ impl CompactDigitSource {
         }
     }
 
-    fn ordered_range_class_pairs(digits: &[i8], class_count: usize) -> Arc<[u16]> {
-        digits
-            .chunks(2)
-            .map(|pair| {
-                let left = RangeImageClass::from_balanced_digit(pair[0], class_count).index();
-                let right = pair
-                    .get(1)
-                    .copied()
+    fn ordered_range_class_pairs(digits: &PackedSignedDigits, class_count: usize) -> Arc<[u16]> {
+        let mut digits = digits.iter();
+        std::iter::from_fn(|| {
+            digits.next().map(|digit| {
+                let left = RangeImageClass::from_balanced_digit(digit, class_count).index();
+                let right = digits
+                    .next()
                     .map(|digit| RangeImageClass::from_balanced_digit(digit, class_count))
                     .unwrap_or(RangeImageClass::PADDING)
                     .index();
                 u16::try_from(left * class_count + right)
                     .expect("supported ordered range-class pair fits u16")
             })
-            .collect()
+        })
+        .collect()
     }
 
-    pub(super) fn digits(&self) -> Arc<[i8]> {
-        Arc::clone(&self.digits)
+    pub(super) fn digits(&self) -> PackedSignedDigits {
+        self.digits.clone()
     }
 
     pub(super) fn live_len(&self) -> usize {
@@ -166,7 +168,7 @@ mod tests {
 
     #[test]
     fn compact_ordered_pairs_include_odd_prefix_padding() {
-        let digits = Arc::<[i8]>::from([0, -2, 3]);
+        let digits = PackedSignedDigits::from_i8_digits_auto(vec![0, -2, 3]);
         let source = CompactDigitSource::new(
             digits,
             FlatBooleanDomain::new(3, 2).unwrap(),
@@ -180,7 +182,7 @@ mod tests {
 
     #[test]
     fn low_basis_source_prepares_pairs_for_the_fused_l2_leaf_on_demand() {
-        let digits = Arc::<[i8]>::from([0, -2, 3]);
+        let digits = PackedSignedDigits::from_i8_digits_auto(vec![0, -2, 3]);
         let mut source = CompactDigitSource::new(
             digits,
             FlatBooleanDomain::new(3, 2).unwrap(),

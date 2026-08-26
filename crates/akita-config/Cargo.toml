@@ -79,7 +79,7 @@ schedules-fp64-onehot = ["akita-schedules/fp64-onehot"]
 [dependencies]
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
-jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "ba36f6d53a51d6fb724d5c27fb4b48604975f1a4", default-features = false, features = [
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "9af4548682d37aeb88c6eb62ec36f07f06140bdb", default-features = false, features = [
   "solinas",
 ] }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }

@@ -34,7 +34,6 @@ use block_parallel::*;
 use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
-pub(crate) use common::digit_blocks_are_balanced;
 use common::*;
 pub(crate) use compression::validate_compression_batch_shape;
 #[cfg(test)]
@@ -63,4 +62,5 @@ pub use ntt_matvec::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
 };
+pub(crate) use ntt_matvec::{mat_vec_mul_ntt_packed_digits_i8, mat_vec_mul_ntt_packed_raw_i8};
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

@@ -146,6 +146,35 @@ impl FoldChunkCoefficients {
             }
         }
     }
+
+    pub(crate) fn chunk<'a>(
+        &'a self,
+        global: &'a [i32],
+        expected_chunks: usize,
+        index: usize,
+    ) -> Result<&'a [i32], AkitaError> {
+        let actual_chunks = self.num_chunks();
+        if actual_chunks != expected_chunks {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_chunks,
+                actual: actual_chunks,
+            });
+        }
+        match &self.storage {
+            FoldChunkStorage::Single if index == 0 => Ok(global),
+            FoldChunkStorage::Single => Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: index + 1,
+            }),
+            FoldChunkStorage::Chunked(chunks) => chunks
+                .get(index)
+                .map(CenteredFoldChunk::coefficients)
+                .ok_or(AkitaError::InvalidSize {
+                    expected: chunks.len(),
+                    actual: index + 1,
+                }),
+        }
+    }
 }
 
 /// Per-group secret witness for the ring relation at one fold level.

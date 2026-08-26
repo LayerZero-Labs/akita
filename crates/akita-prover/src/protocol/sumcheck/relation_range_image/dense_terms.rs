@@ -7,7 +7,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     )]
     pub(super) fn compute_round_compact_dense_terms(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -28,11 +28,23 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::SmallProduct::zero(); 2];
                     let base = j_high * num_first;
+                    let mut witness_digits = compact_witness
+                        .slice(2 * base..2 * (base + num_first))
+                        .expect("compact dense block is in bounds")
+                        .iter();
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = compact_witness[2 * j] as i32;
-                        let w1 = compact_witness[2 * j + 1] as i32;
+                        let w0 = i32::from(
+                            witness_digits
+                                .next()
+                                .expect("compact pair has a left digit"),
+                        );
+                        let w1 = i32::from(
+                            witness_digits
+                                .next()
+                                .expect("compact pair has a right digit"),
+                        );
                         let dw = w1 - w0;
                         let w0_i64 = w0 as i64;
                         let dw_i64 = dw as i64;
@@ -102,11 +114,23 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 |(mut virt, mut rel), j_high| {
                     let mut inner_virt = [E::SmallProduct::zero(); 4];
                     let base = j_high * num_first;
+                    let mut witness_digits = compact_witness
+                        .slice(2 * base..2 * (base + num_first))
+                        .expect("compact dense block is in bounds")
+                        .iter();
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = compact_witness[2 * j] as i32;
-                        let w1 = compact_witness[2 * j + 1] as i32;
+                        let w0 = i32::from(
+                            witness_digits
+                                .next()
+                                .expect("compact pair has a left digit"),
+                        );
+                        let w1 = i32::from(
+                            witness_digits
+                                .next()
+                                .expect("compact pair has a right digit"),
+                        );
                         let dw = w1 - w0;
                         let w0_i64 = w0 as i64;
                         let dw_i64 = dw as i64;
@@ -312,7 +336,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
     ) -> (UniPoly<E>, UniPoly<E>) {
         let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_dense_terms(compact_witness);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)

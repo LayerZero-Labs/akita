@@ -154,9 +154,9 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         skip_all,
         name = "LowBasisRangeCheckProver::compute_round_compact_prefix_x"
     )]
-    pub(super) fn compute_round_compact_prefix_x<V: CompactRangeImageValue>(
+    pub(super) fn compute_round_compact_prefix_x<S: CompactRangeImageSource + ?Sized>(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.num_vars);
         debug_assert_eq!(
@@ -179,7 +179,6 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, y| {
                 let row_start = y * self.live_x_cols;
-                let row = &compact_range_image[row_start..row_start + self.live_x_cols];
                 let j_base = y * current_x_half;
 
                 let mut blk = 0usize;
@@ -193,9 +192,10 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                         let j_low = (j_base + pair_x) & (num_first - 1);
                         let e_in = e_first[j_low];
                         let left = 2 * pair_x;
-                        let left_range_image_integer = row[left].range_image_value();
+                        let left_range_image_integer =
+                            compact_range_image.range_image_value(row_start + left);
                         let right_range_image_integer = if left + 1 < self.live_x_cols {
-                            row[left + 1].range_image_value()
+                            compact_range_image.range_image_value(row_start + left + 1)
                         } else {
                             0
                         };
@@ -359,8 +359,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
         skip_all,
         name = "LowBasisRangeCheckProver::fold_compact_range_image_prefix_x"
     )]
-    pub(super) fn fold_compact_range_image_prefix_x<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn fold_compact_range_image_prefix_x<S: CompactRangeImageSource + ?Sized>(
+        compact_range_image: &S,
         live_x_cols: usize,
         y_len: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -372,15 +372,17 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
             .enumerate()
             .for_each(|(y, row_out)| {
                 let row_start = y * live_x_cols;
-                let row = &compact_range_image[row_start..row_start + live_x_cols];
                 for (pair_x, dst) in row_out.iter_mut().enumerate() {
                     let left = 2 * pair_x;
                     let right_range_image = if left + 1 < live_x_cols {
-                        row[left + 1].range_image_value()
+                        compact_range_image.range_image_value(row_start + left + 1)
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(row[left].range_image_value(), right_range_image);
+                    *dst = fold_lut.fold(
+                        compact_range_image.range_image_value(row_start + left),
+                        right_range_image,
+                    );
                 }
             });
 

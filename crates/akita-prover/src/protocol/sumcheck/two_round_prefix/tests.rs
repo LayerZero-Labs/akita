@@ -12,6 +12,10 @@ use std::collections::HashMap;
 
 type F = Prime128Offset275;
 
+fn packed(witness: &[i8]) -> crate::backend::packed_digits::PackedSignedDigits {
+    crate::backend::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
+}
+
 fn ordered_equality_point(
     challenges: &[F],
     column_variables: usize,
@@ -463,7 +467,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
     let evaluation_trace = PreparedProverLinearTerms::from_dense(vec![F::zero(); 10], 5, 2);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -514,7 +518,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
             let evaluation_trace =
                 PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
             build_stage2_bivariate_skip_proof_from_m_compact(
-                &w_compact,
+                packed(&w_compact).view(),
                 &alpha_evals_y,
                 &relation_matrix_col_evals,
                 &evaluation_trace,
@@ -564,7 +568,7 @@ fn stage2_bivariate_skip_proof_builder_with_prepared_trace_matches_dense() {
         .collect();
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -631,7 +635,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
     );
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -859,7 +863,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         .expect("stage1 bivariate-skip state should build");
 
     let mut prover = LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from(w_compact.as_slice()),
+        packed(&w_compact),
         &tau0,
         akita_types::DigitRangePlan::new(b).unwrap(),
         live_x_cols,

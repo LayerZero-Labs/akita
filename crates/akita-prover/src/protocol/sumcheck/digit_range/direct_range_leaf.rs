@@ -55,6 +55,9 @@ use akita_types::DigitRangePlan;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{Field, Ring, Zero};
 use jolt_field::{Fold, Unreduced};
+use std::ops::Range;
+
+use crate::backend::packed_digits::{PackedSignedDigitIter, PackedSignedDigits};
 
 const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 5;
 
@@ -480,10 +483,10 @@ fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unr
 
 fn compute_range_round_polynomial_from_compact_image<
     E: Field + Ring + Unreduced,
-    V: CompactRangeImageValue,
+    S: CompactRangeImageSource + ?Sized,
 >(
     split_eq: &GruenSplitEq<E>,
-    compact_range_image: &[V],
+    compact_range_image: &S,
     polynomial_precomputation: &RangePolynomialPrecomputation,
 ) -> EqFactoredUniPoly<E> {
     compute_range_round_polynomial_from_compact_image_pairs(
@@ -491,20 +494,184 @@ fn compute_range_round_polynomial_from_compact_image<
         polynomial_precomputation,
         |j| {
             (
-                compact_range_image[2 * j].range_image_value(),
-                compact_range_image[2 * j + 1].range_image_value(),
+                compact_range_image.range_image_value(2 * j),
+                compact_range_image.range_image_value(2 * j + 1),
             )
         },
     )
 }
 
 enum LowBasisRangeImageStorage<E: Field> {
-    Compact(std::sync::Arc<[i8]>),
+    Compact(PackedSignedDigits),
     Materialized(Vec<E>),
 }
 
 pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
     fn range_image_value(self) -> i16;
+}
+
+pub(crate) trait CompactRangeImageSource: Sync {
+    type QuadIter<'a>: ExactSizeIterator<Item = usize>
+    where
+        Self: 'a;
+
+    fn len(&self) -> usize;
+    fn range_image_value(&self, index: usize) -> i16;
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_>;
+}
+
+pub(crate) struct CompactRangeImageQuadIter<I> {
+    values: I,
+    basis: usize,
+}
+
+impl<I, V> Iterator for CompactRangeImageQuadIter<I>
+where
+    I: Iterator<Item = V>,
+    V: CompactRangeImageValue,
+{
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut index = 0usize;
+        let class_bits = self.basis.trailing_zeros() as usize - 1;
+        for offset in 0..4 {
+            let range_image = self.values.next()?.range_image_value();
+            let class = match self.basis {
+                4 => stage1_b4_digit_from_compact_range_image(range_image),
+                8 => stage1_b8_digit_from_compact_range_image(range_image),
+                _ => unreachable!("unsupported compact range-image basis"),
+            };
+            index |= class << (class_bits * offset);
+        }
+        Some(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (minimum, maximum) = self.values.size_hint();
+        (minimum / 4, maximum.map(|maximum| maximum / 4))
+    }
+}
+
+impl<I, V> ExactSizeIterator for CompactRangeImageQuadIter<I>
+where
+    I: ExactSizeIterator<Item = V>,
+    V: CompactRangeImageValue,
+{
+}
+
+pub(crate) struct PackedRangeImageQuadIter<'a> {
+    digits: PackedSignedDigitIter<'a>,
+    class_bits: usize,
+    class_count: usize,
+}
+
+impl Iterator for PackedRangeImageQuadIter<'_> {
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let digits = self.digits.next_array::<4>()?;
+        let mut index = 0usize;
+        for (offset, digit) in digits.into_iter().enumerate() {
+            let class = if digit >= 0 {
+                digit as usize
+            } else {
+                usize::from(digit.unsigned_abs()) - 1
+            };
+            debug_assert!(class < self.class_count);
+            index |= class << (self.class_bits * offset);
+        }
+        Some(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.digits.len() / 4;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for PackedRangeImageQuadIter<'_> {}
+
+impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
+    type QuadIter<'a>
+        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn len(&self) -> usize {
+        <[V]>::len(self)
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        self[index].range_image_value()
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        CompactRangeImageQuadIter {
+            values: self[range].iter().copied(),
+            basis,
+        }
+    }
+}
+
+impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
+    type QuadIter<'a>
+        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        self.as_slice()[index].range_image_value()
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        CompactRangeImageQuadIter {
+            values: self[range].iter().copied(),
+            basis,
+        }
+    }
+}
+
+impl CompactRangeImageSource for PackedSignedDigits {
+    type QuadIter<'a> = PackedRangeImageQuadIter<'a>;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        range_image_from_digit(
+            self.get(index)
+                .expect("packed range-image index is in bounds"),
+        )
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        PackedRangeImageQuadIter {
+            digits: self
+                .view()
+                .slice(range)
+                .expect("compact range-image quad iterator range is in bounds")
+                .iter(),
+            class_bits: basis.trailing_zeros() as usize - 1,
+            class_count: basis / 2,
+        }
+    }
 }
 
 impl CompactRangeImageValue for i16 {

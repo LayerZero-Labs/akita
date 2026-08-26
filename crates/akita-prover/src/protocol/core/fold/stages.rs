@@ -31,8 +31,8 @@ where
         digit_range_equality_col_bits,
         rs.digit_range_equality_low_variable_count,
     )?;
-    let stage1_prover = DigitRangeProver::new(
-        std::sync::Arc::clone(&rs.w_evals_compact),
+    let stage1_prover = DigitRangeProver::from_packed_digits(
+        rs.w_evals_compact.clone(),
         plan.digit_range_plan(),
         domain,
         equality_point,
@@ -158,7 +158,7 @@ where
     let additional_relation_terms = (!linear_weights.is_empty() || !binary_intervals.is_empty())
         .then(|| {
             AdditionalRelationTerms::new(
-                rs.w_evals_compact.as_ref(),
+                &rs.w_evals_compact,
                 domain_len,
                 linear_weights,
                 &binary_intervals,

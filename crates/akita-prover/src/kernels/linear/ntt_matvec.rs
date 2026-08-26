@@ -140,6 +140,37 @@ pub fn mat_vec_mul_ntt_digits_i8<F: Field + CanonicalEncoding, const D: usize>(
     ))
 }
 
+/// Predecomposed mat-vec over a source that decodes one commitment block at a
+/// time. This keeps the full byte witness out of memory while sharing one NTT
+/// dispatch and one digit-LUT policy across all blocks.
+pub(crate) fn mat_vec_mul_ntt_packed_digits_i8<
+    F: Field + CanonicalEncoding,
+    Decode,
+    const D: usize,
+>(
+    slot: &PreparedNttCache<D>,
+    num_rows: usize,
+    row_width: usize,
+    num_live_blocks: usize,
+    decode_block: &Decode,
+    log_basis: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
+    validate_i8_log_basis(log_basis)?;
+    dispatch_slot!(
+        slot,
+        num_rows,
+        row_width,
+        mat_vec_mul_packed_digits_i8_with_params,
+        num_live_blocks,
+        row_width,
+        decode_block,
+        log_basis
+    )
+}
+
 /// Dense pre-decomposed digit mat-vec for the backend-owned digit cache.
 ///
 /// The generic pre-decomposed digit kernel skips all-zero planes, which is
@@ -187,5 +218,29 @@ pub fn mat_vec_mul_ntt_raw_digits_i8<F: Field + CanonicalEncoding, const D: usiz
         num_cols,
         mat_vec_mul_raw_digits_i8_with_params,
         blocks
+    )
+}
+
+/// Raw signed counterpart of [`mat_vec_mul_ntt_packed_digits_i8`].
+pub(crate) fn mat_vec_mul_ntt_packed_raw_i8<F: Field + CanonicalEncoding, Decode, const D: usize>(
+    slot: &PreparedNttCache<D>,
+    num_rows: usize,
+    row_width: usize,
+    num_live_blocks: usize,
+    rhs_bound: u64,
+    decode_block: &Decode,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+where
+    Decode: Fn(usize) -> Result<Vec<[i8; D]>, AkitaError> + Sync,
+{
+    dispatch_slot!(
+        slot,
+        num_rows,
+        row_width,
+        mat_vec_mul_packed_raw_i8_with_params,
+        num_live_blocks,
+        row_width,
+        rhs_bound,
+        decode_block
     )
 }

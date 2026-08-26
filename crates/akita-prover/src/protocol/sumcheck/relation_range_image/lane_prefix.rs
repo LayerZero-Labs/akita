@@ -418,7 +418,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     )]
     pub(super) fn compute_compact_partial_lane_round_terms(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.coefficient_bits());
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
@@ -445,8 +445,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values = &compact_witness
-                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -466,9 +464,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left] as i32;
+                            let w0 = i32::from(compact_witness.at(coefficient_start + left));
                             let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1] as i32
+                                i32::from(compact_witness.at(coefficient_start + left + 1))
                             } else {
                                 0
                             };
@@ -533,8 +531,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values = &compact_witness
-                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -554,9 +550,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             let j_low = (equality_address_base + lane_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * lane_pair;
-                            let w0 = coefficient_values[left] as i32;
+                            let w0 = i32::from(compact_witness.at(coefficient_start + left));
                             let w1 = if left + 1 < self.live_lane_count {
-                                coefficient_values[left + 1] as i32
+                                i32::from(compact_witness.at(coefficient_start + left + 1))
                             } else {
                                 0
                             };
@@ -801,7 +797,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(super) fn fold_compact_partial_lanes(
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
         live_lane_count: usize,
         coeff_count: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -813,16 +809,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .enumerate()
             .for_each(|(coefficient, coefficient_out)| {
                 let coefficient_start = coefficient * live_lane_count;
-                let coefficient_values =
-                    &compact_witness[coefficient_start..coefficient_start + live_lane_count];
                 for (lane_pair, dst) in coefficient_out.iter_mut().enumerate() {
                     let left = 2 * lane_pair;
                     let w_1 = if left + 1 < live_lane_count {
-                        i16::from(coefficient_values[left + 1])
+                        i16::from(compact_witness.at(coefficient_start + left + 1))
                     } else {
                         0
                     };
-                    *dst = fold_lut.fold(i16::from(coefficient_values[left]), w_1);
+                    *dst =
+                        fold_lut.fold(i16::from(compact_witness.at(coefficient_start + left)), w_1);
                 }
             });
 

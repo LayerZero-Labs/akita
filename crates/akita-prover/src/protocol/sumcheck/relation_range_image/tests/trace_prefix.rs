@@ -315,7 +315,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let r1 = F::from_u64(107);
 
     let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
-        &w_prefix,
+        packed(&w_prefix).view(),
         live_lane_count,
         coeff_count,
         r0,

@@ -4,8 +4,7 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_sumcheck::UniPoly;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
 use jolt_field::solinas::parallel::*;
-use jolt_field::Unreduced;
-use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Field, Ring, Unreduced, Zero};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
@@ -141,17 +140,17 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<E: Field + Ring +
     )
 }
 
-/// Build the stage-1 first-two-round bivariate-skip payload from the compact
-/// `s = w(w+1)` table already materialized by the prover.
+/// Build the stage-1 first-two-round bivariate-skip payload from a compact
+/// `s = w(w+1)` source. Packed witnesses derive each range-image value on read.
 #[tracing::instrument(
     skip_all,
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact_range_image"
 )]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
     E: Field + Ring + Unreduced,
-    S: crate::protocol::sumcheck::digit_range::direct_range_leaf::CompactRangeImageValue,
+    S: crate::protocol::sumcheck::digit_range::direct_range_leaf::CompactRangeImageSource + ?Sized,
 >(
-    s_compact: &[S],
+    s_compact: &S,
     tau0: &[E],
     b: usize,
     live_x_cols: usize,
@@ -185,22 +184,11 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                     )
                 },
                 |(mut pos, mut neg), x_col| {
-                    let col = &s_compact[x_col * y_len..(x_col + 1) * y_len];
+                    let col_start = x_col * y_len;
+                    let mut quads = s_compact.quad_lookup_iter(col_start..col_start + y_len, 4);
                     let eq_x_weight = eq_x[x_col];
-                    for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
-                        let base = 4 * y_quad;
-                        let lookup_idx = stage1_b4_lookup_index_from_digits([
-                            stage1_b4_digit_from_compact_range_image(col[base].range_image_value()),
-                            stage1_b4_digit_from_compact_range_image(
-                                col[base + 1].range_image_value(),
-                            ),
-                            stage1_b4_digit_from_compact_range_image(
-                                col[base + 2].range_image_value(),
-                            ),
-                            stage1_b4_digit_from_compact_range_image(
-                                col[base + 3].range_image_value(),
-                            ),
-                        ]);
+                    for &eq_y_weight in eq_y_suffix.iter().take(y_quads) {
+                        let lookup_idx = quads.next().expect("compact range-image quad");
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(
                             &mut pos,
@@ -230,22 +218,11 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 0..live_x_cols,
                 || [E::zero(); 256],
                 |mut histogram, x_col| {
-                    let col = &s_compact[x_col * y_len..(x_col + 1) * y_len];
+                    let col_start = x_col * y_len;
+                    let mut quads = s_compact.quad_lookup_iter(col_start..col_start + y_len, 8);
                     let eq_x_weight = eq_x[x_col];
-                    for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
-                        let base = 4 * y_quad;
-                        let lookup_idx = stage1_b8_lookup_index_from_digits([
-                            stage1_b8_digit_from_compact_range_image(col[base].range_image_value()),
-                            stage1_b8_digit_from_compact_range_image(
-                                col[base + 1].range_image_value(),
-                            ),
-                            stage1_b8_digit_from_compact_range_image(
-                                col[base + 2].range_image_value(),
-                            ),
-                            stage1_b8_digit_from_compact_range_image(
-                                col[base + 3].range_image_value(),
-                            ),
-                        ]);
+                    for &eq_y_weight in eq_y_suffix.iter().take(y_quads) {
+                        let lookup_idx = quads.next().expect("compact range-image quad");
                         let weight = eq_x_weight * eq_y_weight;
                         histogram[lookup_idx] += weight;
                     }

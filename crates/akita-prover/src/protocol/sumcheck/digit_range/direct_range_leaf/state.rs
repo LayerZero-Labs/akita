@@ -16,8 +16,8 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     /// Returns an error if the plan has product stages, if any declared
     /// width overflows, or if the witness or `tau0` length disagrees with
     /// the declared `(live_x_cols, col_bits, ring_bits)` shape.
-    pub fn new(
-        digit_witness: std::sync::Arc<[i8]>,
+    pub(crate) fn new(
+        digit_witness: PackedSignedDigits,
         tau0: &[E],
         plan: DigitRangePlan,
         live_x_cols: usize,
@@ -177,7 +177,7 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                 .expect("two-round prefix requested without cached tau");
             let ring_bits = self.num_vars - self.col_bits;
             let compact_range_image = match &self.range_image {
-                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness.as_ref(),
+                LowBasisRangeImageStorage::Compact(digit_witness) => digit_witness,
                 LowBasisRangeImageStorage::Materialized(_) => {
                     panic!("two-round prefix can only build from compact table")
                 }

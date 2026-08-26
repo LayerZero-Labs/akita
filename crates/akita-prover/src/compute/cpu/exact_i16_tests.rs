@@ -1,5 +1,6 @@
 use super::prepared_tests::{prepared, D, F};
 use super::CpuBackend;
+use crate::backend::packed_digits::PackedSignedDigits;
 use crate::compute::plans::DenseCommitInput;
 use akita_algebra::CyclotomicRing;
 use akita_types::sis::compute_num_digits_field_width;
@@ -10,9 +11,19 @@ use jolt_field::{CanonicalEncoding, One, Ring};
 fn recursive_commit_selects_exact_i16_from_inner_basis() {
     let prepared = prepared();
     let coeffs = vec![[1i8; D], [-1i8; D]];
+    let packed =
+        PackedSignedDigits::from_i8_digits(coeffs.into_iter().flatten().collect(), 2).unwrap();
     let commit = |log_basis_inner| {
         CpuBackend::DEFAULT
-            .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 1, 1, log_basis_inner, Some(2))
+            .recursive_packed_witness_commit_rows::<_, D>(
+                &prepared,
+                packed.zero_padded(2 * D).unwrap(),
+                1,
+                2,
+                1,
+                1,
+                log_basis_inner,
+            )
             .expect("recursive commit rows")
     };
 
