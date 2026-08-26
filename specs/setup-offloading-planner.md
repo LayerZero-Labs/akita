@@ -93,7 +93,8 @@ models.
 ### Goal
 
 Provide an explicit recursion config that activates offloading for supported
-scalar and multi-group roots, makes offload depth a planner decision, and
+scalar and multi-group roots, makes offload depth a planner decision within an
+identity-bound search domain, and
 guarantees every selected recursive edge has a compatible preprocessed
 setup-prefix commitment.
 
@@ -106,10 +107,11 @@ setup-prefix commitment.
 - **Scalar roots use the same carried-opening machinery.** A scalar root may
   produce a setup-prefix opening; its successor receives
   `[S_prefix, W]` through the existing two-group recursive representation.
-- **The planner chooses offload depth.** Every supported nonterminal edge has a
-  direct alternative and may also have an offloaded alternative. The planner
-  may select any number of feasible offloaded edges within the ordinary
-  recursion-depth bound.
+- **The planner chooses offload depth within the catalog-bound domain.** Every
+  supported nonterminal edge has a direct alternative. An edge admitted by
+  `RecursiveSetupSearchPolicy` may also have an offloaded alternative.
+  `Exhaustive` admits every feasible producer level;
+  `RootAndFirstChildV1` admits producer levels zero and one.
 - **Offloading is never mandatory by level or prefix size.** A large prefix
   makes offloading potentially valuable, but does not determine the transition.
   If an offloaded successor is incompatible or fails the viability rules, the
@@ -215,14 +217,16 @@ An offloaded candidate exists when:
 recursive config is selected
 the root schedule key is a supported scalar or genuine multi-group key
 the producer has a nonterminal recursive successor
+the recursive setup search policy admits the producer level
 the successor can commit the exact padded setup prefix
 the active role dimensions and witness partition are supported
 the successor can consume the prefix and still emit a supported witness
 ```
 
-The fold index and prefix length do not select the mode. For every supported
-edge, the planner retains the ordinary direct successor and may retain an
-offloaded successor. It discards the offloaded alternative unless:
+The prefix length does not select the mode. The planner retains the ordinary
+direct successor at every supported edge. At producer levels admitted by the
+recursive setup search policy, it may also retain an offloaded successor. It
+discards the offloaded alternative unless:
 
 ```text
 balanced_witness_bits_entering_successor
@@ -320,7 +324,8 @@ RecursiveCommitmentConfig<Cfg>:
   planner recursion flag = true
   use the recursive companion schedule catalog
   accept selected scalar and genuine multi-group keys
-  enumerate direct and feasible offloaded transitions at every nonterminal edge
+  enumerate direct transitions at every nonterminal edge
+  enumerate feasible offloaded transitions admitted by RecursiveSetupSearchPolicy
   let the selected suffix determine the number of offloaded levels
 ```
 
@@ -334,7 +339,9 @@ fn recursive_setup_planning() -> bool {
 
 The adapter overrides it to `true`. `policy_of::<Self>()` copies the value into
 `PlannerPolicy` for `find_schedule`, including scalar keys selected for the
-recursive companion catalog.
+recursive companion catalog. Shipped recursive catalogs bind
+`RecursiveSetupSearchPolicy::RootAndFirstChildV1`; audit callers may select
+`Exhaustive` explicitly.
 
 The base config's `schedule_catalog()` remains the direct table.
 `RecursiveCommitmentConfig<Cfg>` overrides the same `schedule_catalog()` hook
@@ -695,10 +702,11 @@ contracting candidate, while `Frontier` retains every contracting split needed
 by setup-offloading search.
 
 Any `find_schedule` request with `policy.recursive_setup_planning == true`
-uses the edge logic below. This includes a scalar application root: its first
-fold may produce an outgoing setup-prefix claim, and the successor then opens
-the setup prefix and folded witness as two groups. Ordinary scalar families
-retain direct-only planning.
+uses the edge logic below at producer levels admitted by
+`policy.recursive_setup_search_policy`. This includes a scalar application
+root: its first fold may produce an outgoing setup-prefix claim, and the
+successor then opens the setup prefix and folded witness as two groups.
+Ordinary scalar families retain direct-only planning.
 
 For each existing `block_index_bits` candidate:
 
@@ -1029,12 +1037,13 @@ the candidate score that decides whether and how long to offload.
       selected scalar and genuine multi-group keys.
 - [x] Scalar recursive rows use the companion catalog and provision every
       carried setup-prefix opening required by the selected schedule.
-- [x] Every supported nonterminal edge considers a direct successor and may
-      consider an offloaded successor; no fixed fold count or prefix threshold
-      selects the mode.
+- [x] Every supported nonterminal edge considers a direct successor. An edge
+      admitted by `RecursiveSetupSearchPolicy` may also consider an offloaded
+      successor; no prefix threshold selects the mode.
 - [x] The planner may select zero, one, or several offloaded edges,
-      bounded only by ordinary recursion depth and capability constraints; it
-      does not impose contiguity as a structural rule.
+      bounded by the identity-bound search domain, ordinary recursion depth,
+      and capability constraints. It does not impose contiguity as a
+      structural rule.
 - [x] Every selected offloaded edge contracts the entering balanced witness by
       at least threefold after counting both the recursive witness and padded
       full-field prefix inputs, and strictly reduces the padded capacity of the
@@ -1148,19 +1157,23 @@ Track:
 - verifier cycles saved by eliminating the setup scan;
 - exact selected proof bytes against the direct-only schedule.
 
-The catalog identity binds `RecursiveSplitSearchPolicy`. Production catalogs
-use `BoundedBalancedExtremesV1`: states through twelve reduced variables are
-exhaustive, while larger states search both extremes and a radius-two window
-around the balance estimate. `Exhaustive` remains available for small-domain
-oracles and audited workloads. Results under the bounded policy are selected
-under that named domain and are not described as globally optimal.
+The catalog identity binds both `RecursiveSplitSearchPolicy` and
+`RecursiveSetupSearchPolicy`. Production catalogs use
+`BoundedBalancedExtremesV1` for recursive splits: states through twelve reduced
+variables are exhaustive, while larger states search both extremes and a
+radius-two window around the balance estimate. Shipped recursive setup catalogs
+use `RootAndFirstChildV1`, which considers offloaded edges produced at levels
+zero and one while retaining direct traversal at every level. `Exhaustive`
+remains available for small-domain oracles and audited workloads. Results under
+either bounded policy are selected under that named domain and are not
+described as globally optimal.
 
 ## Execution
 
 1. Remove the fixed level window and prefix-threshold mode rule from the
    recursive multi-group DP.
-2. Enumerate direct and offloaded successors at every supported nonterminal
-   edge.
+2. Enumerate direct successors at every supported nonterminal edge and
+   offloaded successors at levels admitted by `RecursiveSetupSearchPolicy`.
 3. Price the exact Stage 3 payload before comparing suffixes.
 4. Enforce threefold balanced-witness contraction and strict reduction of the
    first remaining direct setup scan.

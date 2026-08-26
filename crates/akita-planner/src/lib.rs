@@ -17,8 +17,8 @@
 
 pub use akita_schedules::{
     ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
-    SelectiveL2ResponseModelId, SisModulusProfileId, SisSecurityPolicyId,
+    RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy, RingDimensionScheduleMode,
+    SelectionPolicyId, SelectiveL2ResponseModelId, SisModulusProfileId, SisSecurityPolicyId,
     DEFAULT_SIS_SECURITY_POLICY,
 };
 

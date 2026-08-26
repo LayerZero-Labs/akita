@@ -746,6 +746,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    selective_l2_response_model: SelectiveL2ResponseModelId::{selective_l2_response_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
             "    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::{recursive_split_search_policy},\n",
+            "    recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::{recursive_setup_search_policy},\n",
             "    setup_field_budget: {setup_field_budget},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
@@ -775,6 +776,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         selective_l2_response_model = identity.selective_l2_response_model.name(),
         selection_policy = identity.selection_policy.name(),
         recursive_split_search_policy = identity.recursive_split_search_policy.name(),
+        recursive_setup_search_policy = identity.recursive_setup_search_policy.name(),
         setup_field_budget = match identity.setup_field_budget {
             Some(value) => format!("Some({value})"),
             None => "None".to_string(),

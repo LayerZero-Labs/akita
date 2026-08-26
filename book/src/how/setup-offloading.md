@@ -120,7 +120,9 @@ The ordinary configuration catalogs use direct setup evaluation. A supported
 `RecursiveCommitmentConfig<Cfg>` selects a separate generated catalog in which
 the planner may use setup offloading.
 
-For each nonterminal edge, the planner compares two successors:
+For each nonterminal edge, the planner retains a direct successor. At producer
+levels admitted by the catalog's recursive setup search policy, it also
+compares an offloaded successor:
 
 ```text
 Direct successor:    [folded witness]
@@ -140,10 +142,14 @@ direct setup capacity. It then compares exact estimated proof bytes, including
 every Stage 3 proof. Later tie breaks prefer a smaller total setup envelope and
 then the canonical schedule order.
 
-The planner may select no offloaded levels, one level, or several levels. A
-fold number or prefix size does not force the choice. The successor's
-`incoming_setup_prefix` field records the selected edge. There is no second
-producer side mode bit that can disagree with it.
+The shipped recursive catalogs consider offloaded edges produced by the root
+and its direct child. This `RootAndFirstChildV1` domain is part of the catalog
+identity; direct traversal remains available at every level. Exhaustive search
+is available for audit workloads. Within the selected domain, the planner may
+select no offloaded levels, one level, or several levels. A prefix size does
+not force the choice. The successor's `incoming_setup_prefix` field records the
+selected edge. There is no second producer-side mode bit that can disagree
+with it.
 
 Planner search happens offline. The generated row records the exact choices,
 and the verifier resolves and audits that row. It never searches for a cheaper

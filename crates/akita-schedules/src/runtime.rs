@@ -133,6 +133,43 @@ impl RecursiveSplitSearchPolicy {
     }
 }
 
+/// Catalog-bound search policy for recursive setup-offload edges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecursiveSetupSearchPolicy {
+    /// Consider an offloaded child at every admissible producer level.
+    Exhaustive,
+    /// Consider offloaded children produced by the root or its direct child.
+    ///
+    /// This bounds production catalog generation without changing direct-edge
+    /// traversal. It is an explicit search-domain choice, not a dominance
+    /// claim about deeper offload points.
+    RootAndFirstChildV1,
+}
+
+impl RecursiveSetupSearchPolicy {
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::Exhaustive => 1,
+            Self::RootAndFirstChildV1 => 2,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Exhaustive => "Exhaustive",
+            Self::RootAndFirstChildV1 => "RootAndFirstChildV1",
+        }
+    }
+
+    /// Whether search admits an offloaded edge produced at `level`.
+    pub const fn admits_offloaded_edge_at(self, level: usize) -> bool {
+        match self {
+            Self::Exhaustive => true,
+            Self::RootAndFirstChildV1 => level <= 1,
+        }
+    }
+}
+
 /// Catalog-bound ring-dimension schedule policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingDimensionScheduleMode {
@@ -186,6 +223,7 @@ pub struct PlannerPolicy {
     pub selective_l2_response_model: SelectiveL2ResponseModelId,
     pub selection_policy: SelectionPolicyId,
     pub recursive_split_search_policy: RecursiveSplitSearchPolicy,
+    pub recursive_setup_search_policy: RecursiveSetupSearchPolicy,
     /// Optional host admission budget for materialized setup field elements.
     /// `None` leaves the deterministic public stream uncapped by protocol policy.
     pub setup_field_budget: Option<usize>,
@@ -867,6 +905,7 @@ mod tests {
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
+            recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension {
@@ -892,6 +931,16 @@ mod tests {
             witness_chunk: ChunkedWitnessCfg::default(),
             recursive_setup_planning: false,
         }
+    }
+
+    #[test]
+    fn recursive_setup_search_policy_has_stable_domain_semantics() {
+        assert_eq!(RecursiveSetupSearchPolicy::Exhaustive.tag(), 1);
+        assert_eq!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.tag(), 2);
+        assert!(RecursiveSetupSearchPolicy::Exhaustive.admits_offloaded_edge_at(12));
+        assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(0));
+        assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(1));
+        assert!(!RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(2));
     }
 
     #[test]

@@ -297,6 +297,11 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+        recursive_setup_search_policy: if Cfg::recursive_setup_planning() {
+            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+        } else {
+            akita_schedules::RecursiveSetupSearchPolicy::Exhaustive
+        },
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,

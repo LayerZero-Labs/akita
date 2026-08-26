@@ -98,6 +98,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+    recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
     recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
     setup_field_budget: None,
     min_offloaded_witness_contraction: 3,

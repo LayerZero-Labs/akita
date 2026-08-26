@@ -835,6 +835,9 @@ pub(crate) fn derive_selected_suffix_schedule(
                 )?)
             };
             let offloaded_child = if policy.recursive_setup_planning
+                && policy
+                    .recursive_setup_search_policy
+                    .admits_offloaded_edge_at(level)
                 && candidate_params.payload_mode.is_compressed()
                 // An offloaded edge accepts only a child suffix with at
                 // least two folds. At the last two admissible depths that

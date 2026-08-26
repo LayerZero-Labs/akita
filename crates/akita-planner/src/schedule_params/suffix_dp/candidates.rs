@@ -83,15 +83,39 @@ pub(crate) fn packing_precommit_opening_products(
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     key: &AkitaScheduleLookupKey,
+    precommitted_honest_fold_policies: &[akita_types::sis::HonestFoldPolicySpec],
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
+    if key.precommitteds.len() != precommitted_honest_fold_policies.len() {
+        return Err(AkitaError::InvalidSetup(
+            "root precommit opening products require one policy per profile".into(),
+        ));
+    }
     if !crate::schedule_params::precommitted_groups_support_opening_dimension(
         key.precommitteds.iter(),
         dimensions.d_d(),
     ) {
         return Ok(Vec::new());
     }
-    let mut products = vec![Vec::new()];
-    for profile in &key.precommitteds {
+    let mut equivalence_classes: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (index, (profile, fold_policy)) in key
+        .precommitteds
+        .iter()
+        .zip(precommitted_honest_fold_policies)
+        .enumerate()
+    {
+        if let Some((_, indices)) = equivalence_classes.iter_mut().find(|(representative, _)| {
+            key.precommitteds[*representative] == *profile
+                && precommitted_honest_fold_policies[*representative] == *fold_policy
+        }) {
+            indices.push(index);
+        } else {
+            equivalence_classes.push((index, vec![index]));
+        }
+    }
+
+    let mut products = vec![vec![None; key.precommitteds.len()]];
+    for (representative, indices) in equivalence_classes {
+        let profile = &key.precommitteds[representative];
         let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
             0,
             policy.claim_ext_degree,
@@ -104,23 +128,82 @@ pub(crate) fn packing_precommit_opening_products(
         if domain.is_empty() {
             return Ok(Vec::new());
         }
-        let next_len = products.len().checked_mul(domain.len()).ok_or_else(|| {
-            AkitaError::InvalidSetup("root precommit opening search domain overflow".into())
-        })?;
+        let assignments = nondecreasing_opening_assignments(&domain, indices.len());
+        let next_len = products
+            .len()
+            .checked_mul(assignments.len())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("root precommit opening search domain overflow".into())
+            })?;
         let mut next = Vec::new();
         next.try_reserve_exact(next_len).map_err(|_| {
             AkitaError::InvalidSetup("root precommit opening search domain is too large".into())
         })?;
         for product in products {
-            for &opening in &domain {
+            for assignment in &assignments {
                 let mut extended = product.clone();
-                extended.push(opening);
+                for (&index, &opening) in indices.iter().zip(assignment) {
+                    extended[index] = Some(opening);
+                }
                 next.push(extended);
             }
         }
         products = next;
     }
-    Ok(products)
+    products
+        .into_iter()
+        .map(|product| {
+            product
+                .into_iter()
+                .map(|opening| {
+                    opening.ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "root precommit opening product is incomplete".into(),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Canonical assignments for interchangeable precommitted groups.
+///
+/// Every multiset of opening candidates is retained, while permutations among
+/// groups with the same profile and honest-fold policy are removed. Root cost
+/// and feasibility depend only on that multiset, so the omitted permutations
+/// cannot change the selected schedule.
+fn nondecreasing_opening_assignments(
+    domain: &[crate::schedule_params::PlannerOpeningCandidate],
+    width: usize,
+) -> Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>> {
+    fn extend(
+        domain: &[crate::schedule_params::PlannerOpeningCandidate],
+        width: usize,
+        minimum: usize,
+        prefix: &mut Vec<crate::schedule_params::PlannerOpeningCandidate>,
+        output: &mut Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>,
+    ) {
+        if prefix.len() == width {
+            output.push(prefix.clone());
+            return;
+        }
+        for index in minimum..domain.len() {
+            prefix.push(domain[index]);
+            extend(domain, width, index, prefix, output);
+            prefix.pop();
+        }
+    }
+
+    let mut output = Vec::new();
+    extend(
+        domain,
+        width,
+        0,
+        &mut Vec::with_capacity(width),
+        &mut output,
+    );
+    output
 }
 
 /// Enumerate the method/dimension work for one suffix state.
@@ -163,7 +246,14 @@ fn opening_work_domain(
             .unwrap_or_default();
         let root_precommit_products = if early_packing_level {
             root_level_key
-                .map(|root_key| packing_precommit_opening_products(policy, dimensions, root_key))
+                .map(|root_key| {
+                    packing_precommit_opening_products(
+                        policy,
+                        dimensions,
+                        root_key,
+                        ctx.precommitted_honest_fold_policies,
+                    )
+                })
                 .transpose()?
         } else {
             None
