@@ -56,6 +56,24 @@ fn test_scalar(value: u128) -> F {
 }
 
 fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: CommitmentRingDims) {
+    params.own_group_mut().opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(role_dims.d_a())
+            .expect("test ring has a production challenge");
+    let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
+        params.inner().matrix.security_policy(),
+        params
+            .inner()
+            .matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        params.inner().matrix.sis_modulus_profile(),
+        role_dims.d_a(),
+        params.open().digits.log_basis,
+        &params.fold_challenge_config(),
+        params.num_digits_fold(),
+    )
+    .expect("retargeted exact A bound");
     let inner = &params.inner().matrix;
     params.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
@@ -66,7 +84,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound().expect("L infinity test matrix"),
+        inner_bound,
         role_dims.d_a(),
     );
     let outer = &params.outer().matrix;
@@ -101,6 +119,22 @@ fn retarget_precommitted_test_role_dims(
     group.opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("test precommitted ring has a production challenge");
+    let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
+        group.profile.inner.matrix.security_policy(),
+        group
+            .profile
+            .inner
+            .matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        group.profile.inner.matrix.sis_modulus_profile(),
+        inner_ring_dimension,
+        group.opening.log_basis_open,
+        &group.opening.fold_challenge_config,
+        group.opening.num_digits_fold,
+    )
+    .expect("retargeted precommitted exact A bound");
     let mut layout = group.profile;
     let inner = &layout.inner.matrix;
     let inner_output_rank = inner.output_rank();
@@ -113,7 +147,7 @@ fn retarget_precommitted_test_role_dims(
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound().expect("L infinity test matrix"),
+        inner_bound,
         inner_ring_dimension,
     );
     let outer = &layout.outer.matrix;
@@ -196,6 +230,7 @@ fn test_inputs_for_group_sizes(
         depth_open,
     )
     .expect("test level params");
+    lp.own_group_mut().opening.num_digits_fold = depth_fold;
     let expected_b_width = num_claims
         .checked_mul(n_a)
         .and_then(|width| width.checked_mul(depth_open))
@@ -213,13 +248,23 @@ fn test_inputs_for_group_sizes(
         );
     }
     if lp.inner().matrix.coeff_linf_bound() == Some(0) {
+        let a_bound = crate::sis::rounded_up_role_a_inf_norm(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+            TEST_D,
+            lp.open().digits.log_basis,
+            &lp.fold_challenge_config(),
+            lp.num_digits_fold(),
+        )
+        .expect("exact test A bound");
         lp.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_a,
             lp.inner().matrix.input_width(),
-            2,
+            a_bound,
             TEST_D,
         );
     }
@@ -234,7 +279,6 @@ fn test_inputs_for_group_sizes(
             TEST_D,
         );
     }
-    lp.own_group_mut().opening.num_digits_fold = depth_fold;
     if group_sizes.len() > 1 {
         lp.set_precommitted_groups(
             group_sizes[..group_sizes.len() - 1]

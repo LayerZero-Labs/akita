@@ -303,6 +303,12 @@ fn retarget_group_role_dims(
     params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("production challenge");
+    let a_bound = *crate::sis::inner_coeff_linf_bounds(
+        params.inner().matrix.sis_modulus_profile(),
+        u32::try_from(inner_ring_dimension).expect("test ring dimension"),
+    )
+    .first()
+    .expect("retargeted exact A bounds");
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
         crate::InnerCommitMatrixParams::try_new_with_min_rank(
@@ -315,11 +321,17 @@ fn retarget_group_role_dims(
                 modulus_profile: inner.sis_modulus_profile(),
                 role: crate::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
-                coeff_linf_bound: 131_071,
+                coeff_linf_bound: a_bound,
             },
             inner.input_width(),
         )
         .expect("audited retargeted A matrix");
+    let inner_output_rank = params.inner().matrix.output_rank();
+    let projected_outer_width = inner_output_rank
+        .checked_mul(params.outer().digits.num_digits)
+        .and_then(|width| width.checked_mul(params.blocks().live_blocks))
+        .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
+        .expect("retargeted B width");
     let outer = params.outer().matrix;
     params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -330,7 +342,7 @@ fn retarget_group_role_dims(
             ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
             coeff_linf_bound: 3,
         },
-        outer.input_width() * (inner_ring_dimension / outer_ring_dimension),
+        projected_outer_width,
     )
     .expect("audited retargeted B matrix");
 }
@@ -345,20 +357,17 @@ fn retarget_group_role_dims_wide(
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
         crate::InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: inner.security_policy(),
-                table_digest: inner
-                    .sis_table_key()
-                    .expect("L infinity test matrix")
-                    .table_digest,
-                modulus_profile: inner.sis_modulus_profile(),
-                role: crate::sis::SisMatrixRole::Inner,
-                ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
-                coeff_linf_bound: 131_071,
-            },
+            inner.sis_table_key().expect("L infinity test matrix"),
             inner.input_width().max(min_input_width),
         )
         .expect("wide audited A matrix");
+    let inner_output_rank = params.inner().matrix.output_rank();
+    let projected_outer_width = inner_output_rank
+        .checked_mul(params.outer().digits.num_digits)
+        .and_then(|width| width.checked_mul(params.blocks().live_blocks))
+        .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
+        .expect("wide retargeted B width")
+        .max(min_input_width);
     let outer = params.outer().matrix;
     params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -369,7 +378,7 @@ fn retarget_group_role_dims_wide(
             ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
             coeff_linf_bound: 3,
         },
-        outer.input_width().max(min_input_width),
+        projected_outer_width,
     )
     .expect("wide audited B matrix");
 }

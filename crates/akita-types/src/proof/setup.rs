@@ -718,6 +718,12 @@ mod tests {
     const SMALL_D: usize = 64;
 
     fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::GroupOpenPhaseParams {
+        let a_bound = *crate::sis::inner_coeff_linf_bounds(
+            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+            u32::try_from(d_setup).expect("test ring dimension"),
+        )
+        .first()
+        .expect("exact prefix A bounds");
         let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
             crate::SisTableKey {
                 policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -725,7 +731,7 @@ mod tests {
                 modulus_profile: crate::sis::SisModulusProfileId::Q128OffsetA7F7,
                 role: crate::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(d_setup).expect("test ring dimension"),
-                coeff_linf_bound: 32_767,
+                coeff_linf_bound: a_bound,
             },
             1,
         )

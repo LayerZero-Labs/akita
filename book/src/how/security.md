@@ -54,8 +54,12 @@ output ordering.
 The estimator hardening described above changes the acceptance model. The
 checked-in SIS table and dependent schedules therefore use the revisioned
 `Quantum128BitADPS16V2` policy ID and one regenerated table digest. The q32
-coefficient ladder stops at `2^28 - 1`; q64 reaches `2^41 - 1`; q128 reaches
-`2^44 - 1`.
+Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128 uses
+`2^44 - 1`. Within those guards, A is keyed by the exact protocol collision
+`4 * ||c||_1 * (2^t - 1)` for reachable opening-basis/digit-depth products
+`t <= 33` and dimension-compatible challenge families. It does not round an A
+collision up to a generic power-of-two bucket. B and D retain their exact
+gadget-anchor rounding.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These

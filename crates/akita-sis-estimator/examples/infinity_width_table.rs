@@ -539,28 +539,16 @@ structured_attack_review=The scalarized estimate does not model ring/module stru
         cap_hits,
     );
     source.push_str("role_coverage_columns=role,modulus_profile,d,coeff_linf_bound,max_module_rank,required_max_width\n");
-    for profile in [
-        akita_types::sis::SisModulusProfileId::Q32Offset99,
-        akita_types::sis::SisModulusProfileId::Q64Offset59,
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
-    ] {
-        for &role in akita_types::sis::SIS_MATRIX_ROLES {
-            for &d in akita_sis_estimator::width_table::RING_DIMS.iter() {
-                for &bound in akita_types::sis::COEFF_LINF_BUCKETS {
-                    if let Some(cell) = akita_types::sis::sis_role_cell(role, profile, d, bound) {
-                        source.push_str(&format!(
-                            "role_coverage={},{},{},{},{},{}\n",
-                            role.name(),
-                            profile.name(),
-                            cell.ring_dimension,
-                            cell.coeff_linf_bound,
-                            cell.max_module_rank,
-                            cell.required_max_width,
-                        ));
-                    }
-                }
-            }
-        }
+    for cell in akita_types::sis::sis_role_cells() {
+        source.push_str(&format!(
+            "role_coverage={},{},{},{},{},{}\n",
+            cell.role.name(),
+            cell.modulus_profile.name(),
+            cell.ring_dimension,
+            cell.coeff_linf_bound,
+            cell.max_module_rank,
+            cell.required_max_width,
+        ));
     }
     source
 }

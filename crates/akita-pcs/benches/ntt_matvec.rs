@@ -89,8 +89,8 @@ fn bench_full_i16_shape<Fld: Field + CanonicalEncoding, const D: usize>(
         },
     );
     let profile = if cache.uses_ifma52() {
-        if cache.has_i16_tail() {
-            "ifma52_i16"
+        if cache.has_exactness_tail() {
+            "ifma52_tail"
         } else {
             "ifma52"
         }
@@ -161,7 +161,11 @@ fn bench_shape<const D: usize>(
         } else {
             sample_i16_digits::<D>(width, log_basis)
         };
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         let variant = format!("i16_l{log_basis}_{layout}");
         if log_basis == 8 {
             assert_eq!(
@@ -205,7 +209,11 @@ fn bench_exact_profile_shape<Fld: Field + CanonicalEncoding, const D: usize>(
             },
         );
         let digits = sample_i16_digits::<D>(width, log_basis);
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
             |bench| {
@@ -247,7 +255,11 @@ fn bench_equal_output_shape<const D: usize>(
                 rhs_abs_bound: 1 << (log_basis - 1),
             },
         );
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         assert_eq!(
             cache
                 .mat_vec_i16::<F>(log_basis, rank, &i16_digits)
@@ -295,7 +307,11 @@ fn bench_equal_output_shape<const D: usize>(
                 rhs_abs_bound: 1 << (log_basis - 1),
             },
         );
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
             |bench| {

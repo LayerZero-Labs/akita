@@ -30,7 +30,7 @@ pub(crate) static FP128_DENSE_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldScheduleEntr
 #[rustfmt::skip]
 pub(crate) static CATALOG_SUFFIX_DIMENSIONS: &[usize] = &[64];
 #[rustfmt::skip]
-pub(crate) static CATALOG_POTENTIAL_A_DIMENSIONS: &[usize] = &[64, 128, 256, 512];
+pub(crate) static CATALOG_POTENTIAL_A_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024];
 #[rustfmt::skip]
 pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[64, 128];
 #[rustfmt::skip]
@@ -49,18 +49,18 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
     sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16V2,
-    sis_table_digest: SisTableDigest([0xf7, 0x3d, 0x9b, 0xd1, 0xce, 0x0e, 0x29, 0xdb, 0xf2, 0x5c, 0x68, 0xec, 0xd6, 0x2e, 0xfc, 0xce, 0x42, 0x51, 0x56, 0x42, 0x1b, 0x75, 0xbe, 0xa3, 0x80, 0x0b, 0xdc, 0xb2, 0x60, 0xeb, 0x91, 0xca]),
+    sis_table_digest: SisTableDigest([0x66, 0xbb, 0xff, 0xdd, 0xb0, 0x15, 0x80, 0x3d, 0xbc, 0xca, 0xc5, 0x3d, 0x6b, 0x30, 0x23, 0x3d, 0x67, 0x40, 0xbc, 0xfc, 0x3d, 0xd5, 0x25, 0x9a, 0xb1, 0xc3, 0x98, 0xc1, 0x7b, 0xea, 0x63, 0x90]),
     sis_l2_table_digest: SisL2TableDigest([0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26, 0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a]),
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 128, log_open_bound: None },
     claim_ext_degree: 1,
     chal_ext_degree: 1,
-    inner_basis_range: (3, 11),
+    inner_basis_range: (3, 16),
     opening_basis_range: (3, 6),
     witness_chunk: ChunkedWitnessCfg { num_chunks: 8, num_activated_levels: 2 },
     recursive_setup_planning: false,
     ring_dimension_schedule_mode: RingDimensionScheduleMode::AdaptiveDimension { num_search_levels: 2, suffix_dimensions: CATALOG_SUFFIX_DIMENSIONS, potential_a_dimensions: CATALOG_POTENTIAL_A_DIMENSIONS, potential_b_dimensions: CATALOG_POTENTIAL_B_DIMENSIONS, potential_d_dimensions: CATALOG_POTENTIAL_D_DIMENSIONS },
     ring_dimensions: CATALOG_RING_DIMENSIONS,
-    ring_challenge_config_digest: 16577217186669637934,
+    ring_challenge_config_digest: 12423973825851036286,
     key_count: 1,
     key_digest: 445803038178971882,
 };

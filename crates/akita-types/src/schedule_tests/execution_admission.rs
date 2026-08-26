@@ -1,5 +1,23 @@
 use super::*;
 
+pub(super) fn exact_test_a_bound(params: &CommittedGroupParams) -> u128 {
+    crate::sis::rounded_up_role_a_inf_norm(
+        params.inner().matrix.security_policy(),
+        params
+            .inner()
+            .matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        params.inner().matrix.sis_modulus_profile(),
+        params.d_a(),
+        params.open().digits.log_basis,
+        &params.fold_challenge_config(),
+        params.num_digits_fold(),
+    )
+    .expect("exact test A bound")
+}
+
 #[test]
 fn accepts_packing_prefix_then_evaluation_trace_prefix() {
     let packing = OpeningMethod::SubringCoefficientPacking {

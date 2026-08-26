@@ -181,8 +181,13 @@ The checked-in production policy is
 `Quantum128BitADPS16V2`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
 scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
 The role-specific coverage declaration is the source of reachable cells. The
-Inner/A ladder stops at `2^28 - 1` for q32, `2^41 - 1` for q64, and
-`2^44 - 1` for q128.
+Inner/A cells are the exact protocol targets
+`4 * ||c||_1 * (2^t - 1)`, where `t` is a reachable product of opening log
+basis and fold digit depth with `t <= 33`. Each ring dimension includes only
+the production challenge masses compatible with its evaluation-trace or
+coefficient-packing geometry, plus the D64 selective-L2 shell where applicable.
+The profile reach guards remain `2^28 - 1` for q32, `2^41 - 1` for q64, and
+`2^44 - 1` for q128; unsupported intermediate values are not rounded up for A.
 
 The production Rust split table is compiled from
 `crates/akita-types/src/sis/generated_sis_table/`; this directory also contains

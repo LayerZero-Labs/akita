@@ -239,21 +239,22 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 .to_string(),
         ));
     }
-    if n_prefix == 0 || !n_prefix.is_power_of_two() {
+    if n_prefix == 0 {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix length must be a nonzero power of two".to_string(),
+            "setup prefix length must be nonzero".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(inner_ring_dimension) {
+    let padded_prefix_len = padded_setup_prefix_len(n_prefix);
+    if !padded_prefix_len.is_multiple_of(inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix length must be a multiple of the ring dimension".to_string(),
+            "padded setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
     }
-    let ring_slots = n_prefix / inner_ring_dimension;
+    let ring_slots = n_prefix.div_ceil(inner_ring_dimension);
     let reduced_vars = checked::ceil_log2(ring_slots).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix ring slots are zero or too large".into())
     })?;
-    let prefix_num_vars = checked::ceil_log2(n_prefix).ok_or_else(|| {
+    let prefix_num_vars = checked::ceil_log2(padded_prefix_len).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix field length is zero or too large".into())
     })?;
     let open_decomp = DecompositionParams {

@@ -180,56 +180,6 @@ pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
-/// Union of coefficient-`L∞` collision buckets for norm-bound sizing.
-///
-/// Canonical role coverage may restrict this union by modulus profile.
-pub const COEFF_LINF_BUCKETS: &[u128] = &[
-    2,
-    3,
-    7,
-    15,
-    31,
-    63,
-    127,
-    255,
-    511,
-    1023,
-    2047,
-    4095,
-    8191,
-    16383,
-    32767,
-    65535,
-    131_071,
-    262_143,
-    524_287,
-    1_048_575,
-    2_097_151,
-    4_194_303,
-    8_388_607,
-    16_777_215,
-    33_554_431,
-    67_108_863,
-    134_217_727,
-    268_435_455,
-    536_870_911,
-    1_073_741_823,
-    2_147_483_647,
-    4_294_967_295,
-    8_589_934_591,
-    17_179_869_183,
-    34_359_738_367,
-    68_719_476_735,
-    137_438_953_471,
-    274_877_906_943,
-    549_755_813_887,
-    1_099_511_627_775,
-    2_199_023_255_551,
-    4_398_046_511_103,
-    8_796_093_022_207,
-    17_592_186_044_415,
-];
-
 /// Canonical key for a generated SIS floor row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SisTableKey {
@@ -243,23 +193,15 @@ pub struct SisTableKey {
     pub role: SisMatrixRole,
     /// Ring dimension.
     pub ring_dimension: u32,
-    /// Rounded coefficient-`L∞` bound.
+    /// Exact role coefficient-`L∞` bound.
     pub coeff_linf_bound: u128,
 }
 
-/// Smallest coefficient-`L∞` bucket with `B >= linf`.
-#[must_use]
-pub fn ceil_coeff_linf_bucket(linf: u128) -> Option<u128> {
-    if linf == 0 {
-        return None;
-    }
-    COEFF_LINF_BUCKETS
-        .iter()
-        .copied()
-        .find(|&bucket| linf <= bucket)
-}
-
-/// Round a raw coefficient-`L∞` bound up to a generated table bucket.
+/// Resolve a raw coefficient-`L∞` bound to a generated role cell.
+///
+/// A-role collisions are already exact protocol-derived targets and therefore
+/// require an exact table key. B and D remain gadget commitments, so their raw
+/// digit-difference bounds round up to the smallest exact gadget anchor.
 #[must_use]
 pub fn ceil_supported_linf_bound(
     policy: SisSecurityPolicyId,
@@ -272,16 +214,16 @@ pub fn ceil_supported_linf_bound(
     if linf == 0 {
         return None;
     }
-    let bucket = match role {
-        SisMatrixRole::Inner => ceil_coeff_linf_bucket(linf)?,
+    let bound = match role {
+        SisMatrixRole::Inner => linf,
         SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()
             .find(|&candidate| linf <= candidate)?,
     };
-    sis_role_cell(role, sis_modulus_profile, d, bucket)?;
-    sis_max_widths(policy, table_digest, sis_modulus_profile, d, bucket)?;
-    Some(bucket)
+    sis_role_cell(role, sis_modulus_profile, d, bound)?;
+    sis_max_widths(policy, table_digest, sis_modulus_profile, d, bound)?;
+    Some(bound)
 }
 
 /// Canonical generated-table key for a raw coefficient-`L∞` bound.

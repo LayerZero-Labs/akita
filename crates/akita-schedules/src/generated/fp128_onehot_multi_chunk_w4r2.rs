@@ -15,15 +15,15 @@ use super::{
 pub(crate) static FP128_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         final_group: PolynomialGroupLayout::new(32, 1),
-        root: GeneratedRootFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(8388608, 8192, 1024), inner_commit_matrix: GeneratedMatrix { ring_dimension: 512, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 8, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 4 }, num_digits_inner: 1, precommitted_groups: &[] },
+        root: GeneratedRootFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(16777216, 16384, 1024), inner_commit_matrix: GeneratedMatrix { ring_dimension: 256, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 4, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 4 }, num_digits_inner: 1, precommitted_groups: &[] },
         recursive_folds: &[
-            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(296186, 2048, 145), inner_commit_matrix: GeneratedMatrix { ring_dimension: 256, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 4, num_digits_fold: 4, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 4 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: None },
-            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(188526, 4096, 47), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 1, num_digits_fold: 4, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: None },
-            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(29207, 1024, 29), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_slice_count: 1, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: Some(638186733) },
-            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(7320, 512, 15), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_slice_count: 1, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: Some(647598080) },
-            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(3992, 512, 8), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, outer_slice_count: 1, num_digits_fold: 2, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Raw, response_l2_sq_cap: Some(347084013) },
+            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(1007759, 4096, 247), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 2, num_digits_fold: 4, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 64 } }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 4 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: None },
+            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(130130, 4096, 32), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_slice_count: 1, num_digits_fold: 4, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: None },
+            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(25337, 1024, 25), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 3 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_slice_count: 1, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: Some(519084505) },
+            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(6808, 512, 14), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_slice_count: 1, num_digits_fold: 3, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Compressed, response_l2_sq_cap: Some(585288468) },
+            GeneratedRecursiveFold { core: GeneratedFoldCore { group: GeneratedGroup { geometry: BlockGeometry::new(3864, 512, 8), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 4 }, outer_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, outer_slice_count: 1, num_digits_fold: 2, opening_method: akita_types::OpeningMethod::EvaluationTrace }, open_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, witness_chunks: 1 }, setup_prefix: None, payload_mode: CommitmentPayloadMode::Raw, response_l2_sq_cap: Some(333453785) },
         ],
-        terminal: GeneratedTerminalFold { geometry: BlockGeometry::new(2012, 256, 8), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, num_digits_inner: 1, fold_log_basis: 5, fold_digit_count: 3, inner_output_rank: 3, inner_coeff_linf_bound: 0, response_l2_sq_cap: Some(663986807), z_linf_cap: None, z_rice_low_bits: 7, z_payload_bytes: 22528 },
+        terminal: GeneratedTerminalFold { geometry: BlockGeometry::new(2012, 256, 8), inner_commit_matrix: GeneratedMatrix { ring_dimension: 64, log_basis: 5 }, num_digits_inner: 1, fold_log_basis: 5, fold_digit_count: 3, inner_output_rank: 3, inner_coeff_linf_bound: 0, response_l2_sq_cap: Some(661390573), z_linf_cap: None, z_rice_low_bits: 7, z_payload_bytes: 22528 },
     },
 ];
 
@@ -36,11 +36,11 @@ pub(crate) static CATALOG_POTENTIAL_B_DIMENSIONS: &[usize] = &[64, 128];
 #[rustfmt::skip]
 pub(crate) static CATALOG_POTENTIAL_D_DIMENSIONS: &[usize] = &[64, 128];
 #[rustfmt::skip]
-pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256, 512];
+pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64, 256];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_onehot_multi_chunk_w4r2",
-    protocol_epoch: 3,
+    protocol_epoch: 2,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
     selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
@@ -49,12 +49,12 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
     sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16V2,
-    sis_table_digest: SisTableDigest([0xf7, 0x3d, 0x9b, 0xd1, 0xce, 0x0e, 0x29, 0xdb, 0xf2, 0x5c, 0x68, 0xec, 0xd6, 0x2e, 0xfc, 0xce, 0x42, 0x51, 0x56, 0x42, 0x1b, 0x75, 0xbe, 0xa3, 0x80, 0x0b, 0xdc, 0xb2, 0x60, 0xeb, 0x91, 0xca]),
+    sis_table_digest: SisTableDigest([0x66, 0xbb, 0xff, 0xdd, 0xb0, 0x15, 0x80, 0x3d, 0xbc, 0xca, 0xc5, 0x3d, 0x6b, 0x30, 0x23, 0x3d, 0x67, 0x40, 0xbc, 0xfc, 0x3d, 0xd5, 0x25, 0x9a, 0xb1, 0xc3, 0x98, 0xc1, 0x7b, 0xea, 0x63, 0x90]),
     sis_l2_table_digest: SisL2TableDigest([0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26, 0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a]),
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 1, log_open_bound: Some(128) },
     claim_ext_degree: 1,
     chal_ext_degree: 1,
-    inner_basis_range: (3, 11),
+    inner_basis_range: (3, 16),
     opening_basis_range: (3, 6),
     witness_chunk: ChunkedWitnessCfg { num_chunks: 4, num_activated_levels: 2 },
     recursive_setup_planning: false,
@@ -62,5 +62,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 16577217186669637934,
     key_count: 1,
-    key_digest: 17114491498750658624,
+    key_digest: 10007865288090352551,
 };

@@ -295,15 +295,16 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
     let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
     let mut low_a = layout;
     let inner = low_a.inner.matrix;
-    let lower_a_bound = crate::sis::COEFF_LINF_BUCKETS
-        .iter()
-        .copied()
-        .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
-        .expect("lower supported A bound");
+    let inner_key = inner.sis_table_key().expect("L infinity test matrix");
+    let lower_a_bound =
+        crate::sis::inner_coeff_linf_bounds(inner_key.modulus_profile, inner_key.ring_dimension)
+            .into_iter()
+            .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
+            .expect("lower supported A bound");
     low_a.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             coeff_linf_bound: lower_a_bound,
-            ..inner.sis_table_key().expect("L infinity test matrix")
+            ..inner_key
         },
         inner.input_width(),
     )
@@ -321,7 +322,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
 
     let mut low_b = layout;
     let outer = low_b.outer.matrix;
-    let lower_b_bound = crate::sis::COEFF_LINF_BUCKETS
+    let lower_b_bound = crate::sis::GADGET_COEFF_LINF_ANCHORS
         .iter()
         .copied()
         .rfind(|&bound| bound < outer.coeff_linf_bound())
@@ -352,7 +353,22 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = lp.preceding_group_mut_for_test(0).unwrap();
+    precommitted.opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
     let inner = &precommitted.profile.inner.matrix;
+    let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        128,
+        precommitted.opening.log_basis_open,
+        &precommitted.opening.fold_challenge_config,
+        precommitted.opening.num_digits_fold,
+    )
+    .expect("D128 exact A bound");
     precommitted.profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
@@ -362,7 +378,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound().expect("L infinity test matrix"),
+        inner_bound,
         128,
     );
     let outer = &precommitted.profile.outer.matrix;
@@ -375,9 +391,6 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         outer.coeff_linf_bound(),
         outer.ring_dimension(),
     );
-    precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
-
     assert_eq!(lp.d_a(), 64, "the final group remains native at A=64");
     assert_eq!(
         lp.group_role_dims(&batch, 0)
@@ -451,7 +464,7 @@ fn address_oracle_group_params(
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         d_a,
-        2,
+        3,
         3,
         2,
         3,

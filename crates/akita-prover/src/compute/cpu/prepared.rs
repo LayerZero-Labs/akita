@@ -5,7 +5,7 @@ use crate::compute::requirements::RoutedNttRequirement;
 use crate::kernels::linear::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use akita_error::AkitaError;
 use akita_types::{
-    dispatch_for_field, ntt_cache_requires_i16_tail, prepare_ntt_cache, AkitaExpandedSetup,
+    dispatch_for_field, ntt_cache_requires_exactness_tail, prepare_ntt_cache, AkitaExpandedSetup,
     NttCacheKey, NttCacheMode, NttTransformDomain, PreparedNttCache,
 };
 use jolt_field::{CanonicalEncoding, Field};
@@ -262,7 +262,7 @@ impl<F: Field + CanonicalEncoding> CpuPreparedSetup<F> {
                         width,
                         rhs_abs_bound,
                     } if dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, ring_d, |RING_D| {
-                        ntt_cache_requires_i16_tail::<F, RING_D>(width, rhs_abs_bound)
+                        ntt_cache_requires_exactness_tail::<F, RING_D>(width, rhs_abs_bound)
                     })? =>
                     {
                         count

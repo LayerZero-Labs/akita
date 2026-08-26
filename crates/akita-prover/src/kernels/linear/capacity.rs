@@ -89,7 +89,7 @@ pub(crate) fn selected_crt_i8_capacity_profile<F: Field + CanonicalEncoding, con
             capacity_profile_from_params::<F, _, Q64_NUM_PRIMES, D>(&params, "Q64/3xi32", 32)
         }
         ProtocolCrtNttParams::Q128(params) => {
-            capacity_profile_from_params::<F, _, Q128_NUM_PRIMES, D>(&params, "Q128/5xi32", 32)
+            capacity_profile_from_params::<F, _, Q128_NUM_PRIMES, D>(&params, "Q128/6xi32", 32)
         }
     }
 }
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(q64.limb_bits, 32);
 
         let q128 = selected_crt_i8_capacity_profile::<Prime128Offset275, 64>().unwrap();
-        assert_eq!(q128.profile_id, "Q128/5xi32");
+        assert_eq!(q128.profile_id, "Q128/6xi32");
         assert_eq!(q128.num_primes, Q128_NUM_PRIMES);
         assert_eq!(q128.limb_bits, 32);
     }

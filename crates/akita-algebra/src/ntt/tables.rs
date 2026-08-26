@@ -16,9 +16,9 @@ pub const MAX_CRT_RING_DEGREE: usize = 2048;
 pub const CHALLENGE_MIN_RING_D: usize = 64;
 
 /// Maximum ring degree for Q128 CRT+NTT profile (challenge-supported paths).
-pub const Q128_MAX_RING_D: usize = 512;
+pub const Q128_MAX_RING_D: usize = 1024;
 /// Maximum ring degree for Q64 CRT+NTT profile (challenge-supported paths).
-pub const Q64_MAX_RING_D: usize = 1024;
+pub const Q64_MAX_RING_D: usize = 2048;
 /// Maximum ring degree for Q32 CRT+NTT profile (challenge-supported paths).
 pub const Q32_MAX_RING_D: usize = 2048;
 
@@ -35,7 +35,7 @@ pub const Q64_NUM_PRIMES: usize = 3;
 pub const Q64_MODULUS: u64 = u64::MAX - 58;
 
 /// Number of CRT primes for the `logq = 128` parameter set.
-pub const Q128_NUM_PRIMES: usize = 5;
+pub const Q128_NUM_PRIMES: usize = 6;
 
 /// Protocol modulus `q = 2^128 - 275`.
 pub const Q128_MODULUS: u128 = u128::MAX - 274;
@@ -53,11 +53,12 @@ pub const I16_TAIL_PRIME: NttPrime<i16> = NttPrime {
 
 /// Raw 30-bit primes for Q128 (`logq = 128`, K=5).
 ///
-/// Chosen v₂-descending under prefix min-v₂ floors for future ring-dim headroom
-/// (see `book/src/foundations/ntt-crt.md`). Q32/Q64 use separate const tables
-/// below with the matching prefix primes.
-pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] =
-    [1073692673, 1073668097, 1073707009, 1073738753, 1073732609];
+/// The six largest primes below `2^30` whose `p - 1` is divisible by `2048`,
+/// independently selected for the Q128 `D <= 1024` profile. Q32 and Q64 use
+/// separate tables below.
+pub const I32_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = [
+    1073707009, 1073698817, 1073692673, 1073682433, 1073668097, 1073655809,
+];
 
 /// CRT primes and per-prime Montgomery constants for Q32 measured `2xi32` profile.
 pub const Q32_PRIMES: [NttPrime<i32>; Q32_NUM_PRIMES] = [
@@ -83,7 +84,8 @@ pub fn q32_garner() -> GarnerData<Q32_NUM_PRIMES> {
 /// Raw 30-bit primes for Q128.
 pub const Q128_RAW_PRIMES: [i32; Q128_NUM_PRIMES] = I32_RAW_PRIMES;
 
-/// CRT primes and per-prime Montgomery constants for `logq = 64` reduced profile.
+/// The three largest primes below `2^30` whose `p - 1` is divisible by `4096`,
+/// with per-prime Montgomery constants for the Q64 `D <= 2048` profile.
 pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
     NttPrime {
         p: 1073692673,
@@ -98,10 +100,10 @@ pub const Q64_PRIMES: [NttPrime<i32>; Q64_NUM_PRIMES] = [
         montsq: 3612607,
     },
     NttPrime {
-        p: 1073707009,
-        pinv: 138446849,
-        mont: 139260,
-        montsq: 66621438,
+        p: 1073655809,
+        pinv: 2030129153,
+        mont: 344060,
+        montsq: 275144610,
     },
 ];
 
@@ -191,6 +193,19 @@ mod tests {
             divisor += 1;
         }
         true
+    }
+
+    fn largest_eligible_i32_primes(count: usize, root_order: i64) -> Vec<i32> {
+        let mut multiple = ((1_i64 << 30) - 2) / root_order;
+        let mut primes = Vec::with_capacity(count);
+        while primes.len() < count {
+            let candidate = multiple * root_order + 1;
+            if is_prime(candidate) {
+                primes.push(i32::try_from(candidate).expect("prime below 2^30"));
+            }
+            multiple -= 1;
+        }
+        primes
     }
 
     fn assert_i16_prime_profile(primes: &[NttPrime<i16>]) {
@@ -303,5 +318,21 @@ mod tests {
         for prime in q128_primes() {
             assert_ntt_order_for_ring_d(&prime, Q128_MAX_RING_D);
         }
+    }
+
+    #[test]
+    fn production_profiles_use_largest_eligible_i32_primes() {
+        assert_eq!(
+            Q32_PRIMES.map(|prime| prime.p).as_slice(),
+            largest_eligible_i32_primes(Q32_NUM_PRIMES, (2 * Q32_MAX_RING_D) as i64)
+        );
+        assert_eq!(
+            Q64_PRIMES.map(|prime| prime.p).as_slice(),
+            largest_eligible_i32_primes(Q64_NUM_PRIMES, (2 * Q64_MAX_RING_D) as i64)
+        );
+        assert_eq!(
+            I32_RAW_PRIMES.as_slice(),
+            largest_eligible_i32_primes(Q128_NUM_PRIMES, (2 * Q128_MAX_RING_D) as i64)
+        );
     }
 }

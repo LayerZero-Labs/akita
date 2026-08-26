@@ -22,11 +22,13 @@ mod boundary;
 
 use boundary::{certified_boundary_from_hint, max_true_in_prefix};
 
-/// Estimator projection of the runtime's canonical coefficient buckets.
-pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
-    akita_types::sis::COEFF_LINF_BUCKETS
-        .iter()
-        .map(|&bound| u64::try_from(bound).expect("runtime SIS bucket exceeds u64"))
+/// Estimator projection of every canonical role coefficient bound.
+pub static COEFF_LINF_BOUNDS: LazyLock<Vec<u64>> = LazyLock::new(|| {
+    canonical_scalar_origins()
+        .into_iter()
+        .map(|(_, _, bound)| bound)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 });
 
@@ -263,7 +265,7 @@ impl Default for InfinityWidthTableConfig {
         Self {
             profiles: FAMILIES.to_vec(),
             ring_dims: RING_DIMS.to_vec(),
-            coeff_linf_bounds: COEFF_LINF_BUCKETS.clone(),
+            coeff_linf_bounds: COEFF_LINF_BOUNDS.clone(),
             max_rank: DEFAULT_MAX_RANK,
             policy: SisSecurityPolicy::Quantum128BitADPS16V2,
             search_cap: None,
@@ -280,7 +282,7 @@ impl Default for InfinityWidthTableConfig {
 pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConfig) -> bool {
     same_set(&config.profiles, FAMILIES.as_slice())
         && same_set(&config.ring_dims, RING_DIMS.as_slice())
-        && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BUCKETS)
+        && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BOUNDS)
         && config.max_rank == DEFAULT_MAX_RANK
         && config.policy == SisSecurityPolicy::Quantum128BitADPS16V2
         && config.search_cap.is_none()

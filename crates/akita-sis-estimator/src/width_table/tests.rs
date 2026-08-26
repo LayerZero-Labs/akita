@@ -70,7 +70,8 @@ fn work_identifiers_track_semantics_but_not_progress_output() {
     let mut config = InfinityWidthTableConfig {
         profiles: vec![AkitaModulusProfileId::Q32Offset99],
         ring_dims: vec![64],
-        coeff_linf_bounds: vec![2],
+        // `4 * 51 * (2^3 - 1)`: the smallest exact D64 A-role target.
+        coeff_linf_bounds: vec![1_428],
         max_rank: 1,
         search_cap: Some(100),
         ..InfinityWidthTableConfig::default()
@@ -88,7 +89,7 @@ fn work_results_round_trip_and_bind_the_planned_item() {
     let config = InfinityWidthTableConfig {
         profiles: vec![AkitaModulusProfileId::Q32Offset99],
         ring_dims: vec![64],
-        coeff_linf_bounds: vec![2],
+        coeff_linf_bounds: vec![1_428],
         max_rank: 1,
         search_cap: Some(100),
         ..InfinityWidthTableConfig::default()
@@ -180,25 +181,30 @@ fn generation_filters_to_production_and_documented_diagnostic_cells() {
         32,
         2
     ));
-    assert!(scalar_origin_is_canonical(
+    assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
         64,
         2
     ));
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
+        64,
+        1_428
+    ));
+    assert!(scalar_origin_is_canonical(
+        AkitaModulusProfileId::Q128OffsetA7F7,
         512,
-        2
+        532
     ));
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q64Offset59,
         512,
-        2
+        532
     ));
     assert!(scalar_origin_is_canonical(
         AkitaModulusProfileId::Q32Offset99,
         512,
-        3
+        532
     ));
     assert!(!scalar_origin_is_canonical(
         AkitaModulusProfileId::Q128OffsetA7F7,
@@ -242,7 +248,8 @@ fn q128_d512_rows_are_estimated_directly() {
     let config = InfinityWidthTableConfig {
         profiles: vec![AkitaModulusProfileId::Q128OffsetA7F7],
         ring_dims: vec![512],
-        coeff_linf_bounds: vec![67_108_863],
+        // `4 * 19 * (2^3 - 1)`: the smallest exact D512 A-role target.
+        coeff_linf_bounds: vec![532],
         max_rank: 2,
         search_cap: Some(100_000),
         profile: InfinityWidthProfile::LatticeEstimatorParity,
@@ -252,6 +259,5 @@ fn q128_d512_rows_are_estimated_directly() {
     validate_infinity_width_rows(&rows).unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| row.d == 512));
-    assert_eq!(rows[0].max_width, 94_477);
-    assert_eq!(rows[1].max_width, 100_000);
+    assert!(rows.iter().all(|row| row.max_width == 100_000));
 }

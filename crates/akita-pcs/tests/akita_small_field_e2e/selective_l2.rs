@@ -47,7 +47,7 @@ fn encode_test_golomb_rice(values: &[i64], rice_low_bits: u32) -> Vec<u8> {
 }
 
 #[test]
-fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
+fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
@@ -91,14 +91,9 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
         else {
             unreachable!("selected route checked above")
         };
-        assert!(
-            norm_proof_shape
-                .limb_gram_layout()
-                .expect("checked LimbGram shape")
-                .expect("shipped small-field route must use LimbGram")
-                .block_count()
-                > 1
-        );
+        norm_proof_shape
+            .validate()
+            .expect("shipped small-field norm-proof shape");
 
         let poly = fp32_l2_onehot_poly(&schedule.root.params, 3);
         let point = (0..NUM_VARS)
@@ -152,15 +147,18 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .iter()
             .position(|fold| fold.stage1.norm_proof.is_some())
             .expect("proof must carry the selected L2 norm");
-        assert!(
-            proof.recursive_folds[l2_index]
-                .stage1
-                .norm_proof
-                .as_ref()
-                .expect("L2 norm proof")
-                .subclaims
-                .len()
-                > 1
+        let norm_proof = proof.recursive_folds[l2_index]
+            .stage1
+            .norm_proof
+            .as_ref()
+            .expect("L2 norm proof");
+        assert_eq!(
+            norm_proof.subclaims.len(),
+            norm_proof_shape.subclaim_count().expect("valid norm shape")
+        );
+        assert_eq!(
+            norm_proof.virtual_evaluations.len(),
+            norm_proof_shape.virtual_evaluation_count()
         );
 
         let verify = |candidate: &AkitaBatchedProof<F, E>| {
@@ -191,14 +189,16 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .response_l2_sq = response_l2_sq_cap + 1;
         assert!(verify(&over_cap).is_err());
 
-        let mut bad_subclaim = proof.clone();
-        bad_subclaim.recursive_folds[l2_index]
-            .stage1
-            .norm_proof
-            .as_mut()
-            .expect("L2 norm proof")
-            .subclaims[0] += E::one();
-        assert!(verify(&bad_subclaim).is_err());
+        if !norm_proof.subclaims.is_empty() {
+            let mut bad_subclaim = proof.clone();
+            bad_subclaim.recursive_folds[l2_index]
+                .stage1
+                .norm_proof
+                .as_mut()
+                .expect("L2 norm proof")
+                .subclaims[0] += E::one();
+            assert!(verify(&bad_subclaim).is_err());
+        }
 
         let mut bad_virtual = proof.clone();
         bad_virtual.recursive_folds[l2_index]

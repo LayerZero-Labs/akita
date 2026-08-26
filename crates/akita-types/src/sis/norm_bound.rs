@@ -12,9 +12,9 @@ use super::ajtai_key::{
     ceil_supported_linf_bound, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
     SisTableDigest,
 };
-use super::decomposition_digits::balanced_digit_abs_max;
+use super::decomposition_digits::balanced_digit_interval_diameter;
 #[cfg(test)]
-use super::decomposition_digits::num_digits_for_linf_cap;
+use super::decomposition_digits::{balanced_digit_abs_max, num_digits_for_linf_cap};
 use crate::layout::digit_math::isqrt_ceil;
 
 pub use super::fold_linf_cap::{
@@ -69,6 +69,20 @@ pub fn role_a_collision_inf_norm_for_response_bound(
         challenge_l1_norm.checked_mul(2)?,
         response_linf_bound.checked_mul(2)?,
     )
+}
+
+/// Complete A-role collision price for the exact difference of two accepted
+/// folded responses.
+///
+/// `response_difference_linf` is the diameter of the accepted coefficient
+/// interval, so it already accounts for both responses and must not be doubled
+/// again. The fold challenges may still differ, contributing the remaining
+/// factor of two before applying [`weak_binding_inf_norm`].
+pub fn role_a_collision_inf_norm_for_response_difference(
+    challenge_l1_norm: u128,
+    response_difference_linf: u128,
+) -> Option<u128> {
+    weak_binding_inf_norm(challenge_l1_norm.checked_mul(2)?, response_difference_linf)
 }
 
 /// Complete physical squared-`L2` A-role collision bound for two accepted
@@ -174,15 +188,14 @@ pub fn certified_terminal_response_linf_cap(
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
-/// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
-/// envelope is [`balanced_digit_abs_max`] at the selected `δ_fold` depth.
-/// MSIS accounting prices the
-/// weak-binding collision `2 · c_bar · z_bar · nu`, where the challenge slack
-/// is `c_bar = 2 · challenge.l1_norm` and the digit envelope is
-/// `z_bar = 2 · balanced_digit_abs_max`, then rounds up to the audited
-/// bucket.
+/// accepts every balanced `δ_fold`-digit string. Binding compares two accepted
+/// responses, so their exact coefficient difference envelope is
+/// [`balanced_digit_interval_diameter`], not twice the asymmetric single-response
+/// envelope [`balanced_digit_abs_max`]. MSIS accounting prices the weak-binding
+/// collision `2 · c_bar · delta_z`, where
+/// `c_bar = 2 · challenge.l1_norm`, then selects that exact audited target.
 ///
-/// Returns `None` on overflow or when the collision exceeds every audited bucket
+/// Returns `None` on overflow or when the exact collision target is not audited
 /// for `(sis_modulus_profile, ring_dimension)`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
@@ -199,10 +212,12 @@ pub fn rounded_up_role_a_inf_norm(
     if log_basis_response == 0 || fold_decomposed_digits == 0 {
         return None;
     }
-    let recomposed_inf_norm_bound =
-        balanced_digit_abs_max(log_basis_response, fold_decomposed_digits);
-    let collision_linf =
-        role_a_collision_inf_norm_for_response_bound(challenge.l1_norm, recomposed_inf_norm_bound)?;
+    let response_difference_bound =
+        balanced_digit_interval_diameter(log_basis_response, fold_decomposed_digits);
+    let collision_linf = role_a_collision_inf_norm_for_response_difference(
+        challenge.l1_norm,
+        response_difference_bound,
+    )?;
     ceil_supported_linf_bound(
         policy,
         table_digest,
@@ -414,6 +429,16 @@ mod tests {
     }
 
     #[test]
+    fn exact_response_difference_is_not_doubled_again() {
+        let challenge_l1 = 51;
+        let response_difference = (1u128 << 24) - 1;
+        assert_eq!(
+            role_a_collision_inf_norm_for_response_difference(challenge_l1, response_difference,),
+            Some(4 * challenge_l1 * response_difference),
+        );
+    }
+
+    #[test]
     fn l2_collision_scales_the_complete_physical_norm_once() {
         let challenge_l1 = 51u128;
         let response_l2_sq = 1u128 << 32;
@@ -490,7 +515,7 @@ mod tests {
     }
 
     #[test]
-    fn rounded_up_role_a_inf_norm_matches_lemma7_envelope() {
+    fn rounded_up_role_a_inf_norm_matches_certified_difference_envelope() {
         use crate::DecompositionParams;
         use akita_challenges::{
             SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT,
@@ -527,9 +552,10 @@ mod tests {
             &cap_config,
         )
         .unwrap();
-        let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
-        // Physical weak-binding collision `8 · ω · z`.
-        let collision_linf = 8u128 * challenge.l1_norm * z_bound;
+        let response_difference =
+            balanced_digit_interval_diameter(decomposition.log_basis, delta_fold);
+        // Digit-certified weak-binding collision `4 · ω · delta_z`.
+        let collision_linf = 4u128 * challenge.l1_norm * response_difference;
         let envelope = ceil_supported_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
@@ -553,6 +579,35 @@ mod tests {
             envelope,
         );
         assert!(envelope >= collision_linf);
+    }
+
+    #[test]
+    fn exact_response_diameter_uses_the_exact_collision_key() {
+        let delta_fold = 6;
+        for (d, profile, expected_collision) in [
+            (128, SisModulusProfileId::Q128OffsetA7F7, 32_505_732),
+            (1024, SisModulusProfileId::Q64Offset59, 16_777_152),
+        ] {
+            let challenge = SparseChallengeConfig::production_for_ring_dim(d).unwrap();
+            let exact_bucket = rounded_up_role_a_inf_norm(
+                DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
+                profile,
+                d,
+                3,
+                &challenge,
+                delta_fold,
+            )
+            .unwrap();
+            assert_eq!(exact_bucket, expected_collision);
+
+            let naive_symmetric_price = role_a_collision_inf_norm_for_response_bound(
+                FoldChallengeNorms::new(&challenge).l1_norm,
+                balanced_digit_abs_max(3, delta_fold),
+            )
+            .unwrap();
+            assert!(naive_symmetric_price > exact_bucket);
+        }
     }
 
     #[test]
@@ -606,19 +661,8 @@ mod tests {
             delta_fold,
         )
         .unwrap();
-        let cap_priced = ceil_supported_linf_bound(
-            DEFAULT_SIS_SECURITY_POLICY,
-            SisTableDigest::CURRENT,
-            SisModulusProfileId::Q64Offset59,
-            SisMatrixRole::Inner,
-            d as u32,
-            8u128
-                .checked_mul(challenge.l1_norm)
-                .unwrap()
-                .checked_mul(honest_cap)
-                .unwrap(),
-        )
-        .unwrap();
+        let cap_priced =
+            role_a_collision_inf_norm_for_response_bound(challenge.l1_norm, honest_cap).unwrap();
         assert!(
             digit_priced > cap_priced,
             "digit-priced {digit_priced} must exceed honest-cap-priced {cap_priced}",
@@ -709,7 +753,8 @@ mod tests {
             &cap_config,
         )
         .unwrap();
-        let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
+        let response_difference =
+            balanced_digit_interval_diameter(decomposition.log_basis, delta_fold);
         let priced = rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
@@ -728,7 +773,7 @@ mod tests {
                 SisModulusProfileId::Q32Offset99,
                 SisMatrixRole::Inner,
                 d as u32,
-                8 * challenge.l1_norm * z_bound
+                4 * challenge.l1_norm * response_difference
             )
             .unwrap(),
         );

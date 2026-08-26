@@ -55,14 +55,13 @@ pub(super) fn prepare_recursive_level_search(
     let opening_layout = suffix_opening_layout(current_witness_len, incoming_setup_prefix)?;
     let setup_prefixes = match setup_prefix {
         RecursiveSetupPrefix::Search { cache, natural_len } => {
-            let n_prefix = padded_setup_prefix_len(natural_len);
             let groups = derive_setup_prefix_groups(
                 cache,
                 SetupPrefixSearchRequest {
                     policy,
                     opening,
                     log_basis_open,
-                    n_prefix,
+                    n_prefix: natural_len,
                     num_chunks,
                     inner_ring_dimension: d_a,
                     outer_ring_dimension: dimensions.d_b(),

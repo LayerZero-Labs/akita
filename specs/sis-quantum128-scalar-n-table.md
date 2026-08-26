@@ -58,19 +58,24 @@ precheck away from equality. The unimplemented high-precision backend fails
 closed rather than silently executing in `f64`.
 
 The canonical role coverage has Inner/A dimensions `64, 128, 256, 512, 1024,
-2048` for q32, `64, 128, 256, 512, 1024` for q64, and `64, 128, 256, 512` for
-q128. Outer/B and Open/D have dimensions `64, 128, 256`. The separate fixed
+2048` for q32 and q64, and `64, 128, 256, 512, 1024` for q128. Outer/B and
+Open/D have dimensions `64, 128, 256`. The separate fixed
 compression cells use their protocol-specific dimensions. Every
-commitment-matrix cell has maximum module rank `20`. Inner/A uses the explicit
-planner bucket union
-`2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
-32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
-16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
-2147483647, 4294967295, 8589934591, 17179869183, 34359738367, 68719476735,
-137438953471, 274877906943, 549755813887, 1099511627775, 2199023255551,
-4398046511103, 8796093022207, 17592186044415`. The q32 profile stops at
-`268435455`, q64 stops at `2199023255551 = 2^41 - 1`, and q128 stops at
-`17592186044415 = 2^44 - 1`.
+commitment-matrix cell has maximum module rank `20`. Inner/A uses exact
+protocol collision targets
+
+```text
+B_A = 4 * ||c||_1 * (2^t - 1),
+t in {3,4,5,6,8,9,10,12,15,16,18,20,21,24,25,27,28,30,32,33}.
+```
+
+The production challenge masses are `14, 16, 19, 23, 31, 51`; the D64
+selective-L2 shell additionally contributes `53`. A ring dimension retains
+only the masses reachable through its evaluation-trace or coefficient-packing
+geometry. The q32 profile guard is `268435455`, q64 is
+`2199023255551 = 2^41 - 1`, and q128 is
+`17592186044415 = 2^44 - 1`; A does not round unsupported intermediate values
+up to those guards.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
@@ -82,9 +87,10 @@ each ring origin, including its accepted and rejected boundary witnesses. The
 runtime projection takes the minimum scalar cutoff when different ring origins
 map to the same scalar key.
 
-The checked-in production audit contains 10,980 ring-origin rows: 3,360 for
-q32, 4,100 for q64, and 3,520 for q128. The q128 Inner/512 cell has 880 direct
-estimator requests: 44 coefficient buckets times 20 module ranks.
+The checked-in production audit contains 20,940 ring-origin rows: 4,780 for
+q32, 9,280 for q64, and 6,880 for q128. The q128 Inner/1024 cell has 2,000
+direct estimator requests: 100 exact coefficient targets times 20 module
+ranks.
 
 ### Quantum cost-model disposition
 
@@ -127,8 +133,9 @@ disappears, LGSA and GSA coincide exactly.
 
 The pinned Sage estimator at
 `c667a48546f140c3a5454c7503c3ca44a264cce2` was also used for an offline
-profile comparison on the proposed widened representative rows. Independent
-local beta and zeta optimization produced:
+profile comparison on conservative profile-guard rows. These rows audit shape
+selection at the reach envelope; after the exact-target cutover they need not
+be runtime table keys. Independent local beta and zeta optimization produced:
 
 | Scalar SIS row | LGSA | GSA | CN11 | CN11 after forgetting q-structure |
 |---|---:|---:|---:|---:|
@@ -451,16 +458,17 @@ B and D use exact gadget anchors when their formulas produce
 3, 7, 15, 31, 63, 127, 255
 ```
 
-A uses the explicit planner bucket set listed in the delivered implementation
-parameters. The set is a deliberate collision-bucket contract, not an implicit
-geometric ladder and not a runtime interpolation rule. If planner workloads
-ever require a bound outside the set, the coverage and generated table must be
-updated together.
+A uses the exact targets derived from the response-difference exponent sweep,
+the compatible production challenge masses, and the profile reach guard. It
+does not round between targets. If planner workloads require a new exponent or
+challenge family, the canonical derivation and generated table must be updated
+together.
 
 F uses the bounds required by its own formula and planner domain.
 
-Each role helper rounds a raw bound up within that role's allowed cells. The
-generator stores the union of the resulting `(B, n)` requests. It does not
+The B and D helpers round a raw gadget bound up within their allowed anchors;
+the A helper requires its already-derived exact target. The generator stores
+the union of the resulting `(B, n)` requests. It does not
 generate the full product of every role's bounds and every role's row
 dimensions unless those cells are actually reachable.
 
@@ -540,7 +548,7 @@ Each file is encoded as an unsigned little endian 64-bit byte length, its
 UTF-8 filename, a NUL byte, and its exact bytes. This encoding is independent
 of host word size, map iteration order, and parallel generation order.
 
-The q128 Inner/512 cells are part of the unified artifact and its shared table
+The q128 Inner/1024 cells are part of the unified artifact and its shared table
 digest. Dependent schedule catalogs embed that same digest.
 
 ## Invariants
@@ -555,7 +563,8 @@ digest. Dependent schedule catalogs embed that same digest.
 - Identical scalar cells are generated once.
 - Unreachable scalar cells are not required.
 - Exact modulus profiles are checked against the configured field.
-- Policy identity changes whenever acceptance semantics change.
+- Policy identity changes whenever estimator acceptance semantics change;
+  coverage-only changes retain the policy and change the table identity.
 - Table identity changes whenever coverage or generated data changes.
 - Missing required cells and arithmetic overflow fail closed with `AkitaError`.
 - Estimator work is offline. Verifier reachable code uses static tables and does
