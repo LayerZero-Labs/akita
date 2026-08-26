@@ -180,17 +180,6 @@ impl GeneratedSetupPrefix {
         log_basis_open: u32,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
-        let d_a = self.group.profile.inner.matrix.ring_dimension();
-        let committed_len = self
-            .group
-            .profile
-            .blocks
-            .live_ring_elements_per_claim
-            .checked_mul(d_a)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
-            })?;
-        akita_types::validate_setup_prefix_domain(natural_len, committed_len)?;
         self.group.expand_to_group(
             Some(natural_len),
             policy,
@@ -897,6 +886,19 @@ mod tests {
                 .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
+        let natural_len = usize::try_from(input.natural_len).expect("natural length");
+        let live_ring_capacity = input
+            .group
+            .profile
+            .blocks
+            .live_ring_elements_per_claim
+            .checked_mul(input.group.profile.inner.matrix.ring_dimension())
+            .expect("live ring capacity");
+        assert_ne!(
+            live_ring_capacity,
+            natural_len.next_power_of_two(),
+            "fixture must exercise ragged live support inside a padded commitment domain"
+        );
         let ring_challenge_config = |d| {
             requested_dimensions.borrow_mut().push(d);
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
