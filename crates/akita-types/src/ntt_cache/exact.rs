@@ -64,6 +64,35 @@ impl<const D: usize> ExactCachePlan<D> {
             Self::Q64Ifma52 { .. } => false,
         }
     }
+
+    fn cache_bytes(&self, num_ring_elements: usize) -> Result<usize, AkitaError> {
+        let bytes_per_ring = match self {
+            Self::Q32 { needs_tail, .. } => {
+                Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q32Ifma52 { needs_tail, .. } => {
+                core::mem::size_of::<u64>() + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q64 { needs_tail, .. } => {
+                Q64_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q64Ifma52 { .. } => 2 * core::mem::size_of::<u64>(),
+            Self::Q128 { needs_tail, .. } => {
+                Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q128Ifma52 { needs_tail, .. } => {
+                3 * core::mem::size_of::<u64>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i32>()
+            }
+        };
+        num_ring_elements
+            .checked_mul(D)
+            .and_then(|entries| entries.checked_mul(bytes_per_ring))
+            .ok_or_else(|| AkitaError::InvalidSetup("planned exact NTT bytes overflow".into()))
+    }
 }
 
 pub(super) fn exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
@@ -168,6 +197,24 @@ pub fn ntt_cache_requires_exactness_tail<F: Field + CanonicalEncoding, const D: 
         exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
             .needs_tail(),
     )
+}
+
+/// Planned in-memory footprint of an exact signed-coefficient NTT cache.
+///
+/// This uses the same platform-selected cache plan as [`prepare_ntt_cache`],
+/// including IFMA52 limb widths and the q128 i32 exactness tail.
+pub fn planned_exact_ntt_cache_bytes<F: Field + CanonicalEncoding, const D: usize>(
+    num_ring_elements: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<usize, AkitaError> {
+    let mode = NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    };
+    validate_cache_mode(mode)?;
+    exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
+        .cache_bytes(num_ring_elements)
 }
 
 pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(

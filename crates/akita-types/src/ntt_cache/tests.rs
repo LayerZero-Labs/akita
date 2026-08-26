@@ -323,6 +323,11 @@ fn q64_exact_cache_uses_ifma52_when_enabled() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<Prime64Offset59, D>(2, 2, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
         assert!(ntt_cache_requires_exactness_tail::<Prime32Offset99, D>(2, 1 << 15).unwrap());
         assert!(cache.uses_ifma52());
@@ -370,6 +375,11 @@ fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<Prime32Offset99, D>(2, 2, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
         assert!(cache.uses_ifma52());
         assert!(cache.has_exactness_tail());
@@ -480,6 +490,11 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<F, D>(ROWS * COLS, COLS, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
         assert!(cache.uses_ifma52());
         assert!(cache.has_exactness_tail());

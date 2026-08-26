@@ -31,8 +31,8 @@ mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
-pub use exact::ntt_cache_requires_exactness_tail;
 use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
+pub use exact::{ntt_cache_requires_exactness_tail, planned_exact_ntt_cache_bytes};
 pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
 pub use prepared_artifact::{
     build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
