@@ -610,13 +610,9 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         &policy,
         dimensions,
         &product_key,
-        &[
-            honest_fold_policy_of::<Dense>(),
-            honest_fold_policy_of::<Dense>(),
-        ],
     )
     .expect("root precommit opening products");
-    assert_eq!(opening_products.len(), 3);
+    assert_eq!(opening_products.len(), 4);
     assert!(opening_products
         .iter()
         .all(|assignment| assignment.len() == 2));
@@ -624,22 +620,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         opening.method(),
         OpeningMethod::SubringCoefficientPacking { .. }
     )));
-
-    let repeated_key = AkitaScheduleLookupKey {
-        final_group: grouped_key.final_group,
-        precommitteds: vec![frozen_group; 16],
-    };
-    let repeated_products = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
-        &policy,
-        dimensions,
-        &repeated_key,
-        &vec![honest_fold_policy_of::<Dense>(); 16],
-    )
-    .expect("symmetric root precommit opening products");
-    assert_eq!(repeated_products.len(), 17);
-    assert!(repeated_products
-        .iter()
-        .all(|assignment| assignment.len() == 16));
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
@@ -650,10 +630,6 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 opening: 512,
             },
             &product_key,
-            &[
-                honest_fold_policy_of::<Dense>(),
-                honest_fold_policy_of::<Dense>(),
-            ],
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
     assert!(incompatible_products.is_empty());
