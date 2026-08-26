@@ -5,7 +5,10 @@ use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_field::parallel::*;
 use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
-use akita_types::{AkitaExpandedSetup, FlatMatrix, SetupPrefixSlot};
+use akita_types::{
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, AkitaExpandedSetup,
+    FlatMatrix, SetupPrefixSlot,
+};
 
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
@@ -15,10 +18,9 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
     RootPolyMeta, RootPolyShape, RootTensorSource, SubringCoefficientPackingBatchKernel,
-    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -394,25 +396,25 @@ where
     }
 }
 
-fn setup_prefix_extension_tensor_unsupported<T>() -> Result<T, AkitaError> {
-    Err(AkitaError::InvalidSetup(
-        "setup-prefix grouped suffix does not support extension tensor projection".to_string(),
-    ))
-}
-
-fn recursive_fold_batch_witnesses<'a, F: FieldCore, const D: usize>(
-    source: RecursiveFoldBatchView<'a, F, D>,
-) -> Result<Vec<&'a RecursiveWitnessFlat>, AkitaError> {
-    let mut witnesses = Vec::with_capacity(source.polys.len());
-    for poly in source.polys {
-        match poly {
-            RecursiveFoldSource::Witness(witness) => witnesses.push(witness.as_ref()),
-            RecursiveFoldSource::SetupPrefix { .. } => {
-                return setup_prefix_extension_tensor_unsupported();
-            }
-        }
+fn setup_prefix_base_evals<'a, F: FieldCore, const D: usize>(
+    expanded: &'a AkitaExpandedSetup<F>,
+    slot: &SetupPrefixSlot<F>,
+) -> Result<&'a [F], AkitaError> {
+    let n_prefix = slot.id.n_prefix()?;
+    if slot.id.d_setup() != D || !n_prefix.is_multiple_of(D) {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix tensor source disagrees with its frozen ring dimension".into(),
+        ));
     }
-    Ok(witnesses)
+    expanded
+        .shared_matrix()
+        .as_field_slice()
+        .get(..n_prefix)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "setup-prefix tensor source exceeds the shared setup matrix".into(),
+            )
+        })
 }
 
 impl<F, E, const D: usize> TensorProjectionKernel<RecursiveFoldView<'_, F, D>, F, E, D>
@@ -431,7 +433,14 @@ where
         E: MulBaseUnreduced<F>,
     {
         match source {
-            RecursiveFoldView::SetupPrefix { .. } => setup_prefix_extension_tensor_unsupported(),
+            RecursiveFoldView::SetupPrefix { expanded, slot } => {
+                let base_evals = setup_prefix_base_evals::<F, D>(expanded, slot)?;
+                tensor_column_partials_from_base_evals::<F, E>(
+                    slot.id.n_prefix()?.trailing_zeros() as usize,
+                    base_evals,
+                    logical_point,
+                )
+            }
             RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
                 SuffixWitnessView<'_, F, D>,
                 F,
@@ -447,11 +456,15 @@ where
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldView<'_, F, D>,
-    ) -> Result<TensorPackedWitness<E>, AkitaError> {
+    ) -> Result<Vec<E>, AkitaError> {
         match source {
-            RecursiveFoldView::SetupPrefix { .. } => Err(AkitaError::InvalidSetup(
-                "setup-prefix grouped suffix does not support extension tensor packing".to_string(),
-            )),
+            RecursiveFoldView::SetupPrefix { expanded, slot } => {
+                let base_evals = setup_prefix_base_evals::<F, D>(expanded, slot)?;
+                tensor_packed_witness_evals::<F, E>(
+                    slot.id.n_prefix()?.trailing_zeros() as usize,
+                    base_evals,
+                )
+            }
             RecursiveFoldView::Witness(view) => <CpuBackend as TensorProjectionKernel<
                 SuffixWitnessView<'_, F, D>,
                 F,
@@ -477,24 +490,18 @@ where
     where
         E: MulBaseUnreduced<F>,
     {
-        let witnesses = recursive_fold_batch_witnesses(source)?;
-        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
-        <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::column_partials_batch(
-            self, prepared, batch, logical_point,
-        )
-    }
-
-    fn sparse_linear_combination(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: RecursiveFoldBatchView<'_, F, D>,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError> {
-        let witnesses = recursive_fold_batch_witnesses(source)?;
-        let batch = <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
-        <CpuBackend as TensorProjectionBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D>>::sparse_linear_combination(
-            self, prepared, batch, coeffs,
-        )
+        source
+            .polys
+            .iter()
+            .map(|poly| {
+                <CpuBackend as TensorProjectionKernel<
+                    RecursiveFoldView<'_, F, D>,
+                    F,
+                    E,
+                    D,
+                >>::column_partials(self, prepared, poly.tensor_view()?, logical_point)
+            })
+            .collect()
     }
 }
 
@@ -670,7 +677,8 @@ mod tests {
     }
 
     #[test]
-    fn setup_prefix_coefficient_packing_matches_copied_dense_oracle() {
+    fn setup_prefix_openings_match_copied_dense_oracles() {
+        use akita_field::Ext2;
         use akita_types::{
             coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
             AkitaSetupDescriptor, BasisMode, CommittedGroupParams, GroupCommitPhaseParams,
@@ -776,5 +784,76 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got[0].coordinates(), expected);
+
+        type E = Ext2<F>;
+        let logical_point = (0..9)
+            .map(|index| {
+                E::from_base_slice(&[
+                    F::from_u64((index + 2) as u64),
+                    F::from_u64((2 * index + 3) as u64),
+                ])
+            })
+            .collect::<Vec<_>>();
+        let view =
+            <RecursiveFoldSource<F> as RootTensorSource<F, D>>::tensor_view(&source).unwrap();
+        let got_partials = <CpuBackend as TensorProjectionKernel<
+            RecursiveFoldView<'_, F, D>,
+            F,
+            E,
+            D,
+        >>::column_partials(
+            &CpuBackend::DEFAULT, None, view, &logical_point
+        )
+        .unwrap();
+        let expected_partials =
+            tensor_column_partials_from_base_evals::<F, E>(9, &fields, &logical_point).unwrap();
+        assert_eq!(got_partials, expected_partials);
+
+        let view =
+            <RecursiveFoldSource<F> as RootTensorSource<F, D>>::tensor_view(&source).unwrap();
+        let got_packed = <CpuBackend as TensorProjectionKernel<
+            RecursiveFoldView<'_, F, D>,
+            F,
+            E,
+            D,
+        >>::packed_witness(&CpuBackend::DEFAULT, None, view)
+        .unwrap();
+        assert_eq!(
+            got_packed,
+            tensor_packed_witness_evals::<F, E>(9, &fields).unwrap()
+        );
+
+        let witness_digits = (0..512)
+            .map(|index| (index % 11) as i8 - 5)
+            .collect::<Vec<_>>();
+        let witness_fields = witness_digits
+            .iter()
+            .copied()
+            .map(F::from_i8)
+            .collect::<Vec<_>>();
+        let witness = RecursiveFoldSource::witness(Arc::new(RecursiveWitnessFlat::from_i8_digits(
+            witness_digits,
+        )));
+        let mixed_sources = [&source, &witness];
+        let mixed_batch =
+            <RecursiveFoldSource<F> as RootTensorSource<F, D>>::tensor_batch(&mixed_sources)
+                .unwrap();
+        let got_mixed = <CpuBackend as TensorProjectionBatchKernel<
+            RecursiveFoldBatchView<'_, F, D>,
+            F,
+            E,
+            D,
+        >>::column_partials_batch(
+            &CpuBackend::DEFAULT, None, mixed_batch, &logical_point
+        )
+        .unwrap();
+        assert_eq!(
+            got_mixed,
+            vec![
+                expected_partials,
+                tensor_column_partials_from_base_evals::<F, E>(9, &witness_fields, &logical_point,)
+                    .unwrap(),
+            ]
+        );
     }
 }

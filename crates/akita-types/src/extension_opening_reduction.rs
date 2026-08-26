@@ -156,10 +156,7 @@ where
     // bits, instead of materializing the full `2^tail` equality table.
     let tail_point = &logical_point[split_bits..];
     let split = SplitEqEvals::new(tail_point)?;
-    let source = FlatColumnSource {
-        evals: base_evals,
-        width,
-    };
+    let source = FlatColumnSource { evals: base_evals };
     Ok(tensor_column_partials_split_fold::<F, E, _>(
         &split, width, &source,
     ))
@@ -168,27 +165,54 @@ where
 /// Read-only source of the base-field column runs consumed by the
 /// extension-opening tensor partials fold.
 ///
-/// `row(tail)` returns the contiguous `width`-length base-field run at flat tail
-/// index `tail`, where `tail` ranges over `0..2^tail_bits`. Implementing this
-/// lets a backend stream its base witness `f` in place during the partials fold
-/// instead of first copying it into a flat buffer.
+/// `row(tail, width)` must yield exactly `width` base-field values for one
+/// tail-major row. Dense sources can return a copied slice iterator, while
+/// compact sources can convert their values lazily without first copying a
+/// flat field buffer.
 pub trait TensorColumnSource<F: FieldCore>: Sync {
-    /// The `width`-length base-field run at flat tail index `tail`.
-    fn row(&self, tail: usize) -> &[F];
+    /// Exact-size iterator over one tail row.
+    type Row<'a>: ExactSizeIterator<Item = F>
+    where
+        Self: 'a;
+
+    /// Yield exactly `width` coefficients at flat tail index `tail`.
+    ///
+    /// Implementors must uphold this exact-length invariant. The contraction
+    /// path checks it with a debug assertion so malformed implementations fail
+    /// during development instead of being silently truncated by `zip`.
+    fn row(&self, tail: usize, width: usize) -> Self::Row<'_>;
 }
 
-/// Column source backed by a flat tail-major base-eval slice:
-/// `row(tail) = evals[tail*width .. (tail+1)*width]`.
+#[inline]
+fn checked_tensor_row<F, S>(source: &S, tail: usize, width: usize) -> S::Row<'_>
+where
+    F: FieldCore,
+    S: TensorColumnSource<F>,
+{
+    let row = source.row(tail, width);
+    debug_assert_eq!(
+        row.len(),
+        width,
+        "tensor column source row must yield exactly width items"
+    );
+    row
+}
+
+/// Column source backed by a flat tail-major base-evaluation slice.
 pub struct FlatColumnSource<'a, F: FieldCore> {
     evals: &'a [F],
-    width: usize,
 }
 
 impl<F: FieldCore> TensorColumnSource<F> for FlatColumnSource<'_, F> {
+    type Row<'a>
+        = std::iter::Copied<std::slice::Iter<'a, F>>
+    where
+        Self: 'a;
+
     #[inline]
-    fn row(&self, tail: usize) -> &[F] {
-        let base = tail * self.width;
-        &self.evals[base..base + self.width]
+    fn row(&self, tail: usize, width: usize) -> Self::Row<'_> {
+        let base = tail * width;
+        self.evals[base..base + width].iter().copied()
     }
 }
 
@@ -262,7 +286,11 @@ fn partials_out_contribution<F, E, S>(
     if E::DELAYED_PRODUCT_SUM_IS_EXACT {
         let mut inner = vec![<E as HasUnreducedOps>::ProductAccum::zero(); width];
         for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
-            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+            for (slot, coeff) in
+                inner
+                    .iter_mut()
+                    .zip(checked_tensor_row::<F, S>(source, row_base + x_in, width))
+            {
                 *slot += e_in.mul_base_to_product_accum(coeff);
             }
         }
@@ -272,7 +300,11 @@ fn partials_out_contribution<F, E, S>(
     } else {
         let mut inner = vec![E::zero(); width];
         for (x_in, &e_in) in split.e_in.iter().enumerate().take(in_len) {
-            for (slot, &coeff) in inner.iter_mut().zip(source.row(row_base + x_in)) {
+            for (slot, coeff) in
+                inner
+                    .iter_mut()
+                    .zip(checked_tensor_row::<F, S>(source, row_base + x_in, width))
+            {
                 *slot += e_in.mul_base(coeff);
             }
         }
@@ -303,22 +335,8 @@ where
         });
     }
 
-    let mut rows = vec![vec![F::zero(); width]; width];
-    for (column, partial) in column_partials.iter().enumerate() {
-        let coords = partial.to_base_vec();
-        if coords.len() != width {
-            return Err(AkitaError::InvalidSize {
-                expected: width,
-                actual: coords.len(),
-            });
-        }
-        for (row, coord) in coords.into_iter().enumerate() {
-            rows[row][column] = coord;
-        }
-    }
-    Ok(rows
-        .into_iter()
-        .map(|coords| E::from_base_slice(&coords))
+    Ok((0..width)
+        .map(|row| E::from_base_fn(|column| column_partials[column].base_coefficient(row)))
         .collect())
 }
 
@@ -428,21 +446,48 @@ pub fn project_tensor_factor_value<F, E>(
 ) -> Result<E, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
-    let coords = value.to_base_vec();
-    if coords.len() != width {
+    if E::EXT_DEGREE != width {
         return Err(AkitaError::InvalidSize {
             expected: width,
-            actual: coords.len(),
+            actual: E::EXT_DEGREE,
         });
     }
-    Ok(coords
-        .into_iter()
-        .zip(eta_weights.iter().copied())
-        .fold(E::zero(), |acc, (coord, weight)| {
-            acc + weight.mul_base(coord)
-        }))
+    if eta_weights.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: eta_weights.len(),
+        });
+    }
+    Ok(project_tensor_factor_value_unchecked::<F, E>(
+        value,
+        eta_weights,
+    ))
+}
+
+#[inline]
+fn project_tensor_factor_value_unchecked<F, E>(value: E, eta_weights: &[E]) -> E
+where
+    F: FieldCore,
+    E: MulBaseUnreduced<F>,
+{
+    if !E::DELAYED_PRODUCT_SUM_IS_EXACT {
+        return eta_weights
+            .iter()
+            .enumerate()
+            .fold(E::zero(), |acc, (coordinate, weight)| {
+                acc + weight.mul_base(value.base_coefficient(coordinate))
+            });
+    }
+    let sum = eta_weights.iter().enumerate().fold(
+        E::ProductAccum::zero(),
+        |mut acc, (coordinate, weight)| {
+            acc += weight.mul_base_to_product_accum(value.base_coefficient(coordinate));
+            acc
+        },
+    );
+    E::reduce_product_accum(sum)
 }
 
 /// Dense evaluations of the FRI-Binius tensor equality factor
@@ -450,12 +495,12 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if `eta` does not match `log2([E:F])` or if an equality
-/// value decomposes into the wrong number of base coordinates.
+/// Returns an error if `eta` does not match `log2([E:F])` or the extension
+/// degree does not match the tensor width.
 pub fn tensor_equality_factor_evals<F, E>(tail_point: &[E], eta: &[E]) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore,
-    E: ExtField<F>,
+    E: MulBaseUnreduced<F>,
 {
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     if eta.len() != split_bits {
@@ -465,16 +510,21 @@ where
         });
     }
     let eta_weights = EqPolynomial::evals(eta)?;
-    let mut out = EqPolynomial::evals(tail_point)?;
-    let project = |value: &mut E| {
-        *value = project_tensor_factor_value::<F, E>(*value, &eta_weights, width)?;
-        Ok::<(), AkitaError>(())
-    };
-    #[cfg(feature = "parallel")]
-    out.par_iter_mut().try_for_each(project)?;
-    #[cfg(not(feature = "parallel"))]
-    out.iter_mut().try_for_each(project)?;
-    Ok(out)
+    if E::EXT_DEGREE != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: E::EXT_DEGREE,
+        });
+    }
+    if eta_weights.len() != width {
+        return Err(AkitaError::InvalidSize {
+            expected: width,
+            actual: eta_weights.len(),
+        });
+    }
+    EqPolynomial::evals_mapped(tail_point, |value| {
+        project_tensor_factor_value_unchecked::<F, E>(value, &eta_weights)
+    })
 }
 
 /// Evaluate the transparent tensor equality factor `A_eta` at one point.
@@ -798,4 +848,42 @@ pub fn num_rounds_from_table_len(len: usize) -> Result<usize, AkitaError> {
         });
     }
     Ok(len.trailing_zeros() as usize)
+}
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::*;
+    use akita_field::{Ext2, Prime64Offset59};
+
+    struct MalformedSource {
+        row_len: usize,
+    }
+
+    impl TensorColumnSource<Prime64Offset59> for MalformedSource {
+        type Row<'a> = std::vec::IntoIter<Prime64Offset59>;
+
+        fn row(&self, _tail: usize, _width: usize) -> Self::Row<'_> {
+            vec![Prime64Offset59::one(); self.row_len].into_iter()
+        }
+    }
+
+    fn contract_malformed_source(row_len: usize) {
+        type F = Prime64Offset59;
+        type E = Ext2<F>;
+        let split = SplitEqEvals::<E>::new(&[]).unwrap();
+        let source = MalformedSource { row_len };
+        let _ = tensor_column_partials_split_fold::<F, E, _>(&split, 2, &source);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor column source row must yield exactly width items")]
+    fn tensor_column_source_rejects_short_rows_in_debug_builds() {
+        contract_malformed_source(1);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor column source row must yield exactly width items")]
+    fn tensor_column_source_rejects_long_rows_in_debug_builds() {
+        contract_malformed_source(3);
+    }
 }

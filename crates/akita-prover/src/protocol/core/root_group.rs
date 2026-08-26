@@ -82,7 +82,7 @@ where
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>;
 
-    fn extension_opening_terms(
+    fn extension_opening_group(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
@@ -90,7 +90,7 @@ where
         claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
+    ) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError>;
 }
 
 impl<F, P> RootProverGroupMeta<F> for PreparedProverGroup<'_, P>
@@ -327,7 +327,7 @@ where
         )
     }
 
-    fn extension_opening_terms(
+    fn extension_opening_group(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
@@ -335,12 +335,12 @@ where
         claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
+    ) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_dimension,
-            |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
+            |D| build_extension_opening_reduction_group::<F, E, P, B, D>(
                 backend,
                 prepared,
                 self.polynomial_refs(),
