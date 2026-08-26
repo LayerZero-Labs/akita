@@ -6,32 +6,24 @@
 
 use akita_algebra::poly::fold_evals_in_place;
 use akita_algebra::uni_poly::UniPoly;
-use akita_algebra::EqPolynomial;
 use akita_error::AkitaError;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{ExtField, FieldCore, Zero};
+use akita_field::{FieldCore, Zero};
 use akita_sumcheck::SumcheckInstanceProver;
 use akita_types::{
-    extension_opening_reduction_claim, num_rounds_from_table_len, project_tensor_factor_value,
-    reduction_table_len, tensor_opening_split, validate_reduction_tables,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    extension_opening_reduction_claim, num_rounds_from_table_len, reduction_table_len,
+    validate_reduction_tables, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-
-/// Maximum number of sparse low-index rounds to keep in the lazy tensor factor.
-///
-/// The lazy factor caches one small state per low-bit assignment, avoiding a
-/// full dense factor table while the sparse witness still has large support.
-pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 
 /// Degree-two round-message accumulator that honors a field's delayed-reduction
 /// exactness contract (`HasUnreducedOps::DELAYED_PRODUCT_SUM_IS_EXACT`).
 ///
 /// Every extension-opening reduction round needs two batch sums: the constant
 /// coefficient `Σ c0·c1` and the quadratic coefficient `Σ q0·q1`. This trait
-/// abstracts how those products are summed so the dense, fused-fold, and sparse
-/// accumulation paths can all pick the right policy from one place:
+/// abstracts how those products are summed so the dense and fused-fold paths
+/// can both pick the right policy from one place:
 ///
 /// - [`DelayedDeg2`] sums the wide `E::ProductAccum` products and reduces once
 ///   per round. This is only sound when `DELAYED_PRODUCT_SUM_IS_EXACT` is set,
@@ -41,11 +33,6 @@ pub const SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS: usize = 12;
 ///   coefficient is byte-identical to per-term reduction. This is the
 ///   contract-safe path for fields that leave `DELAYED_PRODUCT_SUM_IS_EXACT` at
 ///   its conservative `false` default.
-///
-/// Mirrors the same flag check already performed in
-/// [`sparse::TensorEqualityFactor::factor_pair`], so the entire EOR prover
-/// stays byte-identical to per-term `Mul` for any field whose delayed product
-/// sum is not exact.
 trait Deg2RoundAccum<E: FieldCore + HasUnreducedOps>: Sized + Send {
     /// Empty accumulator (both coefficients zero).
     fn zero() -> Self;
@@ -140,11 +127,14 @@ impl<E: FieldCore + HasUnreducedOps> Deg2RoundAccum<E> for DirectDeg2<E> {
 
 mod dense;
 mod prover;
-mod sparse;
+mod tables;
+mod term;
 
 pub use prover::ExtensionOpeningReductionProver;
-pub use sparse::{ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness};
+pub use tables::ExtensionOpeningReductionGroup;
+pub use term::ExtensionOpeningReductionTerm;
 
-pub(crate) use dense::{
-    accumulate_dense_round, fold_dense_reduction_tables_in_place, fused_fold_and_accumulate,
+pub(crate) use dense::accumulate_dense_round;
+pub(in crate::protocol::extension_opening_reduction) use dense::{
+    fused_fold_group_head_and_accumulate, fused_fold_witness_and_accumulate,
 };

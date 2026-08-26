@@ -221,10 +221,6 @@ name = "digit_range"
 harness = false
 
 [[bench]]
-name = "extension_opening_reduction"
-harness = false
-
-[[bench]]
 name = "fft_smooth"
 harness = false
 

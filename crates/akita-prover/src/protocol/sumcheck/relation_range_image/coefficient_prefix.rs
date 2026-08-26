@@ -7,7 +7,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     )]
     pub(super) fn compute_compact_partial_lane_coefficient_round_terms(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
@@ -30,8 +30,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
-                    let lane_values =
-                        &compact_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -52,8 +50,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let w0 = lane_values[left] as i32;
-                            let w1 = lane_values[left + 1] as i32;
+                            let w0 = i32::from(compact_witness.at(lane_start + left));
+                            let w1 = i32::from(compact_witness.at(lane_start + left + 1));
                             let dw = w1 - w0;
                             let w0_i64 = w0 as i64;
                             let dw_i64 = dw as i64;
@@ -109,8 +107,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
-                    let lane_values =
-                        &compact_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -131,8 +127,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
                             let left = 2 * coefficient_pair;
-                            let w0 = lane_values[left] as i32;
-                            let w1 = lane_values[left + 1] as i32;
+                            let w0 = i32::from(compact_witness.at(lane_start + left));
+                            let w1 = i32::from(compact_witness.at(lane_start + left + 1));
                             let dw = w1 - w0;
                             let w0_i64 = w0 as i64;
                             let dw_i64 = dw as i64;

@@ -83,7 +83,10 @@ use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
-use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
+use super::two_round_prefix::{
+    stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
+    stage2_b8_w_digit,
+};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
@@ -96,8 +99,12 @@ use akita_sumcheck::{
 use std::mem;
 use std::time::Instant;
 
+use crate::backend::packed_digits::{
+    PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
+};
+
 enum WitnessState<E: FieldCore> {
-    CompactPrefix(std::sync::Arc<[i8]>),
+    CompactPrefix(PackedSignedDigits),
     FoldedSuffix(Vec<E>),
 }
 

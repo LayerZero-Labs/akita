@@ -21,6 +21,8 @@ use akita_field::CanonicalField;
 use akita_types::SignedDigitKernel;
 use std::ops::Range;
 
+use crate::backend::packed_digits::PackedSignedDigitView;
+
 struct PreparedPm1Challenge {
     positive: Vec<u32>,
     negative: Vec<u32>,
@@ -136,6 +138,11 @@ enum ElementFoldSource<'a, F: CanonicalField, const D: usize> {
         coeffs: &'a [CyclotomicRing<F, D>],
         params: &'a DecomposeParams,
     },
+    PackedTight {
+        digits: PackedSignedDigitView<'a>,
+        num_rings: usize,
+        digit_abs_bound: u64,
+    },
 }
 
 enum DigitScratch<const D: usize> {
@@ -148,6 +155,7 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
         match self {
             Self::Predecomposed { num_rings, .. } => *num_rings,
             Self::LiveRings { coeffs, .. } => coeffs.len(),
+            Self::PackedTight { num_rings, .. } => *num_rings,
         }
     }
 
@@ -157,6 +165,9 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                 digit_abs_bound, ..
             } => *digit_abs_bound,
             Self::LiveRings { params, .. } => params.half_b as u64,
+            Self::PackedTight {
+                digit_abs_bound, ..
+            } => *digit_abs_bound,
         }
     }
 
@@ -205,6 +216,37 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                         rotated.as_ref(),
                         &mut acc[dst_base + digit_idx],
                     );
+                }
+            }
+            (Self::PackedTight { digits, .. }, ChallengePlan::Rotated(rotated)) => {
+                debug_assert_eq!(num_digits, 1);
+                let digit_plane = digits
+                    .decode_array::<D>(ring_idx * D)
+                    .expect("validated packed recursive ring");
+                accumulate_rotated_digit_plane::<D>(
+                    &digit_plane,
+                    rotated.as_ref(),
+                    &mut acc[dst_base],
+                );
+            }
+            (Self::PackedTight { digits, .. }, plan) => {
+                debug_assert_eq!(num_digits, 1);
+                let digit_plane = digits
+                    .decode_array::<D>(ring_idx * D)
+                    .expect("validated packed recursive ring");
+                match plan {
+                    ChallengePlan::WidePm1(pm1) => sparse_mul_acc_pm1(
+                        &digit_plane,
+                        &pm1.positive,
+                        &pm1.negative,
+                        &mut acc[dst_base],
+                    ),
+                    ChallengePlan::WideGeneric => {
+                        sparse_mul_acc(&digit_plane, challenge, &mut acc[dst_base]);
+                    }
+                    ChallengePlan::Rotated(_)
+                    | ChallengePlan::NarrowFull(_)
+                    | ChallengePlan::NarrowChunked(_) => unreachable!(),
                 }
             }
             (Self::Predecomposed { digit_planes, .. }, plan) => {
@@ -316,6 +358,13 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                     );
                 }
             }
+            Self::PackedTight { digits, .. } => {
+                debug_assert_eq!(num_digits, 1);
+                let digit_plane = digits
+                    .decode_array::<D>(ring_idx * D)
+                    .expect("validated packed recursive ring");
+                sparse_mul_acc_narrow(&digit_plane, challenge, &mut acc[dst_base]);
+            }
             Self::LiveRings { coeffs, params } => {
                 match digit_scratch.expect("live narrow path requires signed-digit scratch") {
                     DigitScratch::I8(digit_buf) => {
@@ -382,6 +431,21 @@ impl<F: CanonicalField, const D: usize> ElementFoldSource<'_, F, D> {
                             &mut narrow[digit_idx],
                         );
                     }
+                    flush_narrow_accumulator(narrow, wide);
+                }
+            }
+            Self::PackedTight { digits, .. } => {
+                debug_assert_eq!(num_digits, 1);
+                let digit_plane = digits
+                    .decode_array::<D>(ring_idx * D)
+                    .expect("validated packed recursive ring");
+                for term_range in term_ranges {
+                    sparse_mul_acc_narrow_terms(
+                        &digit_plane,
+                        &challenge.positions[term_range.clone()],
+                        &challenge.coeffs[term_range.clone()],
+                        &mut narrow[0],
+                    );
                     flush_narrow_accumulator(narrow, wide);
                 }
             }
@@ -624,25 +688,23 @@ pub fn balanced_ring_decompose_fold_partitioned<F: CanonicalField, const D: usiz
     )
 }
 
-/// Position-partitioned accumulation for an already-tight recursive digit witness.
-pub fn balanced_tight_digit_fold_partitioned<F: CanonicalField, const D: usize>(
-    coeffs: &[[i8; D]],
+/// Position-partitioned accumulation over a packed tight recursive witness.
+pub(crate) fn packed_tight_digit_fold_partitioned<F: CanonicalField, const D: usize>(
+    digits: PackedSignedDigitView<'_>,
+    num_rings: usize,
     challenges: &[SparseChallenge],
     num_positions_per_block: usize,
-    known_balanced_log_basis: Option<u32>,
 ) -> Vec<[i32; D]> {
-    let digit_abs_bound = known_balanced_log_basis
-        .and_then(akita_types::balanced_signed_digit_abs_bound)
-        .unwrap_or_else(|| u64::from(i8::MIN.unsigned_abs()))
-        .min(u64::from(i8::MIN.unsigned_abs()));
-    debug_assert!(coeffs
-        .iter()
-        .flat_map(|ring| ring.iter())
-        .all(|digit| u64::from(digit.unsigned_abs()) <= digit_abs_bound));
+    let digit_abs_bound = u64::from(
+        digits
+            .bounds()
+            .negative_abs_max()
+            .max(digits.bounds().positive_max()),
+    );
     element_partitioned_decompose_fold::<F, D>(
-        ElementFoldSource::Predecomposed {
-            digit_planes: coeffs,
-            num_rings: coeffs.len(),
+        ElementFoldSource::PackedTight {
+            digits,
+            num_rings,
             digit_abs_bound,
         },
         challenges,

@@ -363,8 +363,8 @@ fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
     // Two logical degree-four values with unit coordinates overlap under psi.
     // The logical infinity norm is one, while the actual packed coefficient
     // vector already carries the conversion cost with infinity norm two.
-    let logical = vec![1i8; 8];
-    let physical = pack_tensor_base_lift_i8_digits::<8>(&logical, 4, 4).unwrap();
+    let logical = [1i8; 8];
+    let physical = pack_tensor_base_lift_i8_digits::<8>(logical.iter().copied(), 4, 4).unwrap();
     assert_eq!(physical, vec![1, 2, 2, 2, 1, 0, 0, 0]);
     let physical_linf = physical
         .iter()

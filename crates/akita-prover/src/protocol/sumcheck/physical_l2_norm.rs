@@ -328,7 +328,7 @@ fn prepare_norm_term<E: FieldCore + FromPrimitiveInt>(
 /// range leaf and prove the resulting standard sumcheck.
 pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
-    compact_witness: &[i8],
+    compact_witness: &crate::backend::packed_digits::PackedSignedDigits,
     range: ClassIndexedRangeLeafProver<E>,
     transcript: &mut T,
 ) -> Result<(PhysicalL2NormProof<E>, Vec<E>, E), AkitaError>
@@ -342,7 +342,10 @@ where
             "fused Stage-1 leaf has inconsistent range geometry".into(),
         ));
     }
-    let integers = plan.materialize_virtual_integers(compact_witness)?;
+    let integers = plan.materialize_virtual_integers(compact_witness.len(), |start, output| {
+        compact_witness.view().decode_range(start, output)?;
+        Ok(())
+    })?;
     let (response_l2_sq, subclaims) = exact_claims::<E>(plan, &integers)?;
     transcript.append_serde(ABSORB_L2_NORM_INTEGER, &response_l2_sq);
     for claim in &subclaims {

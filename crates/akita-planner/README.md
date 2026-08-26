@@ -385,6 +385,16 @@ at levels 0 and 1 use subring coefficient packing and do not carry EOR. Later
 `EvaluationTrace` suffixes and the terminal opening retain method-aware EOR
 pricing when the claim field is an extension.
 
+Recursive setup offloading may continue across several levels. A fold that
+receives a setup prefix opens the prefix and recursive witness with the same
+method. At levels 0 and 1 that method is subring coefficient packing. At later
+levels it is evaluation trace.
+
+The fp128 presets use extension degree one, so their evaluation-trace folds do
+not run EOR. The fp32 and fp64 presets use proper extension fields. Their later
+evaluation-trace folds run one EOR that batches the dense setup prefix with the
+recursive suffix witness. The planner prices that combined opening shape.
+
 ## Crate Boundary
 
 The dependency direction is:
