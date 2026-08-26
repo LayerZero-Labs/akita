@@ -541,7 +541,7 @@ where
                         crate::backend::coefficient_packing::partials_from_position_source::<
                             F,
                             E,
-                            F,
+                            _,
                             D,
                         >(
                             plan,
@@ -552,7 +552,7 @@ where
                                     .map(CyclotomicRing::coefficients)
                                     .ok_or(AkitaError::InvalidProof)
                             },
-                            |_, _, coefficient| coefficient,
+                            |_, coefficient, source| source[coefficient],
                         )?;
                     outputs.push(SubringCoefficientPackingPartials::new(
                         plan.point.geometry(),

@@ -19,22 +19,21 @@ fn zero_vec<T: FieldCore>(len: usize) -> Result<Vec<T>, AkitaError> {
 
 /// Construct canonical partials from an A-ring position source.
 ///
-/// The checked source callback runs once per position. The arithmetic kernel
-/// then consumes the validated contiguous coefficient array without a
-/// fallible callback in its innermost multiply-accumulate loop. This helper is
-/// shared by dense and recursive representations; sparse representations may
-/// implement a direct scatter while comparing against this path in tests.
+/// The source callback runs once per position. Dense sources borrow their ring
+/// coefficients, while packed recursive sources decode one D-sized ring into an
+/// owned array. The arithmetic loop is shared and reads the prepared position
+/// through `coefficient` without repeating source validation or decoding.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
-pub(super) fn partials_from_position_source<'a, F, E, S, const D: usize>(
+pub(super) fn partials_from_position_source<F, E, P, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
-    position_at: impl Fn(usize) -> Result<&'a [S; D], AkitaError> + Sync,
-    coefficient: impl Fn(usize, usize, S) -> F + Sync,
+    position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
+    coefficient: impl Fn(usize, usize, &P) -> F + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F> + FpExtEncoding<F>,
-    S: Copy + Sync + 'a,
+    P: Sync,
 {
     plan.validate::<D>(source_num_vars)?;
     let point = plan.point;
@@ -80,11 +79,7 @@ where
                     let mut packed_position = E::zero();
                     for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
                         let coefficient_index = subring_offset + low_index;
-                        let source = coefficient(
-                            position,
-                            coefficient_index,
-                            source_position[coefficient_index],
-                        );
+                        let source = coefficient(position, coefficient_index, &source_position);
                         packed_position += packing_weight.mul_base(source);
                     }
                     *accumulator += position_weight * packed_position;

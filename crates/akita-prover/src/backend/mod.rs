@@ -6,6 +6,7 @@ mod field_reduction;
 pub(crate) mod flat_blocks;
 mod multilinear_polynomial;
 pub(crate) mod onehot;
+pub(crate) mod packed_digits;
 #[doc(hidden)]
 #[allow(missing_docs)]
 pub mod poly_helpers;

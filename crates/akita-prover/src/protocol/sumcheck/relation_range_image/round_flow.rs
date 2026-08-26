@@ -30,15 +30,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                 WitnessState::CompactPrefix(compact_witness) => {
                     if use_partial_lane_coefficient_round {
                         let (virt_q_coeffs, rel_coeffs) = self
-                            .compute_compact_partial_lane_coefficient_round_terms(compact_witness);
+                            .compute_compact_partial_lane_coefficient_round_terms(
+                                compact_witness.view(),
+                            );
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else if use_partial_lane_round {
                         let (virt_terms, rel_coeffs) =
-                            self.compute_compact_partial_lane_round_terms(compact_witness);
+                            self.compute_compact_partial_lane_round_terms(compact_witness.view());
                         self.combine_terms(virt_terms, rel_coeffs)
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_compact_dense_terms(compact_witness);
+                            self.compute_round_compact_dense_terms(compact_witness.view());
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
@@ -64,17 +66,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     #[inline]
-    pub(super) fn build_compact_w_fold_lut(compact_witness: &[i8], r: E) -> CompactPairFoldLut<E> {
+    pub(super) fn build_compact_w_fold_lut(
+        compact_witness: PackedSignedDigitView<'_>,
+        r: E,
+    ) -> CompactPairFoldLut<E> {
         let min_w = compact_witness
             .iter()
-            .copied()
             .map(i32::from)
             .min()
             .unwrap_or(0)
             .min(0);
         let max_w = compact_witness
             .iter()
-            .copied()
             .map(i32::from)
             .max()
             .unwrap_or(0)
@@ -83,14 +86,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     pub(super) fn materialize_compact_witness(
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
         cfg_into_iter!(0..compact_witness.len() / 2)
             .map(|j| {
                 fold_lut.fold(
-                    i16::from(compact_witness[2 * j]),
-                    i16::from(compact_witness[2 * j + 1]),
+                    i16::from(compact_witness.at(2 * j)),
+                    i16::from(compact_witness.at(2 * j + 1)),
                 )
             })
             .collect()
@@ -165,7 +168,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         if self.coefficient_bits() > 2 {
                             let (folded_witness, virt_terms, rel_coeffs) = self
                                 .materialize_two_round_compact_prefix_and_compute_next_round(
-                                    &compact_witness,
+                                    compact_witness.view(),
                                     &alpha_round2,
                                     &self.linear_terms,
                                     r0,
@@ -175,7 +178,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                             WitnessState::FoldedSuffix(folded_witness)
                         } else {
                             WitnessState::FoldedSuffix(Self::materialize_two_round_compact_prefix(
-                                &compact_witness,
+                                compact_witness.view(),
                                 self.live_lane_count,
                                 coeff_count,
                                 r0,
@@ -234,16 +237,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             WitnessState::FoldedSuffix(Vec::new()),
         ) {
             WitnessState::CompactPrefix(compact_witness) => {
-                let fold_lut = Self::build_compact_w_fold_lut(&compact_witness, r);
+                let compact_view = compact_witness.view();
+                let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
                 let folded_witness = if folding_lane_round && use_partial_lane_round {
                     Self::fold_compact_partial_lanes(
-                        &compact_witness,
+                        compact_view,
                         live_lane_count,
                         coeff_count,
                         &fold_lut,
                     )
                 } else {
-                    Self::materialize_compact_witness(&compact_witness, &fold_lut)
+                    Self::materialize_compact_witness(compact_view, &fold_lut)
                 };
                 self.fold_linear_terms_for_current_round(r);
                 WitnessState::FoldedSuffix(folded_witness)

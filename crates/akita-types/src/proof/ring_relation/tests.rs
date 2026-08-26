@@ -588,31 +588,28 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             MULTI_GROUP_D,
         )
         .expect("T digits");
-        emit_witness_e_planes::<MULTI_GROUP_D>(
-            &mut emitted,
-            &layout,
-            group_index,
-            MULTI_GROUP_D,
-            num_claims,
-            depth_open,
-            &e_digits,
-            num_live_blocks,
-        )
-        .expect("emit E");
-        emit_witness_t_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
-            &mut emitted,
-            &layout,
-            group_index,
-            num_claims,
-            n_a,
-            depth_commit,
-            &t_digits,
-            num_live_blocks,
-        )
-        .expect("emit T");
-
         let depth_fold = params.num_digits_fold();
         for unit in layout.units_for_group(group_index).expect("units") {
+            emit_witness_e_planes::<MULTI_GROUP_D>(
+                &mut emitted,
+                unit,
+                MULTI_GROUP_D,
+                num_claims,
+                depth_open,
+                &e_digits,
+                num_live_blocks,
+            )
+            .expect("emit E");
+            emit_witness_t_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
+                &mut emitted,
+                unit,
+                num_claims,
+                n_a,
+                depth_commit,
+                &t_digits,
+                num_live_blocks,
+            )
+            .expect("emit T");
             let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
                 .map(|index| {
                     marker::<MULTI_GROUP_D>(500 * group_index + 100 * unit.chunk_index() + index)
@@ -787,8 +784,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     let mut emitted = vec![0i8; layout.live_coeff_len()];
     emit_witness_e_planes::<PACK_D_D>(
         &mut emitted,
-        &layout,
-        0,
+        unit,
         packing_geometry.partial_base_field_width(),
         1,
         depth_open,
