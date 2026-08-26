@@ -292,15 +292,12 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         };
         let num_digits_inner =
             num_digits_inner_for_bound(inner_decomp, policy.decomposition.field_bits());
-        for block_index_bits in (0..=reduced_vars).rev() {
-            let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
-                continue;
-            };
-            let position_index_bits = reduced_vars - block_index_bits;
+        for position_index_bits in 0..=reduced_vars {
             let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32)
             else {
                 continue;
             };
+            let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
             if num_live_blocks < num_chunks {
                 continue;
             }

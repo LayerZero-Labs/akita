@@ -747,6 +747,22 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
             .validate()
             .expect("ragged setup prefix matches its frozen live ring slots");
     }
+
+    let high_chunk_groups = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix: natural_len,
+            num_chunks: 32,
+            ..request(trace)
+        },
+    )
+    .unwrap();
+    assert!(!high_chunk_groups.is_empty());
+    assert!(high_chunk_groups.iter().all(|group| !group
+        .profile
+        .blocks
+        .live_blocks
+        .is_power_of_two()));
 }
 
 #[cfg(feature = "catalog-gen")]
