@@ -239,22 +239,21 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
                 .to_string(),
         ));
     }
-    if n_prefix == 0 {
+    if n_prefix == 0 || !n_prefix.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix length must be nonzero".to_string(),
+            "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    let padded_prefix_len = padded_setup_prefix_len(n_prefix);
-    if !padded_prefix_len.is_multiple_of(inner_ring_dimension) {
+    if !n_prefix.is_multiple_of(inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
-            "padded setup prefix length must be a multiple of the ring dimension".to_string(),
+            "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
     }
-    let ring_slots = n_prefix.div_ceil(inner_ring_dimension);
+    let ring_slots = n_prefix / inner_ring_dimension;
     let reduced_vars = checked::ceil_log2(ring_slots).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix ring slots are zero or too large".into())
     })?;
-    let prefix_num_vars = checked::ceil_log2(padded_prefix_len).ok_or_else(|| {
+    let prefix_num_vars = checked::ceil_log2(n_prefix).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix field length is zero or too large".into())
     })?;
     let open_decomp = DecompositionParams {
@@ -292,12 +291,15 @@ pub(in crate::schedule_params) fn derive_setup_prefix_groups(
         };
         let num_digits_inner =
             num_digits_inner_for_bound(inner_decomp, policy.decomposition.field_bits());
-        for position_index_bits in 0..=reduced_vars {
+        for block_index_bits in (0..=reduced_vars).rev() {
+            let Some(num_live_blocks) = 1usize.checked_shl(block_index_bits as u32) else {
+                continue;
+            };
+            let position_index_bits = reduced_vars - block_index_bits;
             let Some(num_positions_per_block) = 1usize.checked_shl(position_index_bits as u32)
             else {
                 continue;
             };
-            let num_live_blocks = ring_slots.div_ceil(num_positions_per_block);
             if num_live_blocks < num_chunks {
                 continue;
             }

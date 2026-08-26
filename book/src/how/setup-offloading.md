@@ -46,6 +46,11 @@ The setup builder commits to all `n_prefix` coefficients. Coefficients after
 zero outside `natural_len`, so those extra coefficients do not change the
 claimed setup contribution.
 
+The commitment block geometry covers exactly `n_prefix / d_A` setup rings.
+Schedules, generated replay, serialized slot registries, and prover setup all
+reject a prefix profile that covers only the natural support or leaves a
+partial final block.
+
 A `SetupPrefixSlotId` binds the active length and the commitment profile. That
 profile fixes the commitment domain, inner and outer matrices, ring dimensions,
 and decomposition parameters. The scheduled incoming prefix also fixes how its

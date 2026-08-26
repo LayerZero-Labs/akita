@@ -327,7 +327,7 @@ where
 /// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
 ///
 /// Offloaded producer edges are covered by verifier-visible setup-prefix
-/// commitments and do not require their natural source prefixes here.
+/// commitments and do not require their full committed source prefixes here.
 pub fn ensure_verifier_schedule_fits_setup(
     setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,

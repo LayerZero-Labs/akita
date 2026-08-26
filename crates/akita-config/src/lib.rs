@@ -899,6 +899,46 @@ mod fp128_policy_tests {
             "unexpected setup-prefix error: {error}"
         );
     }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
+        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+
+        let row = (14..=50)
+            .find_map(|num_vars| {
+                let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
+                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                row.schedule()
+                    .recursive_folds
+                    .iter()
+                    .any(|fold| fold.params.setup_prefix().is_some())
+                    .then_some(row)
+            })
+            .expect("generated row with a setup prefix");
+        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+            let step = schedule
+                .recursive_folds
+                .iter_mut()
+                .find(|fold| fold.params.setup_prefix().is_some())
+                .expect("recursive setup-prefix fold");
+            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+            let blocks = prefix.profile.blocks;
+            let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+            prefix.profile.blocks = akita_types::BlockGeometry::new(
+                omitted_tail_rings,
+                blocks.positions_per_block,
+                omitted_tail_rings.div_ceil(blocks.positions_per_block),
+            );
+            step.params
+                .set_setup_prefix(Some(prefix))
+                .expect("valid prefix topology");
+        });
+        assert!(
+            error.to_string().contains("must commit all"),
+            "unexpected setup-prefix error: {error}"
+        );
+    }
 }
 
 #[cfg(test)]

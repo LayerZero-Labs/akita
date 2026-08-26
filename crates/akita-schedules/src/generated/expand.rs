@@ -886,19 +886,6 @@ mod tests {
                 .find_map(|fold| fold.setup_prefix.map(|prefix| (fold, prefix)))
                 .expect("generated recursive setup-prefix fixture");
         let requested_dimensions = RefCell::new(Vec::new());
-        let natural_len = usize::try_from(input.natural_len).expect("natural length");
-        let live_ring_capacity = input
-            .group
-            .profile
-            .blocks
-            .live_ring_elements_per_claim
-            .checked_mul(input.group.profile.inner.matrix.ring_dimension())
-            .expect("live ring capacity");
-        assert_ne!(
-            live_ring_capacity,
-            natural_len.next_power_of_two(),
-            "fixture must exercise ragged live support inside a padded commitment domain"
-        );
         let ring_challenge_config = |d| {
             requested_dimensions.borrow_mut().push(d);
             SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
@@ -914,9 +901,17 @@ mod tests {
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
+        let expected_challenge_dimension = match input.group.opening_method {
+            akita_types::OpeningMethod::EvaluationTrace => {
+                input.group.profile.inner.matrix.ring_dimension()
+            }
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => challenge_subring_dimension,
+        };
         assert_eq!(
             &*requested_dimensions.borrow(),
-            &[input.group.profile.inner.matrix.ring_dimension()]
+            &[expected_challenge_dimension]
         );
         assert_eq!(expanded.profile, input.group.profile);
         // The plan is derived, so assert it carries the two inputs the row still

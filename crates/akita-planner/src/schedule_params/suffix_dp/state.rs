@@ -137,10 +137,9 @@ pub(super) struct MemoEntry {
     pub(super) referenced: bool,
 }
 
-// Completed frontier entries omit construction-only descriptors. Exact ragged
-// setup prefixes widen the reusable prefixed-state domain, so keep twice the
-// former prefix quota without changing the direct-state budget.
-const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 655_360;
+// Completed frontier entries omit construction-only descriptors. The larger
+// quota stayed within the former peak for the measured high pressure row.
+const MAX_SUFFIX_SEARCH_CACHE_ENTRIES: usize = 524_288;
 // Prefix layouts create a much wider stream of one-off states than ordinary
 // suffixes. Separate quotas keep that stream from evicting direct states while
 // preserving a hard bound on the completed exact-DP cache.

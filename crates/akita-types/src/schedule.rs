@@ -425,28 +425,11 @@ impl FoldSchedule {
                 ));
             }
             if let Some(prefix) = &step.params.setup_prefix() {
-                prefix.validate()?;
-                prefix.profile.outer_slice_count.validate_for_commitment(
-                    0,
-                    crate::CommitmentPayloadMode::Compressed,
-                    prefix.profile.blocks.live_blocks,
-                )?;
-                let n_prefix = prefix.n_prefix()?;
-                let natural_len = prefix.setup_natural_len.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "incoming setup prefix carries no active support length".to_string(),
-                    )
-                })?;
-                crate::validate_setup_prefix_domain(natural_len, n_prefix).map_err(|_| {
+                prefix.validate().map_err(|error| {
                     AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
+                        "recursive fold {index} setup-prefix geometry is invalid: {error}"
                     ))
                 })?;
-                if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
-                    )));
-                }
             }
             let successor_len = self
                 .recursive_folds

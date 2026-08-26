@@ -733,36 +733,40 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
     }));
 
     let natural_len = (1 << 14) - 513;
-    let ragged_groups = derive_setup_prefix_groups(
+    let n_prefix = akita_types::padded_setup_prefix_len(natural_len);
+    let full_prefix_groups = derive_setup_prefix_groups(
         &mut cache,
         SetupPrefixSearchRequest {
-            n_prefix: natural_len,
+            n_prefix,
             ..request(trace)
         },
     )
     .unwrap();
-    assert!(!ragged_groups.is_empty());
-    for group in ragged_groups {
+    assert!(!full_prefix_groups.is_empty());
+    for group in full_prefix_groups {
+        assert_eq!(
+            group.profile.blocks.live_ring_elements_per_claim
+                * group.profile.inner.matrix.ring_dimension(),
+            n_prefix
+        );
+        assert_eq!(
+            group.profile.blocks.live_blocks * group.profile.blocks.positions_per_block,
+            group.profile.blocks.live_ring_elements_per_claim
+        );
         akita_types::scheduled_setup_prefix(natural_len, group)
             .validate()
-            .expect("ragged setup prefix matches its frozen live ring slots");
+            .expect("full setup prefix covers its complete power-of-two domain");
     }
 
-    let high_chunk_groups = derive_setup_prefix_groups(
+    let error = derive_setup_prefix_groups(
         &mut cache,
         SetupPrefixSearchRequest {
             n_prefix: natural_len,
-            num_chunks: 32,
             ..request(trace)
         },
     )
-    .unwrap();
-    assert!(!high_chunk_groups.is_empty());
-    assert!(high_chunk_groups.iter().all(|group| !group
-        .profile
-        .blocks
-        .live_blocks
-        .is_power_of_two()));
+    .expect_err("a natural length is not a setup-prefix commitment domain");
+    assert!(error.to_string().contains("nonzero power of two"));
 }
 
 #[cfg(feature = "catalog-gen")]

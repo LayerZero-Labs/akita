@@ -23,9 +23,36 @@ fn setup_prefix_policy_wire_tag_tracks_policy_identity() {
 
 #[test]
 fn setup_prefix_domain_is_the_smallest_covering_power_of_two() {
-    validate_setup_prefix_domain(65, 128).expect("exact ragged prefix domain");
+    validate_setup_prefix_domain(65, 128).expect("canonical full prefix domain");
     validate_setup_prefix_domain(65, 256).expect_err("overpadded prefix domain");
     validate_setup_prefix_domain(0, 1).expect_err("empty prefix domain");
+}
+
+#[test]
+fn setup_prefix_profile_must_commit_every_ring_in_the_full_domain() {
+    let natural_len = 129;
+    let n_prefix = padded_setup_prefix_len(natural_len);
+    let mut level_params = prefix_eligible_level_params();
+    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
+    let mut prefix = setup_prefix_precommitted_params(&level_params, n_prefix)
+        .expect("full setup-prefix profile");
+    prefix
+        .profile
+        .validate_setup_prefix_geometry(natural_len)
+        .expect("full setup-prefix geometry");
+
+    let blocks = prefix.profile.blocks;
+    let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+    prefix.profile.blocks = crate::BlockGeometry::new(
+        omitted_tail_rings,
+        blocks.positions_per_block,
+        omitted_tail_rings.div_ceil(blocks.positions_per_block),
+    );
+    let error = prefix
+        .profile
+        .validate_setup_prefix_geometry(natural_len)
+        .expect_err("a setup-prefix profile cannot omit real tail rings");
+    assert!(error.to_string().contains("must commit all"));
 }
 
 fn sample_level_params() -> CommittedGroupParams {

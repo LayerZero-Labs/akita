@@ -692,7 +692,9 @@ Pass the prefix cache and natural length together as
 This value is necessary because equal-length main witnesses may arrive with
 different setup-prefix domains and therefore admit different current params.
 `natural_len` does not affect candidate fit and remains only in the eventual
-slot ID.
+slot ID. Candidate fit always uses the complete `n_prefix` source: no planner,
+generated row, or runtime validator may substitute
+`ceil(natural_len / D_setup)` for `n_prefix / D_setup`.
 
 ### Locally Minimized Candidate Derivation
 
