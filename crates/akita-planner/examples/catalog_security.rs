@@ -8,6 +8,19 @@ use akita_sis_estimator::{
     estimate_schedule_security, ScheduleSisBound, ScheduleSisInstanceEstimate, SisSecurityPolicy,
 };
 
+const DETAIL_INSTANCE_HEADER: [&str; 10] = [
+    "instance",
+    "index",
+    "location",
+    "role",
+    "modulus_profile",
+    "norm_bound",
+    "d",
+    "rank",
+    "width",
+    "attack_cost_bits",
+];
+
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-security \
      --example catalog_security -- [--check] [--details] \
@@ -169,19 +182,21 @@ fn main() -> Result<(), String> {
             }
             if details {
                 println!("schedule\t{schedule:#?}");
-                println!("instance\tlocation\trole\tmodulus_profile\tnorm_bound\td\trank\twidth\tattack_cost_bits");
+                println!("{}", DETAIL_INSTANCE_HEADER.join("\t"));
                 for (index, instance) in estimate.instances().iter().enumerate() {
-                    println!(
-                        "instance\t{index}\t{}\t{:?}\t{:?}\t{}\t{}\t{}\t{}\t{:.6}",
-                        instance.location,
-                        instance.role,
-                        instance.modulus_profile,
+                    let columns: [String; DETAIL_INSTANCE_HEADER.len()] = [
+                        "instance".to_string(),
+                        index.to_string(),
+                        instance.location.clone(),
+                        format!("{:?}", instance.role),
+                        format!("{:?}", instance.modulus_profile),
                         bound_label(instance),
-                        instance.ring_dimension,
-                        instance.output_rank,
-                        instance.input_width,
-                        instance.security_bits(),
-                    );
+                        instance.ring_dimension.to_string(),
+                        instance.output_rank.to_string(),
+                        instance.input_width.to_string(),
+                        format!("{:.6}", instance.security_bits()),
+                    ];
+                    println!("{}", columns.join("\t"));
                 }
             }
         }
