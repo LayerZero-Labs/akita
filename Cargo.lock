@@ -147,6 +147,7 @@ dependencies = [
  "akita-config",
  "akita-error",
  "akita-schedules",
+ "akita-sis-estimator",
  "akita-types",
  "libm",
 ]

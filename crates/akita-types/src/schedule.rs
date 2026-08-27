@@ -8,12 +8,14 @@ use akita_error::AkitaError;
 
 mod descriptor;
 mod profiles;
+mod sis_occurrences;
 mod sizing;
 
 pub use profiles::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
     GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
+pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
 /// Public inputs that deterministically select one level's active Akita params.

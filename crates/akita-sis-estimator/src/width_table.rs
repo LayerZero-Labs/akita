@@ -29,21 +29,11 @@ pub static COEFF_LINF_BUCKETS: LazyLock<Vec<u64>> = LazyLock::new(|| {
         .collect()
 });
 
-fn estimator_profile(profile: akita_types::sis::SisModulusProfileId) -> AkitaModulusProfileId {
-    match profile {
-        akita_types::sis::SisModulusProfileId::Q32Offset99 => AkitaModulusProfileId::Q32Offset99,
-        akita_types::sis::SisModulusProfileId::Q64Offset59 => AkitaModulusProfileId::Q64Offset59,
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7 => {
-            AkitaModulusProfileId::Q128OffsetA7F7
-        }
-    }
-}
-
 fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
     let mut origins = BTreeSet::new();
     origins.extend(akita_types::sis::sis_role_cells().into_iter().map(|cell| {
         (
-            estimator_profile(cell.modulus_profile),
+            cell.modulus_profile.into(),
             cell.ring_dimension,
             u64::try_from(cell.coeff_linf_bound).expect("canonical SIS bound exceeds u64"),
         )
@@ -51,7 +41,7 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
     origins.extend(
         akita_types::sis::compression::compression_sis_cells().map(|cell| {
             (
-                estimator_profile(cell.modulus_profile),
+                cell.modulus_profile.into(),
                 cell.ring_dimension,
                 u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                     .expect("compression SIS bound exceeds u64"),

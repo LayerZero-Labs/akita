@@ -21,6 +21,7 @@ akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
+akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", optional = true }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 libm = "0.2"
 
@@ -40,6 +41,7 @@ transcript-keccak = [
 ]
 catalog-gen = ["dep:akita-config"]
 catalog-check = ["catalog-gen", "akita-config/all-schedules"]
+catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
@@ -58,6 +60,11 @@ required-features = ["catalog-gen"]
 name = "compression_schedule_census"
 path = "examples/compression_schedule_census.rs"
 required-features = ["catalog-gen"]
+
+[[example]]
+name = "catalog_security"
+path = "examples/catalog_security.rs"
+required-features = ["catalog-security"]
 
 [lints]
 workspace = true

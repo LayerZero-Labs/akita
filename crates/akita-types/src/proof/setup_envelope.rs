@@ -27,11 +27,25 @@ pub fn setup_matrix_field_elements_for_schedule(
     schedule: &FoldSchedule,
 ) -> Result<usize, AkitaError> {
     let mut max_field_elements = 1;
-    accumulate_matrix_field_elements_for_level(&schedule.root.params, &mut max_field_elements)?;
-    for fold in &schedule.recursive_folds {
-        accumulate_matrix_field_elements_for_level(&fold.params, &mut max_field_elements)?;
+    for occurrence in schedule.sis_occurrences()? {
+        include_matrix_field_elements(
+            &mut max_field_elements,
+            occurrence.output_rank,
+            occurrence.input_width,
+            occurrence.ring_dimension,
+            "schedule SIS occurrence",
+        )?;
     }
-    accumulate_terminal_matrix_field_elements(&schedule.terminal, &mut max_field_elements)?;
+    for fold in &schedule.recursive_folds {
+        if let Some(slot_id) = fold
+            .params
+            .setup_prefix()
+            .and_then(|prefix| prefix.slot_id())
+        {
+            max_field_elements =
+                max_field_elements.max(setup_prefix_slot_field_elements(&slot_id)?);
+        }
+    }
     Ok(max_field_elements)
 }
 
