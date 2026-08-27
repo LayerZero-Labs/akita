@@ -23,13 +23,13 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
-    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
-    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
-    PolynomialGroupLayout, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
+    sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
+    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingVec, SisModulusProfileId,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof, TerminalResponse,
+    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -288,6 +288,29 @@ fn append_recursive_fold(schedule: &mut FoldSchedule) {
         .output_witness_len;
     schedule.terminal.input_witness_len = step.output_witness_len;
     schedule.recursive_folds.push(step);
+}
+
+#[test]
+fn base_field_proof_shape_accepts_mixed_opening_families() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    let precommitted_group = PolynomialGroupLayout::singleton(8);
+    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
+    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    schedule
+        .root
+        .params
+        .insert_precommitted_group(precommitted)
+        .expect("mixed-family precommit");
+    let layout = OpeningClaimsLayout::from_groups(vec![
+        precommitted_group,
+        schedule.root.params.final_group().profile.group,
+    ])
+    .expect("grouped opening layout");
+
+    let shape = canonical_proof_shape(&schedule, &layout, 1).expect("base-field proof shape");
+    assert!(shape.root.extension_opening_reduction.is_none());
 }
 
 #[test]
