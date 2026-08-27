@@ -233,7 +233,8 @@ pub struct GeneratedFamily {
     /// Grouped-root keys enumerated for this generated family.
     pub grouped_requests: GroupedRequestGenerator,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub resolve_catalog_row_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub resolve_catalog_row_for_key:
+        fn(AkitaScheduleLookupKey) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
@@ -319,8 +320,8 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
 
 fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-) -> Result<FoldSchedule, AkitaError> {
-    Cfg::resolve_catalog_row_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
+) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+    Cfg::resolve_catalog_row_for_key(&key)
 }
 
 fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {

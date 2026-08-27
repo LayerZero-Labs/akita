@@ -22,6 +22,7 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and generated-table certification |
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven table emission |
 | `akita-schedules` | Feature-gated generated schedule table wiring |
 | `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
@@ -43,6 +44,7 @@ graph TD
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
   Types["akita-types"]
+  SisEstimator["akita-sis-estimator"]
   Planner["akita-planner"]
   Schedules["akita-schedules"]
   Config["akita-config"]
@@ -75,11 +77,13 @@ graph TD
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
+  SisEstimator --> Types
   Planner --> Error
   Planner --> Challenges
   Planner --> Schedules
   Planner --> Types
   Planner -. catalog-gen .-> Config
+  Planner -. catalog-security .-> SisEstimator
   Schedules --> Error
   Schedules --> Challenges
   Schedules --> Types
@@ -145,6 +149,11 @@ graph TD
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
   `catalog-gen` feature also enables `akita-config`, allowing table-emission
   binaries to name concrete `CommitmentConfig` presets.
+- `akita-sis-estimator` owns the offline scalar SIS cost model and table
+  certification logic. It depends on inert schedule and matrix descriptions in
+  `akita-types`. The planner's optional `catalog-security` feature uses it to
+  report direct modeled costs for expanded generated rows; normal planner,
+  schedule, prover, and verifier builds do not depend on the estimator.
 - `akita-schedules` owns generated row types, catalog identity validation,
   runtime row expansion, and the tracked generated tables with their Cargo
   feature wiring. The family modules are deterministic planner output. The crate
