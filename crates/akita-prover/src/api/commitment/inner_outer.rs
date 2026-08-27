@@ -57,39 +57,44 @@ fn validate_commit_inner_group_len(expected: usize, actual: usize) -> Result<(),
 }
 
 /// Compute one same-shape group of inner commitments `t_i`.
-pub(super) fn compute_inner_commitment<F, S, B, const D_A: usize>(
+pub(super) fn compute_inner_commitment<F, P, B, const D_A: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
-    sources: Vec<S>,
+    polys: &[P],
     plan: CommitInnerPlan,
 ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    B: ComputeBackendSetup<F> + RootCommitKernel<S, F, D_A>,
+    P: RootCommitSource<F, D_A>,
+    B: ComputeBackendSetup<F> + for<'a> RootCommitKernel<P::CommitView<'a>, F, D_A>,
 {
-    backend.commit_inner_group(prepared, sources, plan)
+    let views = polys
+        .iter()
+        .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
+        .collect::<Result<Vec<_>, _>>()?;
+    backend.commit_inner_group(prepared, views, plan)
 }
 
 /// Validate and decompose `t_i`, apply the outer matrix, and erase its ring
 /// dimension for compression.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn compute_outer_commitment<F, B, const D_A: usize, const D_B: usize>(
     backend: &B,
     prepared: &B::PreparedSetup,
     inners: Vec<CommitInnerWitness<F>>,
-    expected_source_count: usize,
-    n_a: usize,
-    num_live_blocks: usize,
-    num_digits_open: usize,
-    log_basis: u32,
-    n_b: usize,
+    profile: &GroupCommitPhaseParams,
     slice_geometry: &CommitmentSliceGeometry,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    validate_commit_inner_group_len(expected_source_count, inners.len())?;
+    let n_a = profile.inner.matrix.output_rank();
+    let num_live_blocks = profile.blocks.live_blocks;
+    let num_digits_open = profile.outer.digits.num_digits;
+    let log_basis = profile.outer.digits.log_basis;
+    let n_b = profile.outer.matrix.output_rank();
+
+    validate_commit_inner_group_len(profile.group.num_polynomials(), inners.len())?;
     let prepared_polynomials = cfg_into_iter!(inners)
         .map(|inner| -> Result<(RingVec<F>, DigitBlocks), AkitaError> {
             validate_commit_inner_shape::<F, D_A>(&inner, num_live_blocks, n_a)?;
@@ -146,11 +151,7 @@ where
         F,
         dims.d_a(),
         |D_A| {
-            let views = polys
-                .iter()
-                .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
-                .collect::<Result<Vec<_>, _>>()?;
-            let inners = compute_inner_commitment::<F, _, _, D_A>(backend, prepared, views, plan)?;
+            let inners = compute_inner_commitment::<F, _, _, D_A>(backend, prepared, polys, plan)?;
             dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
                 F,
@@ -159,12 +160,7 @@ where
                     backend,
                     prepared,
                     inners,
-                    polys.len(),
-                    plan.n_a,
-                    profile.blocks.live_blocks,
-                    profile.outer.digits.num_digits,
-                    profile.outer.digits.log_basis,
-                    profile.outer.matrix.output_rank(),
+                    &profile,
                     &slice_geometry,
                 )
             )

@@ -299,11 +299,7 @@ fn commit_unsliced_reference(
     let backend = ctx.backend();
     let prepared = ctx.prepared();
     let plan = CommitInnerPlan::from_level(params);
-    let views = polys
-        .iter()
-        .map(RootCommitSource::<F, D>::commit_view)
-        .collect::<Result<Vec<_>, _>>()?;
-    let inners = compute_inner_commitment::<F, _, _, D>(backend, prepared, views, plan)?;
+    let inners = compute_inner_commitment::<F, DensePoly<F>, _, D>(backend, prepared, polys, plan)?;
     if inners.len() != polys.len() {
         return Err(AkitaError::InvalidSetup(
             "unsliced reference inner commitment count mismatch".into(),
