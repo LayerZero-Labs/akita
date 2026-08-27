@@ -231,6 +231,7 @@ jobs:
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
@@ -244,6 +245,8 @@ jobs:
           --test transcript_hardening_proptest
           --no-default-features
           --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
 
   test-timing:
     name: Test timing
