@@ -24,7 +24,7 @@ fn zero_vec<T: Field>(len: usize) -> Result<Vec<T>, AkitaError> {
 /// owned array. The arithmetic loop is shared and reads the prepared position
 /// through `coefficient` without repeating source validation or decoding.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
-pub(super) fn partials_from_position_source<F, E, P, const D: usize>(
+pub fn coefficient_packing_partials_from_position_source<F, E, P, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
     source_num_vars: usize,
     position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,

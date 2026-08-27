@@ -739,7 +739,7 @@ where
                         actual: view.live_ring_elems,
                     });
                 }
-                let coordinates = crate::backend::coefficient_packing::partials_from_position_source::<
+                let coordinates = crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source::<
                     F,
                     E,
                     _,

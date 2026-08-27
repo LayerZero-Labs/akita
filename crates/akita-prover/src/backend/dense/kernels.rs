@@ -1,7 +1,7 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::coefficient_packing::partials_from_position_source;
+use crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -138,7 +138,7 @@ where
                         actual: rings.len(),
                     });
                 }
-                let coordinates = partials_from_position_source::<F, E, _, D>(
+                let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
                     plan,
                     RootPolyMeta::<F>::num_vars(*poly),
                     |position| {

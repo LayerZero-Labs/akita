@@ -541,7 +541,7 @@ where
                         ));
                     }
                     let coordinates =
-                        crate::backend::coefficient_packing::partials_from_position_source::<
+                        crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source::<
                             F,
                             E,
                             _,
