@@ -30,7 +30,7 @@ pub(crate) static FP128_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES: &[GeneratedFoldSchedu
             num_digits_inner: 1,
             precommitted_groups: &[
                 // unit one-hot: admits {0, 1}, one hot position per 256 coefficients; 1 x base-2^3 digits, span 3 bits
-                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(14, 1), blocks: BlockGeometry::new(32, 8, 4), outer_slice_count: akita_types::CommitmentSliceCount::FOUR, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 1), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16V2, SisTableDigest([102, 187, 255, 221, 176, 21, 128, 61, 188, 202, 197, 61, 107, 48, 35, 61, 103, 64, 188, 252, 61, 213, 37, 154, 177, 195, 152, 193, 123, 234, 99, 144]), SisModulusProfileId::Q128OffsetA7F7, 1, 8, 7812, 512)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 43), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16V2, SisTableDigest([102, 187, 255, 221, 176, 21, 128, 61, 188, 202, 197, 61, 107, 48, 35, 61, 103, 64, 188, 252, 61, 213, 37, 154, 177, 195, 152, 193, 123, 234, 99, 144]), SisModulusProfileId::Q128OffsetA7F7, 1, 344, 7, 64)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 128 }, num_digits_fold: 2 } },
+                GeneratedPrecommittedGroup { group: GeneratedFrozenGroup { profile: GroupCommitPhaseParams { version: GroupCommitPhaseParams::VERSION, group: PolynomialGroupLayout::new(14, 1), blocks: BlockGeometry::new(32, 8, 4), outer_slice_count: akita_types::CommitmentSliceCount::FOUR, inner: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 1), InnerCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([74, 100, 86, 45, 253, 79, 190, 68, 220, 163, 168, 41, 167, 235, 122, 230, 165, 188, 255, 63, 245, 214, 168, 215, 250, 167, 122, 194, 126, 175, 128, 25]), SisModulusProfileId::Q128OffsetA7F7, 1, 8, 7812, 512)), outer: akita_types::RoleParams::new(akita_types::GadgetDigits::new(3, 43), OuterCommitMatrixParams::new_unchecked(SisSecurityPolicyId::Quantum128BitADPS16, SisTableDigest([74, 100, 86, 45, 253, 79, 190, 68, 220, 163, 168, 41, 167, 235, 122, 230, 165, 188, 255, 63, 245, 214, 168, 215, 250, 167, 122, 194, 126, 175, 128, 25]), SisModulusProfileId::Q128OffsetA7F7, 1, 344, 7, 64)) }, opening_method: akita_types::OpeningMethod::SubringCoefficientPacking { challenge_subring_dimension: 128 }, num_digits_fold: 2 } },
             ],
         },
         recursive_folds: &[
@@ -76,8 +76,8 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     setup_field_budget: None,
     min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-    sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16V2,
-    sis_table_digest: SisTableDigest([0x66, 0xbb, 0xff, 0xdd, 0xb0, 0x15, 0x80, 0x3d, 0xbc, 0xca, 0xc5, 0x3d, 0x6b, 0x30, 0x23, 0x3d, 0x67, 0x40, 0xbc, 0xfc, 0x3d, 0xd5, 0x25, 0x9a, 0xb1, 0xc3, 0x98, 0xc1, 0x7b, 0xea, 0x63, 0x90]),
+    sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
+    sis_table_digest: SisTableDigest([0x4a, 0x64, 0x56, 0x2d, 0xfd, 0x4f, 0xbe, 0x44, 0xdc, 0xa3, 0xa8, 0x29, 0xa7, 0xeb, 0x7a, 0xe6, 0xa5, 0xbc, 0xff, 0x3f, 0xf5, 0xd6, 0xa8, 0xd7, 0xfa, 0xa7, 0x7a, 0xc2, 0x7e, 0xaf, 0x80, 0x19]),
     sis_l2_table_digest: SisL2TableDigest([0xa1, 0xcc, 0x0a, 0x06, 0x08, 0x97, 0x44, 0x14, 0x5b, 0x61, 0x91, 0x9c, 0xf0, 0x01, 0xea, 0x26, 0x0c, 0x95, 0xa4, 0xbb, 0xa1, 0x61, 0xff, 0xda, 0xff, 0x55, 0x39, 0x1d, 0x0d, 0xfa, 0x10, 0x2a]),
     decomposition: DecompositionParams { log_basis: 3, log_commit_bound: 1, log_open_bound: Some(128) },
     claim_ext_degree: 1,
@@ -90,5 +90,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 16577217186669637934,
     key_count: 3,
-    key_digest: 14403268988508520748,
+    key_digest: 5010736218223023046,
 };

@@ -45,14 +45,6 @@ pub fn zgsa_squared_norms(
     let log_q = log2_biguint(q) * std::f64::consts::LN_2;
     let log_xi = XI.ln();
     let num_q_vec = d_i - n;
-    if num_q_vec > n {
-        return Err(EstimatorError::InvalidParameter {
-            field: "identity_vectors",
-            reason: "ZGSA's symmetric transition requires at least as many identity vectors as q-vectors; the pinned lattice-estimator profile does not preserve determinant outside that domain"
-                .to_string(),
-        });
-    }
-
     let mut l_log = vec![0.0_f64; d as usize];
     for entry in &mut l_log[..num_q_vec as usize] {
         *entry = log_q;
@@ -65,7 +57,10 @@ pub fn zgsa_squared_norms(
     let mut diff = slope * 0.5;
     let midpoint = 0.5 * (log_q + log_xi);
 
-    for i in 0..num_q_vec {
+    // Every smoothing step must replace one q-vector and one identity vector
+    // symmetrically around the midpoint. Iterating past the smaller zone would
+    // update only one side and change the profile determinant.
+    for i in 0..num_q_vec.min(n) {
         if diff > 0.5 * (log_q - log_xi) {
             break;
         }
@@ -148,16 +143,22 @@ mod tests {
     }
 
     #[test]
-    fn zgsa_rejects_q_vector_majority_that_breaks_volume() {
+    fn zgsa_q_vector_majority_preserves_volume() {
         let q = BigUint::from(18_446_744_073_709_551_557_u64);
-        let error = zgsa_squared_norms(1_810, 786, &q, 494).unwrap_err();
-        assert!(matches!(
-            error,
-            EstimatorError::InvalidParameter {
-                field: "identity_vectors",
-                ..
-            }
-        ));
+        let profile = zgsa_squared_norms(1_810, 786, &q, 494).unwrap();
+        let actual_log2_volume = profile.iter().map(|value| 0.5 * value.log2()).sum::<f64>();
+        let expected_log2_volume = 1_024.0 * log2_biguint(&q);
+
+        assert!(
+            (actual_log2_volume - expected_log2_volume).abs()
+                <= 1e-10 * expected_log2_volume.abs().max(1.0),
+            "actual={actual_log2_volume}, expected={expected_log2_volume}"
+        );
+        let exact_q_prefix = profile
+            .iter()
+            .take_while(|value| (0.5 * value.log2() - log2_biguint(&q)).abs() < 1e-12)
+            .count();
+        assert_eq!(exact_q_prefix, 238);
     }
 
     #[test]

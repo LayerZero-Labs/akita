@@ -4,6 +4,7 @@ use crate::{
     error::{EstimatorError, Result},
     math::log2_biguint,
     reduction::delta::delta,
+    simulator::is_q_vector_length,
 };
 
 /// Compact facts about an LGSA profile needed by the infinity probability path.
@@ -173,7 +174,7 @@ pub fn lgsa_summary(
     let first_log_norm = log_norm_at(0);
     let first_length = 2.0_f64.powf(first_log_norm);
     let q_f = 2.0_f64.powf(log_q);
-    let idx_start = if (first_length - q_f).abs() < 1e-8 && num_gsa_vec > 1 {
+    let idx_start = if is_q_vector_length(first_length, q_f) && num_gsa_vec > 1 {
         1
     } else {
         0
@@ -222,7 +223,7 @@ mod tests {
         );
 
         let q_f = log2_biguint(q).exp2();
-        let idx_start = if (profile[0].sqrt() - q_f).abs() < 1e-8 {
+        let idx_start = if is_q_vector_length(profile[0].sqrt(), q_f) {
             profile
                 .iter()
                 .position(|value| *value < profile[0])

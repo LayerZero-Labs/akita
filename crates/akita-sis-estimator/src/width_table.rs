@@ -63,7 +63,7 @@ fn canonical_scalar_origins() -> Vec<(AkitaModulusProfileId, u32, u64)> {
             .and_then(|dimension| dimension.checked_mul(2))
             .expect("compression diagnostic dimension fits usize");
         origins.insert((
-            estimator_profile(profile),
+            profile.into(),
             u32::try_from(doubled).expect("compression diagnostic dimension fits u32"),
             u64::try_from(akita_types::sis::compression::COMPRESSION_SIS_COEFF_LINF_BOUND)
                 .expect("compression SIS bound exceeds u64"),
@@ -126,7 +126,7 @@ pub const PRODUCTION_CERTIFICATE_DOMAIN: &str = concat!(
 /// Change this value whenever an estimator or certification change can alter
 /// a work result. Operational changes such as parallelism and progress output
 /// do not change it.
-pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v2";
+pub const INFINITY_WIDTH_EVALUATOR_ID: &str = "akita-infinity-width-v3";
 
 /// Optimizer profile used to discover and certify scalar boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -267,7 +267,7 @@ impl Default for InfinityWidthTableConfig {
             ring_dims: RING_DIMS.to_vec(),
             coeff_linf_bounds: COEFF_LINF_BOUNDS.clone(),
             max_rank: DEFAULT_MAX_RANK,
-            policy: SisSecurityPolicy::Quantum128BitADPS16V2,
+            policy: SisSecurityPolicy::Quantum128BitADPS16,
             search_cap: None,
             profile: InfinityWidthProfile::LocalMinimum,
             progress_every: None,
@@ -284,7 +284,7 @@ pub fn is_production_infinity_width_table_config(config: &InfinityWidthTableConf
         && same_set(&config.ring_dims, RING_DIMS.as_slice())
         && same_set(&config.coeff_linf_bounds, &COEFF_LINF_BOUNDS)
         && config.max_rank == DEFAULT_MAX_RANK
-        && config.policy == SisSecurityPolicy::Quantum128BitADPS16V2
+        && config.policy == SisSecurityPolicy::Quantum128BitADPS16
         && config.search_cap.is_none()
         && config.profile == InfinityWidthProfile::LocalMinimum
 }
@@ -1021,7 +1021,7 @@ fn parse_csv_record(record: &str) -> Result<InfinityWidthRow> {
         );
     }
     let policy = match fields[0] {
-        "Quantum128BitADPS16V2" => SisSecurityPolicy::Quantum128BitADPS16V2,
+        "Quantum128BitADPS16" => SisSecurityPolicy::Quantum128BitADPS16,
         _ => return invalid_config("work_result", "unknown SIS policy label"),
     };
     let modulus_profile = AkitaModulusProfileId::parse(fields[1])?;

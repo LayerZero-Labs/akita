@@ -9,7 +9,7 @@ model. Keep the marketing claim separate from audited reality. See
 
 Production Ajtai key sizing uses generated Module-SIS width tables. The
 generator certifies scalar cutoffs `(B, n) -> max m` under
-`Quantum128BitADPS16V2`, and the checked-in runtime artifact stores the
+`Quantum128BitADPS16`, and the checked-in runtime artifact stores the
 Module-SIS projection:
 
 ```text
@@ -19,7 +19,7 @@ Module-SIS projection:
 
 where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
-The shipped policy is `Quantum128BitADPS16V2`. It accepts a row only when the
+The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
 above-target lower bound of at least 128 bits. The decision threshold is an
 explicit estimator configuration value supplied by the policy profile. The
@@ -52,8 +52,9 @@ parallelizes independent rows and does not change the certificate domain or
 output ordering.
 
 The estimator hardening described above changes the acceptance model. The
-checked-in SIS table and dependent schedules therefore use the revisioned
-`Quantum128BitADPS16V2` policy ID and one regenerated table digest. The q32
+checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
+and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+table digest, and dependent catalog identities bind the corrected semantics. The q32
 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128 uses
 `2^44 - 1`. Within those guards, A is keyed by the exact protocol collision
 `4 * ||c||_1 * (2^t - 1)` for reachable opening-basis/digit-depth products
@@ -132,8 +133,9 @@ LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
 BKZ forgets its canonical q-vectors. On representative widened q64 and q128
 rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
 determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
-ZGSA compatibility path rejects q-vector-majority profiles because the pinned
-generalization does not preserve their lattice determinant.
+ZGSA compatibility path caps its paired smoothing steps at the smaller of the
+q-vector and identity-vector zones, preserving the lattice determinant even
+when q-vectors are the majority.
 
 Infinity-norm probabilities are priced on the coordinates that remain after
 the attacker's `zeta` projection. In particular, the small-box condition uses

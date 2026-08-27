@@ -59,7 +59,8 @@ checkout as the Euclidean table generator:
 c667a48546f140c3a5454c7503c3ca44a264cce2
 ```
 
-(malb/lattice-estimator#217; strict descendant of malb#213 @ 27a581b)
+(tested malb/lattice-estimator#217 revision recorded on 2026-06-27; strict
+descendant of malb#213 @ 27a581b; intentionally not a moving PR-head pin)
 
 Historical estimator golden profile:
 
@@ -178,7 +179,7 @@ Production SIS table generation uses the planner-shaped infinity key:
 ```
 
 The checked-in production policy is
-`Quantum128BitADPS16V2`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
+`Quantum128BitADPS16`: one ADPS16 quantum LGSA rule with a 128-bit target. The production table is
 scalar-keyed by exact modulus profile, coefficient bound, and `n = rank * d`.
 The role-specific coverage declaration is the source of reachable cells. The
 Inner/A cells are the exact protocol targets
@@ -265,33 +266,105 @@ change `INFINITY_WIDTH_EVALUATOR_ID`; existing results then remain as history
 but no longer satisfy the new plan. The result cache is an incremental build
 input, not a runtime table and not a second source of security policy.
 
-Regenerate the nine diagnostic compressed-commitment cells. The compression
-certificate contains only the **nine rank-one cells** used by the
-**1--16 KiB diagnostic ladder**. The established six cells retain their exact
-rank-one SIS boundaries; the three doubled-dimension cells stop at the largest
-reachable width:
+Regenerate the six runtime compressed-commitment cells and three cap-only reach
+diagnostics. The current **1--8 KiB two-map ladder** consumes two ring
+dimensions per modulus profile, for six exact rank-one SIS boundaries. The
+three doubled-dimension rows are offline reach diagnostics only: they are not
+accepted by `compression_ring_dimensions` or stored in
+`COMPRESSION_SIS_CELLS`, and they stop at the largest reachable width.
+
+Generate the rows in the same canonical q32, q64, q128 order used by the
+checked-in certificate:
 
 ```bash
+compression_diag_dir="$(mktemp -d /tmp/akita-compression.XXXXXX)"
 for job in \
-  q128:8:512 q128:16:8192 q128:32:4096 \
+  q32:32:128 q32:64:2048 q32:128:1024 \
   q64:16:256 q64:32:4096 q64:64:2048 \
-  q32:32:128 q32:64:2048 q32:128:1024
+  q128:8:512 q128:16:8192 q128:32:4096
 do
   IFS=: read -r profile d cap <<< "$job"
   cargo run -p akita-sis-estimator --release --features parallel \
     --example infinity_width_table -- \
     --format csv --profiles "$profile" --dims "$d" --bounds 1 \
     --max-rank 1 --search-cap "$cap" --profile local-minimum \
-    --output "/tmp/akita-compression-${profile}-d${d}.csv"
+    --output "$compression_diag_dir/${profile}-d${d}.csv"
 done
 ```
 
+Merge and validate the nine one-row outputs deterministically. No row should be
+copied or reordered by hand:
+
+```bash
+compression_diag_csv="$compression_diag_dir/compression_infinity_width_table.csv"
+head -n 1 "$compression_diag_dir/q32-d32.csv" > "$compression_diag_csv"
+for job in \
+  q32:32 q32:64 q32:128 \
+  q64:16 q64:32 q64:64 \
+  q128:8 q128:16 q128:32
+do
+  IFS=: read -r profile d <<< "$job"
+  test "$(wc -l < "$compression_diag_dir/${profile}-d${d}.csv" | tr -d ' ')" = 2
+  tail -n 1 "$compression_diag_dir/${profile}-d${d}.csv" >> "$compression_diag_csv"
+done
+
+python3 - "$compression_diag_csv" <<'PY'
+import csv
+import sys
+
+expected = [
+    ("q32", 32, 128, 127, "false", "Exact"),
+    ("q32", 64, 2048, 1769, "false", "Exact"),
+    ("q32", 128, 1024, 1024, "true", "AtLeast"),
+    ("q64", 16, 256, 254, "false", "Exact"),
+    ("q64", 32, 4096, 3538, "false", "Exact"),
+    ("q64", 64, 2048, 2048, "true", "AtLeast"),
+    ("q128", 8, 512, 508, "false", "Exact"),
+    ("q128", 16, 8192, 7077, "false", "Exact"),
+    ("q128", 32, 4096, 4096, "true", "AtLeast"),
+]
+with open(sys.argv[1], newline="", encoding="utf-8") as stream:
+    rows = list(csv.DictReader(stream))
+actual = [
+    (
+        row["modulus_profile"],
+        int(row["d"]),
+        int(row["search_cap"]),
+        int(row["max_width"]),
+        row["hit_cap"],
+        row["cutoff_kind"],
+    )
+    for row in rows
+]
+assert actual == expected, (actual, expected)
+assert all(row["policy"] == "Quantum128BitADPS16" for row in rows)
+assert all(row["rank"] == "1" and row["coeff_linf_bound"] == "1" for row in rows)
+PY
+
+diff -u scripts/sis_golden/compression_infinity_width_table.csv "$compression_diag_csv"
+```
+
+Only after reviewing an intentional diff, publish the merged candidate:
+
+```bash
+cp "$compression_diag_csv" scripts/sis_golden/compression_infinity_width_table.csv
+```
+
 The checked-in merged certificate is
-`scripts/sis_golden/compression_infinity_width_table.csv`; its compact runtime
-projection lives in
-`crates/akita-types/src/sis/compression.rs`. These
-supplemental cells do not change the production A/B/D SIS table or schedule
-identity.
+`scripts/sis_golden/compression_infinity_width_table.csv`. The exact six-row
+runtime subset lives in `crates/akita-types/src/sis/compression.rs`; the three
+`AtLeast` rows remain audit-only. This standalone CSV is evidence, not a table
+generator input. Refreshing it does not by itself change the production A/B/D
+SIS table or schedule identity; full `rust-split` generation independently
+certifies the canonical `B = 1` origins under its production cap. After an
+intentional refresh, run the focused consumer checks:
+
+```bash
+cargo test -p akita-types --lib sis::compression::tests
+cargo test -p akita-types --lib \
+  compression::tests::ladder_geometry_and_complete_image_bound_are_checked
+cargo test -p akita-sis-estimator --lib width_table
+```
 
 Regenerate all dependent schedule catalogs after the SIS table:
 

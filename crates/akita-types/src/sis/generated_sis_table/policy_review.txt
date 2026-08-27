@@ -1,6 +1,6 @@
 Akita SIS generated-table policy review
-policy=Quantum128BitADPS16V2
-estimator_revision=akita-infinity-width-v2
+policy=Quantum128BitADPS16
+estimator_revision=akita-infinity-width-v3
 optimizer_profile=local-minimum+proven-pruned-certification
 certificate_domain=proven-pruned beta from 40 to the capped Euclidean baseline, with ADPS16 best-cost and 128-bit decision lower-bound early stops; for each visited beta, every pre-stable LGSA dimension plus both stable-tail endpoints, plus both sides of any active-dimension probability transition, restricted to the tall q-ary domain 0 <= zeta < d - n
 modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-(2^32-22537)

@@ -149,7 +149,7 @@ fn runtime_table_emits_direct_q128_d512_rows() {
             rank: u32::try_from(index + 1).unwrap(),
             coeff_linf_bound: 2,
             max_width,
-            policy: SisSecurityPolicy::Quantum128BitADPS16V2,
+            policy: SisSecurityPolicy::Quantum128BitADPS16,
             search_cap: DEFAULT_SEARCH_CAP,
             hit_cap: false,
             profile: InfinityWidthProfile::LocalMinimum,

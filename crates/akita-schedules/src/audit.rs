@@ -582,7 +582,7 @@ mod tests {
                 log_open_bound: Some(128),
             },
             sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16V2,
+            sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
             sis_table_digest: SisTableDigest::CURRENT,
             sis_l2_table_digest: SisL2TableDigest::CURRENT,
             claim_ext_degree: 1,

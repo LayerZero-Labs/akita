@@ -6,10 +6,15 @@ import os
 import subprocess
 from pathlib import Path
 
-# malb/lattice-estimator#217 head; strict descendant of malb#213 @ 27a581b.
+# Tested malb/lattice-estimator#217 revision recorded on 2026-06-27; strict
+# descendant of malb#213 @ 27a581b. PR #217 is a moving review branch, so this
+# immutable golden-source pin must not be described as its current head.
 # Euclidean geometry is unchanged from 27a581b; Akita prices its required BKZ
 # block size with ADPS16 quantum. Infinity needs #217.
 PINNED_LATTICE_ESTIMATOR_SHA = "c667a48546f140c3a5454c7503c3ca44a264cce2"
+PINNED_LATTICE_ESTIMATOR_REVISION_KIND = "tested-revision"
+PINNED_LATTICE_ESTIMATOR_RECORDED_DATE = "2026-06-27"
+PINNED_LATTICE_ESTIMATOR_UPSTREAM_PR = "https://github.com/malb/lattice-estimator/pull/217"
 
 
 def repo_root() -> Path:

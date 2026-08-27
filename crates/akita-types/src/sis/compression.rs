@@ -79,7 +79,7 @@ pub fn min_compression_secure_rank(
     coeff_linf_bound: u128,
     width: u64,
 ) -> Option<usize> {
-    if policy != SisSecurityPolicyId::Quantum128BitADPS16V2 {
+    if policy != SisSecurityPolicyId::Quantum128BitADPS16 {
         return None;
     }
     let cell = compression_sis_cell(modulus_profile, ring_dimension, coeff_linf_bound)?;
@@ -125,7 +125,7 @@ mod tests {
         for &(profile, d, sis_max_width) in COMPRESSION_SIS_CELLS {
             assert_eq!(
                 min_compression_secure_rank(
-                    SisSecurityPolicyId::Quantum128BitADPS16V2,
+                    SisSecurityPolicyId::Quantum128BitADPS16,
                     profile,
                     d,
                     1,
@@ -134,7 +134,7 @@ mod tests {
                 Some(1)
             );
             assert!(min_compression_secure_rank(
-                SisSecurityPolicyId::Quantum128BitADPS16V2,
+                SisSecurityPolicyId::Quantum128BitADPS16,
                 profile,
                 d,
                 1,

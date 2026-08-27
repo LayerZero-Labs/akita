@@ -40,11 +40,12 @@ they produce the same scalar SIS key.
 Policy identifier:
 
 ```text
-Quantum128BitADPS16V2
+Quantum128BitADPS16
 ```
 
-The old policy identity and scalar `min_security_bits` identity are removed in
-the same cutover. Unsupported policy and table identities fail closed.
+The scalar `min_security_bits` identity is removed in the cutover. The
+development policy retains the unversioned `Quantum128BitADPS16` name and wire
+tag `1`; unsupported policy tags and table identities fail closed.
 
 ### Delivered implementation parameters
 
@@ -115,11 +116,13 @@ production scaffolding. Regeneration under an additional BCSS gate is therefore
 not required by this policy.
 
 Promoting BCSS23 or another idealized quantum sieve to a hard constraint
-requires a new policy identifier. The review must address finite-dimensional
-costs, quantum memory size and access, fault-tolerant implementation, the BKZ
-oracle transfer, and measured rank or proof-size impact; a smaller asymptotic
-exponent alone is insufficient. The ADPS16 paranoid `0.2075 * beta` list-size
-line is likewise not an end-to-end attack-time estimate.
+requires a new evaluator revision, table digest, and artifact regeneration. A
+new policy identifier is additionally required if the old and new rules must
+coexist. The review must address finite-dimensional costs, quantum memory size
+and access, fault-tolerant implementation, the BKZ oracle transfer, and measured
+rank or proof-size impact; a smaller asymptotic exponent alone is insufficient.
+The ADPS16 paranoid `0.2075 * beta` list-size line is likewise not an end-to-end
+attack-time estimate.
 
 ### Shape-model disposition
 
@@ -149,12 +152,13 @@ forget-q-structure variant took about 107 seconds on the audit machine, making
 either inappropriate for the production table sweep.
 
 The pinned ZGSA implementation is not a valid counterexample on arbitrary
-unbalanced shapes. Its symmetric transition preserves determinant only when
-there are at least as many identity vectors as q-vectors. On the q64 row above,
-the profile loses 5,485.85 bits of log2 lattice volume at `beta=494` and creates
-a spurious 90.895-bit result. The Rust compatibility path must reject that
-domain rather than treat it as an attack. On supported ZGSA inputs, generated
-profiles must preserve `log2(det Lambda) = n * log2(q)`.
+unbalanced shapes. Its symmetric transition iterates once per q-vector even
+after the identity-vector zone is exhausted. On the q64 row above, that loses
+5,485.85 bits of log2 lattice volume at `beta=494` and creates a spurious
+90.895-bit result. The Rust compatibility path repairs the transition by
+performing only paired smoothing steps, stopping at the smaller zone. Generated
+ZGSA profiles must preserve `log2(det Lambda) = n * log2(q)` for both balanced
+and q-vector-majority inputs.
 
 The probability regime is also defined on the reduced instance. After the
 attacker projects away `zeta` coordinates, the active dimension is
@@ -248,7 +252,10 @@ shape.
 
 ### Policy identity
 
-The policy ID names the complete acceptance rule. It includes:
+The policy ID names the stable production gate family. The complete runtime
+security identity is the pair of policy ID and generated table digest, while
+offline work IDs additionally include the evaluator revision. Together these
+commit to:
 
 - the hard target;
 - the reduction cost model and exponent;
@@ -257,15 +264,18 @@ The policy ID names the complete acceptance rule. It includes:
 - the boundary certificate domain;
 - the meaning of finite, classified, and failed estimates.
 
-Any change to the hard model that can change whether the same scalar SIS cell
-passes requires a new policy ID and regenerated artifacts. A change to the
-search profile for a table extension requires a new table digest.
+Any development change to the hard model that can change whether the same
+scalar SIS cell passes requires a new evaluator revision, table digest, and
+regenerated artifacts. A distinct policy ID is required only when multiple
+acceptance rules must coexist. A change to the search profile for a table
+extension requires a new table digest.
 
-The active-dimension correction, complete pre-stable search, and explicit
-Euclidean candidate in this hardening patch can change that decision. This
-regeneration therefore introduces the revisioned `Quantum128BitADPS16V2`
-runtime policy ID and a new table digest. Every dependent schedule is
-regenerated in the same atomic cutover.
+The active-dimension correction, complete pre-stable search, explicit
+Euclidean candidate, and scale-aware q-vector classification in this hardening
+patch can change that decision. This regeneration retains the unversioned
+`Quantum128BitADPS16` runtime policy ID and tag `1`, advances the evaluator
+revision, and emits a new table digest. Every dependent schedule is regenerated
+in the same atomic cutover.
 
 The table digest is separate. It commits to the exact modulus profiles, role
 coverage, coefficient bound cells, rank limits, search caps, certificates, and
@@ -579,17 +589,18 @@ digest. Dependent schedule catalogs embed that same digest.
 - Cell interpolation.
 - Reusing a modulus profile for another modulus of the same size.
 - Treating the scalar estimate as a proof against every structured attack.
-- Compatibility with the replaced SIS policy identity.
+- Compatibility with artifacts tied to the replaced SIS table digest.
 
 ## Evaluation
 
 ### Acceptance criteria
 
-- [x] The only production security policy is `Quantum128BitADPS16V2`.
+- [x] The only production security policy is `Quantum128BitADPS16`.
 - [x] The estimator accepts only certified ADPS16 quantum scores at or above
       128.
 - [x] Generic infinite and failed estimates stop generation.
-- [x] The policy ID commits to all acceptance semantics.
+- [x] The policy ID, evaluator revision, and table digest jointly commit to all
+      acceptance semantics.
 - [x] Exact modulus profiles replace size only family selection.
 - [x] Role coverage comes from the planner domain.
 - [x] B and D cover every supported commitment dimension, starting at 64.
@@ -648,7 +659,7 @@ offline; runtime never invokes the estimator.
 ### Architecture
 
 ```text
-Quantum128BitADPS16V2
+Quantum128BitADPS16
         |
         +-- hard gate: ADPS16 quantum score >= 128
         |
@@ -695,7 +706,9 @@ runtime role lookup: n = rank*d, m_need = width*d
 ### Change control
 
 Changing the hard target, ADPS16 mode, norm, shape model, estimator revision,
-or estimate result semantics requires a new policy ID.
+or estimate result semantics requires a new evaluator revision, table digest,
+and regenerated artifacts. A new policy ID is required when the old and new
+acceptance rules must coexist.
 
 Changing role dimensions, role bounds, rank limits, exact modulus profiles,
 search or certificate profiles, search caps, or generated cells requires a

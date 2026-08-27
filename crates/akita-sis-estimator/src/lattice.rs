@@ -13,10 +13,12 @@ use crate::{
     reduction::{
         log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction,
     },
-    simulator::{infinity_shape_profile, lgsa_summary, validate_infinity_shape, LgsaSummary},
+    simulator::{
+        infinity_shape_profile, is_q_vector_length, lgsa_summary, validate_infinity_shape,
+        LgsaSummary,
+    },
 };
 
-const Q_VECTOR_TOLERANCE: f64 = 1e-8;
 const UNIT_VECTOR_TOLERANCE: f64 = 1e-8;
 const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
 // Pinned lattice-estimator computes the sieve floor as Sage RR(1e-100), which
@@ -356,12 +358,7 @@ fn dilithium_log_trial_probability(
     sieve_dim: u32,
 ) -> Result<f64> {
     let q_f = 2.0_f64.powf(log_q);
-    let r0 = profile[0];
-    let idx_start = if (r0.sqrt() - q_f).abs() < Q_VECTOR_TOLERANCE {
-        profile.iter().position(|value| *value < r0).unwrap_or(0)
-    } else {
-        0
-    };
+    let idx_start = q_vector_prefix_len(profile, q_f);
     let idx_end = profile
         .iter()
         .rposition(|value| value.sqrt() > 1.0 + UNIT_VECTOR_TOLERANCE)
@@ -372,6 +369,15 @@ fn dilithium_log_trial_probability(
     let mut log_trial_prob = log2_erf_from_log2_arg(log2_erf_arg) * gaussian_coords;
     log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
     Ok(log_trial_prob)
+}
+
+fn q_vector_prefix_len(profile: &[f64], q: f64) -> usize {
+    let r0 = profile[0];
+    if is_q_vector_length(r0.sqrt(), q) {
+        profile.iter().position(|value| *value < r0).unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -637,5 +643,16 @@ mod tests {
         assert!(log2_erf.is_finite());
         assert!(log2_erf < -999.0);
         assert!(log2_erf > -1_001.0);
+    }
+
+    #[test]
+    fn reconstructed_q64_prefix_uses_scale_aware_detection() {
+        let q = 2.0_f64.powi(64);
+        let reconstructed_q = q + 28_672.0;
+        let r0 = reconstructed_q * reconstructed_q;
+        let profile = [r0, r0, (q - 2.0_f64.powi(40)).powi(2), 4.0];
+
+        assert_eq!(q_vector_prefix_len(&profile, q), 2);
+        assert!(!is_q_vector_length(profile[2].sqrt(), q));
     }
 }
