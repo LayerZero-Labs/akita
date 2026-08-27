@@ -201,6 +201,11 @@ jobs:
             crates/akita-schedules/src/generated \
             specs/evidence/subring-coefficient-packing/head.tsv \
             specs/evidence/subring-coefficient-packing/comparison.tsv
+      - name: Direct modeled SIS cost for every schedule
+        run: |
+          cargo run --release -p akita-planner \
+            --features catalog-security \
+            --example catalog_security -- --check
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
@@ -222,6 +227,7 @@ jobs:
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
@@ -235,6 +241,8 @@ jobs:
           --test transcript_hardening_proptest
           --no-default-features
           --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
 
   test-timing:
     name: Test timing

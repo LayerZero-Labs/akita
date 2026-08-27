@@ -109,4 +109,5 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
 | Transcript hardening | [`book/src/how/transcript.md`](book/src/how/transcript.md) |
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |
+| Direct generated-schedule SIS report | `cargo run --release -p akita-planner --features catalog-security --example catalog_security -- --check` |
 | Jolt verifier bench | [`profile/akita-recursion/README.md`](profile/akita-recursion/README.md) |
