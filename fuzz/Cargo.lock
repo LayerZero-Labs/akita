@@ -314,7 +314,7 @@ dependencies = [
 [[package]]
 name = "jolt-field"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt?rev=9af4548682d37aeb88c6eb62ec36f07f06140bdb#9af4548682d37aeb88c6eb62ec36f07f06140bdb"
+source = "git+https://github.com/a16z/jolt?rev=72dc6451628d8b1dd794147a1f1cc40be0d77963#72dc6451628d8b1dd794147a1f1cc40be0d77963"
 dependencies = [
  "cc",
  "num-traits",
