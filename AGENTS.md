@@ -22,7 +22,6 @@ scripts/check-crate-deps.sh akita-prover
 scripts/check-crate-deps.sh akita-config
 scripts/check-crate-deps.sh akita-planner
 scripts/check-crate-deps.sh akita-setup
-scripts/check-shared-field-identity.sh
 cargo machete --with-metadata
 typos
 ./scripts/check-doc-guardrails.sh   # when changing book, specs, or docs/
