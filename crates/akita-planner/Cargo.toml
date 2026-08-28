@@ -52,6 +52,11 @@ path = "src/bin/gen_schedule_tables.rs"
 required-features = ["catalog-gen"]
 
 [[example]]
+name = "fused_frontier"
+path = "examples/fused_frontier.rs"
+required-features = ["catalog-check"]
+
+[[example]]
 name = "mixed_dimension_search"
 path = "examples/mixed_dimension_search.rs"
 required-features = ["catalog-gen"]
