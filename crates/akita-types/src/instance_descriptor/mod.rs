@@ -20,9 +20,8 @@ pub use fold_linf_binding::FoldLinfProtocolBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
-    COMPRESSION_POLICY,
+    AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
 };
 use akita_error::AkitaError;
 use akita_serialization::{
@@ -124,7 +123,7 @@ impl AlgebraSection {
         E: ExtField<F>,
     {
         Ok(Self {
-            prime_modulus_be: modulus_be_32::<F>(),
+            prime_modulus_be: modulus_be_32::<F>()?,
             field_extension_degree: usize_to_u8(1, "field extension degree")?,
             extension_degree: usize_to_u8(E::DEGREE, "extension degree")?,
         })
@@ -753,11 +752,8 @@ impl AkitaDeserialize for CallSection {
     }
 }
 
-fn modulus_be_32<F: Field + CanonicalEncoding>() -> [u8; 32] {
-    let modulus = detect_field_modulus::<F>();
-    let mut out = [0u8; 32];
-    out[16..].copy_from_slice(&modulus.to_be_bytes());
-    out
+fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
+    crate::field_modulus_be_bytes::<F>()
 }
 
 fn usize_to_u32(value: usize, name: &'static str) -> Result<u32, AkitaError> {

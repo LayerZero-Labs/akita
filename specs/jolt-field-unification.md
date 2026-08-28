@@ -5,7 +5,7 @@
 | Author(s)     | Alberto Centelles |
 | Created       | 2026-07-15     |
 | Status        | active         |
-| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); [Jolt field-kernel follow-up #1794](https://github.com/a16z/jolt/pull/1794); [Akita PR B #429](https://github.com/LayerZero-Labs/akita/pull/429); [Jolt PR C #1745](https://github.com/a16z/jolt/pull/1745) |
+| PR            | [Jolt PR A #1792](https://github.com/a16z/jolt/pull/1792); [Jolt field-kernel follow-up #1794](https://github.com/a16z/jolt/pull/1794); [Jolt coefficient-access follow-up #1810](https://github.com/a16z/jolt/pull/1810); [Akita PR B #447](https://github.com/LayerZero-Labs/akita/pull/447) (mirrors closed [#443](https://github.com/LayerZero-Labs/akita/pull/443)); [Jolt PR C #1796](https://github.com/a16z/jolt/pull/1796) |
 | Supersedes    | [`specs/akita-field-refactor.md`](archive/2026-Q3/akita-field-refactor.md) |
 | Superseded-by |                |
 | Book-chapter  |                |
@@ -18,11 +18,13 @@ arithmetic, increases the audit surface, and creates a reverse dependency from
 Jolt's Akita integration back into Akita's field crate.
 
 This spec makes the Jolt repository's `jolt-field` package the single owner of
-the complete field stack supported by Akita and Jolt. Akita will depend on that
-package directly and `akita-field` will be deleted. The move includes the
-optimized Solinas field implementations, their extensions, SIMD and unreduced
-backends, FFT helpers, and their tests and benchmarks; it is not a thin trait
-crate or an Akita compatibility wrapper.
+the field arithmetic stack shared by Akita and Jolt. Akita depends on that
+package directly and `akita-field` is deleted. The move includes the optimized
+Solinas field implementations, their extensions, SIMD and unreduced backends,
+and their tests and benchmarks; it is not a thin trait crate or an Akita
+compatibility wrapper. FFT roots, smooth-domain construction, and Reed-Solomon
+extension helpers remain Akita protocol infrastructure with one implementation
+in `akita-algebra`.
 
 `jolt-akita` remains a substantive PCS integration crate. It may translate
 transcripts, configuration, setup, batching, serialization errors, and Jolt's
@@ -64,9 +66,10 @@ both repositories importing the same Rust types and traits directly.
 ### Invariants
 
 - There is exactly one production definition and implementation of each field
-  trait, field type, extension type, packed backend, accumulator, and FFT helper
-  in scope. Compatibility modules must not duplicate arithmetic or forward one
-  field API to another.
+  trait, field type, extension type, packed backend, and accumulator in scope.
+  There is likewise one Akita-owned implementation of each FFT root,
+  smooth-domain, and Reed-Solomon helper in `akita-algebra`. Compatibility
+  modules must not duplicate arithmetic or forward one field API to another.
 - Scalar arithmetic remains identical for every supported prime and extension
   field, including canonical representatives and reduction behavior.
 - Packed NEON, AVX2, and AVX-512 arithmetic remains lane-for-lane equal to the
@@ -130,7 +133,7 @@ both repositories importing the same Rust types and traits directly.
 - [x] `jolt-field` does not depend on `akita-serialization`. Existing
   `AkitaSerialize`, `AkitaDeserialize`, and `Valid` behavior for the moved types
   is owned by `akita-serialization` and remains byte-identical.
-- [ ] Golden fixtures demonstrate identical canonical field, extension-field,
+- [x] Golden fixtures demonstrate identical canonical field, extension-field,
   proof, setup, and transcript bytes before and after the cutover.
 - [x] Akita's full formatter, clippy, test, and documentation guardrails pass;
   Jolt's host and host+zk formatter, clippy, and test matrices pass.
@@ -144,18 +147,16 @@ both repositories importing the same Rust types and traits directly.
   validated statement and canonical Akita schedule, without adding
   `backend_num_coeffs` to `AkitaCommitment` or changing the commitment bytes or
   transcript.
-- [ ] Existing field microbenchmarks show no unexplained regression greater
+- [x] Existing field microbenchmarks show no unexplained regression greater
   than 2% in median hot-operation latency or throughput on the same compiler and
   hardware.
 - [x] Jolt's landing PR records the originating Akita revision and an auditable
   mapping from each moved source/test/benchmark file to its new location.
 
-The implementation remains `active` until Jolt PR A lands, Akita replaces its
-temporary PR-head fork pin with the released package or immutable upstream Git
-revision, PR C removes the remaining bootstrap adapter and resolves the final
-integrated graph to one `jolt-field` identity, the architecture-specific CI
-runners report NEON/AVX2/AVX-512 parity, and the same-machine microbenchmark
-comparison and complete host/zk CI matrices pass.
+The implementation remains `active` until Akita PR B lands, PR C removes the
+remaining bootstrap adapter and resolves the final integrated graph to one
+`jolt-field` identity, the architecture-specific CI runners report
+NEON/AVX2/AVX-512 parity, and the complete host/zk CI matrices pass.
 
 ### Testing Strategy
 
@@ -200,6 +201,28 @@ revision. They cover:
 
 The fixtures are checked in or generated from a pinned pre-cutover helper so a
 single post-cutover implementation cannot accidentally bless its own output.
+
+#### Same-machine arithmetic comparison
+
+The cutover was compared in one release binary on an Apple M4 (`arm64`) with
+Rust 1.95 and `-C target-cpu=native`. The binary linked the pre-cutover
+`akita-field` from `03e3f2f96988c251f40608fd8735d011377c37b4` and the pinned
+`jolt-field` from `72dc6451628d8b1dd794147a1f1cc40be0d77963`, ran 4,096
+deterministic operand pairs for 80 repetitions, and reported the median of 15
+interleaved samples per implementation.
+
+The first comparison exposed a stable Fp128 regression: portable Jolt Fp128
+subtraction and multiplication were approximately 21% slower and squaring was
+approximately 9% slower because Akita had not enabled Jolt's architecture
+kernels. Enabling `jolt-field/asm` in the root, fuzz, and recursion dependency
+graphs restored the intended AArch64 path. Repeated post-fix comparisons put
+Fp128 add, subtract, and multiply within 2% of the pre-cutover implementation;
+Fp128 square was 9--10% faster. Fp32/Fp64 multiply, subtract, and square were
+also within 2% in repeated samples. Individual sub-nanosecond Fp32/Fp64 add
+samples varied by more than 2% in both directions across runs, without a stable
+regression; the absolute differences were at most 0.12 ns in the recorded
+runs. Thus every repeatable regression above 2% has an identified cause and a
+corresponding fix.
 
 #### Jolt repository and integrated graph
 
@@ -258,13 +281,17 @@ The following is one ownership unit and moves from `akita-field` into
 | Extensions | `FpExt2`, `FpExt4`, `FpExt8`, their basis/configuration types, Frobenius/lifting operations, and specialized multiplication backends |
 | Unreduced arithmetic | wide and unreduced accumulator representations, reduction traits, optimized folds, and dot-product paths |
 | Packed arithmetic | generic packed interfaces, packed extensions, and NEON, AVX2, and AVX-512 implementations for every supported width |
-| Domains | FFT roots, smooth-domain construction, Reed-Solomon extension helpers, and parallel helpers used by them |
 | Assurance | property/unit tests, packed-vs-scalar parity and boundary tests, fuzz targets, benches, safety comments, and reduction derivations |
 
 Existing Jolt BN254 support stays in the same package. The merge is allowed to
 organize code by capability and backend, but it must not create an `akita`
 module containing a second trait family. Solinas types are first-class
 `jolt-field` exports.
+
+FFT roots, smooth-domain construction, Reed-Solomon extension helpers, and
+their parallel helpers do not move. They remain one Akita-owned implementation
+in `akita-algebra` because they encode PCS domain policy rather than field
+arithmetic identity.
 
 ### Trait Reconciliation
 
@@ -293,7 +320,8 @@ The intended feature surface is:
 | Feature | Meaning |
 |---------|---------|
 | `bn254` | Arkworks/BN254 backend and its dependencies |
-| `solinas` | complete Fp32/Fp64/Fp128, extension, packed, unreduced, and FFT stack moved from Akita |
+| `solinas` | complete Fp32/Fp64/Fp128, extension, packed, and unreduced stack moved from Akita |
+| `asm` | architecture-specific arithmetic kernels for supported Solinas fields |
 | `parallel` | Rayon-backed parallel helpers where supported |
 | `allocative` | allocation instrumentation implementations |
 
@@ -373,10 +401,9 @@ and Fiat-Shamir schedule while bounding decoder allocation from trusted shape.
 
 Akita consumes `jolt-field` from either a standalone registry release or an
 immutable full upstream Jolt Git revision. During stacked review it pins
-upstream commit `4a0d4a33265c6fc7c1dc0e97046b67773a8320ea`, the CI-fixed head of
-the field-kernel follow-up Jolt PR #1794. That revision includes the merged
-field stack from Jolt PR A #1792. It is replaced with the upstream merge
-revision or a released package identity once the follow-up lands.
+upstream commit `72dc6451628d8b1dd794147a1f1cc40be0d77963`, the merge commit of
+Jolt PR #1810. That revision includes the merged field stack and kernel work
+from Jolt PRs #1792 and #1794.
 
 Jolt itself uses the local `crates/jolt-field` workspace member. When Jolt later
 consumes the migrated Akita revision, PR C must use a root Cargo source patch or

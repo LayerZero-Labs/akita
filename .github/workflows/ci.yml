@@ -86,6 +86,15 @@ jobs:
       - name: Check unused dependencies
         run: cargo machete --with-metadata
 
+  shared-field:
+    name: Shared field identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+      - name: Require one jolt-field identity and no akita-field
+        run: scripts/check-shared-field-identity.sh
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest

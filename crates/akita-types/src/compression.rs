@@ -403,7 +403,8 @@ impl PackedNegativeBinary {
                 actual: coefficients.len(),
             });
         }
-        if !map.modulus_profile().matches_modulus(field_modulus::<F>()) {
+        let modulus = field_modulus::<F>()?;
+        if !map.modulus_profile().matches_modulus(modulus) {
             return Err(AkitaError::InvalidSetup(
                 "compression map profile does not match the field modulus".into(),
             ));
@@ -411,11 +412,10 @@ impl PackedNegativeBinary {
         let field_bits = usize::try_from(F::MODULUS_BITS)
             .map_err(|_| AkitaError::InvalidSetup("field bit length overflow".into()))?;
         let mut bytes = vec![0u8; map.packed_digit_bytes()];
-        let modulus = field_modulus::<F>();
         for (coefficient_index, coefficient) in coefficients.iter().enumerate() {
-            let canonical = coefficient
-                .to_u128_checked()
-                .expect("Akita field element must fit in u128");
+            let canonical = coefficient.to_u128_checked().ok_or_else(|| {
+                AkitaError::InvalidInput("compression coefficient does not fit in u128".into())
+            })?;
             let magnitude = if canonical == 0 {
                 0
             } else {
@@ -492,7 +492,7 @@ impl PackedNegativeBinary {
         if !self
             .map
             .modulus_profile()
-            .matches_modulus(field_modulus::<F>())
+            .matches_modulus(field_modulus::<F>()?)
         {
             return Err(AkitaError::InvalidSetup(
                 "compression map profile does not match the field modulus".into(),
@@ -579,7 +579,10 @@ pub struct CompressionTerminalPayload<F> {
 impl<F: Field + CanonicalEncoding> CompressionTerminalPayload<F> {
     /// Bind one flat payload to its already validated chain plan.
     pub fn new(plan: CompressionChainPlan, coefficients: Vec<F>) -> Result<Self, AkitaError> {
-        if !plan.modulus_profile().matches_modulus(field_modulus::<F>()) {
+        if !plan
+            .modulus_profile()
+            .matches_modulus(field_modulus::<F>()?)
+        {
             return Err(AkitaError::InvalidSetup(
                 "compression terminal plan does not match the field modulus".into(),
             ));

@@ -167,18 +167,10 @@ macro_rules! impl_extension_serialization {
                 validate: Validate,
                 _ctx: &(),
             ) -> Result<Self, SerializationError> {
-                let mut coefficients = Vec::with_capacity($degree);
-                for _ in 0..$degree {
-                    coefficients.push(F::deserialize_with_mode(
-                        &mut reader,
-                        compress,
-                        validate,
-                        &(),
-                    )?);
+                let mut coefficients = [F::zero(); $degree];
+                for coefficient in &mut coefficients {
+                    *coefficient = F::deserialize_with_mode(&mut reader, compress, validate, &())?;
                 }
-                let coefficients: [F; $degree] = coefficients.try_into().map_err(|_| {
-                    SerializationError::InvalidData("invalid extension degree".into())
-                })?;
                 let value = Self::new(coefficients);
                 if validate == Validate::Yes {
                     value.check()?;
@@ -195,7 +187,7 @@ impl_extension_serialization!(FpExt8, 8);
 #[cfg(test)]
 mod tests {
     use jolt_field::{CanonicalEncoding, Ring};
-    use jolt_field::{Fp64, FpExt8, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Fp64, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     use crate::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 
@@ -228,6 +220,38 @@ mod tests {
                 0x02, 0x01,
             ]
         );
+    }
+
+    #[test]
+    fn pre_cutover_scalar_and_extension_fixtures_are_stable() {
+        let scalar32 = Prime32Offset99::from_u64(0x1234_5678);
+        let scalar64 = Prime64Offset59::from_u64(0x0123_4567_89ab_cdef);
+        let scalar128 =
+            Prime128Offset275::from_u128_checked(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210)
+                .unwrap();
+        let extension = FpExt4::new([
+            Prime32Offset99::from_u64(1),
+            Prime32Offset99::from_u64(2),
+            Prime32Offset99::from_u64(3),
+            Prime32Offset99::from_u64(4),
+        ]);
+        let fixtures = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/jolt-field-cutover/fields.txt"
+        ));
+        let actual = [
+            serialized(&scalar32),
+            serialized(&scalar64),
+            serialized(&scalar128),
+            serialized(&extension),
+        ];
+        for (bytes, expected) in actual.iter().zip(fixtures.lines()) {
+            let encoded = bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            assert_eq!(encoded, expected);
+        }
     }
 
     #[test]

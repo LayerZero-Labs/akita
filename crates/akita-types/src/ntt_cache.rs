@@ -214,7 +214,7 @@ pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: 
 
 fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    let modulus = field_modulus::<F>();
+    let modulus = field_modulus::<F>()?;
     let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {

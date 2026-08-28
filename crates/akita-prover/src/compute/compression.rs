@@ -297,7 +297,7 @@ where
         if !input
             .plan
             .modulus_profile()
-            .matches_modulus(field_modulus::<F>())
+            .matches_modulus(field_modulus::<F>()?)
         {
             return Err(AkitaError::InvalidSetup(
                 "compression plan profile does not match the execution field".into(),

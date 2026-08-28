@@ -9,6 +9,18 @@ use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
+fn decode_golden_hex(encoded: &str) -> Vec<u8> {
+    encoded
+        .trim()
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            u8::from_str_radix(std::str::from_utf8(pair).expect("fixture is ASCII"), 16)
+                .expect("fixture is hexadecimal")
+        })
+        .collect()
+}
+
 fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
@@ -390,6 +402,13 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     batched
         .serialize_uncompressed(&mut batched_bytes)
         .expect("serialize batched proof");
+    assert_eq!(
+        batched_bytes,
+        decode_golden_hex(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/jolt-field-cutover/proof.hex"
+        )))
+    );
     let shape = batched.shape();
     let mut oversized_shape = shape.clone();
     oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;

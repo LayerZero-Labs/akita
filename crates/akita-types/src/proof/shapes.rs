@@ -193,9 +193,6 @@ pub fn canonical_proof_shape(
         opening_layout: &OpeningClaimsLayout,
         extension_degree: usize,
     ) -> Result<Option<ExtensionOpeningReductionShape>, AkitaError> {
-        if extension_degree == 1 {
-            return Ok(None);
-        }
         let first_method = params.group_params(opening_layout, 0)?.opening_method();
         for group_index in 1..opening_layout.num_groups() {
             if params
@@ -208,7 +205,7 @@ pub fn canonical_proof_shape(
                 ));
             }
         }
-        if !matches!(first_method, OpeningMethod::EvaluationTrace) {
+        if extension_degree == 1 || !matches!(first_method, OpeningMethod::EvaluationTrace) {
             return Ok(None);
         }
         canonical_extension_opening_reduction_shape(opening_layout, extension_degree).map(Some)

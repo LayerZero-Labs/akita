@@ -270,7 +270,7 @@ fn dense_i8_exact_ifma52_preferred<F: Field + CanonicalEncoding, const D: usize>
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     Ok(dense_i8_commit_prefers_exact_ifma52(
-        field_modulus::<F>(),
+        field_modulus::<F>()?,
         D,
         row_width,
         rhs_abs_bound,

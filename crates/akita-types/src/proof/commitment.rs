@@ -7,8 +7,7 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams,
-    PolynomialGroupLayout,
+    CommitmentSliceCount, CompressionChainPlan, GroupCommitPhaseParams, PolynomialGroupLayout,
 };
 
 type MatrixFields = (
@@ -203,7 +202,7 @@ impl<F: Field> CommittedGroup<F> {
 
 impl<F: Field + CanonicalEncoding + Valid> Valid for CommittedGroup<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        let field_bits = 128 - (detect_field_modulus::<F>() - 1).leading_zeros();
+        let field_bits = F::MODULUS_BITS;
         self.profile
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
@@ -462,7 +461,7 @@ where
                 outer_commit_matrix,
             ),
         };
-        let field_bits = 128 - (detect_field_modulus::<F>() - 1).leading_zeros();
+        let field_bits = F::MODULUS_BITS;
         descriptor
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;

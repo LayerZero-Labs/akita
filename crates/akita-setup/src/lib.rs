@@ -149,7 +149,7 @@ fn stable_type_hash(type_name: &str) -> u64 {
 fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> String {
+) -> Result<String, AkitaError> {
     let type_name = std::any::type_name::<Cfg>();
     let family_hash = stable_type_hash(type_name);
     let schedule_lookup_key = PolynomialGroupLayout::new(max_num_vars, max_num_batched_polys);
@@ -185,10 +185,10 @@ fn prefix_registry_cache_file_name<Cfg: CommitmentConfig>(
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
-    let modulus = detect_field_modulus::<Cfg::Field>();
-    format!(
+    let modulus = detect_field_modulus::<Cfg::Field>()?;
+    Ok(format!(
         "akita_prefix_v2_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_nv{max_num_vars}_batch{max_num_batched_polys}.registry",
-    )
+    ))
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -201,7 +201,7 @@ fn public_matrix_cache_file_name<F: Field + CanonicalEncoding>(
     for byte in digest {
         let _ = write!(hex, "{byte:02x}");
     }
-    let modulus = detect_field_modulus::<F>();
+    let modulus = detect_field_modulus::<F>()?;
     Ok(format!("akita_flat_v3_q{modulus:032x}_id{hex}.matrix"))
 }
 
@@ -233,13 +233,9 @@ pub(crate) fn get_prefix_registry_storage_path<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Option<PathBuf> {
-    cache_directory().map(|mut path| {
-        path.push(prefix_registry_cache_file_name::<Cfg>(
-            max_num_vars,
-            max_num_batched_polys,
-        ));
-        path
-    })
+    let mut path = cache_directory()?;
+    path.push(prefix_registry_cache_file_name::<Cfg>(max_num_vars, max_num_batched_polys).ok()?);
+    Some(path)
 }
 
 #[cfg(feature = "disk-persistence")]
@@ -741,7 +737,7 @@ mod tests {
 
         #[test]
         fn cache_file_name_stays_below_common_component_limits() {
-            let name = prefix_registry_cache_file_name::<Cfg>(16, 4);
+            let name = prefix_registry_cache_file_name::<Cfg>(16, 4).expect("registry cache name");
             assert!(
                 name.len() < 200,
                 "setup cache file name should stay comfortably below 255 bytes, got {}: {name}",
@@ -751,7 +747,8 @@ mod tests {
 
         #[test]
         fn cache_file_names_use_current_namespaces() {
-            let registry = prefix_registry_cache_file_name::<Cfg>(16, 4);
+            let registry =
+                prefix_registry_cache_file_name::<Cfg>(16, 4).expect("registry cache name");
             assert!(registry.contains("prefix_v2_"), "cache name: {registry}");
             let matrix = public_matrix_cache_file_name::<TestF>(&sample_akita_setup_seed())
                 .expect("matrix cache name");
