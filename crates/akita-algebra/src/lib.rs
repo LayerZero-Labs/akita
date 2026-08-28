@@ -44,16 +44,46 @@ pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};
 
 /// Fallible parallel fold-reduce over a range.
+///
+/// The identity argument is a zero-argument factory, matching Rayon's
+/// `try_fold` and `try_reduce` contracts. The sequential path calls the same
+/// factory once to obtain its initial accumulator.
 #[macro_export]
 macro_rules! cfg_try_fold_reduce {
-    ($range:expr, $identity:expr, $fold_op:expr, $reduce_op:expr) => {{
+    ($range:expr, $identity_factory:expr, $fold_op:expr, $reduce_op:expr) => {{
+        let identity_factory = $identity_factory;
         #[cfg(feature = "parallel")]
         let result = $range
             .into_par_iter()
-            .try_fold($identity, $fold_op)
-            .try_reduce($identity, $reduce_op);
+            .try_fold(&identity_factory, $fold_op)
+            .try_reduce(&identity_factory, $reduce_op);
         #[cfg(not(feature = "parallel"))]
-        let result = $range.into_iter().try_fold(($identity)(), $fold_op);
+        let result = $range.into_iter().try_fold(identity_factory(), $fold_op);
         result
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
+    #[test]
+    fn try_fold_reduce_uses_identity_factory() {
+        let sum = crate::cfg_try_fold_reduce!(
+            0usize..100,
+            usize::default,
+            |acc, value| acc.checked_add(value),
+            |lhs, rhs| lhs.checked_add(rhs)
+        );
+        assert_eq!(sum, Some((0usize..100).sum()));
+
+        let empty = crate::cfg_try_fold_reduce!(
+            0usize..0,
+            usize::default,
+            |acc, value| acc.checked_add(value),
+            |lhs, rhs| lhs.checked_add(rhs)
+        );
+        assert_eq!(empty, Some(0));
+    }
 }
