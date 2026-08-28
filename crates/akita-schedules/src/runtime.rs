@@ -541,6 +541,65 @@ pub fn nonterminal_level_payload_bytes(
     ))
 }
 
+/// Fused-check counterpart of [`nonterminal_level_payload_bytes`].
+///
+/// Prices one non-terminal fold level with the proposed single fused
+/// range-relation sumcheck ([`akita_types::fused_level_proof_bytes`]) instead
+/// of the shipping two-stage shape, keeping the extension-opening reduction
+/// and stage-3 accounting identical. Purely additive reporting arm: it changes
+/// no replay-path accounting.
+///
+/// # Errors
+///
+/// Returns an error in exactly the cases
+/// [`nonterminal_level_payload_bytes`] errors.
+pub fn fused_nonterminal_level_payload_bytes(
+    policy: &PlannerPolicy,
+    params: &CommittedGroupParams,
+    successor: Option<&CommittedGroupParams>,
+    input_witness_len: usize,
+    output_witness_len: usize,
+) -> Result<(usize, usize), AkitaError> {
+    let challenge_field_bits = policy.challenge_field_bits()?;
+    let fused = akita_types::fused_level_proof_bytes(
+        policy.decomposition.field_bits(),
+        challenge_field_bits,
+        params,
+        successor,
+        output_witness_len,
+        Some(if successor.is_some() {
+            akita_types::NextWitnessBindingPolicy::OuterPayload
+        } else {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        }),
+    )?;
+    let eor = if matches!(
+        params.opening_method(),
+        akita_types::OpeningMethod::EvaluationTrace
+    ) {
+        let final_group = PolynomialGroupLayout::singleton(
+            akita_types::padded_boolean_opening_vars(input_witness_len)?,
+        );
+        let opening_shape = params
+            .opening_layout_for_final_group(final_group)?
+            .aggregate_polynomial_group_layout()?;
+        akita_types::extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            opening_shape,
+        )?
+    } else {
+        0
+    };
+    let fused = fused
+        .checked_add(eor)
+        .ok_or_else(|| AkitaError::InvalidSetup("level proof payload size overflow".into()))?;
+    Ok((
+        fused,
+        stage3_payload_bytes_for_successor(policy, successor)?,
+    ))
+}
+
 /// Recompute the exact serialized proof payload for one expanded schedule.
 ///
 /// This is the non-leaking reporting counterpart to generated-row replay. It
@@ -587,6 +646,84 @@ pub fn expanded_schedule_proof_payload_bytes(
         )?;
         total = total
             .checked_add(direct)
+            .and_then(|value| value.checked_add(stage3))
+            .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
+    }
+
+    let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
+        policy.claim_ext_degree,
+        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
+            schedule.terminal.input_witness_len,
+        )?),
+    )?;
+    let terminal_response = akita_types::terminal_response_planner_bytes(
+        field_bits,
+        &schedule.terminal.response_shape,
+        schedule.terminal.response_l2_sq_cap(),
+    );
+    total
+        .checked_add(akita_types::FOLD_GRIND_NONCE_BYTES)
+        .and_then(|value| value.checked_add(terminal_eor))
+        .and_then(|value| value.checked_add(terminal_response))
+        .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
+}
+
+/// Fused-check counterpart of [`expanded_schedule_proof_payload_bytes`].
+///
+/// Walks the same expanded schedule and sums the same components, pricing
+/// every non-terminal level with [`fused_nonterminal_level_payload_bytes`]
+/// (one fused range-relation sumcheck per level) instead of the shipping
+/// two-stage accounting. The terminal payload, extension-opening reductions,
+/// grind nonce, and stage-3 payloads are identical by construction, so the
+/// difference against the split walker is exactly the per-level round-stream
+/// swap. Purely additive reporting arm.
+///
+/// # Errors
+///
+/// Returns an error in exactly the cases
+/// [`expanded_schedule_proof_payload_bytes`] errors.
+pub fn expanded_schedule_fused_proof_payload_bytes(
+    key: &akita_types::AkitaScheduleLookupKey,
+    schedule: &FoldSchedule,
+    policy: &PlannerPolicy,
+) -> Result<usize, AkitaError> {
+    let field_bits = policy.decomposition.field_bits();
+    key.validate(field_bits)?;
+    schedule.validate_structure()?;
+    let nonterminal_levels = schedule
+        .recursive_folds
+        .len()
+        .checked_add(1)
+        .ok_or_else(|| AkitaError::InvalidSetup("fold level count overflow".into()))?;
+    let mut total = 0usize;
+    for level in 0..nonterminal_levels {
+        let (params, input_witness_len, output_witness_len) = if level == 0 {
+            (
+                &schedule.root.params,
+                schedule.root.input_witness_len,
+                schedule.root.output_witness_len,
+            )
+        } else {
+            let fold = schedule.recursive_folds.get(level - 1).ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive fold index is out of range".into())
+            })?;
+            (
+                &fold.params,
+                fold.input_witness_len,
+                fold.output_witness_len,
+            )
+        };
+        let successor = schedule.recursive_folds.get(level).map(|fold| &fold.params);
+        let (fused, stage3) = fused_nonterminal_level_payload_bytes(
+            policy,
+            params,
+            successor,
+            input_witness_len,
+            output_witness_len,
+        )?;
+        total = total
+            .checked_add(fused)
             .and_then(|value| value.checked_add(stage3))
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }

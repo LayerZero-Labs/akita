@@ -23,7 +23,8 @@ pub use resolve::{
     schedule_from_entry, ResolvedScheduleRow,
 };
 pub use runtime::{
-    default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,
+    default_sis_security_policy, expanded_schedule_fused_proof_payload_bytes,
+    expanded_schedule_proof_payload_bytes, fused_nonterminal_level_payload_bytes, validate_policy,
     PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy, RingDimensionScheduleMode,
     RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
