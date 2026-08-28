@@ -162,6 +162,28 @@ impl GroupCommitPhaseParams {
         self.blocks
     }
 
+    /// Executable B packing implied by this frozen A/B identity.
+    ///
+    /// Slice count and physical B width live on the profile; this expands them
+    /// into the dyadic block ranges and padded physical layout the outer
+    /// commitment kernel consumes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the frozen dimensions cannot
+    /// form a well-defined slice layout.
+    pub fn derive_slice_geometry(&self) -> Result<CommitmentSliceGeometry, AkitaError> {
+        CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.blocks.live_blocks,
+            self.group.num_polynomials(),
+            self.inner.matrix.output_rank(),
+            self.outer.digits.num_digits,
+            self.inner.matrix.ring_dimension(),
+            self.outer.matrix.ring_dimension(),
+        )
+    }
+
     /// The A-role gadget decomposition.
     #[inline]
     #[must_use]
@@ -241,16 +263,7 @@ impl GroupCommitPhaseParams {
             .positions_per_block
             .checked_mul(self.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
-        let expected_b_width = CommitmentSliceGeometry::try_new(
-            self.outer_slice_count,
-            self.blocks.live_blocks,
-            self.group.num_polynomials(),
-            self.inner.matrix.output_rank(),
-            self.outer.digits.num_digits,
-            inner_ring_dimension,
-            outer_ring_dimension,
-        )?
-        .physical_input_width();
+        let expected_b_width = self.derive_slice_geometry()?.physical_input_width();
         if self.inner.matrix.input_width() != expected_a_width
             || self.outer.matrix.input_width() != expected_b_width
         {

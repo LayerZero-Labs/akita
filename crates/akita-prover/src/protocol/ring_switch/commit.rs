@@ -53,12 +53,8 @@ where
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
-    let slice_geometry = validate_commit_level_params::<Cfg::Field>(
-        commit_params,
-        expanded.as_ref(),
-        fold_level,
-        1,
-    )?;
+    validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref(), fold_level, 1)?;
+    let slice_geometry = commit_params.own_group().profile.derive_slice_geometry()?;
 
     let (packed_witness, inner_rows, commitment, compression_witness) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),

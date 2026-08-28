@@ -222,7 +222,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&contract),
         expanded,
         &contract_stack,
-        GroupContext::explicit_without_precommitted_groups(&params),
+        GroupContext::explicit(&params.own_group().profile),
     )
     .expect("contract commit");
 
@@ -235,7 +235,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         std::slice::from_ref(&dense),
         expanded,
         &cpu_stack,
-        GroupContext::explicit_without_precommitted_groups(&params),
+        GroupContext::explicit(&params.own_group().profile),
     )
     .expect("dense oracle commit");
 
@@ -246,20 +246,15 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     assert_eq!(contract_output.hint, dense_output.hint);
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 
-    let mut malformed_params = params.clone();
-    malformed_params
-        .own_group_mut()
-        .profile
-        .inner
-        .digits
-        .num_digits += 1;
+    let mut malformed_profile = params.own_group().profile;
+    malformed_profile.inner.digits.num_digits += 1;
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
         &contract_stack,
-        GroupContext::explicit_without_precommitted_groups(&malformed_params),
+        GroupContext::explicit(&malformed_profile),
     )
-    .expect_err("malformed explicit params must reject before arithmetic");
+    .expect_err("malformed explicit profile must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 }
