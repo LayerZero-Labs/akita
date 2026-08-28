@@ -684,8 +684,9 @@ the committed witness $w$. The schedule selects how the public opening weight
 $T_{\mathrm{open}}(x)$ is prepared. `EvaluationTrace` uses the trace weights
 derived in [Field-to-ring evaluation reduction](./field-ring-reduction.md).
 `SubringCoefficientPacking` uses the direct coefficient-packing weights
-derived in [Root fold and ring switch](./root-fold-ring-switch.md). Both methods
-establish the same linear evaluation-consistency shape
+derived in [Field-to-ring evaluation
+reduction](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials).
+Both methods establish the same linear evaluation-consistency shape
 
 $$
 v_{\mathrm{open}}=\sum_x w(x)T_{\mathrm{open}}(x).
@@ -728,7 +729,10 @@ $C_{\mathrm{method}}$ is the ordered sum of the zero-target packed E/Q relation
 events, the packing-Z term, and the direct-opening term. Each constraint is
 therefore included exactly once. Stage 2 folds each structured linear term
 under the same challenges and sums their final values. This preserves the
-native relation fast path without building one dense weight table.
+native relation fast path without building one dense weight table. The
+[physical packing
+realization](./root-fold-ring-switch.md#the-packing-consistency-quotient)
+explains the $U^s+1$ quotient and the two evaluations of the shared challenge.
 
 ### The fused Stage-2 claim
 
