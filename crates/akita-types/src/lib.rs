@@ -155,7 +155,10 @@ pub use proof::{
     append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
     DigitRangePlan, FlatBooleanDomain,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::{
+    fused_level_chain_rounds, fused_level_proof_bytes, level_proof_bytes, split_level_chain_rounds,
+    FOLD_GRIND_NONCE_BYTES,
+};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,

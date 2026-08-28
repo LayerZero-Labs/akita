@@ -24,6 +24,17 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
     rounds * compressed_unipoly_bytes(degree, elem_bytes)
 }
 
+/// Header-stripped byte size of the optional physical-L2 norm payload.
+///
+/// Shared by the split (`stage1_proof_bytes`) and fused
+/// ([`fused_level_proof_bytes`]) accounting: the norm machinery is not part of
+/// the digit-range/relation round chain, so both wire shapes carry it
+/// unchanged.
+fn norm_proof_bytes(shape: crate::proof::PhysicalL2NormProofWireShape, elem_bytes: usize) -> usize {
+    16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
+        + shape.sumcheck.into_iter().sum::<usize>() * elem_bytes
+}
+
 fn stage1_proof_bytes(
     rounds: usize,
     b: usize,
@@ -39,14 +50,59 @@ fn stage1_proof_bytes(
                 + stage.child_claims * elem_bytes
         })
         .sum::<usize>();
-    let norm_bytes = norm.map_or(0, |shape| {
-        16 + (shape.subclaims + shape.virtual_evaluations) * elem_bytes
-            + shape.sumcheck.into_iter().sum::<usize>() * elem_bytes
-    });
+    let norm_bytes = norm.map_or(0, |shape| norm_proof_bytes(shape, elem_bytes));
     // The ordinary final range evaluation remains outside the optional norm
     // payload. The fused standard leaf shape accounts for the one additional
     // stored coefficient in every selected L2 leaf round.
     Ok(stages_bytes + elem_bytes + norm_bytes)
+}
+
+/// Sequential sumcheck rounds in one split level's Fiat-Shamir chain.
+///
+/// Counts every absorb-then-sample round of the shipping two-stage shape: the
+/// stage-1 digit-range subproofs (product substages plus the alphabet leaf, or
+/// plus the L2 norm sumcheck on an L2 route) followed by the stage-2 fused
+/// relation/range-image sumcheck. Offline reporting only; not a verifier
+/// formula.
+///
+/// # Errors
+///
+/// Returns an error when `b` is not a supported digit-range basis or the L2
+/// norm shape is invalid.
+pub fn split_level_chain_rounds(
+    rounds: usize,
+    b: usize,
+    route: InnerCommitSecurityRoute,
+) -> Result<usize, AkitaError> {
+    let plan = DigitRangePlan::new(b)?;
+    let (stages, norm) = plan.proof_shapes_for_route(rounds, route)?;
+    let stage1_rounds = stages
+        .into_iter()
+        .map(|stage| stage.sumcheck_proof.0)
+        .sum::<usize>();
+    let norm_rounds = norm.map_or(0, |shape| shape.sumcheck.len());
+    Ok(stage1_rounds + norm_rounds + rounds)
+}
+
+/// Sequential sumcheck rounds in one fused-check level's Fiat-Shamir chain.
+///
+/// The fused check replaces the stage-1 range subproofs and the stage-2
+/// sumcheck by one sumcheck over the same `rounds`-variable domain; an L2
+/// route's norm sumcheck is carried unchanged. Offline reporting only.
+///
+/// # Errors
+///
+/// Returns an error when `b` is not a supported digit-range basis or the L2
+/// norm shape is invalid.
+pub fn fused_level_chain_rounds(
+    rounds: usize,
+    b: usize,
+    route: InnerCommitSecurityRoute,
+) -> Result<usize, AkitaError> {
+    let plan = DigitRangePlan::new(b)?;
+    let (_, norm) = plan.proof_shapes_for_route(rounds, route)?;
+    let norm_rounds = norm.map_or(0, |shape| shape.sumcheck.len());
+    Ok(rounds + norm_rounds)
 }
 
 /// Header-stripped byte size of one non-terminal folded proof level.
@@ -124,6 +180,79 @@ pub fn level_proof_bytes(
         + FOLD_GRIND_NONCE_BYTES
         + stage1_bytes
         + sumcheck
+        + next_commit_bytes
+        + next_eval_bytes)
+}
+
+/// Header-stripped byte size of one non-terminal fold level under the fused
+/// range-relation check.
+///
+/// This is the estimator arm for the proposed single-sumcheck fold level: the
+/// stage-1 digit-range tree (its subproof round messages, child claims, and
+/// carried range-image evaluation) and the stage-2 sumcheck are replaced by
+/// **one** sumcheck over the same `sumcheck_rounds` domain whose compressed
+/// round messages store `b + 1` coefficients per round, where `b` is the
+/// opening digit basis (the alphabet is certified by the degree-`b` vanishing
+/// polynomial instead of the degree-halving virtual table). Every other wire
+/// component is priced exactly as [`level_proof_bytes`] prices it: the opening
+/// payload, the grind nonce, the next-witness binding, and the next
+/// evaluation. An L2 inner route's physical-norm payload is carried unchanged
+/// (the norm machinery is orthogonal to the fused chain; whether the
+/// Euclidean-route physical binding survives fusion is an open design
+/// question, so L2 rows priced here are byte estimates for an unchanged norm
+/// wire).
+///
+/// Purely additive reporting/planning arm: it changes no existing accounting
+/// and is not on the prover/verifier replay path.
+///
+/// # Errors
+///
+/// Returns an error in exactly the cases [`level_proof_bytes`] errors.
+pub fn fused_level_proof_bytes(
+    base_field_bits: u32,
+    challenge_field_bits: u32,
+    lp: &CommittedGroupParams,
+    next_lp: Option<&CommittedGroupParams>,
+    output_witness_len: usize,
+    next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
+) -> Result<usize, AkitaError> {
+    let challenge_elem_bytes = field_bytes(challenge_field_bits);
+    let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+    let b = 1usize << lp.open().digits.log_basis;
+    let fused_sumcheck = sumcheck_bytes(rounds, b + 1, challenge_elem_bytes);
+    let plan = DigitRangePlan::new(b)?;
+    let (_, norm) = plan.proof_shapes_for_route(rounds, lp.inner().matrix.security_route())?;
+    let norm_bytes = norm.map_or(0, |shape| norm_proof_bytes(shape, challenge_elem_bytes));
+    let v_bytes = payload_bytes(
+        base_field_bits,
+        lp.open().matrix.sis_modulus_profile(),
+        lp.opening_payload_geometry()?,
+    )?;
+    let next_commit_bytes = match next_witness_binding {
+        Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
+            let next_lp = next_lp.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "outer-payload level proof is missing successor params".to_string(),
+                )
+            })?;
+            payload_bytes(
+                base_field_bits,
+                next_lp.outer().matrix.sis_modulus_profile(),
+                next_lp.outer_payload_geometry()?,
+            )?
+        }
+        Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
+        None => {
+            return Err(AkitaError::InvalidSetup(
+                "intermediate level is missing an outgoing witness binding".to_string(),
+            ))
+        }
+    };
+    let next_eval_bytes = challenge_elem_bytes;
+    Ok(v_bytes
+        + FOLD_GRIND_NONCE_BYTES
+        + fused_sumcheck
+        + norm_bytes
         + next_commit_bytes
         + next_eval_bytes)
 }
@@ -747,6 +876,222 @@ mod tests {
         ));
 
         let missing_binding = level_proof_bytes(128, 128, &lp, None, D * 8, None);
+        assert!(matches!(missing_binding, Err(AkitaError::InvalidSetup(_))));
+    }
+
+    #[test]
+    fn fused_level_bytes_swap_only_the_round_stream_at_all_bases() {
+        // The fused arm must differ from the split accounting by exactly the
+        // round-stream swap: drop the stage-1 tree (subproof messages, child
+        // claims, carried range evaluation) and the degree-3 stage-2 messages,
+        // add one sumcheck with `b + 1` stored coefficients over the same
+        // rounds. Opening payload, grind nonce, next binding, and next
+        // evaluation are untouched.
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let next_lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        let output_witness_len = D * 8;
+
+        for log_basis in 2..=6 {
+            let lp = CommittedGroupParams::params_only(
+                SisModulusProfileId::Q128OffsetA7F7,
+                D,
+                log_basis,
+                2,
+                2,
+                2,
+                fold_challenge_config,
+            )
+            .with_decomp(1, 1, 1, 1, 1)
+            .unwrap();
+            let split = level_proof_bytes(
+                128,
+                128,
+                &lp,
+                Some(&next_lp),
+                output_witness_len,
+                Some(crate::NextWitnessBindingPolicy::OuterPayload),
+            )
+            .unwrap();
+            let fused = fused_level_proof_bytes(
+                128,
+                128,
+                &lp,
+                Some(&next_lp),
+                output_witness_len,
+                Some(crate::NextWitnessBindingPolicy::OuterPayload),
+            )
+            .unwrap();
+            let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+            let b = 1usize << log_basis;
+            let elem_bytes = field_bytes(128);
+            let expected = split
+                - stage1_proof_bytes(rounds, b, elem_bytes, lp.inner().matrix.security_route())
+                    .unwrap()
+                - sumcheck_bytes(rounds, 3, elem_bytes)
+                + sumcheck_bytes(rounds, b + 1, elem_bytes);
+            assert_eq!(
+                fused, expected,
+                "fused level bytes must swap exactly the round stream at log_basis={log_basis}"
+            );
+        }
+    }
+
+    #[test]
+    fn fused_level_bytes_carry_the_l2_norm_payload_unchanged() {
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let next_lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        let table_key = sis_l2_table_key_for_collision_sq(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisL2TableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            D as u32,
+            1u128 << 50,
+        )
+        .expect("generated L2 key");
+        let shape = PhysicalL2NormProofShape::Direct {
+            physical_response_len: 512,
+        };
+        let mut lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            4,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        lp.own_group_mut().profile.inner.matrix =
+            crate::InnerCommitMatrixParams::try_new_l2_with_min_rank(
+                table_key,
+                shape.physical_response_len() / D,
+                1u128 << 30,
+                shape,
+            )
+            .expect("audited L2 matrix");
+        let output_witness_len = D * 8;
+        let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+        let b = 1usize << lp.open().digits.log_basis;
+        let elem_bytes = field_bytes(128);
+        let route = lp.inner().matrix.security_route();
+        let (_, norm) = DigitRangePlan::new(b)
+            .unwrap()
+            .proof_shapes_for_route(rounds, route)
+            .unwrap();
+        let norm_bytes = norm_proof_bytes(norm.expect("L2 route norm shape"), elem_bytes);
+
+        let split = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            output_witness_len,
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
+        )
+        .unwrap();
+        let fused = fused_level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            output_witness_len,
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
+        )
+        .unwrap();
+        // The norm payload appears in both arms: removing the stage-1 payload
+        // from the split total removes it, and the fused arm adds it back.
+        let expected = split
+            - stage1_proof_bytes(rounds, b, elem_bytes, route).unwrap()
+            - sumcheck_bytes(rounds, 3, elem_bytes)
+            + sumcheck_bytes(rounds, b + 1, elem_bytes)
+            + norm_bytes;
+        assert_eq!(fused, expected);
+    }
+
+    #[test]
+    fn chain_round_helpers_count_the_sequential_barriers() {
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            3,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        let route = lp.inner().matrix.security_route();
+        let rounds = 27;
+        // b = 8: one leaf subproof plus stage 2.
+        assert_eq!(
+            split_level_chain_rounds(rounds, 8, route).unwrap(),
+            2 * rounds
+        );
+        assert_eq!(fused_level_chain_rounds(rounds, 8, route).unwrap(), rounds);
+        // b = 16: one product substage, the leaf, and stage 2.
+        assert_eq!(
+            split_level_chain_rounds(rounds, 16, route).unwrap(),
+            3 * rounds
+        );
+        // b = 64: two product substages, the leaf, and stage 2.
+        assert_eq!(
+            split_level_chain_rounds(rounds, 64, route).unwrap(),
+            4 * rounds
+        );
+        assert!(split_level_chain_rounds(rounds, 5, route).is_err());
+    }
+
+    #[test]
+    fn fused_level_proof_bytes_rejects_incomplete_intermediate_schedule() {
+        const D: usize = 64;
+        let lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            4,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+
+        let missing_successor = fused_level_proof_bytes(
+            128,
+            128,
+            &lp,
+            None,
+            D * 8,
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
+        );
+        assert!(matches!(
+            missing_successor,
+            Err(AkitaError::InvalidSetup(_))
+        ));
+
+        let missing_binding = fused_level_proof_bytes(128, 128, &lp, None, D * 8, None);
         assert!(matches!(missing_binding, Err(AkitaError::InvalidSetup(_))));
     }
 
