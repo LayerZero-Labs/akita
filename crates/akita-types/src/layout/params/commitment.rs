@@ -128,15 +128,7 @@ impl CommittedGroupParams {
                 "commitment A matrix width disagrees with request geometry".into(),
             ));
         }
-        let geometry = crate::CommitmentSliceGeometry::try_new(
-            self.outer_slice_count(),
-            self.blocks().live_blocks,
-            num_polynomials,
-            self.inner().matrix.output_rank(),
-            self.outer().digits.num_digits,
-            self.role_dims().d_a(),
-            self.role_dims().d_b(),
-        )?;
+        let geometry = own_profile.derive_slice_geometry()?;
         if self.outer().matrix.input_width() != geometry.physical_input_width() {
             return Err(AkitaError::InvalidSetup(
                 "commitment B matrix width disagrees with sliced request geometry".into(),

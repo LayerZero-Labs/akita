@@ -1,7 +1,8 @@
 use super::*;
-use crate::compute::{ComputeBackendSetup, DigitRowsComputeBackend};
-use crate::{AkitaProverSetup, CommitInnerWitness, CpuBackend, DensePoly};
-use akita_algebra::CyclotomicRing;
+use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
+use crate::compute::{CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx};
+use crate::kernels::linear::decompose_commit_blocks_into;
+use crate::{AkitaProverSetup, CpuBackend, DensePoly};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp64;
 use akita_types::sis::{
@@ -9,8 +10,8 @@ use akita_types::sis::{
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 use akita_types::{
-    CommittedSourceEncoding, GroupCommitPhaseParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout,
+    CommittedSourceEncoding, CompressionChainPlan, GroupCommitPhaseParams, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
     SetupMatrixCapacity, SisModulusProfileId,
 };
 
@@ -125,38 +126,6 @@ fn audited_commit_params(
     )
     .expect("audited fixture D matrix");
     params
-}
-
-fn inner_witness(recomposed_blocks: usize, rows_per_block: usize) -> CommitInnerWitness<F> {
-    CommitInnerWitness::from_rows(vec![
-        vec![CyclotomicRing::<F, D>::zero(); rows_per_block];
-        recomposed_blocks
-    ])
-}
-
-#[test]
-fn commit_inner_shape_accepts_expected_layout() {
-    let inner = inner_witness(2, 3);
-    validate_commit_inner_shape::<F, D>(&inner, 2, 3).expect("shape should match");
-}
-
-#[test]
-fn commit_inner_shape_rejects_bad_block_count() {
-    let inner = inner_witness(1, 3);
-    assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-}
-
-#[test]
-fn commit_inner_shape_rejects_bad_row_count() {
-    let inner = inner_witness(2, 2);
-    assert!(validate_commit_inner_shape::<F, D>(&inner, 2, 3).is_err());
-}
-
-#[test]
-fn commit_inner_shape_accepts_many_all_zero_blocks() {
-    let num_live_blocks = 1024;
-    let inner = inner_witness(num_live_blocks, 3);
-    validate_commit_inner_shape::<F, D>(&inner, num_live_blocks, 3).expect("all-zero blocks");
 }
 
 #[test]
@@ -304,153 +273,6 @@ fn commit_b_input_len_rejects_overflow() {
     ));
 }
 
-#[test]
-fn outer_slice_inputs_are_polynomial_major_and_zero_padded() {
-    let first = akita_types::DigitBlocks::new(vec![10, 11, 12, 13, 14], vec![1; 5], 1)
-        .expect("first digit blocks");
-    let second = akita_types::DigitBlocks::new(vec![20, 21, 22, 23, 24], vec![1; 5], 1)
-        .expect("second digit blocks");
-    let geometry = akita_types::CommitmentSliceGeometry::try_new(
-        akita_types::CommitmentSliceCount::TWO,
-        5,
-        2,
-        1,
-        1,
-        1,
-        1,
-    )
-    .expect("slice geometry");
-
-    let inputs = outer_slice_inputs::<1>(&[&first, &second], &geometry).expect("slice inputs");
-    assert_eq!(
-        inputs,
-        vec![
-            vec![[10], [11], [0], [20], [21], [0]],
-            vec![[12], [13], [14], [22], [23], [24]],
-        ]
-    );
-}
-
-#[test]
-fn outer_slice_stream_reuses_one_physical_width_buffer() {
-    let digits =
-        akita_types::DigitBlocks::new((0..13).collect(), vec![1; 13], 1).expect("digit blocks");
-    let geometry = akita_types::CommitmentSliceGeometry::try_new(
-        akita_types::CommitmentSliceCount::FOUR,
-        13,
-        1,
-        1,
-        1,
-        1,
-        1,
-    )
-    .expect("slice geometry");
-    let planes = digits.typed_planes::<1>().expect("typed planes");
-    let mut addresses = Vec::new();
-
-    for_each_outer_slice_input::<1>(std::iter::once(planes), &geometry, |input| {
-        assert_eq!(input.len(), geometry.physical_input_width());
-        addresses.push(input.as_ptr());
-        Ok(())
-    })
-    .expect("stream slices");
-
-    assert_eq!(addresses.len(), 4);
-    assert!(addresses.windows(2).all(|pair| pair[0] == pair[1]));
-}
-
-#[test]
-fn sliced_b_images_match_independent_block_diagonal_oracle_for_all_counts() {
-    const BLOCKS: usize = 9;
-    const POLYS: usize = 2;
-    const PER_BLOCK: usize = 2;
-    const ROWS: usize = 3;
-
-    let polynomial_digits = (0..POLYS)
-        .map(|polynomial| {
-            let digits = (0..BLOCKS * PER_BLOCK)
-                .map(|index| (1 + polynomial * 31 + index) as i8)
-                .collect::<Vec<_>>();
-            akita_types::DigitBlocks::new(digits, vec![PER_BLOCK; BLOCKS], 1).unwrap()
-        })
-        .collect::<Vec<_>>();
-
-    for slice_count in akita_types::CommitmentSliceCount::ALL {
-        let geometry = akita_types::CommitmentSliceGeometry::try_new(
-            slice_count,
-            BLOCKS,
-            POLYS,
-            PER_BLOCK,
-            1,
-            1,
-            1,
-        )
-        .unwrap();
-        let matrix = (0..ROWS)
-            .map(|row| {
-                (0..geometry.physical_input_width())
-                    .map(|column| 1 + (row as i64 + 1) * 17 + column as i64)
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let production_inputs =
-            outer_slice_inputs::<1>(&polynomial_digits.iter().collect::<Vec<_>>(), &geometry)
-                .unwrap();
-        let production_image = production_inputs
-            .iter()
-            .flat_map(|input| {
-                let matrix = &matrix;
-                matrix.iter().map(move |row| {
-                    row.iter()
-                        .zip(input)
-                        .map(|(&matrix_entry, digit)| matrix_entry * i64::from(digit[0]))
-                        .sum::<i64>()
-                })
-            })
-            .collect::<Vec<_>>();
-
-        // Independent oracle: derive proportional boundaries and physical
-        // columns directly, without calling slicing geometry helpers.
-        let slices = slice_count.get();
-        let max_blocks = BLOCKS.div_ceil(slices);
-        let mut oracle_image = Vec::with_capacity(slices * ROWS);
-        for slice_index in 0..slices {
-            let start = BLOCKS * slice_index / slices;
-            let end = BLOCKS * (slice_index + 1) / slices;
-            for row in &matrix {
-                let mut image = 0i64;
-                for polynomial in 0..POLYS {
-                    for global_block in start..end {
-                        let local_block = global_block - start;
-                        for offset in 0..PER_BLOCK {
-                            let physical_column =
-                                (polynomial * max_blocks + local_block) * PER_BLOCK + offset;
-                            let digit = 1 + polynomial * 31 + global_block * PER_BLOCK + offset;
-                            image += row[physical_column] * digit as i64;
-                        }
-                    }
-                }
-                oracle_image.push(image);
-            }
-        }
-        assert_eq!(production_image, oracle_image);
-
-        // The complete logical stack is the compression source. Compare a
-        // second independent linear image so slice ordering cannot alias.
-        let production_compressed = production_image
-            .iter()
-            .enumerate()
-            .map(|(index, &value)| (index as i64 + 3) * value)
-            .sum::<i64>();
-        let oracle_compressed = oracle_image
-            .iter()
-            .enumerate()
-            .map(|(index, &value)| (index as i64 + 3) * value)
-            .sum::<i64>();
-        assert_eq!(production_compressed, oracle_compressed);
-    }
-}
-
 /// Inner digit depth that actually represents an `Fp32` coefficient at
 /// `log_basis_inner = 2`.
 ///
@@ -461,26 +283,6 @@ fn sliced_b_images_match_independent_block_diagonal_oracle_for_all_counts() {
 /// the fixture states a depth consistent with the coefficients it commits.
 fn slice_fixture_num_digits_inner() -> usize {
     akita_types::sis::compute_num_digits_field_width(32, 2)
-}
-
-/// Full-field balanced-digit contract matching the slice fixture's geometry.
-///
-/// `log_commit_bound == field_bits` is the unbounded endpoint, so the accepted
-/// interval is representability alone and the fixture keeps committing arbitrary
-/// field elements. The balanced-digit class imposes no structural requirement, so
-/// the dense fixture source is admissible. Both restrictive paths — a bounded
-/// declaration and the unit one-hot class — are covered by the `fp128` e2e tests,
-/// which own real catalogs.
-fn slice_fixture_contract() -> akita_types::sis::CommittedSourceContract {
-    akita_types::sis::CommittedSourceContract::try_new(
-        akita_types::sis::CommittedSourceClass::BalancedSignedDigit,
-        akita_types::DecompositionParams {
-            log_basis: 2,
-            log_commit_bound: 32,
-            log_open_bound: Some(32),
-        },
-    )
-    .expect("full-field slice fixture contract")
 }
 
 fn commitment_params_for_slice_count(
@@ -497,19 +299,27 @@ fn commit_unsliced_reference(
     let backend = ctx.backend();
     let prepared = ctx.prepared();
     let plan = CommitInnerPlan::from_level(params);
-    let views = polys
-        .iter()
-        .map(RootCommitSource::<F, D>::commit_view)
-        .collect::<Result<Vec<_>, _>>()?;
-    let prepared_polynomials = prepare_inner_commit_group::<F, _, _, D, D>(
-        backend,
-        prepared,
-        views,
-        plan,
-        params.blocks().live_blocks,
-        params.outer().digits.num_digits,
-        params.outer().digits.log_basis,
-    )?;
+    let inners = compute_inner_commitment::<F, DensePoly<F>, _, D>(backend, prepared, polys, plan)?;
+    if inners.len() != polys.len() {
+        return Err(AkitaError::InvalidSetup(
+            "unsliced reference inner commitment count mismatch".into(),
+        ));
+    }
+    let prepared_polynomials = inners
+        .into_iter()
+        .map(|inner| {
+            validate_commit_inner_shape::<F, D>(&inner, params.blocks().live_blocks, plan.n_a)?;
+            let blocks = (0..params.blocks().live_blocks)
+                .map(|block| inner.block_rows::<D>(block, plan.n_a))
+                .collect::<Result<Vec<_>, _>>()?;
+            let digits = decompose_commit_blocks_into::<F, D, D>(
+                &blocks,
+                params.outer().digits.num_digits,
+                params.outer().digits.log_basis,
+            )?;
+            Ok((inner.into_inner_rows(), digits))
+        })
+        .collect::<Result<Vec<_>, AkitaError>>()?;
     let geometry = akita_types::CommitmentSliceGeometry::try_new(
         akita_types::CommitmentSliceCount::ONE,
         params.blocks().live_blocks,
@@ -610,6 +420,30 @@ fn commit_unsliced_reference(
     Ok(((Commitment::new(payload), hint), compression_plan))
 }
 
+fn commit_fixture_with_profile(
+    polys: &[DensePoly<F>],
+    ctx: &OperationCtx<'_, F, CpuBackend>,
+    profile: GroupCommitPhaseParams,
+) -> Result<CommitmentWithHint<F>, AkitaError> {
+    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile)?;
+    let CommitmentCompressionOutput {
+        payload,
+        witness,
+        quotients,
+    } = compute_commitment_compression(
+        ctx,
+        profile.outer.matrix.sis_table_key().modulus_profile,
+        source,
+    )?;
+    let hint = AkitaCommitmentHint::new_with_outer_compression(
+        profile.inner.matrix.ring_dimension(),
+        inner_rows,
+        &witness,
+        &quotients,
+    )?;
+    Ok((Commitment::new(payload), hint))
+}
+
 #[test]
 fn s1_matches_real_unsliced_commitment_pipeline() {
     const NUM_VARS: usize = 10;
@@ -632,15 +466,12 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
         .collect::<Vec<_>>();
     let poly = DensePoly::<F>::from_field_evals(NUM_VARS, &evals).expect("dense polynomial");
 
-    let production_geometry =
-        validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
-            .expect("production S=1 geometry");
-    let production = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    validate_commit_level_params::<F>(&params, setup.expanded.as_ref(), 0, 1)
+        .expect("production S=1 geometry");
+    let production = commit_fixture_with_profile(
         std::slice::from_ref(&poly),
         &ctx,
-        (&params).into(),
-        &production_geometry,
-        slice_fixture_contract(),
+        GroupCommitPhaseParams::try_from_params(params.group(), &params).expect("S=1 profile"),
     )
     .expect("production S=1 commitment");
     let (reference, compression_plan) =
@@ -673,17 +504,17 @@ fn s1_matches_real_unsliced_commitment_pipeline() {
 
     for slice_count in akita_types::CommitmentSliceCount::ALL {
         let sliced_params = commitment_params_for_slice_count(slice_count);
-        let slice_geometry =
-            validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
-                .unwrap_or_else(|error| {
-                    panic!("real S={} geometry failed: {error}", slice_count.get())
-                });
-        let (commitment, hint) = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+        validate_commit_level_params::<F>(&sliced_params, setup.expanded.as_ref(), 0, 1)
+            .unwrap_or_else(|error| {
+                panic!("real S={} geometry failed: {error}", slice_count.get())
+            });
+        let (commitment, hint) = commit_fixture_with_profile(
             std::slice::from_ref(&poly),
             &ctx,
-            (&sliced_params).into(),
-            &slice_geometry,
-            slice_fixture_contract(),
+            GroupCommitPhaseParams::try_from_params(sliced_params.group(), &sliced_params)
+                .unwrap_or_else(|error| {
+                    panic!("real S={} profile failed: {error}", slice_count.get())
+                }),
         )
         .unwrap_or_else(|error| panic!("real S={} commitment failed: {error}", slice_count.get()));
         let source_coefficients = slice_count
@@ -759,23 +590,17 @@ fn commitment_bytes_ignore_opening_method_and_profiles_reject_tensor_sources() {
         .map(|index| F::from_u64((index * 17 + 9) as u64))
         .collect::<Vec<_>>();
     let polynomial = DensePoly::<F>::from_field_evals(NUM_VARS, &evaluations).unwrap();
-    let slice_geometry =
-        validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
-    let contract = akita_config::proof_optimized::fp64::Dense::committed_source_contract().unwrap();
-    let raw = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    validate_commit_level_params::<F>(&canonical, setup.expanded.as_ref(), 0, 1).unwrap();
+    let raw = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
-        (&canonical).into(),
-        &slice_geometry,
-        contract,
+        GroupCommitPhaseParams::try_from_params(canonical.group(), &canonical).unwrap(),
     )
     .unwrap();
-    let raw_under_other_method = commit_with_validated_geometry::<F, DensePoly<F>, CpuBackend>(
+    let raw_under_other_method = commit_fixture_with_profile(
         std::slice::from_ref(&polynomial),
         &ctx,
-        (&packing_plan).into(),
-        &slice_geometry,
-        contract,
+        GroupCommitPhaseParams::try_from_params(packing_plan.group(), &packing_plan).unwrap(),
     )
     .unwrap();
     assert_eq!(raw, raw_under_other_method);

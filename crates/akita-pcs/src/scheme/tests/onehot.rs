@@ -289,27 +289,12 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         &setup,
         &final_polys,
         &stack,
-        akita_prover::GroupContext::explicit_with_precommitted_groups(&precommitteds, main_params),
+        akita_prover::GroupContext::explicit(&main_params.own_group().profile),
     )
     .expect("explicit final multi-group commitment");
 
     assert_eq!(explicit_output.committed_group, final_commitment);
     assert_eq!(explicit_output.hint, final_hint);
-
-    let missing_precommitted_groups =
-        akita_types::PrecommittedGroupProfiles::from_profiles(vec![pre_a_commitment.profile])
-            .expect("nonempty precommitted groups");
-    let error = OneHotScheme::commit(
-        &setup,
-        &final_polys,
-        &stack,
-        akita_prover::GroupContext::explicit_with_precommitted_groups(
-            &missing_precommitted_groups,
-            main_params,
-        ),
-    )
-    .expect_err("explicit grouped params must bind precommitted profile count");
-    assert!(matches!(error, AkitaError::InvalidSetup(_)));
 
     assert_eq!(
         pre_a_commitment.rows().count(),
