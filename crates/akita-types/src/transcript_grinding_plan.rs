@@ -67,7 +67,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     }
     let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
-    append_nonterminal(
+    let rounds = append_nonterminal(
         &mut runs,
         capacity,
         extension_degree,
@@ -85,8 +85,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
             level.checked_add(1).ok_or_else(|| {
                 AkitaError::InvalidSetup("terminal grinding level overflow".into())
             })?,
-            params,
-            output_witness_len,
+            rounds,
             terminal,
         )?;
     }
@@ -108,14 +107,13 @@ fn derive_transcript_grinding_plan(
     let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
 
-    let mut predecessor = &schedule.root;
-    append_nonterminal(
+    let mut predecessor_rounds = append_nonterminal(
         &mut runs,
         capacity,
         extension_degree,
         0,
-        &predecessor.params,
-        predecessor.output_witness_len,
+        &schedule.root.params,
+        schedule.root.output_witness_len,
         root_layout,
         schedule.recursive_folds.first().map_or(
             GrindingPlanSuccessor::Terminal(&schedule.terminal),
@@ -124,16 +122,12 @@ fn derive_transcript_grinding_plan(
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        let layout = recursive_layout(
-            &predecessor.params,
-            predecessor.output_witness_len,
-            &fold.params,
-        )?;
+        let layout = recursive_layout(predecessor_rounds, &fold.params)?;
         let successor = schedule.recursive_folds.get(index + 1).map_or(
             GrindingPlanSuccessor::Terminal(&schedule.terminal),
             |step| GrindingPlanSuccessor::Recursive(&step.params),
         );
-        append_nonterminal(
+        predecessor_rounds = append_nonterminal(
             &mut runs,
             capacity,
             extension_degree,
@@ -143,7 +137,6 @@ fn derive_transcript_grinding_plan(
             &layout,
             successor,
         )?;
-        predecessor = fold;
     }
 
     append_terminal(
@@ -154,8 +147,7 @@ fn derive_transcript_grinding_plan(
             schedule.recursive_folds.len() + 1,
             "terminal grinding level",
         )?,
-        &predecessor.params,
-        predecessor.output_witness_len,
+        predecessor_rounds,
         &schedule.terminal,
     )?;
     GrindingPlan::new(runs, capacity)
@@ -171,7 +163,7 @@ fn append_nonterminal(
     output_witness_len: usize,
     layout: &OpeningClaimsLayout,
     successor: GrindingPlanSuccessor<'_>,
-) -> Result<(), AkitaError> {
+) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
         append_eor(runs, capacity, extension_degree, level, layout)?;
@@ -228,7 +220,7 @@ fn append_nonterminal(
         capacity,
     )?);
 
-    let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
+    let rounds = tau0_width;
     let basis = 1usize
         .checked_shl(params.open().digits.log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("digit-range basis exceeds usize".into()))?;
@@ -312,7 +304,7 @@ fn append_nonterminal(
             }
         }
     }
-    Ok(())
+    Ok(rounds)
 }
 
 fn append_terminal(
@@ -320,12 +312,10 @@ fn append_terminal(
     capacity: u32,
     extension_degree: usize,
     level: u32,
-    predecessor_params: &CommittedGroupParams,
-    predecessor_output_witness_len: usize,
+    predecessor_rounds: usize,
     terminal: &crate::TerminalFoldParams,
 ) -> Result<(), AkitaError> {
-    let width = crate::sumcheck_rounds(predecessor_params.d_a(), predecessor_output_witness_len);
-    let layout = OpeningClaimsLayout::new(width, 1)?;
+    let layout = OpeningClaimsLayout::new(predecessor_rounds, 1)?;
     if extension_degree > 1 {
         append_eor(runs, capacity, extension_degree, level, &layout)?;
     }
@@ -422,8 +412,7 @@ fn append_sumcheck(
 }
 
 fn recursive_layout(
-    predecessor_params: &CommittedGroupParams,
-    predecessor_output_witness_len: usize,
+    predecessor_rounds: usize,
     current: &CommittedGroupParams,
 ) -> Result<OpeningClaimsLayout, AkitaError> {
     let mut groups = Vec::with_capacity(2);
@@ -432,10 +421,7 @@ fn recursive_layout(
             setup_prefix_sumcheck_rounds(prefix)?,
         ));
     }
-    groups.push(PolynomialGroupLayout::singleton(crate::sumcheck_rounds(
-        predecessor_params.d_a(),
-        predecessor_output_witness_len,
-    )));
+    groups.push(PolynomialGroupLayout::singleton(predecessor_rounds));
     OpeningClaimsLayout::from_groups(groups)
 }
 
@@ -467,4 +453,100 @@ fn usize_to_u32(value: usize, name: &str) -> Result<u32, AkitaError> {
 
 fn usize_to_u64(value: usize, name: &str) -> Result<u64, AkitaError> {
     u64::try_from(value).map_err(|_| AkitaError::InvalidSetup(format!("{name} exceeds u64")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SisModulusProfileId;
+    use akita_challenges::SparseChallengeConfig;
+
+    fn params(ring_dimension: usize) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            ring_dimension,
+            3,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(1, 1, 2, 2, 2)
+        .expect("test fold params")
+    }
+
+    #[test]
+    fn stage_rounds_follow_successor_padded_relation_domain() {
+        let current = params(64);
+        let successor = params(128);
+        let layout = OpeningClaimsLayout::new(6, 1).expect("opening layout");
+        let output_witness_len = 64;
+        let expected_rounds = current
+            .relation_address_geometry(&layout, 1, successor.d_a(), output_witness_len)
+            .expect("relation geometry")
+            .relation_point_variable_count();
+        assert_eq!(expected_rounds, 7);
+        assert_ne!(
+            expected_rounds,
+            crate::sumcheck_rounds(current.d_a(), output_witness_len),
+            "the fixture must distinguish successor padding from the old shortcut"
+        );
+
+        let mut runs = Vec::new();
+        let rounds = append_nonterminal(
+            &mut runs,
+            128,
+            1,
+            0,
+            &current,
+            output_witness_len,
+            &layout,
+            GrindingPlanSuccessor::Recursive(&successor),
+        )
+        .expect("nonterminal grinding runs");
+        assert_eq!(rounds, expected_rounds);
+        assert_eq!(
+            runs.iter()
+                .filter(|run| {
+                    matches!(
+                        run.site(),
+                        GrindingSite::SumcheckRound {
+                            protocol: SumcheckProtocol::Stage2,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            expected_rounds
+        );
+
+        let recursive = recursive_layout(rounds, &successor).expect("recursive layout");
+        assert_eq!(
+            recursive
+                .group_layout(recursive.root_final_group_index().expect("final group"))
+                .expect("final layout")
+                .num_vars(),
+            expected_rounds
+        );
+
+        let terminal = crate::TerminalFoldParams::from_expanded_group(successor);
+        let mut terminal_runs = Vec::new();
+        append_terminal(&mut terminal_runs, 128, 4, 1, rounds, &terminal)
+            .expect("terminal grinding runs");
+        assert_eq!(
+            terminal_runs
+                .iter()
+                .filter(|run| {
+                    matches!(
+                        run.site(),
+                        GrindingSite::SumcheckRound {
+                            protocol: SumcheckProtocol::ExtensionOpeningReduction,
+                            ..
+                        }
+                    )
+                })
+                .count(),
+            expected_rounds - 2
+        );
+    }
 }
