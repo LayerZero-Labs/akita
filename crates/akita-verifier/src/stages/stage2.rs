@@ -248,22 +248,15 @@ where
                 (relation_weight?, coefficient_packing_weight?)
             }
         };
-        let compression_oracle = match (
+        let compression_oracle = evaluate_compression_oracle(
             self.compression_relation_weights,
             self.negative_binary_support,
             self.binary_batching,
-        ) {
-            (Some(weights), Some(support), Some(binary_batching)) => {
-                let compression_relation_weight =
-                    weights.evaluate_at_point(self.setup, challenges)?;
-                let binary_weight = support
-                    .evaluate_restricted_equality_at_point(&self.stage1_point, challenges)?;
-                w_eval * compression_relation_weight
-                    + binary_batching * binary_weight * w_eval * (w_eval + E::one())
-            }
-            (None, None, None) => E::zero(),
-            _ => return Err(AkitaError::InvalidProof),
-        };
+            self.setup,
+            &self.stage1_point,
+            challenges,
+            w_eval,
+        )?;
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
         let trace_oracle = match &self.opening_semantics.0 {
@@ -298,6 +291,36 @@ where
             + relation_oracle
             + trace_oracle
             + physical_l2_oracle)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn evaluate_compression_oracle<F, E>(
+    weights: Option<&PreparedCompressionRelation<E>>,
+    support: Option<&NegativeBinarySupport>,
+    binary_batching: Option<E>,
+    setup: &AkitaExpandedSetup<F>,
+    stage1_point: &[E],
+    point: &[E],
+    witness_evaluation: E,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    match (weights, support, binary_batching) {
+        (Some(weights), Some(support), Some(binary_batching)) => {
+            let relation_weight = weights.evaluate_at_point(setup, point)?;
+            let binary_weight =
+                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
+            Ok(witness_evaluation * relation_weight
+                + binary_batching
+                    * binary_weight
+                    * witness_evaluation
+                    * (witness_evaluation + E::one()))
+        }
+        (None, None, None) => Ok(E::zero()),
+        _ => Err(AkitaError::InvalidProof),
     }
 }
 
@@ -541,3 +564,7 @@ mod tests {
         .is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "stage2/compressed_reduced_tests.rs"]
+mod compressed_reduced_tests;
