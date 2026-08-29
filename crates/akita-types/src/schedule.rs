@@ -360,7 +360,13 @@ impl FoldSchedule {
                 "root fold payload must be compressed".into(),
             ));
         }
+        if root_commitment.ring_relation_mode != crate::RingRelationMode::QuotientLift {
+            return Err(AkitaError::InvalidSetup(
+                "nonterminal level 0 requires quotient-lift ring relations".into(),
+            ));
+        }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
+        let mut reduced_relation_suffix = false;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             step.params.validate_group_topology()?;
             if !step.params.precommitted_groups().is_empty() {
@@ -370,6 +376,34 @@ impl FoldSchedule {
             }
             step.params.validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.setup_prefix().is_some();
+            let absolute_level = index + 1;
+            match step.params.ring_relation_mode {
+                crate::RingRelationMode::QuotientLift => {
+                    if reduced_relation_suffix {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} cannot resume quotient-lift ring relations after the reduced-evaluation suffix"
+                        )));
+                    }
+                }
+                crate::RingRelationMode::ReducedEvaluation => {
+                    if absolute_level < 2 {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} requires quotient-lift ring relations"
+                        )));
+                    }
+                    if !matches!(step.params.opening_method(), OpeningMethod::EvaluationTrace) {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} reduced-evaluation ring relations require evaluation-trace opening"
+                        )));
+                    }
+                    if consumes_setup_prefix {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} reduced-evaluation ring relations cannot consume a setup prefix"
+                        )));
+                    }
+                    reduced_relation_suffix = true;
+                }
+            }
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"

@@ -96,6 +96,7 @@ impl WitnessLayout {
 
         let relation_layout = relation_geometry.rhs_layout();
         let row_families = relation_layout.row_families()?;
+        let quotient_lift = !lp.ring_relation_mode.is_reduced_evaluation();
         let first_compression_row = row_families
             .iter()
             .position(|row| {
@@ -105,13 +106,15 @@ impl WitnessLayout {
                 )
             })
             .unwrap_or(row_families.len());
-        for row in &row_families[..first_compression_row] {
-            let len = quotient_depth
-                .checked_mul(row.geometry().physical_coefficient_width())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
-            cursor = cursor
-                .checked_add(len)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R range overflow".into()))?;
+        if quotient_lift {
+            for row in &row_families[..first_compression_row] {
+                let len = quotient_depth
+                    .checked_mul(row.geometry().physical_coefficient_width())
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
+                cursor = cursor
+                    .checked_add(len)
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness R range overflow".into()))?;
+            }
         }
         if !lp.payload_mode.is_compressed() {
             return Ok(Some(cursor));
@@ -172,13 +175,15 @@ impl WitnessLayout {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("compression witness range overflow".into())
                 })?;
-            for ring_dim in [b_map.ring_dimension(), d_map.ring_dimension()] {
-                let len = quotient_depth.checked_mul(ring_dim).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient width overflow".into())
-                })?;
-                cursor = cursor.checked_add(len).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient range overflow".into())
-                })?;
+            if quotient_lift {
+                for ring_dim in [b_map.ring_dimension(), d_map.ring_dimension()] {
+                    let len = quotient_depth.checked_mul(ring_dim).ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression quotient width overflow".into())
+                    })?;
+                    cursor = cursor.checked_add(len).ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression quotient range overflow".into())
+                    })?;
+                }
             }
         }
         Ok(Some(align_witness_offset(
@@ -245,37 +250,43 @@ mod tests {
                 crate::CommitmentPayloadMode::Raw,
                 crate::CommitmentPayloadMode::Compressed,
             ] {
-                for num_polynomials in [1, 2, 5] {
-                    for num_chunks in [1, 2, 4] {
-                        let mut params = base.clone();
-                        params.payload_mode = payload_mode;
-                        let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
-                            .expect("scalar opening batch");
-                        let relation_geometry =
-                            RelationWitnessGeometry::for_evaluation_trace_execution(
+                for ring_relation_mode in [
+                    crate::RingRelationMode::QuotientLift,
+                    crate::RingRelationMode::ReducedEvaluation,
+                ] {
+                    for num_polynomials in [1, 2, 5] {
+                        for num_chunks in [1, 2, 4] {
+                            let mut params = base.clone();
+                            params.payload_mode = payload_mode;
+                            params.ring_relation_mode = ring_relation_mode;
+                            let opening_batch = OpeningClaimsLayout::new(0, num_polynomials)
+                                .expect("scalar opening batch");
+                            let relation_geometry =
+                                RelationWitnessGeometry::for_evaluation_trace_execution(
+                                    &params,
+                                    &opening_batch,
+                                )
+                                .expect("relation geometry");
+                            let materialized = WitnessLayout::new(
                                 &params,
                                 &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                2,
                             )
-                            .expect("relation geometry");
-                        let materialized = WitnessLayout::new(
-                            &params,
-                            &opening_batch,
-                            &relation_geometry,
-                            num_chunks,
-                            2,
-                        )
-                        .expect("materialized witness layout")
-                        .live_coeff_len();
-                        let scalar = WitnessLayout::try_scalar_live_coeff_len(
-                            &params,
-                            &opening_batch,
-                            &relation_geometry,
-                            num_chunks,
-                            2,
-                        )
-                        .expect("scalar witness sizing")
-                        .expect("compression source is supported");
-                        assert_eq!(scalar, materialized);
+                            .expect("materialized witness layout")
+                            .live_coeff_len();
+                            let scalar = WitnessLayout::try_scalar_live_coeff_len(
+                                &params,
+                                &opening_batch,
+                                &relation_geometry,
+                                num_chunks,
+                                2,
+                            )
+                            .expect("scalar witness sizing")
+                            .expect("compression source is supported");
+                            assert_eq!(scalar, materialized);
+                        }
                     }
                 }
             }

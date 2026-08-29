@@ -90,10 +90,23 @@ pub struct WitnessLayout {
     units: Vec<WitnessUnitLayout>,
     compression_layers: Vec<CompressionWitnessLayerLayout>,
     compression_alignment_ranges: Vec<Range<usize>>,
-    r_rows: Vec<WitnessQuotientRowLayout>,
-    /// Envelope containing every shared quotient and compression layer.
-    r_range: Range<usize>,
-    quotient_depth: usize,
+    relation_quotients: RelationQuotientLayout,
+    /// Envelope containing everything after the chunk-major Z/E/T body.
+    tail_range: Range<usize>,
+}
+
+/// Mode-aware ownership of polynomial-modulus quotient witness rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelationQuotientLayout {
+    /// Ordinary and compression relation rows are represented by quotient
+    /// digits at one shared decomposition depth.
+    QuotientLift {
+        quotient_depth: usize,
+        rows: Vec<WitnessQuotientRowLayout>,
+    },
+    /// Ring equalities are checked after negacyclic reduction, so no quotient
+    /// row is part of the committed witness.
+    ReducedEvaluation,
 }
 
 /// One padded negative-binary digit span in the global witness tail.
@@ -109,8 +122,8 @@ pub struct CompressionWitnessLayerLayout {
     map_index: usize,
     f_spans: Vec<(usize, CompressionWitnessSpan)>,
     h_span: CompressionWitnessSpan,
-    f_quotient_rows: Vec<(usize, usize)>,
-    h_quotient_row: usize,
+    f_quotient_rows: Option<Vec<(usize, usize)>>,
+    h_quotient_row: Option<usize>,
 }
 
 /// One native relation-quotient row in the shared R tail.
@@ -397,14 +410,15 @@ impl CompressionWitnessLayerLayout {
     }
 
     /// Relation-ordered F quotient-row indices, tagged by opening group.
+    /// Absent when this layer belongs to a reduced-evaluation witness.
     #[must_use]
-    pub fn f_quotient_rows(&self) -> &[(usize, usize)] {
-        &self.f_quotient_rows
+    pub fn f_quotient_rows(&self) -> Option<&[(usize, usize)]> {
+        self.f_quotient_rows.as_deref()
     }
 
-    /// Shared H quotient-row index for this layer.
+    /// Shared H quotient-row index for this layer. Absent in reduced mode.
     #[must_use]
-    pub fn h_quotient_row(&self) -> usize {
+    pub fn h_quotient_row(&self) -> Option<usize> {
         self.h_quotient_row
     }
 }
@@ -425,39 +439,52 @@ impl WitnessLayout {
             units,
             compression_layers: Vec::new(),
             compression_alignment_ranges: Vec::new(),
-            r_rows,
-            r_range: r_start..r_end,
-            quotient_depth,
+            relation_quotients: RelationQuotientLayout::QuotientLift {
+                quotient_depth,
+                rows: r_rows,
+            },
+            tail_range: r_start..r_end,
         }
     }
 
     pub(crate) fn validate_internal_ranges(&self) -> Result<(), AkitaError> {
-        if self.quotient_depth == 0 || self.r_range.end != self.live_coeff_len() {
+        let body_end = self.units.last().map_or(0, |unit| unit.t_range.end);
+        if self.tail_range.start != body_end || self.tail_range.start > self.tail_range.end {
             return Err(AkitaError::InvalidSetup(
-                "witness layout has malformed quotient geometry".into(),
+                "witness tail disagrees with its chunk-major body".into(),
             ));
         }
-        let mut previous_row_end = None;
-        for row in &self.r_rows {
-            let expected_len = self
-                .quotient_depth
-                .checked_mul(row.geometry.physical_coefficient_width())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
-            if row.range.len() != expected_len
-                || previous_row_end.is_some_and(|end| row.range.start < end)
-            {
+        if let RelationQuotientLayout::QuotientLift {
+            quotient_depth,
+            rows,
+        } = &self.relation_quotients
+        {
+            if *quotient_depth == 0 {
                 return Err(AkitaError::InvalidSetup(
-                    "witness quotient rows are not canonically ordered".into(),
+                    "witness layout has malformed quotient geometry".into(),
                 ));
             }
-            previous_row_end = Some(row.range.end);
+            let mut previous_row_end = None;
+            for row in rows {
+                let expected_len = quotient_depth
+                    .checked_mul(row.geometry.physical_coefficient_width())
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
+                if row.range.len() != expected_len
+                    || previous_row_end.is_some_and(|end| row.range.start < end)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "witness quotient rows are not canonically ordered".into(),
+                    ));
+                }
+                previous_row_end = Some(row.range.end);
+            }
         }
 
         let mut ranges = Vec::new();
         for unit in &self.units {
             ranges.extend([unit.z_range(), unit.e_range(), unit.t_range()]);
         }
-        ranges.extend(self.r_rows.iter().map(WitnessQuotientRowLayout::range));
+        ranges.extend(self.r_rows().iter().map(WitnessQuotientRowLayout::range));
         for layer in &self.compression_layers {
             ranges.extend(layer.f_spans.iter().map(|(_, span)| span.range()));
             ranges.push(layer.h_span.range());
@@ -474,7 +501,7 @@ impl WitnessLayout {
             }
             cursor = range.end;
         }
-        if cursor != self.live_coeff_len() || self.r_range.start > self.r_range.end {
+        if cursor != self.live_coeff_len() {
             return Err(AkitaError::InvalidSetup(
                 "witness ranges do not cover the declared live prefix".into(),
             ));
@@ -600,7 +627,8 @@ impl WitnessLayout {
         }
         let relation_layout = relation_geometry.rhs_layout();
         let row_families = relation_layout.row_families()?;
-        let r_start = cursor;
+        let tail_start = cursor;
+        let quotient_lift = !lp.ring_relation_mode.is_reduced_evaluation();
         let first_compression_row = row_families
             .iter()
             .position(|row| {
@@ -611,34 +639,32 @@ impl WitnessLayout {
             })
             .unwrap_or(row_families.len());
         let mut r_rows = vec![None; row_families.len()];
-        for (row_index, row) in row_families[..first_compression_row].iter().enumerate() {
-            let geometry = row.geometry();
-            let len = quotient_depth
-                .checked_mul(geometry.physical_coefficient_width())
-                .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
-            let range = witness_range(cursor, len, "witness R range overflow")?;
-            cursor = range.end;
-            r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
+        if quotient_lift {
+            for (row_index, row) in row_families[..first_compression_row].iter().enumerate() {
+                let geometry = row.geometry();
+                let len = quotient_depth
+                    .checked_mul(geometry.physical_coefficient_width())
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness R width overflow".into()))?;
+                let range = witness_range(cursor, len, "witness R range overflow")?;
+                cursor = range.end;
+                r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
+            }
         }
         if !lp.payload_mode.is_compressed() {
-            let r_rows = r_rows
-                .into_iter()
-                .enumerate()
-                .map(|(row_index, row)| {
-                    row.ok_or_else(|| {
-                        AkitaError::InvalidSetup(format!(
-                            "raw witness quotient row {row_index} was not placed"
-                        ))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let relation_quotients = if quotient_lift {
+                RelationQuotientLayout::QuotientLift {
+                    quotient_depth,
+                    rows: collect_quotient_rows(r_rows, "raw witness")?,
+                }
+            } else {
+                RelationQuotientLayout::ReducedEvaluation
+            };
             return Ok(Self {
                 units,
                 compression_layers: Vec::new(),
                 compression_alignment_ranges: Vec::new(),
-                r_rows,
-                r_range: r_start..cursor,
-                quotient_depth,
+                relation_quotients,
+                tail_range: tail_start..cursor,
             });
         }
         let relation_coefficient_block = relation_geometry.relation_coefficient_block_len()?;
@@ -717,17 +743,21 @@ impl WitnessLayout {
                         ))
                     }
                 };
-                let range = witness_range(
-                    cursor,
-                    quotient_depth
-                        .checked_mul(geometry.physical_coefficient_width())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("compression quotient width overflow".into())
-                        })?,
-                    "compression quotient range overflow",
-                )?;
-                cursor = range.end;
-                r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
+                if quotient_lift {
+                    let range = witness_range(
+                        cursor,
+                        quotient_depth
+                            .checked_mul(geometry.physical_coefficient_width())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "compression quotient width overflow".into(),
+                                )
+                            })?,
+                        "compression quotient range overflow",
+                    )?;
+                    cursor = range.end;
+                    r_rows[row_index] = Some(WitnessQuotientRowLayout { geometry, range });
+                }
                 f_quotient_rows.push((group_index, row_index));
             }
             let h_quotient_row = first_compression_row
@@ -749,20 +779,22 @@ impl WitnessLayout {
                     ))
                 }
             };
-            let h_quotient_range = witness_range(
-                cursor,
-                quotient_depth
-                    .checked_mul(h_geometry.physical_coefficient_width())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression quotient width overflow".into())
-                    })?,
-                "compression quotient range overflow",
-            )?;
-            cursor = h_quotient_range.end;
-            r_rows[h_quotient_row] = Some(WitnessQuotientRowLayout {
-                geometry: h_geometry,
-                range: h_quotient_range,
-            });
+            if quotient_lift {
+                let h_quotient_range = witness_range(
+                    cursor,
+                    quotient_depth
+                        .checked_mul(h_geometry.physical_coefficient_width())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("compression quotient width overflow".into())
+                        })?,
+                    "compression quotient range overflow",
+                )?;
+                cursor = h_quotient_range.end;
+                r_rows[h_quotient_row] = Some(WitnessQuotientRowLayout {
+                    geometry: h_geometry,
+                    range: h_quotient_range,
+                });
+            }
             compression_layers.push(CompressionWitnessLayerLayout {
                 map_index,
                 f_spans,
@@ -770,8 +802,8 @@ impl WitnessLayout {
                     map: h_map,
                     range: h_range,
                 },
-                f_quotient_rows,
-                h_quotient_row,
+                f_quotient_rows: quotient_lift.then_some(f_quotient_rows),
+                h_quotient_row: quotient_lift.then_some(h_quotient_row),
             });
         }
         // Extension-field tensor packing carries a grouped root witness into
@@ -796,24 +828,20 @@ impl WitnessLayout {
         if aligned_witness_end != cursor {
             compression_alignment_ranges.push(cursor..aligned_witness_end);
         }
-        let r_rows = r_rows
-            .into_iter()
-            .enumerate()
-            .map(|(row_index, row)| {
-                row.ok_or_else(|| {
-                    AkitaError::InvalidSetup(format!(
-                        "witness quotient row {row_index} was not placed"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let relation_quotients = if quotient_lift {
+            RelationQuotientLayout::QuotientLift {
+                quotient_depth,
+                rows: collect_quotient_rows(r_rows, "witness")?,
+            }
+        } else {
+            RelationQuotientLayout::ReducedEvaluation
+        };
         Ok(Self {
             units,
             compression_layers,
             compression_alignment_ranges,
-            r_rows,
-            r_range: r_start..aligned_witness_end,
-            quotient_depth,
+            relation_quotients,
+            tail_range: tail_start..aligned_witness_end,
         })
     }
 
@@ -836,8 +864,8 @@ impl WitnessLayout {
             .map_or(0, |max| max + 1)
     }
 
-    pub fn r_range(&self) -> Range<usize> {
-        self.r_range.clone()
+    pub fn tail_range(&self) -> Range<usize> {
+        self.tail_range.clone()
     }
 
     /// Layer-major compression witness geometry.
@@ -899,15 +927,27 @@ impl WitnessLayout {
     }
 
     pub fn r_rows(&self) -> &[WitnessQuotientRowLayout] {
-        &self.r_rows
+        match &self.relation_quotients {
+            RelationQuotientLayout::QuotientLift { rows, .. } => rows,
+            RelationQuotientLayout::ReducedEvaluation => &[],
+        }
     }
 
-    pub fn quotient_depth(&self) -> usize {
-        self.quotient_depth
+    #[must_use]
+    pub const fn relation_quotient_layout(&self) -> &RelationQuotientLayout {
+        &self.relation_quotients
+    }
+
+    #[must_use]
+    pub fn quotient_depth(&self) -> Option<usize> {
+        match self.relation_quotients {
+            RelationQuotientLayout::QuotientLift { quotient_depth, .. } => Some(quotient_depth),
+            RelationQuotientLayout::ReducedEvaluation => None,
+        }
     }
 
     pub fn live_coeff_len(&self) -> usize {
-        self.r_range.end
+        self.tail_range.end
     }
 
     pub fn num_chunks_for_group(&self, group_index: usize) -> usize {
@@ -989,10 +1029,19 @@ impl WitnessLayout {
         coordinate_plane: usize,
         modulus_coefficient: usize,
     ) -> Result<usize, AkitaError> {
-        let row = self.r_rows.get(relation_row).ok_or_else(|| {
+        let RelationQuotientLayout::QuotientLift {
+            quotient_depth,
+            rows,
+        } = &self.relation_quotients
+        else {
+            return Err(AkitaError::InvalidInput(
+                "reduced-evaluation witness has no quotient coordinates".into(),
+            ));
+        };
+        let row = rows.get(relation_row).ok_or_else(|| {
             AkitaError::InvalidInput("witness R semantic index out of range".into())
         })?;
-        if quotient_digit >= self.quotient_depth {
+        if quotient_digit >= *quotient_depth {
             return Err(AkitaError::InvalidInput(
                 "witness R semantic index out of range".into(),
             ));
@@ -1006,10 +1055,22 @@ impl WitnessLayout {
             .ok_or_else(|| AkitaError::InvalidSetup("witness R index overflow".into()))?;
         checked_range_index(&row.range, local, "witness R")
     }
+}
 
-    pub fn r_offset(&self) -> usize {
-        self.r_range.start
-    }
+fn collect_quotient_rows(
+    rows: Vec<Option<WitnessQuotientRowLayout>>,
+    context: &str,
+) -> Result<Vec<WitnessQuotientRowLayout>, AkitaError> {
+    rows.into_iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            row.ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "{context} quotient row {row_index} was not placed"
+                ))
+            })
+        })
+        .collect()
 }
 
 fn witness_range(start: usize, len: usize, context: &str) -> Result<Range<usize>, AkitaError> {

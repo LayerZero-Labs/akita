@@ -211,7 +211,7 @@ where
     let n_d_active = lp.open().matrix.output_rank();
     let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
     let witness_layout = instance.segment_layout(lp, None)?;
-    if witness_layout.r_rows().len() != rows || witness_layout.quotient_depth() != levels {
+    if witness_layout.r_rows().len() != rows || witness_layout.quotient_depth() != Some(levels) {
         return Err(AkitaError::InvalidSetup(
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));

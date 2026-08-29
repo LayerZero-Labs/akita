@@ -223,6 +223,7 @@ pub use transcript_grinding_plan::{
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
-    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,
-    WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
+    RelationQuotientLayout, WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout,
+    MAX_WITNESS_CHUNKS,
 };

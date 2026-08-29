@@ -605,7 +605,7 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     log_basis: u32,
     compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<(), AkitaError> {
-    if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
+    if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != Some(levels) {
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one())

@@ -763,7 +763,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
             }
             let relation_layout = relation_geometry.rhs_layout();
-            assert_eq!(layout.r_range().start, cursor);
+            assert_eq!(layout.tail_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
                 let params = lp.group_params(&batch, group_index).expect("group params");
@@ -867,7 +867,10 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 );
                 cursor += h_map.padded_digit_count();
                 assert_eq!(support_interval.end, cursor);
-                for &(group_index, row_index) in layer.f_quotient_rows() {
+                for &(group_index, row_index) in layer
+                    .f_quotient_rows()
+                    .expect("quotient-lift compression rows")
+                {
                     assert!(group_order.contains(&group_index));
                     let row = &layout.r_rows()[row_index];
                     assert_eq!(
@@ -877,7 +880,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     );
                     cursor = row.range().end;
                 }
-                let h_row = &layout.r_rows()[layer.h_quotient_row()];
+                let h_row = &layout.r_rows()[layer.h_quotient_row().expect("quotient-lift H row")];
                 assert_eq!(
                     h_row.range(),
                     cursor..cursor + quotient_depth * h_row.geometry().physical_coefficient_width()
@@ -891,7 +894,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     .contains(&suffix_alignment));
             }
             cursor = layout.live_coeff_len();
-            assert_eq!(layout.r_range().end, cursor);
+            assert_eq!(layout.tail_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
                 lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)
