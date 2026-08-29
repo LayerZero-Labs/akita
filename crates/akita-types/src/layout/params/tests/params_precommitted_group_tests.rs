@@ -406,7 +406,10 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         &batch,
         &relation_geometry,
         lp.witness_chunk.num_chunks,
-        crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(crate::r_decomp_levels::<Prime128OffsetA7F7>(
+            lp.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .expect("witness layout");
     assert_eq!(
@@ -571,8 +574,14 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
     assert_eq!(precommitted.physical_coefficient_width(), 128);
     assert_eq!(geometry.relation_coefficient_block_len().unwrap(), 64);
 
-    let layout =
-        WitnessLayout::new(&lp, &batch, &geometry, 2, 2).expect("mixed-method witness layout");
+    let layout = WitnessLayout::new(
+        &lp,
+        &batch,
+        &geometry,
+        2,
+        crate::RelationQuotientPlan::quotient_lift(2).unwrap(),
+    )
+    .expect("mixed-method witness layout");
     assert_eq!(
         layout
             .unit(final_group, 0)
@@ -617,9 +626,14 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             let relation_geometry =
                 crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
                     .expect("relation geometry");
-            let layout =
-                WitnessLayout::new(&lp, &batch, &relation_geometry, num_chunks, quotient_depth)
-                    .expect("compact witness layout");
+            let layout = WitnessLayout::new(
+                &lp,
+                &batch,
+                &relation_geometry,
+                num_chunks,
+                crate::RelationQuotientPlan::quotient_lift(quotient_depth).unwrap(),
+            )
+            .expect("compact witness layout");
             let mut cursor = 0usize;
             let mut unit_position = 0usize;
             for chunk in 0..num_chunks {

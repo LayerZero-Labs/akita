@@ -866,7 +866,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        quotient_depth,
+        crate::RelationQuotientPlan::quotient_lift(quotient_depth).unwrap(),
     )
     .unwrap();
     let opening_source_len = witness_layout.live_coeff_len();
@@ -1015,7 +1015,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         &inputs.opening_batch,
         &joint_geometry,
         1,
-        inputs.depth_fold().unwrap(),
+        crate::RelationQuotientPlan::quotient_lift(inputs.depth_fold().unwrap()).unwrap(),
     )
     .unwrap();
     let relation_geometry = inputs

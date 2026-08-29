@@ -135,7 +135,7 @@ fn make_case_with_shape(
         &opening_batch,
         &relation_geometry,
         num_live_blocks / blocks_per_chunk,
-        r_decomp_levels::<F>(log_basis),
+        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(log_basis)).unwrap(),
     )
     .unwrap();
 

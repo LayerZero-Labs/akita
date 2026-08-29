@@ -127,6 +127,7 @@ pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 live_specs=(
   specs/akita-compute-backend-metal.md
   specs/quotient-free-tail-ring-relations.md
+  specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md

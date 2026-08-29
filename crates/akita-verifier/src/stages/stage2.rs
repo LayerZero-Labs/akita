@@ -308,13 +308,13 @@ mod tests {
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics,
-        prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels,
-        relation_rhs_coeff_len, AkitaSetupDescriptor, BasisMode,
-        CoefficientPackingBatchSemanticInputs, CommitmentPayloadMode, DigitRangePlan, FlatMatrix,
-        OpenCommitMatrixParams, OpeningClaimsLayout, OpeningMethod,
-        PreparedSubringCoefficientPackingPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
-        SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
+        prepare_coefficient_packing_verifier_batch_semantics, relation_rhs_coeff_len,
+        AkitaSetupDescriptor, BasisMode, CoefficientPackingBatchSemanticInputs,
+        CommitmentPayloadMode, DigitRangePlan, FlatMatrix, OpenCommitMatrixParams,
+        OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
+        RelationAddressGeometry, RelationRangeImagePlan, RelationWitnessGeometry,
+        RingRelationGroupOpening, RingRelationInstance, RingVec, SisModulusProfileId,
+        SubringCoefficientPackingGeometry, WitnessLayout,
     };
     use jolt_field::Zero;
     use jolt_field::{Ext2, Prime64Offset59};
@@ -362,7 +362,8 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            r_decomp_levels::<F>(params.open().digits.log_basis),
+            akita_types::RelationQuotientPlan::for_field_bits(&params, F::modulus_bits())
+                .expect("relation quotient plan"),
         )
         .unwrap();
         let relation_address_geometry = RelationAddressGeometry::for_relation(

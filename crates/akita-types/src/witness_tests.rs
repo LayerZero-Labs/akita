@@ -1,5 +1,5 @@
 use super::*;
-use crate::{CommitmentPayloadMode, RingRelationMode, SisModulusProfileId};
+use crate::{CommitmentPayloadMode, RingRelationMode, SisModulusProfileId, COMPRESSION_MAP_COUNT};
 
 #[test]
 fn default_is_single_chunk() {
@@ -49,8 +49,14 @@ fn test_layout(num_chunks: usize) -> (CommittedGroupParams, OpeningClaimsLayout,
     let relation_geometry =
         RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .expect("relation geometry");
-    let layout = WitnessLayout::new(&lp, &opening_batch, &relation_geometry, num_chunks, 2)
-        .expect("witness layout");
+    let layout = WitnessLayout::new(
+        &lp,
+        &opening_batch,
+        &relation_geometry,
+        num_chunks,
+        RelationQuotientPlan::quotient_lift(2).unwrap(),
+    )
+    .expect("witness layout");
     (lp, opening_batch, layout)
 }
 
@@ -151,26 +157,35 @@ fn relation_mode_is_the_authority_for_raw_and_compressed_quotient_ranges() {
         let relation_geometry =
             RelationWitnessGeometry::for_evaluation_trace_execution(&lifted_params, &opening_batch)
                 .expect("relation geometry");
-        let lifted = WitnessLayout::new(&lifted_params, &opening_batch, &relation_geometry, 2, 2)
-            .expect("quotient-lift layout");
+        let lifted = WitnessLayout::new(
+            &lifted_params,
+            &opening_batch,
+            &relation_geometry,
+            2,
+            RelationQuotientPlan::quotient_lift(2).unwrap(),
+        )
+        .expect("quotient-lift layout");
         lifted
             .validate_internal_ranges()
             .expect("valid quotient-lift ranges");
 
         let mut reduced_params = lifted_params.clone();
         reduced_params.ring_relation_mode = RingRelationMode::ReducedEvaluation;
-        let reduced = WitnessLayout::new(&reduced_params, &opening_batch, &relation_geometry, 2, 2)
-            .expect("reduced-evaluation layout");
+        let reduced = WitnessLayout::new(
+            &reduced_params,
+            &opening_batch,
+            &relation_geometry,
+            2,
+            RelationQuotientPlan::ReducedEvaluation,
+        )
+        .expect("reduced-evaluation layout without quotient metadata");
         reduced
             .validate_internal_ranges()
             .expect("valid reduced-evaluation ranges");
 
         assert!(matches!(
             lifted.relation_quotient_layout(),
-            RelationQuotientLayout::QuotientLift {
-                quotient_depth: 2,
-                ..
-            }
+            RelationQuotientLayout::QuotientLift { .. }
         ));
         assert_eq!(lifted.quotient_depth(), Some(2));
         assert!(!lifted.r_rows().is_empty());
@@ -181,6 +196,15 @@ fn relation_mode_is_the_authority_for_raw_and_compressed_quotient_ranges() {
         assert_eq!(reduced.quotient_depth(), None);
         assert!(reduced.r_rows().is_empty());
         assert!(reduced.r_coefficient_index(0, 0, 0, 0).is_err());
+        assert!(RelationQuotientPlan::quotient_lift(0).is_err());
+        assert!(WitnessLayout::new(
+            &lifted_params,
+            &opening_batch,
+            &relation_geometry,
+            2,
+            RelationQuotientPlan::ReducedEvaluation,
+        )
+        .is_err());
         assert_eq!(lifted.units(), reduced.units());
         assert_eq!(lifted.tail_range().start, reduced.tail_range().start);
         assert!(reduced.live_coeff_len() < lifted.live_coeff_len());

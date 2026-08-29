@@ -86,7 +86,7 @@ mod tests {
     use crate::offset_eq::OffsetEqWindow;
     use crate::ring::{eval_ring_at_pows, scalar_powers, CyclotomicRing};
     use akita_field::{
-        FpExt4, MulBase, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RandomSampling,
+        Ext2, FpExt4, MulBase, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RandomSampling,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -143,6 +143,17 @@ mod tests {
         assert_eq!(product_evaluation, kernel_evaluation);
     }
 
+    macro_rules! check_admitted_dimensions {
+        ($base:ty, $extension:ty, $seed:expr) => {{
+            check_product_identity::<$base, $extension, 64>($seed);
+            check_product_identity::<$base, $extension, 128>($seed + 1);
+            check_product_identity::<$base, $extension, 256>($seed + 2);
+            check_product_identity::<$base, $extension, 512>($seed + 3);
+            check_product_identity::<$base, $extension, 1024>($seed + 4);
+            check_product_identity::<$base, $extension, 2048>($seed + 5);
+        }};
+    }
+
     #[test]
     fn residue_recurrence_matches_quadratic_and_ring_product_oracles() {
         for seed in 1..=8 {
@@ -150,15 +161,29 @@ mod tests {
             check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 2>(seed + 10);
             check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 4>(seed + 20);
             check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 8>(seed + 30);
-            check_product_identity::<Prime64Offset59, Prime64Offset59, 16>(seed + 40);
-            check_product_identity::<Prime64Offset59, Prime64Offset59, 32>(seed + 50);
+            check_product_identity::<Prime64Offset59, Ext2<Prime64Offset59>, 16>(seed + 40);
+            check_product_identity::<Prime64Offset59, Ext2<Prime64Offset59>, 32>(seed + 50);
             check_product_identity::<Prime128OffsetA7F7, Prime128OffsetA7F7, 64>(seed + 60);
             check_product_identity::<Prime128OffsetA7F7, Prime128OffsetA7F7, 128>(seed + 70);
         }
-        check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 64>(101);
-        check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 128>(102);
-        check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 256>(103);
-        check_product_identity::<Prime32Offset99, FpExt4<Prime32Offset99>, 512>(104);
+
+        // This is the complete commitment-dimension admission surface. Keep
+        // it synchronized with `akita_types::SUPPORTED_COMMITMENT_RING_DIMS`.
+        check_admitted_dimensions!(Prime32Offset99, FpExt4<Prime32Offset99>, 101);
+        check_admitted_dimensions!(Prime64Offset59, Ext2<Prime64Offset59>, 201);
+        check_admitted_dimensions!(Prime128OffsetA7F7, Prime128OffsetA7F7, 301);
+    }
+
+    #[test]
+    fn fp64_terminal_kernel_uses_the_configured_extension_field() {
+        type E = Ext2<Prime64Offset59>;
+        let mut rng = StdRng::seed_from_u64(401);
+        let weights = (0..64).map(|_| E::random(&mut rng)).collect::<Vec<_>>();
+        let alpha = E::random(&mut rng);
+        assert_eq!(
+            terminal_residue_kernel(&weights, alpha).unwrap(),
+            quadratic_kernel(&weights, alpha)
+        );
     }
 
     #[test]

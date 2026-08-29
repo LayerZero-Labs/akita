@@ -825,7 +825,7 @@ impl CommittedGroupParams {
             opening_batch,
             &relation_geometry,
             self.witness_chunk.num_chunks,
-            crate::sis::compute_num_digits_field_width(field_bits, self.open().digits.log_basis),
+            crate::RelationQuotientPlan::for_field_bits(self, field_bits)?,
         )?;
         Ok(witness_layout.live_coeff_len())
     }

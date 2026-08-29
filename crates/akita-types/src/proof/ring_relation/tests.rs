@@ -5,6 +5,7 @@ mod support;
 
 use super::*;
 use crate::layout::GroupOpenPhaseParams;
+use crate::r_decomp_levels;
 use crate::DigitBlocks;
 use crate::{
     emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes, relation_rhs_coeff_len,

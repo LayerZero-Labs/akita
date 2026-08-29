@@ -14,7 +14,7 @@
 //! Markov interpretation once that envelope bounds the conditional mean.
 
 use akita_error::{checked, AkitaError};
-use akita_types::sis::{compute_num_digits_field_width, HonestFoldPolicySpec};
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{CommittedGroupParams, OpeningClaimsLayout, WitnessLayout};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -749,7 +749,6 @@ pub(crate) fn next_source_moment(
             "response source moments disagree with the opening groups".into(),
         ));
     }
-    let quotient_depth = compute_num_digits_field_width(field_bits, params.open().digits.log_basis);
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, opening_layout, extension_degree)?;
     let layout = WitnessLayout::new(
@@ -757,7 +756,7 @@ pub(crate) fn next_source_moment(
         opening_layout,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        quotient_depth,
+        akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?,
     )?;
     let mut logical_components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
 
@@ -853,16 +852,18 @@ pub(crate) fn next_source_moment(
         }
     }
 
-    for row in layout.r_rows() {
-        let scalar_count = row.range().len() / quotient_depth;
-        if scalar_count != 0 {
-            let (energy, peak) = field_digit_moments(
-                scalar_count,
-                field_bits,
-                params.open().digits.log_basis,
-                quotient_depth,
-            )?;
-            checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;
+    if let Some(quotient_depth) = layout.quotient_depth() {
+        for row in layout.r_rows() {
+            let scalar_count = row.range().len() / quotient_depth;
+            if scalar_count != 0 {
+                let (energy, peak) = field_digit_moments(
+                    scalar_count,
+                    field_bits,
+                    params.open().digits.log_basis,
+                    quotient_depth,
+                )?;
+                checked_add_component(&mut logical_components, R_COMPONENT, energy, peak)?;
+            }
         }
     }
 

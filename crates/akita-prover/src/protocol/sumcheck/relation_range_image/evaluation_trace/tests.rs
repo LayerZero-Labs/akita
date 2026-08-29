@@ -101,7 +101,10 @@ where
         &opening_batch,
         &relation_witness_geometry,
         2,
-        r_decomp_levels::<F>(level_params.open().digits.log_basis),
+        akita_types::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+            level_params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let live_len = witness_layout.live_coeff_len();

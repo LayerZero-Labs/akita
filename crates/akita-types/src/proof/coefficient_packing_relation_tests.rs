@@ -92,7 +92,10 @@ where
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<Base>(params.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<Base>(
+            params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let relation_address_geometry = RelationAddressGeometry::for_relation(

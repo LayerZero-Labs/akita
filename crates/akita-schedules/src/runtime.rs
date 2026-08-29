@@ -857,23 +857,20 @@ pub fn planned_next_witness_len(
     }
     let opening_batch =
         params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
-    let quotient_depth = akita_types::sis::compute_num_digits_field_width(
-        field_bits,
-        params.open().digits.log_basis,
-    );
+    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?;
     if !params.compression_sources_supported()? {
         return Ok(None);
     }
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, extension_degree)?;
     if params.setup_prefix().is_none() {
-        return WitnessLayout::try_scalar_live_coeff_len(
+        return Ok(Some(WitnessLayout::scalar_live_coeff_len(
             params,
             &opening_batch,
             &relation_geometry,
             num_chunks,
-            quotient_depth,
-        );
+            quotient_plan,
+        )?));
     }
     Ok(Some(
         WitnessLayout::new(
@@ -881,7 +878,7 @@ pub fn planned_next_witness_len(
             &opening_batch,
             &relation_geometry,
             num_chunks,
-            quotient_depth,
+            quotient_plan,
         )?
         .live_coeff_len(),
     ))
