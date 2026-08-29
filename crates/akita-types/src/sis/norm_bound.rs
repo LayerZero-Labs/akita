@@ -191,7 +191,7 @@ pub fn certified_terminal_response_linf_cap(
 /// accepts every balanced `δ_fold`-digit string. Binding compares two accepted
 /// responses, so their exact coefficient difference envelope is
 /// [`balanced_digit_interval_diameter`], not twice the asymmetric single-response
-/// envelope [`balanced_digit_abs_max`]. MSIS accounting prices the weak-binding
+/// envelope `balanced_digit_abs_max`. MSIS accounting prices the weak-binding
 /// collision `2 · c_bar · delta_z`, where
 /// `c_bar = 2 · challenge.l1_norm`, then selects that exact audited target.
 ///

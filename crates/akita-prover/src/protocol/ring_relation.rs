@@ -33,7 +33,9 @@ use super::core::{
     PreparedCoefficientPackingGroup, PreparedEvaluationTraceGroup, PreparedGroupOpening,
 };
 use super::fold_grind;
-use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
+use super::ring_relation_witness::{
+    RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
+};
 use crate::backend::RingSwitchRelationView;
 
 mod compression_witness;
@@ -323,9 +325,14 @@ where
     }
 }
 
-struct RelationDRows<F: Field, const D: usize> {
-    reduced: Vec<CyclotomicRing<F, D>>,
-    quotients: Vec<CyclotomicRing<F, D>>,
+enum RelationDRows<F: Field, const D: usize> {
+    QuotientLift {
+        reduced: Vec<CyclotomicRing<F, D>>,
+        quotients: Vec<CyclotomicRing<F, D>>,
+    },
+    ReducedEvaluation {
+        reduced: Vec<CyclotomicRing<F, D>>,
+    },
 }
 
 /// Compute the private D-block rows `v = D * e_hat` and their relation quotients.
@@ -338,10 +345,11 @@ fn compute_relation_d_rows<F, RB, const D: usize>(
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
+    relation_mode: akita_types::RingRelationMode,
 ) -> Result<RelationDRows<F, D>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    RB: RingSwitchProveBackend<F, D>,
+    RB: RingSwitchProveBackend<F, D> + DigitRowsComputeBackend<F>,
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
@@ -350,6 +358,21 @@ where
         e_hat_planes = e_hat.typed_planes::<D>()?.len()
     )
     .entered();
+    if relation_mode == akita_types::RingRelationMode::ReducedEvaluation {
+        let rows = backend.digit_rows(
+            prepared,
+            d_row_len,
+            &[e_hat.typed_planes::<D>()?],
+            log_basis,
+        )?;
+        let [reduced] = rows
+            .try_into()
+            .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
+        if reduced.len() != d_row_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        return Ok(RelationDRows::ReducedEvaluation { reduced });
+    }
     let rows = RingSwitchRelationKernel::relation_rows(
         backend,
         prepared,
@@ -382,7 +405,7 @@ where
             relation_quotient::quotient_from_cyclic_and_reduced(cyclic, reduced)
         })
         .collect();
-    Ok(RelationDRows {
+    Ok(RelationDRows::QuotientLift {
         reduced: rows.d_negacyclic,
         quotients,
     })
@@ -722,21 +745,35 @@ impl RingRelationProver {
             dims.d_d(),
             |D_D| {
                 if d_row_len == 0 {
-                    Ok::<_, AkitaError>((
-                        RingVec::from_coeffs(Vec::new()),
-                        RingVec::from_coeffs(Vec::new()),
-                    ))
+                    let d_quotients = match lp.ring_relation_mode {
+                        akita_types::RingRelationMode::QuotientLift => {
+                            RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new()))
+                        }
+                        akita_types::RingRelationMode::ReducedEvaluation => {
+                            RelationDQuotientWitness::ReducedEvaluation
+                        }
+                    };
+                    Ok::<_, AkitaError>((RingVec::from_coeffs(Vec::new()), d_quotients))
                 } else {
                     let d_rows = compute_relation_d_rows::<F, RB, D_D>(
                         ring_switch_ctx,
                         d_row_len,
                         d_log_basis,
                         e_hat,
+                        lp.ring_relation_mode,
                     )?;
-                    Ok::<_, AkitaError>((
-                        RingVec::from_ring_elems(&d_rows.reduced),
-                        RingVec::from_ring_elems(&d_rows.quotients),
-                    ))
+                    match d_rows {
+                        RelationDRows::QuotientLift { reduced, quotients } => Ok((
+                            RingVec::from_ring_elems(&reduced),
+                            RelationDQuotientWitness::QuotientLift(RingVec::from_ring_elems(
+                                &quotients,
+                            )),
+                        )),
+                        RelationDRows::ReducedEvaluation { reduced } => Ok((
+                            RingVec::from_ring_elems(&reduced),
+                            RelationDQuotientWitness::ReducedEvaluation,
+                        )),
+                    }
                 }
             }
         )
@@ -758,6 +795,7 @@ impl RingRelationProver {
                         plan,
                         &hints[group_index],
                         group_payloads[relation_group_index].clone(),
+                        lp.ring_relation_mode,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -766,6 +804,7 @@ impl RingRelationProver {
                 relation_rhs_layout,
                 retained_outer_sources,
                 &v,
+                lp.ring_relation_mode,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(

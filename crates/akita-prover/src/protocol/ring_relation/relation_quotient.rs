@@ -712,11 +712,7 @@ where
         }
         let ring_dim = geometry.polynomial_modulus_dimension();
         let compression = compression.ok_or(AkitaError::InvalidProof)?;
-        let quotient = compression
-            .source(source)?
-            .quotients
-            .get(map_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let quotient = compression.source(source)?.quotient(map_index)?;
         if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
             return Err(AkitaError::InvalidSize {
                 expected: ring_dim,

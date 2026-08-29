@@ -1,4 +1,6 @@
 use super::*;
+use crate::compute::{ComputeBackendSetup, CpuBackend};
+use crate::AkitaProverSetup;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     relation_rhs_coeff_len, BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams,
@@ -9,6 +11,52 @@ use jolt_field::{Ext2, ExtField, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
+
+#[test]
+fn reduced_d_rows_prepare_only_the_negacyclic_product() {
+    const D: usize = 64;
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        akita_types::SetupMatrixCapacity {
+            num_field_elements: 4 * D,
+        },
+    )
+    .unwrap();
+    let prepared = CpuBackend::DEFAULT
+        .prepare_expanded(setup.expanded.clone())
+        .unwrap();
+    let ctx = OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref()).unwrap();
+    let e_hat = DigitBlocks::new(vec![-1; 2 * D], vec![2], D).unwrap();
+
+    let rows = compute_relation_d_rows::<F, CpuBackend, D>(
+        &ctx,
+        2,
+        1,
+        &e_hat,
+        akita_types::RingRelationMode::ReducedEvaluation,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        rows,
+        RelationDRows::ReducedEvaluation { ref reduced } if reduced.len() == 2
+    ));
+    let key = akita_types::NttCacheKey::from_matrix_shape(
+        D,
+        2,
+        2,
+        akita_types::NttTransformDomain::Negacyclic,
+    )
+    .unwrap();
+    assert_eq!(
+        prepared.ntt_cache_bytes().unwrap(),
+        CpuBackend::DEFAULT
+            .planned_ntt_cache_entry_bytes(&prepared, key)
+            .unwrap()
+    );
+    assert_eq!(prepared.compression_ntt_cache_bytes(), 0);
+}
 
 fn fixture() -> (
     CommittedGroupParams,

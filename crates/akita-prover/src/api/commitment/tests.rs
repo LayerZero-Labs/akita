@@ -394,6 +394,7 @@ fn commit_unsliced_reference(
             id: (),
             plan: compression_plan.clone(),
             coefficients: source.into_coeffs(),
+            relation_mode: akita_types::RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -412,11 +413,12 @@ fn commit_unsliced_reference(
         .into_iter()
         .map(|(rows, _)| rows)
         .collect::<Vec<_>>();
+    let quotients = output.relation.into_quotient_lift()?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
         D,
         inner_rows,
         &output.witness,
-        &output.quotients,
+        &quotients,
     )?;
     Ok(((Commitment::new(payload), hint), compression_plan))
 }
