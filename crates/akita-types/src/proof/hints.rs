@@ -4,6 +4,33 @@ use crate::{
     COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };
 
+fn validate_compression_stage_count(stage_count: usize) -> Result<(), SerializationError> {
+    if matches!(stage_count, 0 | COMPRESSION_MAP_COUNT) {
+        Ok(())
+    } else {
+        Err(SerializationError::InvalidData(
+            "commitment hint must contain zero or exactly two compression stages".into(),
+        ))
+    }
+}
+
+fn validate_compression_component_counts(
+    stage_count: usize,
+    quotient_count: usize,
+) -> Result<(), SerializationError> {
+    validate_compression_stage_count(stage_count)?;
+    if matches!(
+        (stage_count, quotient_count),
+        (0, 0) | (COMPRESSION_MAP_COUNT, 0) | (COMPRESSION_MAP_COUNT, COMPRESSION_MAP_COUNT)
+    ) {
+        Ok(())
+    } else {
+        Err(SerializationError::InvalidData(
+            "commitment hint must contain zero or one quotient per compression stage".into(),
+        ))
+    }
+}
+
 /// Prover-side semantic inner rows for one commitment bundle.
 ///
 /// One entry belongs to each polynomial in claim order. Every entry stores
@@ -185,25 +212,10 @@ impl<F: Field> AkitaCommitmentHint<F> {
             ));
         }
         checked_shape_len(self.inner_rows.len())?;
-        if !matches!(
+        validate_compression_component_counts(
             self.outer_compression_stages.len(),
-            0 | COMPRESSION_MAP_COUNT
-        ) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or exactly two compression stages".into(),
-            ));
-        }
-        if !matches!(
-            (
-                self.outer_compression_stages.len(),
-                self.outer_compression_quotients.len(),
-            ),
-            (0, 0) | (COMPRESSION_MAP_COUNT, 0) | (COMPRESSION_MAP_COUNT, COMPRESSION_MAP_COUNT)
-        ) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or one quotient per compression stage".into(),
-            ));
-        }
+            self.outer_compression_quotients.len(),
+        )?;
         let mut packed_bytes = 0usize;
         for stage in &self.outer_compression_stages {
             packed_bytes = packed_bytes.checked_add(stage.len()).ok_or_else(|| {
@@ -433,11 +445,7 @@ where
 
         let compression_stage_count =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if !matches!(compression_stage_count, 0 | COMPRESSION_MAP_COUNT) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or exactly two compression stages".into(),
-            ));
-        }
+        validate_compression_stage_count(compression_stage_count)?;
         let mut outer_compression_stages = Vec::new();
         reserve_shape_len(&mut outer_compression_stages, compression_stage_count)?;
         let mut packed_bytes = 0usize;
@@ -460,14 +468,7 @@ where
 
         let compression_quotient_count =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        if !matches!(
-            (compression_stage_count, compression_quotient_count),
-            (0, 0) | (COMPRESSION_MAP_COUNT, 0) | (COMPRESSION_MAP_COUNT, COMPRESSION_MAP_COUNT)
-        ) {
-            return Err(SerializationError::InvalidData(
-                "commitment hint must contain zero or one quotient per compression stage".into(),
-            ));
-        }
+        validate_compression_component_counts(compression_stage_count, compression_quotient_count)?;
         let mut outer_compression_quotients = Vec::new();
         reserve_shape_len(&mut outer_compression_quotients, compression_quotient_count)?;
         let mut quotient_coefficients = 0usize;

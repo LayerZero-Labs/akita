@@ -81,6 +81,21 @@ enum PreparedWitnessTail<F: FieldCore> {
     ReducedEvaluation,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static QUOTIENT_DECOMPOSITION_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_quotient_decomposition_calls() {
+    QUOTIENT_DECOMPOSITION_CALLS.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn quotient_decomposition_calls() -> usize {
+    QUOTIENT_DECOMPOSITION_CALLS.get()
+}
+
 #[cfg(feature = "response-model-diagnostics")]
 fn integer_range_l2_sq(witness: &PackedSignedDigits, range: std::ops::Range<usize>) -> u128 {
     witness
@@ -666,6 +681,8 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     for (_, event) in events {
         match event {
             WitnessTailEvent::Quotient { row_index } => {
+                #[cfg(test)]
+                QUOTIENT_DECOMPOSITION_CALLS.with(|calls| calls.set(calls.get() + 1));
                 let row = r.rows().get(row_index).ok_or(AkitaError::InvalidProof)?;
                 let row_layout = layout
                     .r_rows()
@@ -699,30 +716,45 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
                 out.write_at(range.start, &digits)?;
             }
             WitnessTailEvent::Compression { source, map_index } => {
-                let compression = compression.ok_or(AkitaError::InvalidProof)?;
-                let layer = layout
-                    .compression_layers()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let span = match source {
-                    CompressionSourceId::Outer { group_index } => layer
-                        .f_spans()
-                        .iter()
-                        .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-                        .ok_or(AkitaError::InvalidProof)?,
-                    CompressionSourceId::Opening => layer.h_span(),
-                };
-                let packed = compression
-                    .source(source)?
-                    .witness
-                    .stages()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                emit_packed_negative_binary(out, span, packed)?;
+                emit_compression_witness_event(
+                    out,
+                    layout,
+                    compression.ok_or(AkitaError::InvalidProof)?,
+                    source,
+                    map_index,
+                )?;
             }
         }
     }
     Ok(())
+}
+
+fn emit_compression_witness_event<F: CanonicalField>(
+    out: &mut PackedSignedDigitWriter,
+    layout: &WitnessLayout,
+    compression: &CompressionWitnessMaterialization<F>,
+    source: CompressionSourceId,
+    map_index: usize,
+) -> Result<(), AkitaError> {
+    let layer = layout
+        .compression_layers()
+        .get(map_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    let span = match source {
+        CompressionSourceId::Outer { group_index } => layer
+            .f_spans()
+            .iter()
+            .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+            .ok_or(AkitaError::InvalidProof)?,
+        CompressionSourceId::Opening => layer.h_span(),
+    };
+    let packed = compression
+        .source(source)?
+        .witness
+        .stages()
+        .get(map_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    emit_packed_negative_binary(out, span, packed)
 }
 
 fn emit_reduced_witness_tail<F: CanonicalField>(
@@ -735,24 +767,24 @@ fn emit_reduced_witness_tail<F: CanonicalField>(
     }
     for layer in layout.compression_layers() {
         let compression = compression.ok_or(AkitaError::InvalidProof)?;
-        for (group_index, span) in layer.f_spans() {
-            let packed = compression
-                .source(CompressionSourceId::Outer {
+        for (group_index, _) in layer.f_spans() {
+            emit_compression_witness_event(
+                out,
+                layout,
+                compression,
+                CompressionSourceId::Outer {
                     group_index: *group_index,
-                })?
-                .witness
-                .stages()
-                .get(layer.map_index())
-                .ok_or(AkitaError::InvalidProof)?;
-            emit_packed_negative_binary(out, span, packed)?;
+                },
+                layer.map_index(),
+            )?;
         }
-        let packed = compression
-            .source(CompressionSourceId::Opening)?
-            .witness
-            .stages()
-            .get(layer.map_index())
-            .ok_or(AkitaError::InvalidProof)?;
-        emit_packed_negative_binary(out, layer.h_span(), packed)?;
+        emit_compression_witness_event(
+            out,
+            layout,
+            compression,
+            CompressionSourceId::Opening,
+            layer.map_index(),
+        )?;
     }
     Ok(())
 }

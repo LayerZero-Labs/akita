@@ -4,8 +4,7 @@
 //! [`RingRelationProver`].
 use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
-    OpeningFoldKernel, OperationCtx, RingSwitchProveBackend, RingSwitchRelationKernel,
-    RingSwitchRelationPlan, RootOpeningSource, RuntimeRingSwitchProveBackend,
+    OpeningFoldKernel, OperationCtx, RootOpeningSource, RuntimeRingSwitchProveBackend,
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
@@ -36,16 +35,19 @@ use super::fold_grind;
 use super::ring_relation_witness::{
     RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
-use crate::backend::RingSwitchRelationView;
-
 mod compression_witness;
+mod d_rows;
 mod relation_quotient;
+
+use d_rows::{compute_relation_d_rows, RelationDRows};
 
 pub(crate) use compression_witness::{
     materialize_compression_witness, CompressionSourceId, CompressionSourceWitness,
     CompressionWitnessMaterialization,
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
+#[cfg(test)]
+pub(crate) use relation_quotient::{multi_group_quotient_calls, reset_multi_group_quotient_calls};
 
 struct EvaluationTraceOpeningMaterial<F: Field> {
     e_folded: RingVec<F>,
@@ -323,92 +325,6 @@ where
             "sparse batched fold is unsupported for this polynomial backend".to_string(),
         )),
     }
-}
-
-enum RelationDRows<F: Field, const D: usize> {
-    QuotientLift {
-        reduced: Vec<CyclotomicRing<F, D>>,
-        quotients: Vec<CyclotomicRing<F, D>>,
-    },
-    ReducedEvaluation {
-        reduced: Vec<CyclotomicRing<F, D>>,
-    },
-}
-
-/// Compute the private D-block rows `v = D * e_hat` and their relation quotients.
-///
-/// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
-/// the opening digits at the D-role ring dimension. Callers extract both from
-/// the schedule; this function must not read schedule types.
-fn compute_relation_d_rows<F, RB, const D: usize>(
-    ring_switch_ctx: &OperationCtx<'_, F, RB>,
-    d_row_len: usize,
-    log_basis: u32,
-    e_hat: &DigitBlocks,
-    relation_mode: akita_types::RingRelationMode,
-) -> Result<RelationDRows<F, D>, AkitaError>
-where
-    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
-    RB: RingSwitchProveBackend<F, D> + DigitRowsComputeBackend<F>,
-{
-    let backend = ring_switch_ctx.backend();
-    let prepared = ring_switch_ctx.prepared();
-    let _span = tracing::info_span!(
-        "compute_relation_v",
-        e_hat_planes = e_hat.typed_planes::<D>()?.len()
-    )
-    .entered();
-    if relation_mode == akita_types::RingRelationMode::ReducedEvaluation {
-        let rows = backend.digit_rows(
-            prepared,
-            d_row_len,
-            &[e_hat.typed_planes::<D>()?],
-            log_basis,
-        )?;
-        let [reduced] = rows
-            .try_into()
-            .map_err(|_: Vec<_>| AkitaError::InvalidProof)?;
-        if reduced.len() != d_row_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        return Ok(RelationDRows::ReducedEvaluation { reduced });
-    }
-    let rows = RingSwitchRelationKernel::relation_rows(
-        backend,
-        prepared,
-        RingSwitchRelationView {
-            e_hat: e_hat.typed_planes::<D>()?,
-            t_hat: &[],
-            z_segment: &[],
-            z_folded_centered_inf_norm: 0,
-        },
-        RingSwitchRelationPlan {
-            n_d: d_row_len,
-            n_b: 0,
-            n_a: 0,
-            log_basis_open: log_basis,
-            log_basis_outer: log_basis,
-        },
-    )?;
-    if rows.d_negacyclic.len() != d_row_len
-        || rows.d_cyclic.len() != d_row_len
-        || !rows.b_cyclic.is_empty()
-        || !rows.a_quotients.is_empty()
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let quotients = rows
-        .d_cyclic
-        .iter()
-        .zip(&rows.d_negacyclic)
-        .map(|(cyclic, reduced)| {
-            relation_quotient::quotient_from_cyclic_and_reduced(cyclic, reduced)
-        })
-        .collect();
-    Ok(RelationDRows::QuotientLift {
-        reduced: rows.d_negacyclic,
-        quotients,
-    })
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic

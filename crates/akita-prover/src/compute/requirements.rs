@@ -232,23 +232,26 @@ impl NttExecutionRequirements {
         params: &CommittedGroupParams,
         num_chunks: usize,
     ) -> Result<(), AkitaError> {
-        if params.ring_relation_mode == RingRelationMode::QuotientLift {
-            self.add_relation_ab(
-                level,
-                params.inner().matrix.ring_dimension(),
-                params.inner().matrix.output_rank(),
-                params.inner().matrix.input_width(),
-                params.outer().matrix.ring_dimension(),
-                params.outer().matrix.output_rank(),
-                params.outer().matrix.input_width(),
-                params.open().digits.log_basis,
-                params.num_digits_fold(),
-                num_chunks,
-                params.inner().matrix.sis_modulus_profile(),
-            )?;
-            for precommitted in params.precommitted_groups() {
-                self.add_precommitted_relation(level, precommitted, num_chunks)?;
+        match params.ring_relation_mode {
+            RingRelationMode::QuotientLift => {
+                self.add_relation_ab(
+                    level,
+                    params.inner().matrix.ring_dimension(),
+                    params.inner().matrix.output_rank(),
+                    params.inner().matrix.input_width(),
+                    params.outer().matrix.ring_dimension(),
+                    params.outer().matrix.output_rank(),
+                    params.outer().matrix.input_width(),
+                    params.open().digits.log_basis,
+                    params.num_digits_fold(),
+                    num_chunks,
+                    params.inner().matrix.sis_modulus_profile(),
+                )?;
+                for precommitted in params.precommitted_groups() {
+                    self.add_precommitted_relation(level, precommitted, num_chunks)?;
+                }
             }
+            RingRelationMode::ReducedEvaluation => {}
         }
         Ok(())
     }
@@ -271,8 +274,8 @@ impl NttExecutionRequirements {
             )?,
             extent,
         )?;
-        if params.ring_relation_mode == RingRelationMode::QuotientLift {
-            return self.add_matrix(
+        match params.ring_relation_mode {
+            RingRelationMode::QuotientLift => self.add_matrix(
                 level,
                 NttOperationCluster::RingSwitch,
                 NttCacheKey::from_matrix_shape(
@@ -282,9 +285,9 @@ impl NttExecutionRequirements {
                     NttTransformDomain::Cyclic,
                 )?,
                 extent,
-            );
+            ),
+            RingRelationMode::ReducedEvaluation => Ok(()),
         }
-        Ok(())
     }
 
     fn add_precommitted_relation(
