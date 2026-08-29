@@ -285,6 +285,7 @@ impl RecursiveCandidateContext<'_, '_> {
                 }],
                 core.open_commit_matrix,
                 request.payload_mode,
+                akita_types::RingRelationMode::QuotientLift,
                 source_encoding,
                 crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
             )?);

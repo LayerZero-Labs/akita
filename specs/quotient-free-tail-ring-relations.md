@@ -4,8 +4,8 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-25 |
-| Status        | proposed |
-| PR            | |
+| Status        | active |
+| PR            | [#445](https://github.com/LayerZero-Labs/akita/pull/445) |
 | Supersedes    | |
 | Superseded-by | |
 | Book-chapter  | book/src/how/proving/akita-fold-realizations.md |
@@ -453,18 +453,25 @@ address semantics.
 
 ### Verifier MLE of a residue kernel
 
-Stage 2 ends at a multilinear point. Let `r` be the coefficient-coordinate
-part of that point, and let
+Stage 2 ends at a multilinear point. Let `r` be that complete point and let
+`o` be the physical start address of one native coefficient window. Define the
+exact terminal equality weights
 
 \[
-e_r(j)=\operatorname{eq}(r,j).
+e_{r,o}(j)=\operatorname{eq}(r,o+j).
 \]
+
+The caller MUST derive this window from the canonical relation address through
+the checked offset-equality authority. It MUST NOT assume that every native A,
+B, D, F, or H window begins at zero merely because the shared coefficient block
+is aligned. Two windows with the same native dimension but different physical
+starts are not interchangeable.
 
 For one public multiplier `A`, the verifier needs
 
 \[
-\widetilde\kappa_{A,\alpha}(r)
-=\sum_j e_r(j)\kappa_{A,\alpha}(j).
+\widetilde\kappa_{A,\alpha}(r,o)
+=\sum_j e_{r,o}(j)\kappa_{A,\alpha}(j).
 \]
 
 Swap the public multiplier and witness-coordinate sums:
@@ -478,7 +485,7 @@ where
 
 \[
 H_k(r,\alpha)
-=\sum_j e_r(j)
+=\sum_j e_{r,o}(j)
 (-1)^{\lfloor(k+j)/d\rfloor}
 \alpha^{(k+j)\bmod d}.
 \]
@@ -487,9 +494,12 @@ The complete `H` vector has the recurrence
 
 \[
 H_0(r,\alpha)
-=\sum_j e_r(j)\alpha^j
-=\prod_b\left((1-r_b)+r_b\alpha^{2^b}\right)
+=\sum_j e_{r,o}(j)\alpha^j
 \]
+
+The familiar product formula is available only when the checked window
+authority proves the corresponding zero-aligned complete Boolean block. The
+general implementation consumes the exact equality-weight slice.
 
 and
 
@@ -497,13 +507,13 @@ and
 \boxed{
 H_{k+1}(r,\alpha)
 =\alpha H_k(r,\alpha)
--D_\alpha e_r(d-1-k).
+-D_\alpha e_{r,o}(d-1-k).
 }
 \]
 
-The verifier builds `e_r` and `H` once per distinct native role dimension,
-then evaluates each public multiplier by one base-field-by-extension-field dot
-product with `H`.
+The verifier builds `H` from each exact equality window and reuses it only for
+an identical physical start and native dimension. It then evaluates each public
+multiplier by one base-field-by-extension-field dot product with `H`.
 
 ### Direct public setup scan
 
@@ -533,9 +543,10 @@ changes from powers of `alpha` to `H` weights.
 If `S` is the active setup coefficient count, both scans cost `O(S+d)` and one
 base-by-extension multiply-accumulate per setup coefficient. Reduced evaluation
 adds `O(d)` extension work to build the equality table and `H` recurrence.
-Mixed A/B/D dimensions require one `H^(d_role)` per distinct native dimension,
-which is the same dimension set for which the verifier currently prepares
-native alpha powers.
+Mixed or unaligned A/B/D/F/H windows require their exact checked equality
+weights. The implementation MAY stream or cache these kernels, but auxiliary
+storage MUST remain bounded by the largest active native window and it MUST NOT
+materialize a witness-sized functional table.
 
 The verifier MUST extend the existing fused `SetupContributionPlan` scan. It
 MUST NOT add independent A, B, and D scans or materialize one residue kernel
@@ -611,7 +622,7 @@ replacement for the planner’s other choices.
 | Incoming setup prefix | Forbidden | Cutover waits until the prefix is absent |
 | Outgoing setup offload / Stage 3 | Forbidden after cutover | The reduced-evaluation suffix cannot create a later prefix |
 | Extension-opening reduction | Supported | Evaluation-trace final claim and EOR transcript remain unchanged |
-| Mixed role dimensions | Supported | Prepare one terminal residue kernel per distinct native dimension |
+| Mixed role dimensions | Supported | Prepare terminal residue kernels from exact checked physical equality windows |
 | Multi-chunk witness | Supported | `WitnessLayout` remains chunk-major; mode only removes the shared R ranges |
 | Frozen root precommitments | Not present in the suffix | Current recursive folds reject precommitted groups independently |
 | Clear terminal response | Existing behavior | Not represented by the new enum |
@@ -873,7 +884,7 @@ pub fn residue_kernel<F, E>(
 ) -> Result<Vec<E>, AkitaError>;
 
 pub fn terminal_residue_kernel<E>(
-    coefficient_point: &[E],
+    equality_weights: &[E],
     alpha: E,
 ) -> Result<Vec<E>, AkitaError>;
 ```
@@ -888,9 +899,11 @@ not:
 - power-of-two dimension and point-arity validation before allocation;
 - no division by `alpha^d + 1`.
 
-`terminal_residue_kernel` SHOULD generate the equality weights and `H` in one
-allocation when that is clearer and faster than retaining two vectors. Tests
-must still expose both mathematical quantities to the oracle.
+The caller SHOULD derive `e_j = eq(point, physical_start + j)` through the
+existing checked offset-equality window authority, then pass those exact
+weights to `terminal_residue_kernel`. The primitive MAY reuse that input
+allocation for `H` when ownership makes this clear. Tests must still expose
+both mathematical quantities to the oracle.
 
 ### Prover relation-weight representation
 
@@ -961,6 +974,23 @@ In `ReducedEvaluation`, it becomes:
 
 No empty `RelationQuotientOutput` SHOULD be constructed. The mode match should
 occur before quotient computation.
+
+The mode match MUST also occur before selecting product and transform backends.
+Deleting R ranges is insufficient if the prover still computes values that are
+discarded later. In reduced-evaluation mode:
+
+- the D path MUST produce only its negacyclic reduced image, not a cyclic image
+  and derived polynomial quotient;
+- the compression path MUST retain negative-binary digits and terminal reduced
+  images without constructing cyclic product or quotient images;
+- A/B relation-quotient kernels MUST not run; and
+- NTT/cache requirements MUST omit relation cyclic transforms, compression
+  cyclic transforms, and centered quotient-tail caches that no live witness
+  segment consumes.
+
+These are typed backend requirements, not benchmark-only optimizations. Tests
+and diagnostics MUST show zero quotient construction, decomposition, and
+quotient-only NTT/cache preparation in reduced-evaluation mode.
 
 ### Compression path
 
@@ -1591,6 +1621,18 @@ Mitigation: extend `SetupContributionPlan` first and benchmark its existing
 fused traversal with power and H functionals before integrating the full
 protocol.
 
+### Hidden quotient work below witness construction
+
+The current D and compression executors can compute cyclic and negacyclic
+products together and derive quotients before witness emission decides what to
+keep. A layout-only cutover would save proof bytes while retaining most of the
+prover work and exact-NTT cache pressure.
+
+Mitigation: introduce negacyclic-only reduced-mode product paths and make NTT
+requirements depend on `RingRelationMode`. Assert that quotient-only kernels,
+cyclic transforms, and centered quotient-tail caches are absent before
+collecting prover benchmarks.
+
 ### Planner state widening
 
 Removing quotient rows changes witness length, response moments, and later
@@ -1610,142 +1652,158 @@ not a proposal for stacked feature PRs.
 
 ## Execution plan
 
-### Slice 0: approve the protocol and scope
+### Slice 0: restack and correct the active specification
 
-- Review this spec with `specs/SPEC_REVIEW.md`.
-- Resolve whether implementation begins after transcript grinding or on a
-  stack whose base is its exact reviewed head.
-- Confirm that the reduced-evaluation mode removes compression quotients and
-  forbids all setup-prefix edges after cutover.
-- Record baseline dense fp32/fp64/fp128 catalog and planner diagnostics.
+- Stack this PR on the exact #444 head, whose first parent stack contains the
+  selected #448 transcript-grinding head.
+- Refresh concurrent-PR references and mark this specification active.
+- Record the offset-aware terminal equality-window requirement and the ban on
+  hidden quotient-only product or NTT work.
 
-Exit condition: no ambiguity remains about mode semantics, eligibility,
-transcript order, or proof-size evidence.
+Exit condition: the specification branch has the intended first parent and no
+known code/spec mismatch remains before implementation.
 
-### Slice 1: shared type, descriptor, and layout authority
+### Slice 1: protocol type, binding, and generated schema
 
-- Add `RingRelationMode` and the one-per-fold field.
-- Bind it into descriptors, instance schedule digests, generated types, and
-  catalog identity.
-- Add complete `FoldSchedule` eligibility validation.
-- Make `WitnessLayout` mode-aware and remove R ranges in reduced-evaluation mode.
-- Route proof sizing and source moments through that layout.
+- Add `RingRelationMode` and the one-per-fold `CommittedGroupParams` field.
+- Bind its stable tag into level and schedule descriptors.
+- Bump the instance descriptor epoch.
+- Carry the field through generated rows, expansion, emission, and catalog
+  identity without changing the existing schedule choices.
 
-This slice may use a test-only reduced-evaluation schedule but need not prove it yet.
+Exit condition: descriptors and all shipped catalog identities distinguish the
+two modes, while every existing row replays explicitly as `QuotientLift`.
 
-Exit condition: typed schedule and layout tests can distinguish both modes,
-all malformed sequences reject, and no planner-only quotient toggle remains.
+### Slice 2: mode-aware witness layout authority
 
-### Slice 2: algebra oracle and fused verifier setup scan
+- Replace the implicit always-present quotient tail with a typed lifted or
+  reduced relation layout.
+- Remove ordinary and compression quotient ranges in reduced-evaluation mode.
+- Route successor length, proof sizing, source moments, and range access through
+  the same layout authority.
+- Add complete `FoldSchedule` eligibility and monotone-suffix validation.
 
-- Add the residue-kernel and terminal-kernel recurrences plus independent
-  references.
+Exit condition: typed layout and schedule tests distinguish both modes, all
+malformed sequences reject, and no planner-only quotient toggle remains.
+
+### Slice 3: shared residue algebra
+
+- Add the residue recurrence and offset-aware terminal-kernel recurrence.
+- Consume exact checked equality weights for each physical native window.
+- Add independent quadratic references and malformed-input tests.
+
+Exit condition: algebra oracles agree across supported dimensions, offsets,
+and mixed-window fixtures without prover/verifier copies.
+
+### Slice 4: verifier coefficient functional and fused setup scan
+
 - Generalize prepared native coefficient functionals.
-- Extend `SetupContributionPlan` to evaluate power or H coefficient weights
+- Extend `SetupContributionPlan` to evaluate power or terminal-kernel weights
   through the same fused scan.
-- Add reduced-evaluation structured challenge and compression-map terminal evaluation.
+- Add reduced structured-challenge and compression-map terminal evaluation.
 
-Exit condition: verifier-focused dense oracles pass for raw/compressed and
-mixed-dimension fixtures, with one setup scan and `O(d)` auxiliary state.
+Exit condition: verifier-focused dense oracles pass for raw, compressed,
+mixed-dimension, and unaligned fixtures with one setup scan and bounded
+auxiliary state.
 
-### Slice 3: verifier protocol integration
+### Slice 5: verifier protocol integration
 
-- Add the exhaustive mode dispatch to `RelationMatrixEvaluator`.
+- Add exhaustive mode dispatch to `RelationMatrixEvaluator`.
 - Reject deferred setup claims in reduced-evaluation mode.
-- Remove quotient-tail evaluation and the common-alpha outer factor in the
-  reduced-evaluation branch.
+- Remove quotient-tail evaluation and the common-alpha outer factor from the
+  reduced branch.
 - Add transcript-order, schedule-digest, tamper, and no-panic tests.
 
-Exit condition: the verifier accepts reduced-evaluation scalar fixtures and rejects every
-cross-mode or malformed replay without any proof-format addition.
+Exit condition: the verifier accepts reduced scalar fixtures and rejects every
+cross-mode or malformed replay without a proof-format field.
 
-### Slice 4: baseline dense prover
+### Slice 6: zero-quotient prover substrate and NTT requirements
 
-- Skip quotient construction and emission in reduced-evaluation mode.
+- Select negacyclic-only D and compression product paths before quotient work.
+- Skip ordinary and compression quotient construction and emission.
+- Remove relation-cyclic and quotient-tail-only transforms and caches from the
+  reduced-mode NTT requirement set.
+
+Exit condition: diagnostics prove zero quotient construction, decomposition,
+cyclic-only transforms, and quotient-only cache preparation in reduced mode.
+
+### Slice 7: dense Stage-2 prover oracle
+
 - Introduce the canonical factored-or-dense relation-weight oracle.
 - Compile all ordinary and compression reduced weights into the dense variant.
 - Integrate it with the existing fused range-image/relation sumcheck.
 - Preserve evaluation-trace/EOR structured terms and negative-binary terms.
 
-Exit condition: quotient-lift and reduced-evaluation end-to-end proofs agree on valid relations;
-reduced-evaluation mode executes zero quotient work and supports the declared feature
-matrix.
+Exit condition: quotient-lift and reduced-evaluation proofs agree on valid
+relations and the declared feature matrix passes end to end.
 
-### Slice 5: exact planner cutover
+### Slice 8: exact planner cutover
 
 - Add `RingRelationPhase` to suffix state and memo keys.
-- Enumerate the one-way cutover at eligible states.
-- Suppress setup-prefix search in the reduced-evaluation suffix.
-- Price exact mode-aware witness shapes, source moments, proof bytes, and any
-  grinding nonce stream.
+- Enumerate the one-way cutover and suppress later setup-prefix search.
+- Price exact mode-aware witness shapes, source moments, proof bytes, and
+  grinding nonce streams.
 - Add the small exhaustive cutover oracle and phase diagnostics.
 
 Exit condition: traversal order does not change selection, cache quotas remain
 unchanged, and generated replay matches planner estimates.
 
-### Slice 6: generated catalogs and evidence
+### Slice 9: generated schedules, evidence, and documentation
 
-- Regenerate all affected catalogs.
-- Produce dense fp32/fp64/fp128 baseline/head proof-size evidence.
-- Serialize representative proofs and benchmark verifier phases.
-- Record planner wall time, peak RSS, and search counters.
-- Update Book chapters only after behavior and evidence are stable.
+- Regenerate affected catalogs only after the planner and proof shapes settle.
+- Produce dense fp32/fp64/fp128 proof-size and verifier-phase evidence.
+- Record planner wall time, peak RSS, search counters, and prover quotient-work
+  counters.
+- Update the Book after behavior and evidence are stable.
 
-Exit condition: checked evidence supports the proof-size change, verifier
-architecture, and bounded search claims.
+Exit condition: checked evidence supports the proof-size, verifier architecture,
+zero-quotient-work, and bounded-search claims.
 
-### Slice 7: optional prover optimization
-
-This slice is not required for acceptance of this feature branch. Profile the dense oracle
-before choosing among sparse kernel banks, one-round checkpointing, full
-streaming, or rank-two Stage 3. Any optimization must preserve the shared
-algebra oracle and verifier equation.
+Optional prover optimizations follow profiling and are not required for initial
+acceptance. They MUST preserve the shared algebra oracle and verifier equation.
 
 ## Pull-request landscape and stacking plan
 
-This section records the open Akita branches inspected on 2026-08-25. SHAs are
+This section records the Akita branches refreshed on 2026-08-29. SHAs are
 included so the recommendation does not silently apply to later rewrites.
 
-### Transcript grinding PR 417
+### Transcript grinding PR 448
 
-PR [#417](https://github.com/LayerZero-Labs/akita/pull/417), head
-`aa4efc3074d652abfab166e7bada3fc5a3fed397`, is open and review-required. It
+PR [#448](https://github.com/LayerZero-Labs/akita/pull/448), head
+`303ddbca548c788e5ec7fbd74b5a679bd269d8cd`, is open. It
 changes transcript query sites around `alpha`, `tau0`, and `tau1`; proof-level
 nonce serialization; planner cost composition; suffix-DP state and frontiers;
 schedule estimates; generated catalogs; and both ring-switch implementations.
 
-This feature has no mathematical dependency on grinding, but its integration
-has a strong code and transcript dependency. The implementation SHOULD wait
-for PR 417 to land, or explicitly stack on that exact reviewed head. Building
-the full feature independently on current main would create avoidable conflict
-in the verifier alpha site and would price the wrong planner cost type if PR
-417 lands later.
+This feature has no mathematical dependency on grinding, but it has a strong
+code, transcript, and proof-cost dependency. The implementation branch is now
+explicitly stacked in the intended merge order:
 
-This single feature branch remains based on current `main`. It will carry the
-specification and the complete implementation. Algebra Slice 2 may begin on
-the current base because it avoids transcript-facing types. Before Slices 3–6,
-the same branch SHOULD be rebased onto a `main` containing PR 417, or explicitly
-stacked on that exact reviewed head if implementation cannot wait. Do not open
-a replacement implementation branch.
+```text
+#448 transcript grinding @ 303ddbca5
+  -> #444 q128 SIS widening @ b5326abf8
+    -> #445 quotient-free relations
+```
+
+The #445 spec replay commit has `b5326abf8d7311b13c9f1146d0a515e549c64e9a`
+as its sole parent. Later slices MUST preserve this order or restack on the
+corresponding newer exact heads after refreshing all three PRs.
 
 ### Suffix EOR and packed prover stack
 
-PR [#398](https://github.com/LayerZero-Labs/akita/pull/398), head
-`dd0a9fbdb6dfecd2b363a7ad82ffbc8a65366a2b`, rewrites suffix EOR and touches
-evaluation-trace prover tables. PR
-[#437](https://github.com/LayerZero-Labs/akita/pull/437), head
-`f72ae5683e2af3051d5b805b21cf61c27a832ae6`, stacks packed recursive witness
-storage on #398 and changes `ring_switch`, `ring_switch/coeffs`,
-`ring_relation_witness`, Stage 1, Stage 2, and witness emission. PR
-[#439](https://github.com/LayerZero-Labs/akita/pull/439), head
+The accepted packed recursive-witness cutover from
+[#437](https://github.com/LayerZero-Labs/akita/pull/437) is already present in
+the current stack as `4eb6b0128`. The accepted commitment-stage refactor from
+[#441](https://github.com/LayerZero-Labs/akita/pull/441) is also present as
+`4a6897c9b`. PR [#439](https://github.com/LayerZero-Labs/akita/pull/439), head
 `fb4fa643b22953f90085d919e31c006105b5cf51`, adds packed dense prover storage.
 
-These PRs do not change the reduced-evaluation verifier equation. They strongly
-intersect the baseline dense prover slice. The prover implementation SHOULD
-be rebased after the accepted packed-witness cutover rather than teaching a new
-reduced-evaluation path to storage that is about to be replaced. The reduced-evaluation oracle
-may remain unpacked extension-field scratch; only the compact recursive witness
-must follow the final packed ownership model.
+The merged changes do not alter the reduced-evaluation verifier equation, but
+they define the witness and commitment ownership model this implementation
+MUST use. The open dense-storage PR intersects the baseline dense prover slice;
+refresh it before that slice. The reduced-evaluation oracle may remain unpacked
+extension-field scratch, while the compact recursive witness follows the
+accepted packed ownership model.
 
 ### Trusted schedule artifacts PR 428
 
@@ -1799,16 +1857,16 @@ Treat it as a prover integration surface, not a protocol dependency.
 
 ```text
 codex/quotient-free-tail-relations
-  |-- specification and stable shared algebra on the current main base
-  |-- rebase the same branch after accepted transcript/planner dependencies land
+  |-- #448 transcript grinding exact head
+  |-- #444 q128 SIS widening exact head
+  |-- specification and shared protocol/type slices
   |-- implement verifier, prover, and exact planner cutover on that base
   `-- generate catalogs, evidence, Book updates, and the review-ready PR
 ```
 
-Do not create a separate specification PR or implementation branch. Do not
-stack this branch on all open feature branches. Re-evaluate exact heads before
-each implementation slice, and rebase this branch only onto dependencies that
-are accepted or intentionally chosen as its PR base.
+Keep the implementation as reviewable commits on this PR. Do not stack the
+branch on every open feature branch. Re-evaluate the exact #448 and #444 heads
+before later slices and restack only when either chosen lower dependency moves.
 
 ## Documentation plan
 
@@ -1847,7 +1905,7 @@ Archive it after the durable content is fully folded, following
 | Compression reduced transpose | `crates/akita-types/src/proof/compression_relation_weights.rs`, prover/verifier ring-switch compression paths |
 | Planner state and cutover | `crates/akita-planner/src/schedule_params/suffix_dp/`, recursive candidate materialization, response model |
 | Generated rows and identity | `crates/akita-schedules/src/generated/`, `catalog_identity.rs`, planner emitter and reports |
-| Transcript grinding interaction | PR #417 ring-switch query sites, packed proof cost, and grinding plan |
+| Transcript grinding interaction | PR #448 ring-switch query sites, packed proof cost, and grinding plan |
 | End-to-end protocol tests | `crates/akita-pcs/src/scheme/tests/`, `crates/akita-pcs/tests/protocol_soundness.rs` |
 
 ## References
@@ -1864,13 +1922,12 @@ Archive it after the durable content is fully folded, following
   L0/L1 packing policy and later evaluation-trace cutover.
 - [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md), required review rubric before
   implementation approval.
-- [PR #417](https://github.com/LayerZero-Labs/akita/pull/417), transcript
-  grinding integration inspected at head `aa4efc307`.
+- [PR #448](https://github.com/LayerZero-Labs/akita/pull/448), transcript
+  grinding integration inspected at head `303ddbca5`.
 - [PR #428](https://github.com/LayerZero-Labs/akita/pull/428), trusted schedule
   artifact proposal inspected at head `d6499748e`.
 - [PR #434](https://github.com/LayerZero-Labs/akita/pull/434), certified planner
   architecture inspected at head `d7261d916`.
-- [PR #398](https://github.com/LayerZero-Labs/akita/pull/398) and
-  [PR #437](https://github.com/LayerZero-Labs/akita/pull/437), suffix EOR and
-  packed recursive witness stacks inspected at heads `dd0a9fbdb` and
-  `f72ae5683`.
+- [PR #437](https://github.com/LayerZero-Labs/akita/pull/437) and
+  [PR #441](https://github.com/LayerZero-Labs/akita/pull/441), packed recursive
+  witness and commitment-stage changes already present in the current stack.

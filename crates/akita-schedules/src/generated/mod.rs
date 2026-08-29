@@ -63,6 +63,7 @@ pub struct GeneratedFoldCore {
     pub group: GeneratedGroup,
     pub open_commit_matrix: GeneratedMatrix,
     pub witness_chunks: u32,
+    pub ring_relation_mode: akita_types::RingRelationMode,
 }
 
 /// Generated fields that are legal only at the root fold.

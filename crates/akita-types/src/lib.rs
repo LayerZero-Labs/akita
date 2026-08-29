@@ -28,6 +28,7 @@ pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
+mod ring_relation_mode;
 pub mod schedule;
 pub mod schedule_selection;
 pub mod setup_contribution;
@@ -160,6 +161,7 @@ pub use proof::{
     DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
+pub use ring_relation_mode::RingRelationMode;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,

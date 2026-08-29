@@ -480,6 +480,7 @@ fn root_final_group_level_params_candidate(
         groups,
         open_commit_matrix,
         akita_types::CommitmentPayloadMode::Compressed,
+        akita_types::RingRelationMode::QuotientLift,
         akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,

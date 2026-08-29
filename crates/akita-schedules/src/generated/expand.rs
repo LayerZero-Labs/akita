@@ -111,6 +111,7 @@ pub(crate) enum GeneratedFoldExpansionRole {
 pub(crate) struct GeneratedGroupExpansion {
     pub role: GeneratedFoldExpansionRole,
     pub payload_mode: akita_types::CommitmentPayloadMode,
+    pub ring_relation_mode: akita_types::RingRelationMode,
     pub open_commit_matrix: GeneratedMatrix,
     pub group: akita_types::PolynomialGroupLayout,
     pub source: GroupLengthSource,
@@ -259,6 +260,7 @@ impl GeneratedGroup {
         let GeneratedGroupExpansion {
             role,
             payload_mode,
+            ring_relation_mode,
             open_commit_matrix,
             group,
             source,
@@ -639,6 +641,7 @@ impl GeneratedGroup {
             groups,
             open_matrix,
             payload_mode,
+            ring_relation_mode,
             source_encoding,
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.

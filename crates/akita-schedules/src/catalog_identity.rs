@@ -632,6 +632,7 @@ fn write_generated_fold_core(h: &mut Fnv64, fold: GeneratedFoldCore) {
     write_generated_group(h, fold.group);
     write_generated_open_matrix(h, fold.open_commit_matrix);
     write_generated_partition(h, fold.witness_chunks);
+    h.write_u64(u64::from(fold.ring_relation_mode.tag()));
 }
 
 fn write_generated_root_fold(h: &mut Fnv64, fold: &GeneratedRootFold) {

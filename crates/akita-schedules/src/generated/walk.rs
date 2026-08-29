@@ -72,6 +72,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 num_digits_inner: entry.root.num_digits_inner,
             },
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            ring_relation_mode: entry.root.core.ring_relation_mode,
             open_commit_matrix: entry.root.core.open_commit_matrix,
             // The root's own group *is* the row's lookup key.
             group: key.final_group,
@@ -120,6 +121,7 @@ pub(crate) fn walk_generated_schedule_entry(
                     response_l2_sq_cap: fold.response_l2_sq_cap,
                 },
                 payload_mode: fold.payload_mode,
+                ring_relation_mode: fold.core.ring_relation_mode,
                 open_commit_matrix: fold.core.open_commit_matrix,
                 // A recursive fold commits one polynomial over the witness it
                 // receives, so its layout follows from that length.

@@ -244,7 +244,7 @@ fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
         .grinding
         .serialize_uncompressed(&mut grinding_bytes)
         .expect("serialize grinding binding");
-    assert_eq!(descriptor.version, 3);
+    assert_eq!(descriptor.version, 4);
     assert_eq!(
         &bytes[offset..offset + grinding_bytes.len()],
         grinding_bytes
@@ -302,7 +302,7 @@ fn call_section_rejects_mismatched_polynomial_count_before_allocation() {
 }
 
 #[test]
-fn rejects_non_v1_descriptor_version() {
+fn rejects_noncurrent_descriptor_version() {
     let mut descriptor = sample_descriptor();
     descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
     assert!(matches!(
@@ -359,6 +359,18 @@ fn role_local_ring_dimension_changes_plan_binding() {
             matrix.coeff_linf_bound().expect("L infinity test matrix"),
             matrix.ring_dimension() * 2,
         );
+
+    assert_ne!(
+        PlanSection::from_schedule(sample_selection(), &first),
+        PlanSection::from_schedule(sample_selection(), &second)
+    );
+}
+
+#[test]
+fn ring_relation_mode_changes_plan_binding() {
+    let first = sample_schedule();
+    let mut second = first.clone();
+    second.root.params.ring_relation_mode = crate::RingRelationMode::ReducedEvaluation;
 
     assert_ne!(
         PlanSection::from_schedule(sample_selection(), &first),
