@@ -1,5 +1,5 @@
 use super::plan::{DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan};
-use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
+use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeighting};
 use super::*;
 use crate::{
     dyadic_block_ranges, gadget_row_scalars, AkitaExpandedSetup, AkitaSetupDescriptor,
@@ -822,8 +822,16 @@ fn expected_z_setup_weights(
         })
         .collect()
 }
-#[test]
-fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
+struct HeterogeneousSetupFixture {
+    inputs: TestSetupInputs,
+    groups: Vec<SetupContributionGroupInputs>,
+    witness_layout: WitnessLayout,
+    relation_address_geometry: crate::RelationAddressGeometry,
+    relation_point: Vec<F>,
+    fold_gadget: Vec<F>,
+}
+
+fn heterogeneous_setup_fixture() -> HeterogeneousSetupFixture {
     let quotient_depth = 2;
     let group_shapes = [
         // Relation order deliberately differs from numeric group order.
@@ -910,6 +918,26 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(quotient_depth, 4);
+    HeterogeneousSetupFixture {
+        inputs,
+        groups,
+        witness_layout,
+        relation_address_geometry,
+        relation_point: full_vec_randomness,
+        fold_gadget,
+    }
+}
+
+#[test]
+fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
+    let HeterogeneousSetupFixture {
+        inputs,
+        groups,
+        witness_layout,
+        relation_address_geometry,
+        relation_point: full_vec_randomness,
+        fold_gadget,
+    } = heterogeneous_setup_fixture();
     let mut plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
@@ -985,58 +1013,6 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             group.group_id
         );
     }
-
-    let reduced_alpha = test_scalar(23);
-    let coefficient_point = (0..relation_address_geometry.relation_coefficient_variable_count())
-        .map(|index| test_scalar(1701 + index as u128))
-        .collect::<Vec<_>>();
-    let mut reduced_plan = SetupContributionPlan::prepare::<F>(
-        &inputs.level_params,
-        &inputs.opening_batch,
-        1,
-        inputs.eq_tau1.clone(),
-        &witness_layout,
-        &groups,
-        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
-        Some(&fold_gadget),
-        relation_address_geometry,
-    )
-    .unwrap();
-    reduced_plan
-        .materialize_direct_scan(
-            PreparedCoefficientFunctional::reduced_evaluation(
-                reduced_alpha,
-                &coefficient_point,
-                relation_address_geometry,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let base_dimension = reduced_plan.projection_geometry().base_ring_dim();
-    let setup_coefficients = reduced_plan.required() * base_dimension;
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupDescriptor {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_coefficients,
-            setup_seed: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_coefficients)
-                .map(|index| test_scalar(1801 + index as u128))
-                .collect(),
-        ),
-    );
-    assert_eq!(
-        reduced_plan.evaluate_direct::<F>(&setup).unwrap(),
-        fused_scan::reduced_direct_literal_oracle(
-            &reduced_plan,
-            &setup,
-            &coefficient_point,
-            reduced_alpha,
-        ),
-        "heterogeneous multi-group reduced setup scan must match the literal oracle"
-    );
 }
 
 #[test]
@@ -1135,7 +1111,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         a_ratio: 1,
         role_subcolumns: 1,
         role_lanes: 1,
-        role_lane_alpha: &uniform_lane_alpha,
+        weighting: RoleLaneWeighting::Lifted(&uniform_lane_alpha),
     };
     setup_z_col_weights(
         &layout,

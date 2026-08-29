@@ -191,93 +191,108 @@ pub(super) fn structured_slice_reference(
     evaluation
 }
 
-fn literal_constant_terminal_weight(
-    coefficient_point: &[F],
-    lane_point: &[F],
-    dimension: usize,
-    alpha: F,
-) -> F {
-    let mut native_point = coefficient_point.to_vec();
-    native_point.extend_from_slice(lane_point);
-    assert_eq!(native_point.len(), dimension.trailing_zeros() as usize);
-    let powers = scalar_powers(alpha, dimension);
-    (0..dimension).fold(F::zero(), |sum, coefficient| {
-        sum + eq_eval_at_index(&native_point, coefficient) * powers[coefficient]
-    })
-}
-
+#[allow(clippy::too_many_arguments)]
 fn reduced_structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
+    layout: &WitnessLayout,
+    fold_gadget: &[F],
     block_challenges: &[F],
     opening_a_evals: &[F],
     coefficient_point: &[F],
     relation_point: &[F],
-    coefficient_dimension: usize,
     alpha: F,
 ) -> F {
-    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
-    let lane_point = |dimension: usize| {
-        let ratio = dimension / coefficient_dimension;
-        &relation_point[..ratio.trailing_zeros() as usize]
-    };
-    let a_terminal = literal_constant_terminal_weight(
-        coefficient_point,
-        lane_point(group.role_dims.d_a()),
-        group.role_dims.d_a(),
-        alpha,
-    );
-    let b_terminal = literal_constant_terminal_weight(
-        coefficient_point,
-        lane_point(group.role_dims.d_b()),
-        group.role_dims.d_b(),
-        alpha,
-    );
-    let d_terminal = literal_constant_terminal_weight(
-        coefficient_point,
-        lane_point(group.role_dims.d_d()),
-        group.role_dims.d_d(),
-        alpha,
-    );
+    let mut full_point = coefficient_point.to_vec();
+    full_point.extend_from_slice(relation_point);
     let (outer_subcolumns, _) =
         SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
     let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
     let witness_gadget = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+    let alpha_powers = scalar_powers(alpha, group.role_dims.d_a());
     let mut evaluation = F::zero();
-    for (block_claim, &block_challenge) in block_challenges.iter().enumerate() {
-        for subcolumn in 0..group.opening_subcolumns {
-            for (digit, &gadget) in opening_gadget.iter().enumerate() {
-                let column =
-                    (block_claim * group.opening_subcolumns + subcolumn) * group.depth_open + digit;
-                evaluation += block_challenge
-                    * group.consistency_weight
-                    * e_eq_slice[column]
-                    * gadget
-                    * d_terminal;
+    for claim in 0..group.num_claims {
+        for global_block in 0..group.num_live_blocks {
+            let block_claim = claim * group.num_live_blocks + global_block;
+            let block_challenge = block_challenges[block_claim];
+            let unit = layout.unit_for_block(group.group_id, global_block).unwrap();
+            for subcolumn in 0..group.opening_subcolumns {
+                for (digit, &gadget) in opening_gadget.iter().enumerate() {
+                    let physical_start = unit
+                        .e_coefficient_index(
+                            group.role_dims.d_d(),
+                            group.num_claims,
+                            group.depth_open,
+                            claim,
+                            global_block,
+                            subcolumn,
+                            digit,
+                            0,
+                        )
+                        .unwrap();
+                    let scalar = block_challenge * group.consistency_weight * gadget;
+                    for coefficient in 0..group.role_dims.d_d() {
+                        evaluation += scalar
+                            * eq_eval_at_index(&full_point, physical_start + coefficient)
+                            * alpha_powers[subcolumn * group.role_dims.d_d() + coefficient];
+                    }
+                }
             }
-        }
-        for row in 0..group.n_a {
-            for subcolumn in 0..outer_subcolumns {
-                for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                    let column = ((block_claim * group.n_a + row) * outer_subcolumns + subcolumn)
-                        * group.depth_commit
-                        + digit;
-                    evaluation += block_challenge
-                        * group.a_row_weights[row]
-                        * t_eq_slice[column]
-                        * gadget
-                        * b_terminal;
+            for row in 0..group.n_a {
+                for subcolumn in 0..outer_subcolumns {
+                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
+                        let physical_start = unit
+                            .t_coefficient_index(
+                                group.role_dims.d_a(),
+                                group.role_dims.d_b(),
+                                group.num_claims,
+                                group.n_a,
+                                group.depth_commit,
+                                claim,
+                                global_block,
+                                row,
+                                subcolumn,
+                                digit,
+                                0,
+                            )
+                            .unwrap();
+                        let scalar = block_challenge * group.a_row_weights[row] * gadget;
+                        for coefficient in 0..group.role_dims.d_b() {
+                            evaluation += scalar
+                                * eq_eval_at_index(&full_point, physical_start + coefficient)
+                                * alpha_powers[subcolumn * group.role_dims.d_b() + coefficient];
+                        }
+                    }
                 }
             }
         }
     }
     for (position, &opening) in opening_a_evals.iter().enumerate() {
-        for (digit, &gadget) in witness_gadget.iter().enumerate() {
-            evaluation += group.consistency_weight
-                * opening
-                * z_eq_slice[position * group.depth_witness + digit]
-                * gadget
-                * a_terminal;
+        for (commit_digit, &gadget) in witness_gadget.iter().enumerate() {
+            for unit in layout.units_for_group(group.group_id).unwrap() {
+                for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+                    let physical_start = unit
+                        .z_coefficient_index(
+                            group.role_dims.d_a(),
+                            group.num_positions_per_block,
+                            group.depth_witness,
+                            fold_gadget.len(),
+                            position,
+                            commit_digit,
+                            fold_digit,
+                            0,
+                        )
+                        .unwrap();
+                    let scalar = -(group.consistency_weight * opening * gadget * fold);
+                    for (coefficient, &power) in
+                        alpha_powers.iter().enumerate().take(group.role_dims.d_a())
+                    {
+                        evaluation += scalar
+                            * eq_eval_at_index(&full_point, physical_start + coefficient)
+                            * power;
+                    }
+                }
+            }
         }
     }
     evaluation
@@ -317,30 +332,55 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
             .unwrap(),
     )
     .unwrap();
-    let group = &plan.groups[0];
-    let block_challenges = (0..group.num_claims * group.num_live_blocks)
+    let group_id = plan.groups[0].group_id;
+    let block_challenges = (0..plan.groups[0].num_claims * plan.groups[0].num_live_blocks)
         .map(|index| test_scalar(801 + index as u128))
         .collect::<Vec<_>>();
-    let opening_a_evals = (0..group.num_positions_per_block)
+    let opening_a_evals = (0..plan.groups[0].num_positions_per_block)
         .map(|index| test_scalar(901 + index as u128))
         .collect::<Vec<_>>();
-    assert_eq!(
-        plan.evaluate_structured_group::<F>(
-            group.group_id,
-            &block_challenges,
-            &opening_a_evals,
-            alpha,
-        )
-        .unwrap(),
-        reduced_structured_slice_reference(
-            group,
-            &block_challenges,
-            &opening_a_evals,
+    let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &[F], openings: &[F]| {
+        let expected = reduced_structured_slice_reference(
+            &plan.groups[0],
+            &layout,
+            &fold_gadget,
+            blocks,
+            openings,
             &coefficient_point,
             &relation_point,
-            geometry.relation_coefficient_block_len(),
             alpha,
-        )
+        );
+        assert_ne!(expected, F::zero());
+        assert_eq!(
+            plan.evaluate_structured_group::<F>(group_id, blocks, openings, alpha)
+                .unwrap(),
+            expected
+        );
+    };
+
+    let original_a_weights = plan.groups[0].a_row_weights.to_vec();
+    let original_consistency = plan.groups[0].consistency_weight;
+    std::sync::Arc::make_mut(&mut plan.groups[0].a_row_weights).fill(F::zero());
+    assert_literal(
+        &plan,
+        &block_challenges,
+        &vec![F::zero(); opening_a_evals.len()],
+    );
+
+    std::sync::Arc::make_mut(&mut plan.groups[0].a_row_weights)
+        .copy_from_slice(&original_a_weights);
+    plan.groups[0].consistency_weight = F::zero();
+    assert_literal(
+        &plan,
+        &block_challenges,
+        &vec![F::zero(); opening_a_evals.len()],
+    );
+
+    plan.groups[0].consistency_weight = original_consistency;
+    assert_literal(
+        &plan,
+        &vec![F::zero(); block_challenges.len()],
+        &opening_a_evals,
     );
 }
 

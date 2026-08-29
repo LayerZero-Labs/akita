@@ -80,13 +80,8 @@ where
             actual: point.len(),
         });
     }
-    let equality = OffsetEqWindow::new(point)?;
     let map = span.map();
     let digit_span = span.range();
-    let matrix = setup
-        .shared_matrix()
-        .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-    let row = matrix.row_flat(0)?;
     let digit_span_len = map
         .input_width()
         .checked_mul(map.ring_dimension())
@@ -96,6 +91,11 @@ where
             "compression witness span disagrees with its canonical map".into(),
         ));
     }
+    let matrix = setup
+        .shared_matrix()
+        .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
+    let row = matrix.row_flat(0)?;
+    let equality = OffsetEqWindow::new(point)?;
     (0..map.input_width()).try_fold(E::zero(), |evaluation, column| {
         let column_offset = column
             .checked_mul(map.ring_dimension())
@@ -804,6 +804,12 @@ mod tests {
         let malformed_span = CompressionWitnessSpan::new_for_test(map, 2040..2048);
         assert!(
             evaluate_reduced_compression_map(&setup, &malformed_span, &point, 2048, alpha).is_err()
+        );
+        let out_of_domain_span =
+            CompressionWitnessSpan::new_for_test(map, 2040..2040 + setup_coefficients);
+        assert!(
+            evaluate_reduced_compression_map(&setup, &out_of_domain_span, &point, 2048, alpha)
+                .is_err()
         );
         let oversized_point = vec![F::one(); 4_096];
         assert!(

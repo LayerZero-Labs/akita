@@ -127,32 +127,46 @@ impl<E: Field> SetupContributionPlan<E> {
                                 "structured reduced functionals have malformed dimensions".into(),
                             ));
                         }
-                        // E, T, and Z gadgets are constant native-ring
-                        // polynomials. Their complete reduced coefficient
-                        // contraction is therefore H[0]. Distinct physical
-                        // subcolumns remain in the high equality weights.
+                        // Each E/T gadget is constant inside its D/B native
+                        // subring, contributing H_role[0], but that subring is
+                        // embedded at `subcolumn * d_role` in the native-A
+                        // constraint polynomial. Preserve the monomial shift
+                        // explicitly; the high equality weights own only the
+                        // distinct physical witness address.
                         let opening_scale =
                             *d_functional.first().ok_or(AkitaError::InvalidProof)?;
                         let commitment_scale =
                             *b_functional.first().ok_or(AkitaError::InvalidProof)?;
                         let witness_scale =
                             *a_functional.first().ok_or(AkitaError::InvalidProof)?;
+                        let opening_subcolumn_scales = scalar_powers_with_stride(
+                            alpha,
+                            group.role_dims.d_d(),
+                            opening_subcolumns,
+                        )?;
+                        let commitment_subcolumn_scales = scalar_powers_with_stride(
+                            alpha,
+                            group.role_dims.d_b(),
+                            outer_subcolumns,
+                        )?;
                         (
                             Some(
-                                (0..opening_subcolumns)
-                                    .flat_map(|_| {
-                                        opening_gadget
-                                            .iter()
-                                            .map(move |&gadget| opening_scale * gadget)
+                                opening_subcolumn_scales
+                                    .into_iter()
+                                    .flat_map(|subcolumn_scale| {
+                                        opening_gadget.iter().map(move |&gadget| {
+                                            subcolumn_scale * opening_scale * gadget
+                                        })
                                     })
                                     .collect::<Vec<_>>(),
                             ),
                             Some(
-                                (0..outer_subcolumns)
-                                    .flat_map(|_| {
-                                        commitment_gadget
-                                            .iter()
-                                            .map(move |&gadget| commitment_scale * gadget)
+                                commitment_subcolumn_scales
+                                    .into_iter()
+                                    .flat_map(|subcolumn_scale| {
+                                        commitment_gadget.iter().map(move |&gadget| {
+                                            subcolumn_scale * commitment_scale * gadget
+                                        })
                                     })
                                     .collect::<Vec<_>>(),
                             ),
