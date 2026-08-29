@@ -186,8 +186,11 @@ impl_extension_serialization!(FpExt8, 8);
 
 #[cfg(test)]
 mod tests {
-    use jolt_field::{CanonicalEncoding, Ring};
-    use jolt_field::{Fp64, FpExt4, FpExt8, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{CanonicalEncoding, Ext2, Ring};
+    use jolt_field::{
+        Fp64, FpExt4, FpExt8, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99,
+        Prime64Offset59,
+    };
 
     use crate::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 
@@ -198,6 +201,17 @@ mod tests {
         let mut bytes = Vec::new();
         value.serialize_with_mode(&mut bytes, Compress::No).unwrap();
         bytes
+    }
+
+    fn decode_fixture_hex(encoded: &str) -> Vec<u8> {
+        encoded
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("fixture is ASCII"), 16)
+                    .expect("fixture is hexadecimal")
+            })
+            .collect()
     }
 
     #[test]
@@ -224,34 +238,179 @@ mod tests {
 
     #[test]
     fn pre_cutover_scalar_and_extension_fixtures_are_stable() {
-        let scalar32 = Prime32Offset99::from_u64(0x1234_5678);
-        let scalar64 = Prime64Offset59::from_u64(0x0123_4567_89ab_cdef);
-        let scalar128 =
-            Prime128Offset275::from_u128_checked(0x0123_4567_89ab_cdef_fedc_ba98_7654_3210)
-                .unwrap();
-        let extension = FpExt4::new([
+        let extension2 = Ext2::<Prime64Offset59>::new(
+            Prime64Offset59::from_u64(1),
+            Prime64Offset59::from_u64(2),
+        );
+        let extension4 = FpExt4::new([
             Prime32Offset99::from_u64(1),
             Prime32Offset99::from_u64(2),
             Prime32Offset99::from_u64(3),
             Prime32Offset99::from_u64(4),
+        ]);
+        let extension8 = FpExt8::new([
+            Prime32Offset99::from_u64(1),
+            Prime32Offset99::from_u64(2),
+            Prime32Offset99::from_u64(3),
+            Prime32Offset99::from_u64(4),
+            Prime32Offset99::from_u64(5),
+            Prime32Offset99::from_u64(6),
+            Prime32Offset99::from_u64(7),
+            Prime32Offset99::from_u64(8),
         ]);
         let fixtures = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/jolt-field-cutover/fields.txt"
         ));
         let actual = [
-            serialized(&scalar32),
-            serialized(&scalar64),
-            serialized(&scalar128),
-            serialized(&extension),
+            ("prime32_zero", serialized(&Prime32Offset99::from_u64(0))),
+            ("prime32_one", serialized(&Prime32Offset99::from_u64(1))),
+            (
+                "prime32_max",
+                serialized(&Prime32Offset99::from_u64(0xffff_ff9c)),
+            ),
+            (
+                "prime32_random",
+                serialized(&Prime32Offset99::from_u64(0x5e95_dc11)),
+            ),
+            ("prime64_zero", serialized(&Prime64Offset59::from_u64(0))),
+            ("prime64_one", serialized(&Prime64Offset59::from_u64(1))),
+            (
+                "prime64_max",
+                serialized(&Prime64Offset59::from_u64(0xffff_ffff_ffff_ffc4)),
+            ),
+            (
+                "prime64_random",
+                serialized(&Prime64Offset59::from_u64(0x03db_45b0_675b_9f54)),
+            ),
+            (
+                "prime128_a7f7_zero",
+                serialized(&Prime128OffsetA7F7::from_u64(0)),
+            ),
+            (
+                "prime128_a7f7_one",
+                serialized(&Prime128OffsetA7F7::from_u64(1)),
+            ),
+            (
+                "prime128_a7f7_max",
+                serialized(
+                    &Prime128OffsetA7F7::from_u128_checked(
+                        0xffff_ffff_ffff_ffff_ffff_ffff_0000_5808,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "prime128_a7f7_random_a",
+                serialized(
+                    &Prime128OffsetA7F7::from_u128_checked(
+                        0x59c9_f049_a454_d1c9_2917_8971_d900_881d,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                "prime128_a7f7_random_b",
+                serialized(
+                    &Prime128OffsetA7F7::from_u128_checked(
+                        0x97ca_5c79_1111_19c2_d65b_7558_6cc1_d87a,
+                    )
+                    .unwrap(),
+                ),
+            ),
+            ("fp_ext2_prime64", serialized(&extension2)),
+            ("fp_ext4_prime32", serialized(&extension4)),
+            ("fp_ext8_prime32", serialized(&extension8)),
         ];
-        for (bytes, expected) in actual.iter().zip(fixtures.lines()) {
+        let expected = fixtures
+            .lines()
+            .map(|line| line.split_once('=').expect("labeled field fixture"))
+            .collect::<Vec<_>>();
+        assert_eq!(actual.len(), expected.len());
+        for ((label, bytes), (expected_label, expected_hex)) in actual.iter().zip(expected) {
+            assert_eq!(*label, expected_label);
             let encoded = bytes
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>();
-            assert_eq!(encoded, expected);
+            assert_eq!(encoded, expected_hex, "fixture {label}");
         }
+    }
+
+    #[test]
+    fn pre_cutover_malformed_decoding_behavior_is_stable() {
+        let fixtures = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/jolt-field-cutover/malformed.txt"
+        ));
+        let fixture = |name: &str| {
+            let (_, encoded) = fixtures
+                .lines()
+                .filter_map(|line| line.split_once('='))
+                .find(|(label, _)| *label == name)
+                .unwrap_or_else(|| panic!("missing malformed fixture {name}"));
+            decode_fixture_hex(encoded)
+        };
+
+        let invalid_scalar = fixture("invalid_prime128_a7f7_modulus");
+        assert!(Prime128OffsetA7F7::deserialize_with_mode(
+            &invalid_scalar[..],
+            Compress::No,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+        let scalar = Prime128OffsetA7F7::deserialize_with_mode(
+            &invalid_scalar[..],
+            Compress::No,
+            Validate::No,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(
+            serialized(&scalar),
+            fixture("unvalidated_prime128_a7f7_modulus")
+        );
+
+        let invalid_ext2 = fixture("invalid_fp_ext2_prime64_second_modulus");
+        assert!(Ext2::<Prime64Offset59>::deserialize_with_mode(
+            &invalid_ext2[..],
+            Compress::No,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+        let extension2 = Ext2::<Prime64Offset59>::deserialize_with_mode(
+            &invalid_ext2[..],
+            Compress::No,
+            Validate::No,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(
+            serialized(&extension2),
+            fixture("unvalidated_fp_ext2_prime64_second_modulus")
+        );
+
+        let invalid_ext8 = fixture("invalid_fp_ext8_prime32_fifth_modulus");
+        assert!(FpExt8::<Prime32Offset99>::deserialize_with_mode(
+            &invalid_ext8[..],
+            Compress::No,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+        let extension8 = FpExt8::<Prime32Offset99>::deserialize_with_mode(
+            &invalid_ext8[..],
+            Compress::No,
+            Validate::No,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(
+            serialized(&extension8),
+            fixture("unvalidated_fp_ext8_prime32_fifth_modulus")
+        );
     }
 
     #[test]

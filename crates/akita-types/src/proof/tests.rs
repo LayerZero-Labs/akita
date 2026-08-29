@@ -4,10 +4,10 @@ use akita_algebra::CompressedUniPoly;
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
-use jolt_field::{One, Prime128Offset275, Ring, Zero};
+use jolt_field::{One, Prime128Offset275, Prime128OffsetA7F7, Ring, Zero};
 use rand::SeedableRng;
 
-type F = Prime128Offset275;
+type F = Prime128OffsetA7F7;
 
 fn decode_golden_hex(encoded: &str) -> Vec<u8> {
     encoded

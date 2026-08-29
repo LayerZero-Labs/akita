@@ -708,9 +708,11 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
 mod tests {
     use super::*;
     use jolt_field::Zero;
-    use jolt_field::{Fp32, Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{
+        Fp32, Fp64, Prime128Offset275, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+    };
 
-    type F = Prime128Offset275;
+    type F = Prime128OffsetA7F7;
     const D: usize = 4;
     type SmallF = Fp64<4294967197>;
     const SMALL_D: usize = 64;
@@ -769,8 +771,8 @@ mod tests {
     }
 
     fn decode_golden_hex(encoded: &str) -> Vec<u8> {
-        encoded
-            .trim()
+        let compact = encoded.split_ascii_whitespace().collect::<String>();
+        compact
             .as_bytes()
             .chunks_exact(2)
             .map(|pair| {
