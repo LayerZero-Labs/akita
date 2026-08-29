@@ -69,7 +69,9 @@ where
     if deferred_setup_claim.is_none() {
         let _span =
             tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
-        plan.materialize_direct_scan(alpha)?;
+        plan.materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
+            alpha,
+        ))?;
     }
 
     let mut structured_evaluation = E::zero();
@@ -97,12 +99,7 @@ where
     } else {
         let _span =
             tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
-        plan.evaluate_direct::<F>(
-            setup,
-            prepared_point.inner().powers.as_ref(),
-            prepared_point.outer().powers.as_ref(),
-            prepared_point.opening().powers.as_ref(),
-        )?
+        plan.evaluate_direct::<F>(setup)?
     };
     let quotient_evaluation =
         evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families).map_err(

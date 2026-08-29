@@ -115,8 +115,8 @@ pub use proof::{
     compression_relation_claim_from_rhs_extension, decode_terminal_z_golomb_payload,
     derive_public_matrix_prefix, draw_group_fold_challenges, emit_witness_e_planes,
     emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    folded_root_supports_opening_shape, generate_relation_rhs, padded_setup_prefix_len,
-    prepare_coefficient_packing_batch_semantics,
+    evaluate_reduced_compression_map, folded_root_supports_opening_shape, generate_relation_rhs,
+    padded_setup_prefix_len, prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, prepare_opening_point,
     raw_field_segment_bytes, relation_claim_from_compressed_rhs_extension,
     relation_claim_from_layout_extension, relation_claim_from_rows,
@@ -142,10 +142,11 @@ pub use proof::{
     GroupBatchStatement, GroupFoldChallenges, LevelProofShape, NegativeBinarySupport,
     NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation, RelationAddressGeometry,
-    RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
-    RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,
-    RelationWitnessGeometry, RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
+    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation,
+    ReducedCoefficientFunctional, RelationAddressGeometry, RelationGroupRows,
+    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RelationRowFamily,
+    RelationRowGeometry, RelationWeightContribution, RelationWeightEvent, RelationWitnessGeometry,
+    RingCommitment, RingMultiplierOpeningPoint, RingRelationGroupOpening,
     RingRelationGroupOpeningView, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
@@ -172,8 +173,9 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
+    ensure_setup_envelope, shared_setup_fold_gadget, PreparedCoefficientFunctional,
+    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupProjectionGeometry,
 };
 pub use signed_digit::{
     balanced_signed_digit_abs_bound, SignedDigitKernel, MAX_I16_LOG_BASIS, MAX_I8_LOG_BASIS,

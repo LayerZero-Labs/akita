@@ -306,7 +306,8 @@ fn setup_index_mle_bridges_smaller_relation_blocks_to_native_setup_blocks() {
     )
     .unwrap();
     let alpha = test_scalar(3);
-    plan.materialize_direct_scan(alpha).unwrap();
+    plan.materialize_direct_scan(PreparedCoefficientFunctional::lifted_power(alpha))
+        .unwrap();
 
     assert_eq!(
         plan.relation_address_geometry()
@@ -363,8 +364,7 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
         let alpha_pows_b = scalar_powers(alpha, role_dims.d_b());
         let alpha_pows_d = scalar_powers(alpha, role_dims.d_d());
         assert_eq!(
-            plan.evaluate_direct::<F>(&setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
-                .unwrap(),
+            plan.evaluate_direct::<F>(&setup).unwrap(),
             plan.evaluate_direct_by_rows::<F>(
                 &setup,
                 &alpha_pows_a,

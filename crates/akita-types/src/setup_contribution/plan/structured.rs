@@ -26,8 +26,9 @@ impl<E: Field> SetupContributionPlan<E> {
         let uses_evaluation_trace_consistency =
             matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace);
         if self
-            .direct_scan_alpha
-            .is_some_and(|prepared| prepared != alpha)
+            .direct_scan_functional
+            .as_ref()
+            .is_some_and(|prepared| prepared.alpha() != alpha)
         {
             return Err(AkitaError::InvalidInput(
                 "structured relation alpha disagrees with direct setup weights".into(),

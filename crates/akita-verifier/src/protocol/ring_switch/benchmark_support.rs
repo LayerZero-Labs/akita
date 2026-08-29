@@ -171,7 +171,9 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, LOG_BASIS);
     let mut plan: SetupContributionPlan<F> =
         evaluator.setup_contribution_plan::<F>(relation_address, Some(&fold_gadget))?;
-    plan.materialize_direct_scan(alpha)?;
+    plan.materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
+        alpha,
+    ))?;
     let setup_field_elements = plan.projection_geometry().natural_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {

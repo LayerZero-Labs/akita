@@ -204,18 +204,17 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             Some(&fold_gadget),
         )
         .unwrap();
-    direct_plan.materialize_direct_scan(alpha).unwrap();
-    assert!(direct_plan
-        .materialize_direct_scan(MixedF::from_u64(11))
-        .is_err());
-    let setup_claim = direct_plan
-        .evaluate_direct::<MixedF>(
-            &setup,
-            &scalar_powers(alpha, D_INNER),
-            &scalar_powers(alpha, D_PROJECTED),
-            &scalar_powers(alpha, D_PROJECTED),
-        )
+    direct_plan
+        .materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
+            alpha,
+        ))
         .unwrap();
+    assert!(direct_plan
+        .materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
+            MixedF::from_u64(11),
+        ))
+        .is_err());
+    let setup_claim = direct_plan.evaluate_direct::<MixedF>(&setup).unwrap();
 
     let direct = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
         &evaluator, &point, &setup, alpha, None,

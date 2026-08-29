@@ -4,19 +4,124 @@ use super::*;
 use akita_algebra::cfg_try_fold_reduce;
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 
+enum DirectScanKernel<'a, E: Field> {
+    LiftedPower {
+        base_powers: &'a [E],
+        projections: &'a [[RoleProjection<E>; 3]],
+    },
+    ReducedEvaluation,
+}
+
 impl<E: Field> SetupContributionPlan<E> {
-    pub fn evaluate_direct<F>(
-        &self,
-        setup: &AkitaExpandedSetup<F>,
-        alpha_pows_a: &[E],
-        alpha_pows_b: &[E],
-        alpha_pows_d: &[E],
-    ) -> Result<E, AkitaError>
+    pub fn evaluate_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        self.evaluate_role_dims_direct(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
+        match self
+            .direct_scan_functional
+            .as_ref()
+            .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan is not prepared".into()))?
+        {
+            PreparedCoefficientFunctional::LiftedPower { alpha } => {
+                let geometry = self.projection_geometry;
+                let alpha_pows_a = scalar_powers(*alpha, geometry.role_dims().d_a());
+                let alpha_pows_b = scalar_powers(*alpha, geometry.role_dims().d_b());
+                let alpha_pows_d = scalar_powers(*alpha, geometry.role_dims().d_d());
+                self.evaluate_role_dims_direct(setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+            }
+            PreparedCoefficientFunctional::ReducedEvaluation { .. } => {
+                self.evaluate_reduced_direct(setup)
+            }
+        }
+    }
+
+    fn evaluate_reduced_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let base_d = self.projection_geometry.base_ring_dim();
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            base_d,
+            |BASE_D| {
+                self.evaluate_direct_typed::<F, BASE_D>(setup, DirectScanKernel::ReducedEvaluation)
+            }
+        )
+    }
+
+    fn evaluate_groups_reduced<F, const BASE_D: usize>(
+        &self,
+        setup_view: &RingMatrixView<'_, F, BASE_D>,
+    ) -> Result<E, AkitaError>
+    where
+        F: Field,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let required = self.projection_geometry.required();
+        if self.d_weights.len() != self.d_rows {
+            return Err(AkitaError::InvalidSetup(
+                "cached setup scan geometry is malformed".into(),
+            ));
+        }
+        let setup_flat = setup_view.as_slice();
+        let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
+        let num_jobs = required.div_ceil(job_rings);
+        cfg_try_fold_reduce!(
+            0..num_jobs,
+            E::zero,
+            |acc, job| {
+                let lo = job.checked_mul(job_rings).ok_or(AkitaError::InvalidProof)?;
+                let hi = lo
+                    .checked_add(job_rings)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .min(required);
+                let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+                let mut term = E::zero();
+                for (offset, ring) in setup.iter().enumerate() {
+                    let base_idx = lo.checked_add(offset).ok_or(AkitaError::InvalidProof)?;
+                    let mut coefficient_weights = [E::zero(); BASE_D];
+                    for group in &self.groups {
+                        let direct = group.direct_scan_weights.as_ref().ok_or_else(|| {
+                            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
+                        })?;
+                        let functionals = direct.reduced_functionals.as_ref().ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "reduced setup coefficient functionals are missing".into(),
+                            )
+                        })?;
+                        let segment_index = group
+                            .segments
+                            .partition_point(|segment| segment.hi <= base_idx);
+                        let Some(segment) = group.segments.get(segment_index) else {
+                            continue;
+                        };
+                        if base_idx < segment.lo || base_idx >= segment.hi {
+                            continue;
+                        }
+                        add_reduced_base_ring_weights(
+                            base_idx,
+                            segment,
+                            &ReducedScanGroupWeights {
+                                e: &direct.e,
+                                t: &direct.t,
+                                z: &direct.z,
+                                role_ratios: [group.a_ratio, group.b_ratio, group.d_ratio],
+                                functionals,
+                            },
+                            &mut coefficient_weights,
+                        )?;
+                    }
+                    if coefficient_weights.iter().any(|weight| !weight.is_zero()) {
+                        term += eval_ring_at_pows_fast(ring, &coefficient_weights);
+                    }
+                }
+                Ok(acc + term)
+            },
+            |lhs, rhs| Ok(lhs + rhs)
+        )
     }
 
     fn evaluate_role_dims_direct<F>(
@@ -90,32 +195,38 @@ impl<E: Field> SetupContributionPlan<E> {
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_role_dims_direct_typed::<F, BASE_D>(setup, base_pows, &projections)
+                self.evaluate_direct_typed::<F, BASE_D>(
+                    setup,
+                    DirectScanKernel::LiftedPower {
+                        base_powers: base_pows,
+                        projections: &projections,
+                    },
+                )
             }
         )
     }
 
-    fn evaluate_role_dims_direct_typed<F, const BASE_D: usize>(
+    fn evaluate_direct_typed<F, const BASE_D: usize>(
         &self,
         setup: &AkitaExpandedSetup<F>,
-        base_pows: &[E],
-        projections: &[[RoleProjection<E>; 3]],
+        kernel: DirectScanKernel<'_, E>,
     ) -> Result<E, AkitaError>
     where
         F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let fused_groups = self.groups.len() > 1;
+        let reduced_evaluation = matches!(&kernel, DirectScanKernel::ReducedEvaluation);
         let logical_group_rings = self
             .groups
             .iter()
             .fold(0usize, |sum, group| sum.saturating_add(group.required));
-        let physical_ring_evaluations = if fused_groups {
+        let physical_ring_evaluations = if fused_groups || reduced_evaluation {
             self.projection_geometry.required()
         } else {
             logical_group_rings
         };
-        let jobs = if fused_groups {
+        let jobs = if fused_groups || reduced_evaluation {
             self.projection_geometry
                 .required()
                 .div_ceil(super::segments::SETUP_SCAN_JOB_RINGS)
@@ -133,35 +244,43 @@ impl<E: Field> SetupContributionPlan<E> {
             physical_ring_evaluations,
             jobs,
             fused_groups,
+            reduced_evaluation,
             base_d = BASE_D,
             final_a_ratio = self.projection_geometry.a_ratio(),
             final_b_ratio = self.projection_geometry.b_ratio(),
             final_d_ratio = self.projection_geometry.d_ratio()
         )
         .entered();
-        if base_pows.len() != BASE_D {
-            return Err(AkitaError::InvalidSize {
-                expected: BASE_D,
-                actual: base_pows.len(),
-            });
-        }
         let required = self.projection_geometry.required();
         let setup_len = setup.shared_matrix().num_field_elements() / BASE_D;
-        if required > setup_len {
+        if self.projection_geometry.base_ring_dim() != BASE_D || required > setup_len {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
             ));
         }
         // The scan reads only the `required` leading rings.
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, required)?;
+        let DirectScanKernel::LiftedPower {
+            base_powers,
+            projections,
+        } = kernel
+        else {
+            return self.evaluate_groups_reduced(&setup_view);
+        };
+        if base_powers.len() != BASE_D {
+            return Err(AkitaError::InvalidSize {
+                expected: BASE_D,
+                actual: base_powers.len(),
+            });
+        }
         if fused_groups {
-            return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_pows, projections);
+            return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_powers, projections);
         }
         let mut acc = E::zero();
         for (group, projection) in self.groups.iter().zip(projections) {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
-                base_pows,
+                base_powers,
                 &self.d_weights,
                 &projection[0],
                 &projection[1],

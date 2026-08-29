@@ -11,8 +11,9 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::ops::Range;
 
 use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
-    RelationRowFamily, RingRelationInstance, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams,
+    CompressionMapPlan, FpExtEncoding, ReducedCoefficientFunctional, RelationRowFamily,
+    RingRelationInstance, WitnessLayout,
 };
 
 #[derive(Clone, Debug)]
@@ -46,6 +47,78 @@ pub struct CompressionRelationWeights<E: Field> {
 pub struct NegativeBinarySupport {
     intervals: Vec<Range<usize>>,
     physical_field_len: usize,
+}
+
+/// Evaluate one complete canonical compression map through exact reduced
+/// coefficient functionals.
+///
+/// This is the checked boundary between [`CompressionMapPlan`] geometry and
+/// the public setup prefix. It deliberately reads the map coefficients from
+/// that authority instead of reconstructing them from witness offsets. Each
+/// setup coefficient is consumed once, while one native terminal kernel is
+/// retained at a time.
+pub fn evaluate_reduced_compression_map<F, E>(
+    setup: &AkitaExpandedSetup<F>,
+    map: CompressionMapPlan,
+    point: &[E],
+    physical_field_len: usize,
+    digit_span_start: usize,
+    alpha: E,
+) -> Result<E, AkitaError>
+where
+    F: Field,
+    E: ExtField<F> + MulBaseUnreduced<F>,
+{
+    let equality = OffsetEqWindow::new(point)?;
+    if !physical_field_len.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "compression relation domain must be a power of two".into(),
+        ));
+    }
+    if equality.variable_count() != physical_field_len.trailing_zeros() as usize {
+        return Err(AkitaError::InvalidSize {
+            expected: physical_field_len.trailing_zeros() as usize,
+            actual: equality.variable_count(),
+        });
+    }
+    let matrix = setup
+        .shared_matrix()
+        .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
+    let row = matrix.row_flat(0)?;
+    let digit_span_len = map
+        .input_width()
+        .checked_mul(map.ring_dimension())
+        .ok_or_else(|| AkitaError::InvalidSetup("compression map digit span overflow".into()))?;
+    digit_span_start
+        .checked_add(digit_span_len)
+        .filter(|&end| end <= physical_field_len)
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("compression map digit span is out of range".into())
+        })?;
+    (0..map.input_width()).try_fold(E::zero(), |evaluation, column| {
+        let column_offset = column
+            .checked_mul(map.ring_dimension())
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map column overflow".into()))?;
+        let column_end = column_offset
+            .checked_add(map.ring_dimension())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression map column extent overflow".into())
+            })?;
+        let physical_start = digit_span_start
+            .checked_add(column_offset)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
+        let functional = ReducedCoefficientFunctional::prepare(
+            &equality,
+            physical_field_len,
+            physical_start,
+            map.ring_dimension(),
+            alpha,
+        )?;
+        let coefficients = row
+            .get(column_offset..column_end)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(evaluation + functional.evaluate_multiplier(coefficients)?)
+    })
 }
 
 impl NegativeBinarySupport {
@@ -671,5 +744,67 @@ mod tests {
             (F::one() - equality_point[0]) * (F::one() - point[0])
         );
         assert_ne!(restricted, factored);
+    }
+
+    #[test]
+    fn reduced_map_uses_canonical_geometry_at_unaligned_window() {
+        let map =
+            CompressionMapPlan::new(crate::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1).unwrap();
+        let setup_coefficients = map.input_width() * map.ring_dimension();
+        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            crate::AkitaSetupDescriptor {
+                max_num_vars: 0,
+                max_num_batched_polys: 0,
+                num_field_elements: setup_coefficients,
+                setup_seed: [0u8; 32].into(),
+            },
+            crate::FlatMatrix::from_flat_data(
+                (0..setup_coefficients)
+                    .map(|index| F::from_u64(401 + index as u64))
+                    .collect(),
+            ),
+        );
+        let point = (0..11)
+            .map(|index| F::from_u64(503 + index as u64))
+            .collect::<Vec<_>>();
+        let equality = OffsetEqWindow::new(&point).unwrap();
+        let digit_span_start = 11;
+        let expected = (0..map.input_width()).fold(F::zero(), |evaluation, column| {
+            let start = column * map.ring_dimension();
+            let functional = ReducedCoefficientFunctional::prepare(
+                &equality,
+                2048,
+                digit_span_start + start,
+                map.ring_dimension(),
+                F::from_u64(19),
+            )
+            .unwrap();
+            evaluation
+                + functional
+                    .evaluate_multiplier(
+                        setup
+                            .shared_matrix()
+                            .as_field_slice()
+                            .get(start..start + map.ring_dimension())
+                            .unwrap(),
+                    )
+                    .unwrap()
+        });
+        assert_eq!(
+            evaluate_reduced_compression_map(
+                &setup,
+                map,
+                &point,
+                2048,
+                digit_span_start,
+                F::from_u64(19)
+            )
+            .unwrap(),
+            expected
+        );
+        assert!(
+            evaluate_reduced_compression_map(&setup, map, &point, 2048, 2040, F::from_u64(19))
+                .is_err()
+        );
     }
 }

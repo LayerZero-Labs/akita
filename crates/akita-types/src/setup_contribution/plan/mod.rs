@@ -34,7 +34,10 @@ pub(crate) use types::{
     DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
 };
 pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
-pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
+pub use types::{
+    PreparedCoefficientFunctional, PreparedRelationAddress, SetupContributionGroupInputs,
+    SetupContributionPlan,
+};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::{checked_slice, SetupProjectionGeometry};
@@ -57,6 +60,7 @@ fn divide_aligned(
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
-    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
+    add_reduced_base_ring_weights, base_ring_segment_inner_sum_typed, dispatch_segment_roles,
+    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment,
+    ReducedScanGroupWeights, RoleProjection,
 };

@@ -82,6 +82,14 @@ pub(super) enum RoleProjection<E> {
     },
 }
 
+pub(super) struct ReducedScanGroupWeights<'a, E: Field> {
+    pub(super) e: &'a [E],
+    pub(super) t: &'a [E],
+    pub(super) z: &'a [E],
+    pub(super) role_ratios: [usize; 3],
+    pub(super) functionals: &'a [std::sync::Arc<[E]>; 3],
+}
+
 impl<E: Field> RoleProjection<E> {
     #[inline(always)]
     pub(super) fn is_identity(&self) -> bool {
@@ -120,6 +128,87 @@ pub(super) fn role_projection<E: Field>(
         shift: ratio.trailing_zeros() as usize,
         mask: ratio - 1,
     })
+}
+
+/// Add one setup ring's reduced A/B/D coefficient weights.
+///
+/// The three role contributions are combined coefficient-by-coefficient before
+/// the setup ring is evaluated, so even overlapping mixed-dimension views read
+/// each public setup coefficient exactly once.
+pub(super) fn add_reduced_base_ring_weights<E: Field, const D: usize>(
+    base_idx: usize,
+    segment: &GroupSetupSegment<E>,
+    group: &ReducedScanGroupWeights<'_, E>,
+    output: &mut [E; D],
+) -> Result<(), AkitaError> {
+    let [a_ratio, b_ratio, d_ratio] = group.role_ratios;
+    if segment.has_d {
+        let role_idx = projected_role_index(base_idx, d_ratio)?;
+        let eq_idx = role_idx
+            .checked_sub(segment.d_start_abs)
+            .ok_or(AkitaError::InvalidProof)?;
+        let weight = segment.d_weight * *group.e.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
+        add_functional_chunk(base_idx, d_ratio, &group.functionals[2], weight, output)?;
+    }
+    if segment.has_b {
+        let role_idx = projected_role_index(base_idx, b_ratio)?;
+        let local = role_idx
+            .checked_sub(segment.b_start_abs)
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut weight = E::zero();
+        for term in segment.b_terms.iter() {
+            let logical = term
+                .logical_start
+                .checked_add(local)
+                .and_then(|index| group.t.get(index))
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?;
+            weight += term.row_weight * logical;
+        }
+        add_functional_chunk(base_idx, b_ratio, &group.functionals[1], weight, output)?;
+    }
+    if segment.has_a {
+        let role_idx = projected_role_index(base_idx, a_ratio)?;
+        let eq_idx = role_idx
+            .checked_sub(segment.a_start_abs)
+            .ok_or(AkitaError::InvalidProof)?;
+        let weight = segment.a_row_weight * *group.z.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
+        add_functional_chunk(base_idx, a_ratio, &group.functionals[0], weight, output)?;
+    }
+    Ok(())
+}
+
+fn projected_role_index(base_idx: usize, ratio: usize) -> Result<usize, AkitaError> {
+    if !ratio.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "setup role projection ratio must be a power of two".into(),
+        ));
+    }
+    Ok(base_idx / ratio)
+}
+
+fn add_functional_chunk<E: Field, const D: usize>(
+    base_idx: usize,
+    ratio: usize,
+    functional: &[E],
+    scalar: E,
+    output: &mut [E; D],
+) -> Result<(), AkitaError> {
+    if scalar.is_zero() {
+        return Ok(());
+    }
+    let chunk = base_idx % ratio;
+    let start = chunk
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("coefficient functional offset overflow".into()))?;
+    let end = start
+        .checked_add(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("coefficient functional extent overflow".into()))?;
+    let weights = functional.get(start..end).ok_or(AkitaError::InvalidProof)?;
+    for (target, &weight) in output.iter_mut().zip(weights) {
+        *target += scalar * weight;
+    }
+    Ok(())
 }
 
 #[inline(always)]
