@@ -47,6 +47,9 @@ pub fn grinding_predicate_accepts(
     predicate: &[u8; GRINDING_PREDICATE_LEN],
     grind_bits: NonZeroU8,
 ) -> bool {
+    // `grind_bits` is a `u8`, so `whole_bytes` is at most `u8::MAX / 8 == 31`,
+    // which indexes a `GRINDING_PREDICATE_LEN`-byte predicate in bounds.
+    const _: () = assert!((u8::MAX as usize / u8::BITS as usize) < GRINDING_PREDICATE_LEN);
     let grind_bits = usize::from(grind_bits.get());
     let whole_bytes = grind_bits / u8::BITS as usize;
     let remaining_bits = grind_bits % u8::BITS as usize;

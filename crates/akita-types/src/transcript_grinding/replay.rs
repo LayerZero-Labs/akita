@@ -176,6 +176,24 @@ impl<'a> NonceStreamCursor<'a> {
         self.plan.consume_run(site, multiplicity)
     }
 
+    /// Consume the zero-width root record plus one record per fold coordinate.
+    ///
+    /// Writer and verifier replay consume fold groups identically, so this is
+    /// the single definition of that run shape.
+    fn consume_fold_group(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+    ) -> Result<(), AkitaError> {
+        self.consume_zero_run(
+            GrindingSite::FoldChallengeGroup { level, group },
+            coordinate_count
+                .checked_add(1)
+                .ok_or(AkitaError::InvalidProof)?,
+        )
+    }
+
     fn advance_bits(&mut self, width: u8) -> Result<(), AkitaError> {
         self.bit_offset = self
             .bit_offset
@@ -267,9 +285,7 @@ impl<'a> TranscriptNonceWriter<'a> {
     /// Write the next expected logical entry and reject a site or width mismatch.
     pub fn write(&mut self, site: GrindingSite, value: u32) -> Result<(), AkitaError> {
         let entry = self.cursor.next(site)?;
-        if !value_fits(value, entry.nonce_bits) {
-            return Err(AkitaError::InvalidProof);
-        }
+        // `write_entry` is the single width gate for every write path.
         self.write_entry(entry, value)
     }
 
@@ -309,21 +325,6 @@ impl<'a> TranscriptNonceWriter<'a> {
             .cursor
             .next_kind(site, GrindingQueryKind::FoldResponse)?;
         self.write_entry(entry, counter)
-    }
-
-    /// Consume the zero-width root and indexed-coordinate records for one fold group.
-    pub fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.cursor.consume_zero_run(
-            GrindingSite::FoldChallengeGroup { level, group },
-            coordinate_count
-                .checked_add(1)
-                .ok_or(AkitaError::InvalidProof)?,
-        )
     }
 
     /// Finish the stream, requiring exact plan and bit-cursor exhaustion.
@@ -396,21 +397,6 @@ impl TranscriptNonceReader<'_> {
         self.read_entry(entry)
     }
 
-    /// Consume the zero-width root and indexed-coordinate records for one fold group.
-    pub fn record_fold_challenges(
-        &mut self,
-        level: u32,
-        group: u32,
-        coordinate_count: usize,
-    ) -> Result<(), AkitaError> {
-        self.cursor.consume_zero_run(
-            GrindingSite::FoldChallengeGroup { level, group },
-            coordinate_count
-                .checked_add(1)
-                .ok_or(AkitaError::InvalidProof)?,
-        )
-    }
-
     /// Finish replay, requiring exact plan and bit-cursor exhaustion.
     pub fn finish(self) -> Result<(), AkitaError> {
         if !self.cursor.is_finished(self.stream.bit_len) {
@@ -465,15 +451,102 @@ where
     fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError>;
 }
 
-/// Borrowed prover transcript with exclusive ownership of one nonce-stream cursor.
-pub struct ProverGrindingTranscript<'transcript, 'plan, T> {
+/// The nonce-stream side of a grinding adapter.
+///
+/// The prover searches for and commits each nonce; the verifier reads and
+/// checks it. Those are the only two behaviours that differ between the two
+/// adapters, so they are the only two methods here — everything else is shared
+/// by [`GrindingTranscript`]. The transcript bound lives on the impl, which is
+/// how the prover requires [`TranscriptChallengePreview`] and the verifier does
+/// not.
+pub trait NonceCursor<F, T> {
+    /// Apply one scheduled proof-of-work transition against `transcript`.
+    fn grind_query(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError>;
+
+    /// Consume one fold group's zero-width root and coordinate records.
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+    ) -> Result<(), AkitaError>;
+}
+
+impl<F, T> NonceCursor<F, T> for TranscriptNonceWriter<'_>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F> + TranscriptChallengePreview,
+{
+    fn grind_query(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError> {
+        self.grind::<F, T>(transcript, site)
+    }
+
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+    ) -> Result<(), AkitaError> {
+        self.cursor
+            .consume_fold_group(level, group, coordinate_count)
+    }
+}
+
+impl<F, T> NonceCursor<F, T> for TranscriptNonceReader<'_>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+{
+    fn grind_query(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError> {
+        self.grind::<F, T>(transcript, site)
+    }
+
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+    ) -> Result<(), AkitaError> {
+        self.cursor
+            .consume_fold_group(level, group, coordinate_count)
+    }
+}
+
+/// Borrowed transcript with exclusive ownership of one nonce-stream cursor.
+///
+/// Prover and verifier replay differ only in their [`NonceCursor`], so this is
+/// the single adapter both use; see [`ProverGrindingTranscript`] and
+/// [`VerifierGrindingTranscript`].
+pub struct GrindingTranscript<'transcript, T, C> {
     transcript: &'transcript mut T,
-    writer: TranscriptNonceWriter<'plan>,
+    cursor: C,
     #[cfg(feature = "logging-transcript")]
     audit: ChallengeAudit,
 }
 
-impl<'transcript, 'plan, T> ProverGrindingTranscript<'transcript, 'plan, T> {
+/// Prover-side grinding adapter over a nonce writer.
+pub type ProverGrindingTranscript<'transcript, 'plan, T> =
+    GrindingTranscript<'transcript, T, TranscriptNonceWriter<'plan>>;
+
+/// Verifier-side grinding adapter over a nonce reader.
+pub type VerifierGrindingTranscript<'transcript, 'proof, T> =
+    GrindingTranscript<'transcript, T, TranscriptNonceReader<'proof>>;
+
+impl<T, C> GrindingTranscript<'_, T, C> {
+    /// Require the structural challenge audit to have consumed every plan entry.
+    fn seal_audit(&mut self) -> Result<(), AkitaError> {
+        #[cfg(feature = "logging-transcript")]
+        {
+            self.audit.seal_query();
+            if !self.audit.is_finished() {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'transcript, 'plan, T> GrindingTranscript<'transcript, T, TranscriptNonceWriter<'plan>> {
     /// Attach the exact public plan to an already-bound prover transcript.
     pub fn new(
         transcript: &'transcript mut T,
@@ -481,35 +554,20 @@ impl<'transcript, 'plan, T> ProverGrindingTranscript<'transcript, 'plan, T> {
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             transcript,
-            writer: TranscriptNonceWriter::new(plan)?,
+            cursor: TranscriptNonceWriter::new(plan)?,
             #[cfg(feature = "logging-transcript")]
             audit: ChallengeAudit::default(),
         })
     }
 
     /// Require exact cursor exhaustion and return the packed proof stream.
-    pub fn finish(self) -> Result<TranscriptNonceStream, AkitaError> {
-        #[cfg(feature = "logging-transcript")]
-        {
-            let mut audit = self.audit;
-            audit.seal_query();
-            if !audit.is_finished() {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        self.writer.finish()
+    pub fn finish(mut self) -> Result<TranscriptNonceStream, AkitaError> {
+        self.seal_audit()?;
+        self.cursor.finish()
     }
 }
 
-/// Borrowed verifier transcript with exclusive ownership of one nonce-stream cursor.
-pub struct VerifierGrindingTranscript<'transcript, 'proof, T> {
-    transcript: &'transcript mut T,
-    reader: TranscriptNonceReader<'proof>,
-    #[cfg(feature = "logging-transcript")]
-    audit: ChallengeAudit,
-}
-
-impl<'transcript, 'proof, T> VerifierGrindingTranscript<'transcript, 'proof, T> {
+impl<'transcript, 'proof, T> GrindingTranscript<'transcript, T, TranscriptNonceReader<'proof>> {
     /// Attach the exact public plan and proof stream to an already-bound verifier transcript.
     pub fn new(
         transcript: &'transcript mut T,
@@ -518,139 +576,129 @@ impl<'transcript, 'proof, T> VerifierGrindingTranscript<'transcript, 'proof, T> 
     ) -> Result<Self, AkitaError> {
         Ok(Self {
             transcript,
-            reader: stream.reader(plan)?,
+            cursor: stream.reader(plan)?,
             #[cfg(feature = "logging-transcript")]
             audit: ChallengeAudit::default(),
         })
     }
 
     /// Require exact plan and proof-bit exhaustion.
-    pub fn finish(self) -> Result<(), AkitaError> {
-        #[cfg(feature = "logging-transcript")]
-        {
-            let mut audit = self.audit;
-            audit.seal_query();
-            if !audit.is_finished() {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        self.reader.finish()
+    pub fn finish(mut self) -> Result<(), AkitaError> {
+        self.seal_audit()?;
+        self.cursor.finish()
     }
 }
 
-macro_rules! impl_transcript_forwarding {
-    ($adapter:ident) => {
-        impl<F, T> Transcript<F> for $adapter<'_, '_, T>
-        where
-            F: FieldCore + CanonicalField,
-            T: Transcript<F>,
-        {
-            fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.bind_instance_bytes(instance_bytes);
-            }
+impl<F, T, C> Transcript<F> for GrindingTranscript<'_, T, C>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    C: Send,
+{
+    fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.bind_instance_bytes(instance_bytes);
+    }
 
-            fn record_wire_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.record_wire_serde(label, value);
-            }
+    fn record_wire_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.record_wire_serde(label, value);
+    }
 
-            fn record_wire_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.record_wire_bytes(label, bytes);
-            }
+    fn record_wire_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.record_wire_bytes(label, bytes);
+    }
 
-            #[cfg(feature = "logging-transcript")]
-            fn record_grinding_plan_query(&mut self, site: &[u8], multiplicity: u64) {
-                self.transcript
-                    .record_grinding_plan_query(site, multiplicity);
-            }
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_plan_query(&mut self, site: &[u8], multiplicity: u64) {
+        self.transcript
+            .record_grinding_plan_query(site, multiplicity);
+    }
 
-            #[cfg(feature = "logging-transcript")]
-            fn record_grinding_actual_query(&mut self, site: &[u8], label: &[u8]) {
-                self.transcript.record_grinding_actual_query(site, label);
-            }
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_actual_query(&mut self, site: &[u8], label: &[u8]) {
+        self.transcript.record_grinding_actual_query(site, label);
+    }
 
-            #[cfg(feature = "logging-transcript")]
-            fn record_fold_challenge_range(&mut self, group_index: usize, coordinate_count: usize) {
-                self.audit.seal_query();
-                self.audit.observe_fold_range(group_index, coordinate_count);
-                self.transcript
-                    .record_fold_challenge_range(group_index, coordinate_count);
-            }
+    #[cfg(feature = "logging-transcript")]
+    fn record_fold_challenge_range(&mut self, group_index: usize, coordinate_count: usize) {
+        self.audit.seal_query();
+        self.audit.observe_fold_range(group_index, coordinate_count);
+        self.transcript
+            .record_fold_challenge_range(group_index, coordinate_count);
+    }
 
-            fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.append_bytes(label, bytes);
-            }
+    fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.append_bytes(label, bytes);
+    }
 
-            fn append_field(&mut self, label: &[u8], value: &F) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.append_field(label, value);
-            }
+    fn append_field(&mut self, label: &[u8], value: &F) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.append_field(label, value);
+    }
 
-            fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
-                #[cfg(feature = "logging-transcript")]
-                self.audit.seal_query();
-                self.transcript.append_serde(label, value);
-            }
+    fn append_serde<S: AkitaSerialize>(&mut self, label: &[u8], value: &S) {
+        #[cfg(feature = "logging-transcript")]
+        self.audit.seal_query();
+        self.transcript.append_serde(label, value);
+    }
 
-            fn challenge_scalar(&mut self, label: &[u8]) -> F {
-                #[cfg(feature = "logging-transcript")]
-                if let Some(site) = self.audit.observe_query(label, false) {
-                    self.transcript
-                        .record_grinding_actual_query(&site.canonical_bytes(), label);
-                }
-                self.transcript.challenge_scalar(label)
-            }
-
-            fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
-                #[cfg(feature = "logging-transcript")]
-                if let Some(site) = self.audit.observe_query(label, false) {
-                    self.transcript
-                        .record_grinding_actual_query(&site.canonical_bytes(), label);
-                }
-                self.transcript.challenge_bytes(label, len)
-            }
-
-            fn challenge_block(
-                &mut self,
-                label: &[u8],
-            ) -> [u8; akita_transcript::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
-                #[cfg(feature = "logging-transcript")]
-                if let Some(site) = self.audit.observe_query(
-                    label,
-                    label == akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE,
-                ) {
-                    self.transcript
-                        .record_grinding_actual_query(&site.canonical_bytes(), label);
-                }
-                self.transcript.challenge_block(label)
-            }
-
-            fn grinding_predicate(
-                &mut self,
-                site_label: &[u8],
-                grind_bits: u8,
-                nonce_bits: u8,
-                counter: u32,
-            ) -> Option<[u8; akita_transcript::GRINDING_PREDICATE_LEN]> {
-                self.transcript
-                    .grinding_predicate(site_label, grind_bits, nonce_bits, counter)
-            }
+    fn challenge_scalar(&mut self, label: &[u8]) -> F {
+        #[cfg(feature = "logging-transcript")]
+        if let Some(site) = self.audit.observe_query(label, false) {
+            self.transcript
+                .record_grinding_actual_query(&site.canonical_bytes(), label);
         }
-    };
+        self.transcript.challenge_scalar(label)
+    }
+
+    fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8> {
+        #[cfg(feature = "logging-transcript")]
+        if let Some(site) = self.audit.observe_query(label, false) {
+            self.transcript
+                .record_grinding_actual_query(&site.canonical_bytes(), label);
+        }
+        self.transcript.challenge_bytes(label, len)
+    }
+
+    fn challenge_block(
+        &mut self,
+        label: &[u8],
+    ) -> [u8; akita_transcript::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        #[cfg(feature = "logging-transcript")]
+        if let Some(site) = self.audit.observe_query(
+            label,
+            label == akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE,
+        ) {
+            self.transcript
+                .record_grinding_actual_query(&site.canonical_bytes(), label);
+        }
+        self.transcript.challenge_block(label)
+    }
+
+    fn grinding_predicate(
+        &mut self,
+        site_label: &[u8],
+        grind_bits: u8,
+        nonce_bits: u8,
+        counter: u32,
+    ) -> Option<[u8; akita_transcript::GRINDING_PREDICATE_LEN]> {
+        self.transcript
+            .grinding_predicate(site_label, grind_bits, nonce_bits, counter)
+    }
 }
 
-impl_transcript_forwarding!(ProverGrindingTranscript);
-impl_transcript_forwarding!(VerifierGrindingTranscript);
-
-impl<T> TranscriptChallengePreview for ProverGrindingTranscript<'_, '_, T>
+// Preview is a prover-side capability: only the writer adapter exposes it, so
+// verifier replay keeps exactly the surface it had before.
+impl<'plan, T> TranscriptChallengePreview
+    for GrindingTranscript<'_, T, TranscriptNonceWriter<'plan>>
 where
     T: TranscriptChallengePreview,
 {
@@ -662,55 +710,49 @@ where
     }
 }
 
-macro_rules! impl_transcript_grinding {
-    ($adapter:ident, $cursor:ident, $($extra_bound:tt)*) => {
-        impl<F, T> TranscriptGrinding<F> for $adapter<'_, '_, T>
-        where
-            F: FieldCore + CanonicalField,
-            T: Transcript<F> $($extra_bound)*,
+impl<F, T, C> TranscriptGrinding<F> for GrindingTranscript<'_, T, C>
+where
+    F: FieldCore + CanonicalField,
+    T: Transcript<F>,
+    C: NonceCursor<F, T> + Send,
+{
+    fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
+        self.cursor.grind_query(self.transcript, site)?;
+        #[cfg(feature = "logging-transcript")]
         {
-            fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError> {
-                self.$cursor.grind::<F, T>(self.transcript, site)?;
-                #[cfg(feature = "logging-transcript")]
-                {
-                    self.audit.begin_query(site)?;
-                    self.transcript
-                        .record_grinding_plan_query(&site.canonical_bytes(), 1);
-                }
-                Ok(())
-            }
-
-            fn record_fold_challenges(
-                &mut self,
-                level: u32,
-                group: u32,
-                coordinate_count: usize,
-            ) -> Result<(), AkitaError> {
-                self.$cursor
-                    .record_fold_challenges(level, group, coordinate_count)?;
-                #[cfg(feature = "logging-transcript")]
-                {
-                    self.audit.seal_query();
-                    if self.audit.invalid {
-                        return Err(AkitaError::InvalidProof);
-                    }
-                    self.audit.consume_fold(group, coordinate_count);
-                    self.transcript.record_grinding_plan_query(
-                        &GrindingSite::FoldChallengeGroup { level, group }.canonical_bytes(),
-                        u64::try_from(coordinate_count)
-                            .ok()
-                            .and_then(|count| count.checked_add(1))
-                            .ok_or(AkitaError::InvalidProof)?,
-                    );
-                }
-                Ok(())
-            }
+            self.audit.begin_query(site)?;
+            self.transcript
+                .record_grinding_plan_query(&site.canonical_bytes(), 1);
         }
-    };
-}
+        Ok(())
+    }
 
-impl_transcript_grinding!(ProverGrindingTranscript, writer, + TranscriptChallengePreview);
-impl_transcript_grinding!(VerifierGrindingTranscript, reader,);
+    fn record_fold_challenges(
+        &mut self,
+        level: u32,
+        group: u32,
+        coordinate_count: usize,
+    ) -> Result<(), AkitaError> {
+        self.cursor
+            .record_fold_challenges(level, group, coordinate_count)?;
+        #[cfg(feature = "logging-transcript")]
+        {
+            self.audit.seal_query();
+            if self.audit.invalid {
+                return Err(AkitaError::InvalidProof);
+            }
+            self.audit.consume_fold(group, coordinate_count);
+            self.transcript.record_grinding_plan_query(
+                &GrindingSite::FoldChallengeGroup { level, group }.canonical_bytes(),
+                u64::try_from(coordinate_count)
+                    .ok()
+                    .and_then(|count| count.checked_add(1))
+                    .ok_or(AkitaError::InvalidProof)?,
+            );
+        }
+        Ok(())
+    }
+}
 
 impl<F, T> ProverTranscriptGrinding<F> for ProverGrindingTranscript<'_, '_, T>
 where
@@ -718,7 +760,7 @@ where
     T: Transcript<F> + TranscriptChallengePreview,
 {
     fn commit_fold_response(&mut self, site: GrindingSite, counter: u32) -> Result<(), AkitaError> {
-        self.writer.write_fold_response(site, counter)?;
+        self.cursor.write_fold_response(site, counter)?;
         #[cfg(feature = "logging-transcript")]
         {
             self.audit.seal_query();
@@ -738,7 +780,7 @@ where
     T: Transcript<F>,
 {
     fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {
-        let nonce = self.reader.read_fold_response(site)?;
+        let nonce = self.cursor.read_fold_response(site)?;
         #[cfg(feature = "logging-transcript")]
         {
             self.audit.seal_query();

@@ -18,6 +18,7 @@ mod transcript_grinding_binding;
 pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
+use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
     AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId, DecompositionParams,
     FoldSchedule, OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
@@ -752,14 +753,6 @@ impl AkitaDeserialize for CallSection {
 
 fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
     crate::field_modulus_be_bytes::<F>()
-}
-
-fn usize_to_u32(value: usize, name: &'static str) -> Result<u32, AkitaError> {
-    u32::try_from(value).map_err(|_| AkitaError::InvalidInput(format!("{name} does not fit u32")))
-}
-
-fn usize_to_u8(value: usize, name: &'static str) -> Result<u8, AkitaError> {
-    u8::try_from(value).map_err(|_| AkitaError::InvalidInput(format!("{name} does not fit u8")))
 }
 
 fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {

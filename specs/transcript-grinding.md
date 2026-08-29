@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao, Codex |
 | Created | 2026-05-22 |
 | Status | active |
-| PR | [#417](https://github.com/LayerZero-Labs/akita/pull/417) |
+| PR | [#448](https://github.com/LayerZero-Labs/akita/pull/448) |
 | Supersedes | Unmerged transcript grinding design at `5057456` |
 | Superseded-by | |
 | Book-chapter | |

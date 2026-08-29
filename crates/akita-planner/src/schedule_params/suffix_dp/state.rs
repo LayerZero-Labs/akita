@@ -100,9 +100,7 @@ impl ParentObservableKey {
                 opening_vars: first.recursive_opening_num_vars()?,
                 stage3_rounds: first
                     .setup_prefix()
-                    .map(akita_types::setup_prefix_sumcheck_rounds)
-                    .transpose()?
-                    .unwrap_or(0),
+                    .map_or(0, |prefix| prefix.profile.group.num_vars()),
             },
         })
     }

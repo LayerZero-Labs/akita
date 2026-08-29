@@ -1,5 +1,6 @@
 //! Canonical grinding-plan derivation from public schedule geometry.
 
+use crate::narrowing::{usize_to_u32, usize_to_u64};
 use crate::{
     multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
@@ -8,12 +9,32 @@ use crate::{
 };
 use akita_error::AkitaError;
 
-/// Successor shape needed to price one planner edge.
-#[doc(hidden)]
+/// Successor shape consumed by one nonterminal fold.
+///
+/// This is the derivation's own notion of "what comes after this level", shared
+/// by whole-schedule derivation and by planner edge pricing.
 #[derive(Clone, Copy)]
 pub enum GrindingPlanSuccessor<'a> {
     Recursive(&'a CommittedGroupParams),
     Terminal(&'a crate::TerminalFoldParams),
+}
+
+/// Challenge capacity shared by every plan-derivation entry point.
+///
+/// The capacity is the single quantity each entry point needs from the field
+/// metadata, so deriving it is the only prelude any of them run.
+fn challenge_capacity_bits(
+    layout: &OpeningClaimsLayout,
+    modulus_bits: u32,
+    extension_degree: usize,
+) -> Result<u32, AkitaError> {
+    layout.check()?;
+    if extension_degree == 0 || !extension_degree.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "grinding extension degree must be a nonzero power of two".into(),
+        ));
+    }
+    nominal_challenge_capacity_bits(modulus_bits, extension_degree)
 }
 
 /// Derive the only accepted grinding plan from field metadata and public protocol shape.
@@ -34,7 +55,6 @@ pub fn derive_transcript_grinding_plan_from_public_shape(
 /// standalone [`FoldSchedule`] and must not pass root-only structure checks.
 /// The planner separately validates candidate geometry before calling this
 /// pricing entry point.
-#[doc(hidden)]
 pub fn transcript_grinding_nonce_bits_for_planner_candidate(
     schedule: &FoldSchedule,
     root_layout: &OpeningClaimsLayout,
@@ -48,7 +68,6 @@ pub fn transcript_grinding_nonce_bits_for_planner_candidate(
 }
 
 /// Price one planner edge using the canonical query builders.
-#[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_nonce_bits_for_planner_edge(
     params: &CommittedGroupParams,
@@ -59,13 +78,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     extension_degree: usize,
     level: u32,
 ) -> Result<usize, AkitaError> {
-    layout.check()?;
-    if extension_degree == 0 || !extension_degree.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "grinding extension degree must be a nonzero power of two".into(),
-        ));
-    }
-    let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
+    let capacity = challenge_capacity_bits(layout, modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
     let rounds = append_nonterminal(
         &mut runs,
@@ -98,13 +111,7 @@ fn derive_transcript_grinding_plan(
     modulus_bits: u32,
     extension_degree: usize,
 ) -> Result<GrindingPlan, AkitaError> {
-    root_layout.check()?;
-    if extension_degree == 0 || !extension_degree.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "grinding extension degree must be a nonzero power of two".into(),
-        ));
-    }
-    let capacity = nominal_challenge_capacity_bits(modulus_bits, extension_degree)?;
+    let capacity = challenge_capacity_bits(root_layout, modulus_bits, extension_degree)?;
     let mut runs = Vec::new();
 
     let mut predecessor_rounds = append_nonterminal(
@@ -122,7 +129,9 @@ fn derive_transcript_grinding_plan(
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
-        let layout = recursive_layout(predecessor_rounds, &fold.params)?;
+        let layout = fold
+            .params
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
         let successor = schedule.recursive_folds.get(index + 1).map_or(
             GrindingPlanSuccessor::Terminal(&schedule.terminal),
             |step| GrindingPlanSuccessor::Recursive(&step.params),
@@ -299,7 +308,7 @@ fn append_nonterminal(
     }
     if let GrindingPlanSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
-            for round in 0..setup_prefix_sumcheck_rounds(prefix)? {
+            for round in 0..prefix.profile.group.num_vars() {
                 append_sumcheck(runs, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
             }
         }
@@ -411,50 +420,6 @@ fn append_sumcheck(
     Ok(())
 }
 
-fn recursive_layout(
-    predecessor_rounds: usize,
-    current: &CommittedGroupParams,
-) -> Result<OpeningClaimsLayout, AkitaError> {
-    let mut groups = Vec::with_capacity(2);
-    if let Some(prefix) = current.setup_prefix() {
-        groups.push(PolynomialGroupLayout::singleton(
-            setup_prefix_sumcheck_rounds(prefix)?,
-        ));
-    }
-    groups.push(PolynomialGroupLayout::singleton(predecessor_rounds));
-    OpeningClaimsLayout::from_groups(groups)
-}
-
-/// Number of Stage 3 sumcheck rounds induced when a successor consumes a setup prefix.
-pub fn setup_prefix_sumcheck_rounds(
-    prefix: &crate::GroupOpenPhaseParams,
-) -> Result<usize, AkitaError> {
-    let n_prefix = prefix.n_prefix()?;
-    let d_setup = prefix.d_setup();
-    if d_setup == 0 || !n_prefix.is_multiple_of(d_setup) {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix field length does not align with its ring dimension".into(),
-        ));
-    }
-    let ring_len = n_prefix / d_setup;
-    if ring_len == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix ring length is zero".into(),
-        ));
-    }
-    (d_setup.trailing_zeros() as usize)
-        .checked_add(ring_len.next_power_of_two().trailing_zeros() as usize)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix round count overflow".into()))
-}
-
-fn usize_to_u32(value: usize, name: &str) -> Result<u32, AkitaError> {
-    u32::try_from(value).map_err(|_| AkitaError::InvalidSetup(format!("{name} exceeds u32")))
-}
-
-fn usize_to_u64(value: usize, name: &str) -> Result<u64, AkitaError> {
-    u64::try_from(value).map_err(|_| AkitaError::InvalidSetup(format!("{name} exceeds u64")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,7 +485,9 @@ mod tests {
             expected_rounds
         );
 
-        let recursive = recursive_layout(rounds, &successor).expect("recursive layout");
+        let recursive = successor
+            .opening_layout_for_final_group(PolynomialGroupLayout::singleton(rounds))
+            .expect("recursive layout");
         assert_eq!(
             recursive
                 .group_layout(recursive.root_final_group_index().expect("final group"))

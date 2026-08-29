@@ -23,6 +23,7 @@ pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod lhl_blinding;
+pub(crate) mod narrowing;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
@@ -213,7 +214,7 @@ pub use transcript_grinding::{
     GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
 };
 pub use transcript_grinding_plan::{
-    derive_transcript_grinding_plan_from_public_shape, setup_prefix_sumcheck_rounds,
+    derive_transcript_grinding_plan_from_public_shape,
     transcript_grinding_nonce_bits_for_planner_candidate,
     transcript_grinding_nonce_bits_for_planner_edge, GrindingPlanSuccessor,
 };

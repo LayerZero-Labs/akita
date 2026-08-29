@@ -195,6 +195,36 @@ mod tests {
                 );
                 assert!(count(GrindingQueryKind::FoldChallengeGroup) > 0);
                 assert!(plan.expanded_query_count() >= plan.runs().len() as u64);
+
+                // A level's Stage 3 rounds are induced by its *successor's*
+                // setup prefix, and their count is the prefix group's own
+                // committed width. Pin that against the stored layout so no
+                // second derivation of the prefix width can reappear.
+                for (index, step) in row.schedule().recursive_folds.iter().enumerate() {
+                    let level = u32::try_from(index).expect("grinding level fits u32");
+                    let expected = step
+                        .params
+                        .setup_prefix()
+                        .map_or(0, |prefix| prefix.profile.group.num_vars());
+                    let observed = plan
+                        .runs()
+                        .iter()
+                        .filter(|run| {
+                            matches!(
+                                run.site(),
+                                GrindingSite::SumcheckRound {
+                                    protocol: akita_types::SumcheckProtocol::Stage3,
+                                    level: run_level,
+                                    ..
+                                } if run_level == level
+                            )
+                        })
+                        .count();
+                    assert_eq!(
+                        observed, expected,
+                        "level {level} Stage 3 rounds must equal the successor prefix group width"
+                    );
+                }
             }
         }
 
