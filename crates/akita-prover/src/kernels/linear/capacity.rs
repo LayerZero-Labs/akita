@@ -126,12 +126,14 @@ mod tests {
     fn q128_digit_capacity_matches_expected_scale() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let width = params
-            .crt_capacity()
+        let capacity = params.crt_capacity();
+        let width = capacity
             .max_safe_width::<Prime128Offset275, D>(BALANCED_DIGIT_RHS_MAX_ABS)
             .expect("one i8 term should fit");
 
-        assert_eq!(width, 511);
+        assert_eq!(width, 549_578_630_967);
+        assert!(capacity.supports::<Prime128Offset275, D>(width, BALANCED_DIGIT_RHS_MAX_ABS));
+        assert!(!capacity.supports::<Prime128Offset275, D>(width + 1, BALANCED_DIGIT_RHS_MAX_ABS));
     }
 
     #[test]
@@ -151,14 +153,17 @@ mod tests {
     }
 
     #[test]
-    fn q128_rejects_unsafe_single_centered_term() {
+    fn q128_centered_capacity_matches_expected_scale() {
         const D: usize = 128;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let width = params
-            .crt_capacity()
-            .max_safe_width::<Prime128Offset275, D>(32_768);
+        let capacity = params.crt_capacity();
+        let width = capacity
+            .max_safe_width::<Prime128Offset275, D>(32_768)
+            .expect("one centered term should fit");
 
-        assert_eq!(width, None);
+        assert_eq!(width, 1_073_395_763);
+        assert!(capacity.supports::<Prime128Offset275, D>(width, 32_768));
+        assert!(!capacity.supports::<Prime128Offset275, D>(width + 1, 32_768));
     }
 
     #[test]
@@ -204,8 +209,8 @@ mod tests {
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime128Offset275, 256>().unwrap(),
-            127,
-            127,
+            137_394_657_741,
+            137_394_657_741,
         );
     }
 
@@ -233,7 +238,7 @@ mod tests {
             q128_params
                 .crt_capacity()
                 .max_safe_width::<Prime128Offset275, D>(32_768),
-            None
+            Some(536_697_881)
         );
     }
 
