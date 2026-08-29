@@ -7,12 +7,13 @@ use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    build_compression_relation_weights, dispatch_for_field, shared_setup_fold_gadget,
-    validate_role_dispatch, AkitaExpandedSetup, CommittedGroupParams, CompressionRelationWeights,
-    FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout, PreparedRelationAddress,
+    build_compression_relation_weights, build_reduced_compression_relation_weights,
+    dispatch_for_field, shared_setup_fold_gadget, validate_role_dispatch, AkitaExpandedSetup,
+    CommittedGroupParams, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
+    OpeningClaimsLayout, PreparedRelationAddress, ReducedCompressionRelationWeights,
     RelationAddressGeometry, RelationWitnessGeometry, RingMultiplierOpeningPoint,
-    RingRelationGroupOpeningView, RingRelationInstance, RingRole, SetupContributionGroupInputs,
-    SetupContributionPlan, WitnessLayout,
+    RingRelationGroupOpeningView, RingRelationInstance, RingRelationMode, RingRole,
+    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::{Arc, Mutex};
@@ -38,7 +39,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: Field> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
-    pub compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    pub compression_relation_weights: Option<PreparedCompressionRelation<E>>,
     /// Sparse support of every F/H negative-binary digit span.
     pub negative_binary_support: Option<NegativeBinarySupport>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
@@ -57,7 +58,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: Field> {
 
 struct RingSwitchVerifyCoreOutput<E: Field> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    compression_relation_weights: Option<PreparedCompressionRelation<E>>,
     negative_binary_support: Option<NegativeBinarySupport>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
@@ -65,6 +66,28 @@ struct RingSwitchVerifyCoreOutput<E: Field> {
     tau1: Vec<E>,
     b: usize,
     alpha: E,
+}
+
+pub(crate) enum PreparedCompressionRelation<E: Field> {
+    QuotientLift(CompressionRelationWeights<E>),
+    ReducedEvaluation(ReducedCompressionRelationWeights<E>),
+}
+
+impl<E: Field> PreparedCompressionRelation<E> {
+    pub(crate) fn evaluate_at_point<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        point: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: Field,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        match self {
+            Self::QuotientLift(weights) => weights.evaluate_at_point(point),
+            Self::ReducedEvaluation(weights) => weights.evaluate_at_point(setup, point),
+        }
+    }
 }
 
 impl<E: Field> RingSwitchVerifyCoreOutput<E> {
@@ -243,22 +266,36 @@ where
         .opening_source_len
         .checked_mul(replay.opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
-    let compression_relation_weights = lp
-        .payload_mode
-        .is_compressed()
-        .then(|| {
-            build_compression_relation_weights(
-                replay.setup,
-                relation,
-                alpha,
-                lp,
-                &tau1,
-                &witness_layout,
-                replay.opening_ring_dim,
-                physical_field_len,
-            )
+    let compression_relation_weights = if lp.payload_mode.is_compressed() {
+        Some(match lp.ring_relation_mode {
+            RingRelationMode::QuotientLift => {
+                PreparedCompressionRelation::QuotientLift(build_compression_relation_weights(
+                    replay.setup,
+                    relation,
+                    alpha,
+                    lp,
+                    &tau1,
+                    &witness_layout,
+                    replay.opening_ring_dim,
+                    physical_field_len,
+                )?)
+            }
+            RingRelationMode::ReducedEvaluation => PreparedCompressionRelation::ReducedEvaluation(
+                build_reduced_compression_relation_weights(
+                    alpha,
+                    lp,
+                    opening_batch,
+                    relation.extension_degree(),
+                    &tau1,
+                    &witness_layout,
+                    replay.opening_ring_dim,
+                    physical_field_len,
+                )?,
+            ),
         })
-        .transpose()?;
+    } else {
+        None
+    };
     let negative_binary_support = lp
         .payload_mode
         .is_compressed()

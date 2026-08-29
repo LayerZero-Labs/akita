@@ -1,5 +1,12 @@
 //! Shared compact F/H relation weights for prover materialization and verifier evaluation.
 
+mod reduced;
+
+pub use reduced::{
+    build_reduced_compression_relation_weights, evaluate_reduced_compression_map,
+    ReducedCompressionRelationWeights,
+};
+
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{
     eval_boolean_pair_tensor_families, EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
@@ -12,8 +19,8 @@ use std::ops::Range;
 
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionWitnessSpan, FpExtEncoding, ReducedCoefficientFunctional, RelationRowFamily,
-    RingRelationInstance, WitnessLayout,
+    CompressionWitnessSpan, FpExtEncoding, RelationRowFamily, RingRelationInstance,
+    RingRelationMode, WitnessLayout,
 };
 
 #[derive(Clone, Debug)]
@@ -47,80 +54,6 @@ pub struct CompressionRelationWeights<E: Field> {
 pub struct NegativeBinarySupport {
     intervals: Vec<Range<usize>>,
     physical_field_len: usize,
-}
-
-/// Evaluate one complete canonical compression map through exact reduced
-/// coefficient functionals.
-///
-/// This is the checked boundary between [`CompressionMapPlan`] geometry and
-/// the public setup prefix. It deliberately reads the map coefficients from
-/// that authority instead of reconstructing them from witness offsets. Each
-/// setup coefficient is consumed once, while one native terminal kernel is
-/// retained at a time.
-pub fn evaluate_reduced_compression_map<F, E>(
-    setup: &AkitaExpandedSetup<F>,
-    span: &CompressionWitnessSpan,
-    point: &[E],
-    physical_field_len: usize,
-    alpha: E,
-) -> Result<E, AkitaError>
-where
-    F: Field,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    if !physical_field_len.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "compression relation domain must be a power of two".into(),
-        ));
-    }
-    let expected_variables = physical_field_len.trailing_zeros() as usize;
-    if point.len() != expected_variables {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_variables,
-            actual: point.len(),
-        });
-    }
-    let map = span.map();
-    let digit_span = span.range();
-    let digit_span_len = map
-        .input_width()
-        .checked_mul(map.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("compression map digit span overflow".into()))?;
-    if digit_span.len() != digit_span_len || digit_span.end > physical_field_len {
-        return Err(AkitaError::InvalidSetup(
-            "compression witness span disagrees with its canonical map".into(),
-        ));
-    }
-    let matrix = setup
-        .shared_matrix()
-        .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-    let row = matrix.row_flat(0)?;
-    let equality = OffsetEqWindow::new(point)?;
-    (0..map.input_width()).try_fold(E::zero(), |evaluation, column| {
-        let column_offset = column
-            .checked_mul(map.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("compression map column overflow".into()))?;
-        let column_end = column_offset
-            .checked_add(map.ring_dimension())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression map column extent overflow".into())
-            })?;
-        let physical_start = digit_span
-            .start
-            .checked_add(column_offset)
-            .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
-        let functional = ReducedCoefficientFunctional::prepare(
-            &equality,
-            physical_field_len,
-            physical_start,
-            map.ring_dimension(),
-            alpha,
-        )?;
-        let coefficients = row
-            .get(column_offset..column_end)
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(evaluation + functional.evaluate_multiplier(coefficients)?)
-    })
 }
 
 impl NegativeBinarySupport {
@@ -449,6 +382,131 @@ where
     Ok(())
 }
 
+fn compression_span_for_row<'a>(
+    witness_layout: &'a WitnessLayout,
+    family: &RelationRowFamily,
+) -> Result<(Option<usize>, usize, &'a CompressionWitnessSpan), AkitaError> {
+    match *family {
+        RelationRowFamily::CompressionF {
+            group_index,
+            map_index,
+            ..
+        } => {
+            let span = witness_layout
+                .compression_layers()
+                .get(map_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .f_spans()
+                .iter()
+                .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+                .ok_or(AkitaError::InvalidProof)?;
+            Ok((Some(group_index), map_index, span))
+        }
+        RelationRowFamily::CompressionH { map_index, .. } => {
+            let span = witness_layout
+                .compression_layers()
+                .get(map_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .h_span();
+            Ok((None, map_index, span))
+        }
+        _ => Err(AkitaError::InvalidInput(
+            "relation row is not a compression row".into(),
+        )),
+    }
+}
+
+fn successor_compression_span(
+    witness_layout: &WitnessLayout,
+    group_index: Option<usize>,
+    map_index: usize,
+) -> Result<Option<&CompressionWitnessSpan>, AkitaError> {
+    let Some(successor_index) = map_index.checked_add(1) else {
+        return Err(AkitaError::InvalidSetup(
+            "compression map index overflow".into(),
+        ));
+    };
+    if successor_index >= crate::COMPRESSION_MAP_COUNT {
+        return Ok(None);
+    }
+    let layer = witness_layout
+        .compression_layers()
+        .get(successor_index)
+        .ok_or(AkitaError::InvalidProof)?;
+    match group_index {
+        Some(group_index) => layer
+            .f_spans()
+            .iter()
+            .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+            .map(Some)
+            .ok_or(AkitaError::InvalidProof),
+        None => Ok(Some(layer.h_span())),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_initial_recompositions<F, E>(
+    weights: &mut CompressionRelationWeights<E>,
+    relation_layout: &crate::RelationRhsLayout,
+    lp: &CommittedGroupParams,
+    opening_batch: &crate::OpeningClaimsLayout,
+    witness_layout: &WitnessLayout,
+    field_bits: usize,
+    row_weights: &[E],
+    row_families: &[RelationRowFamily],
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + Ring + ExtField<F>,
+{
+    for relation_group_index in 0..relation_layout.groups.len() {
+        let (group_index, plan) = relation_layout.group_compression_plan(relation_group_index)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
+        let stage = witness_layout
+            .compression_layers()
+            .first()
+            .and_then(|layer| {
+                layer
+                    .f_spans()
+                    .iter()
+                    .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+            })
+            .ok_or(AkitaError::InvalidProof)?;
+        push_recomposition::<F, E>(
+            weights,
+            stage.range().start,
+            stage.map().ring_dimension(),
+            plan.source_coefficients(),
+            relation_layout.groups[relation_group_index].role_dims.d_b(),
+            b_range.start,
+            b_range.len(),
+            field_bits,
+            row_weights,
+        )?;
+    }
+    let d_start = row_families
+        .iter()
+        .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
+        .ok_or(AkitaError::InvalidProof)?;
+    let opening_plan = relation_layout.opening_compression_plan()?;
+    let opening_stage = witness_layout
+        .compression_layers()
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .h_span();
+    push_recomposition::<F, E>(
+        weights,
+        opening_stage.range().start,
+        opening_stage.map().ring_dimension(),
+        opening_plan.source_coefficients(),
+        relation_layout.d_ring_dimension,
+        d_start,
+        relation_layout.n_d,
+        field_bits,
+        row_weights,
+    )
+}
+
 /// Build the one canonical compact F/H relation table.
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "build_compression_relation_weights")]
@@ -466,6 +524,16 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
+    if lp.ring_relation_mode != RingRelationMode::QuotientLift
+        || !matches!(
+            witness_layout.relation_quotient_layout(),
+            crate::RelationQuotientLayout::QuotientLift { .. }
+        )
+    {
+        return Err(AkitaError::InvalidSetup(
+            "lifted compression weights require a quotient relation layout".into(),
+        ));
+    }
     let opening_batch = instance.opening_batch();
     let relation_geometry =
         crate::RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
@@ -494,82 +562,25 @@ where
     let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
     let mut evaluated_matrices = Vec::<EvaluatedCompressionMatrix<E>>::new();
-
-    for (relation_group_index, group) in relation_layout.groups.iter().enumerate() {
-        let (group_index, plan) = relation_layout.group_compression_plan(relation_group_index)?;
-        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
-        let stage = witness_layout
-            .compression_layers()
-            .first()
-            .and_then(|layer| {
-                layer
-                    .f_spans()
-                    .iter()
-                    .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-            })
-            .ok_or(AkitaError::InvalidProof)?;
-        push_recomposition::<F, E>(
-            &mut weights,
-            stage.range().start,
-            stage.map().ring_dimension(),
-            plan.source_coefficients(),
-            group.role_dims.d_b(),
-            b_range.start,
-            b_range.len(),
-            field_bits,
-            &row_weights,
-        )?;
-    }
-    let d_start = row_families
-        .iter()
-        .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
-        .ok_or(AkitaError::InvalidProof)?;
-    let opening_plan = relation_layout.opening_compression_plan()?;
-    let opening_stage = witness_layout
-        .compression_layers()
-        .first()
-        .ok_or(AkitaError::InvalidProof)?
-        .h_span();
-    push_recomposition::<F, E>(
+    push_initial_recompositions::<F, E>(
         &mut weights,
-        opening_stage.range().start,
-        opening_stage.map().ring_dimension(),
-        opening_plan.source_coefficients(),
-        relation_layout.d_ring_dimension,
-        d_start,
-        relation_layout.n_d,
+        relation_layout,
+        lp,
+        opening_batch,
+        witness_layout,
         field_bits,
         &row_weights,
+        &row_families,
     )?;
 
     for (row_index, family) in row_families.iter().enumerate() {
-        let (group_index, map_index, span) = match *family {
-            RelationRowFamily::CompressionF {
-                group_index,
-                map_index,
-                ..
-            } => {
-                let span = witness_layout
-                    .compression_layers()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .f_spans()
-                    .iter()
-                    .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-                    .ok_or(AkitaError::InvalidProof)?;
-                (Some(group_index), map_index, span)
-            }
-            RelationRowFamily::CompressionH { map_index, .. } => (
-                None,
-                map_index,
-                witness_layout
-                    .compression_layers()
-                    .get(map_index)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .h_span(),
-            ),
-            _ => continue,
-        };
+        if !matches!(
+            family,
+            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+        ) {
+            continue;
+        }
+        let (group_index, map_index, span) = compression_span_for_row(witness_layout, family)?;
         let map = span.map();
         let row_weight = *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?;
         let matrix_index = if let Some(index) = evaluated_matrices.iter().position(|evaluated| {
@@ -619,22 +630,8 @@ where
                         .ok_or(AkitaError::InvalidProof)?,
             )?;
         }
-        if map_index + 1 < crate::COMPRESSION_MAP_COUNT {
-            let successor = match group_index {
-                Some(group_index) => witness_layout
-                    .compression_layers()
-                    .get(map_index + 1)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .f_spans()
-                    .iter()
-                    .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
-                    .ok_or(AkitaError::InvalidProof)?,
-                None => witness_layout
-                    .compression_layers()
-                    .get(map_index + 1)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .h_span(),
-            };
+        if let Some(successor) = successor_compression_span(witness_layout, group_index, map_index)?
+        {
             push_recomposition::<F, E>(
                 &mut weights,
                 successor.range().start,
@@ -746,74 +743,5 @@ mod tests {
             (F::one() - equality_point[0]) * (F::one() - point[0])
         );
         assert_ne!(restricted, factored);
-    }
-
-    #[test]
-    fn reduced_map_uses_canonical_geometry_at_unaligned_window() {
-        let map =
-            CompressionMapPlan::new(crate::SisModulusProfileId::Q128OffsetA7F7, 8, 16, 1).unwrap();
-        let setup_coefficients = map.input_width() * map.ring_dimension();
-        let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            crate::AkitaSetupDescriptor {
-                max_num_vars: 0,
-                max_num_batched_polys: 0,
-                num_field_elements: setup_coefficients,
-                setup_seed: [0u8; 32].into(),
-            },
-            crate::FlatMatrix::from_flat_data(
-                (0..setup_coefficients)
-                    .map(|index| F::from_u64(401 + index as u64))
-                    .collect(),
-            ),
-        );
-        let point = (0..11)
-            .map(|index| F::from_u64(503 + index as u64))
-            .collect::<Vec<_>>();
-        let digit_span_start = 11;
-        let span = CompressionWitnessSpan::new_for_test(
-            map,
-            digit_span_start..digit_span_start + setup_coefficients,
-        );
-        let alpha = F::from_u64(19);
-        let alpha_powers = scalar_powers(alpha, map.ring_dimension());
-        let setup_row = setup.shared_matrix().as_field_slice();
-        // Independent literal oracle: multiply each public map column by every
-        // possible witness monomial, reduce X^d = -1, and place the resulting
-        // scalar at its full physical witness address before the MLE fold.
-        let expected = (0..map.input_width()).fold(F::zero(), |evaluation, column| {
-            (0..map.ring_dimension()).fold(evaluation, |evaluation, witness_coefficient| {
-                let residue = (0..map.ring_dimension()).fold(F::zero(), |sum, map_coefficient| {
-                    let exponent = map_coefficient + witness_coefficient;
-                    let product = setup_row[column * map.ring_dimension() + map_coefficient]
-                        * alpha_powers[exponent % map.ring_dimension()];
-                    if exponent < map.ring_dimension() {
-                        sum + product
-                    } else {
-                        sum - product
-                    }
-                });
-                let physical =
-                    digit_span_start + column * map.ring_dimension() + witness_coefficient;
-                evaluation + akita_algebra::offset_eq::eq_eval_at_index(&point, physical) * residue
-            })
-        });
-        assert_eq!(
-            evaluate_reduced_compression_map(&setup, &span, &point, 2048, alpha).unwrap(),
-            expected
-        );
-        let malformed_span = CompressionWitnessSpan::new_for_test(map, 2040..2048);
-        assert!(
-            evaluate_reduced_compression_map(&setup, &malformed_span, &point, 2048, alpha).is_err()
-        );
-        let out_of_domain_span =
-            CompressionWitnessSpan::new_for_test(map, 2040..2040 + setup_coefficients);
-        assert!(
-            evaluate_reduced_compression_map(&setup, &out_of_domain_span, &point, 2048, alpha)
-                .is_err()
-        );
-        let oversized_point = vec![F::one(); 4_096];
-        assert!(
-            evaluate_reduced_compression_map(&setup, &span, &oversized_point, 2048, alpha).is_err()
-        );
     }
 }

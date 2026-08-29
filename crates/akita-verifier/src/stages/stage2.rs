@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
+use crate::protocol::ring_switch::{PreparedCompressionRelation, RelationMatrixEvaluator};
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
@@ -10,8 +10,7 @@ use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
-    NegativeBinarySupport, OpeningFamily,
+    CoefficientPackingVerifierGroupSemantics, FpExtEncoding, NegativeBinarySupport, OpeningFamily,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -128,7 +127,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-    compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+    compression_relation_weights: Option<&'a PreparedCompressionRelation<E>>,
     negative_binary_support: Option<&'a NegativeBinarySupport>,
     binary_batching: Option<E>,
     setup_claim: Option<E>,
@@ -157,7 +156,7 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+        compression_relation_weights: Option<&'a PreparedCompressionRelation<E>>,
         negative_binary_support: Option<&'a NegativeBinarySupport>,
         binary_batching: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
@@ -255,7 +254,8 @@ where
             self.binary_batching,
         ) {
             (Some(weights), Some(support), Some(binary_batching)) => {
-                let compression_relation_weight = weights.evaluate_at_point(challenges)?;
+                let compression_relation_weight =
+                    weights.evaluate_at_point(self.setup, challenges)?;
                 let binary_weight = support
                     .evaluate_restricted_equality_at_point(&self.stage1_point, challenges)?;
                 w_eval * compression_relation_weight

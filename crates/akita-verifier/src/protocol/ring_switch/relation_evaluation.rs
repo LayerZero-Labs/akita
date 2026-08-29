@@ -1,15 +1,17 @@
-//! Succinct prepared relation evaluation for every role geometry.
+//! Mode-bound prepared relation evaluation for every role geometry.
 //!
-//! The common low alpha coordinates are factored once. The setup plan then
-//! selects contiguous q=1 or projected-lane q>1 kernels without changing the
-//! verifier formula or control flow.
+//! Quotient lifting factors the common low alpha coordinates and evaluates its
+//! explicit quotient tail. Reduced evaluation prepares exact terminal
+//! coefficient functionals, performs the same structured/direct setup work,
+//! and returns that already-complete flat MLE without either lifted-only step.
 
 use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
-    RelationAddressGeometry, RelationRowFamily, RelationWitnessGeometry,
+    RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily, RelationWitnessGeometry,
+    RingRelationMode,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -28,13 +30,35 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let relation_geometry = RelationWitnessGeometry::for_level(
-        &context.level_params,
-        &context.opening_batch,
-        context.extension_degree,
-    )?;
-    let row_families = relation_geometry.rhs_layout().row_families()?;
+    let mode = context.level_params.ring_relation_mode;
+    if mode.is_reduced_evaluation() && deferred_setup_claim.is_some() {
+        return Err(AkitaError::InvalidProof);
+    }
+    match (mode, context.witness_layout.relation_quotient_layout()) {
+        (RingRelationMode::QuotientLift, RelationQuotientLayout::QuotientLift { .. })
+        | (RingRelationMode::ReducedEvaluation, RelationQuotientLayout::ReducedEvaluation) => {}
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "relation evaluator mode disagrees with its witness layout".into(),
+            ));
+        }
+    }
+    let row_families = if mode == RingRelationMode::QuotientLift {
+        Some(
+            RelationWitnessGeometry::for_level(
+                &context.level_params,
+                &context.opening_batch,
+                context.extension_degree,
+            )?
+            .rhs_layout()
+            .row_families()?,
+        )
+    } else {
+        None
+    };
     let quotient_row_dims = row_families
+        .as_deref()
+        .unwrap_or(&[])
         .iter()
         .filter(|family| {
             !matches!(
@@ -49,6 +73,7 @@ where
         alpha,
         evaluator.relation_address_geometry,
         &quotient_row_dims,
+        mode,
     )?;
     if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
         return Err(AkitaError::InvalidProof);
@@ -69,9 +94,7 @@ where
     if deferred_setup_claim.is_none() {
         let _span =
             tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
-        plan.materialize_direct_scan(akita_types::PreparedCoefficientFunctional::lifted_power(
-            alpha,
-        ))?;
+        plan.materialize_direct_scan(prepared_point.coefficient_functional())?;
     }
 
     let mut structured_evaluation = E::zero();
@@ -101,16 +124,25 @@ where
             tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
         plan.evaluate_direct::<F>(setup)?
     };
-    let quotient_evaluation =
-        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families).map_err(
-            |error| AkitaError::InvalidInput(format!("relation quotient failed: {error:?}")),
-        )?;
-
-    let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
-    if deferred_setup_claim.is_some() {
-        evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    let relation_evaluation = structured_evaluation + setup_evaluation;
+    match mode {
+        RingRelationMode::QuotientLift => {
+            let quotient_evaluation = evaluate_quotient_tail::<F, E>(
+                evaluator,
+                &prepared_point,
+                row_families.as_deref().ok_or(AkitaError::InvalidProof)?,
+            )
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!("relation quotient failed: {error:?}"))
+            })?;
+            if deferred_setup_claim.is_some() {
+                evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+            }
+            Ok(prepared_point.common_alpha_evaluation()?
+                * (relation_evaluation + quotient_evaluation))
+        }
+        RingRelationMode::ReducedEvaluation => Ok(relation_evaluation),
     }
-    Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
 }
 
 #[allow(clippy::too_many_arguments)]

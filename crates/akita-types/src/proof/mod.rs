@@ -64,8 +64,9 @@ pub use commitment::{
     AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
 pub use compression_relation_weights::{
-    build_compression_relation_weights, evaluate_reduced_compression_map,
-    CompressionRelationWeights, NegativeBinarySupport,
+    build_compression_relation_weights, build_reduced_compression_relation_weights,
+    evaluate_reduced_compression_map, CompressionRelationWeights, NegativeBinarySupport,
+    ReducedCompressionRelationWeights,
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
