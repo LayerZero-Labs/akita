@@ -985,6 +985,58 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             group.group_id
         );
     }
+
+    let reduced_alpha = test_scalar(23);
+    let coefficient_point = (0..relation_address_geometry.relation_coefficient_variable_count())
+        .map(|index| test_scalar(1701 + index as u128))
+        .collect::<Vec<_>>();
+    let mut reduced_plan = SetupContributionPlan::prepare::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+        inputs.eq_tau1.clone(),
+        &witness_layout,
+        &groups,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
+        Some(&fold_gadget),
+        relation_address_geometry,
+    )
+    .unwrap();
+    reduced_plan
+        .materialize_direct_scan(
+            PreparedCoefficientFunctional::reduced_evaluation(
+                reduced_alpha,
+                &coefficient_point,
+                relation_address_geometry,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let base_dimension = reduced_plan.projection_geometry().base_ring_dim();
+    let setup_coefficients = reduced_plan.required() * base_dimension;
+    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 0,
+            num_field_elements: setup_coefficients,
+            setup_seed: [0u8; 32].into(),
+        },
+        FlatMatrix::from_flat_data(
+            (0..setup_coefficients)
+                .map(|index| test_scalar(1801 + index as u128))
+                .collect(),
+        ),
+    );
+    assert_eq!(
+        reduced_plan.evaluate_direct::<F>(&setup).unwrap(),
+        fused_scan::reduced_direct_literal_oracle(
+            &reduced_plan,
+            &setup,
+            &coefficient_point,
+            reduced_alpha,
+        ),
+        "heterogeneous multi-group reduced setup scan must match the literal oracle"
+    );
 }
 
 #[test]

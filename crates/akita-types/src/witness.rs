@@ -366,6 +366,11 @@ impl WitnessQuotientRowLayout {
 }
 
 impl CompressionWitnessSpan {
+    #[cfg(test)]
+    pub(crate) fn new_for_test(map: CompressionMapPlan, range: Range<usize>) -> Self {
+        Self { map, range }
+    }
+
     /// Checked canonical map represented by this span.
     #[must_use]
     pub fn map(&self) -> CompressionMapPlan {

@@ -54,12 +54,6 @@ impl<E: Field> SetupContributionPlan<E> {
             .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
         let t_stride = checked::product([group.n_a, group.depth_commit, outer_subcolumns])
             .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
-        let opening_scales = (opening_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
-            .transpose()?;
-        let outer_scales = (outer_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
-            .transpose()?;
         let e_len = block_claims
             .checked_mul(e_stride)
             .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
@@ -79,24 +73,113 @@ impl<E: Field> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
-            let projected_opening_gadget = opening_scales.as_ref().map(|scales| {
-                scales
-                    .iter()
-                    .flat_map(|&scale| opening_gadget.iter().map(move |&gadget| scale * gadget))
-                    .collect::<Vec<_>>()
-            });
+            let (projected_opening_gadget, projected_commitment_gadget, projected_witness_gadget) =
+                match (
+                    self.direct_scan_functional.as_ref(),
+                    weights.reduced_functionals.as_ref(),
+                ) {
+                    (Some(PreparedCoefficientFunctional::LiftedPower { .. }), None) => {
+                        let opening = (opening_subcolumns != 1)
+                            .then(|| {
+                                scalar_powers_with_stride(
+                                    alpha,
+                                    group.role_dims.d_d(),
+                                    opening_subcolumns,
+                                )
+                            })
+                            .transpose()?
+                            .map(|scales| {
+                                scales
+                                    .iter()
+                                    .flat_map(|&scale| {
+                                        opening_gadget.iter().map(move |&gadget| scale * gadget)
+                                    })
+                                    .collect::<Vec<_>>()
+                            });
+                        let commitment = (outer_subcolumns != 1)
+                            .then(|| {
+                                scalar_powers_with_stride(
+                                    alpha,
+                                    group.role_dims.d_b(),
+                                    outer_subcolumns,
+                                )
+                            })
+                            .transpose()?
+                            .map(|scales| {
+                                scales
+                                    .iter()
+                                    .flat_map(|&scale| {
+                                        commitment_gadget.iter().map(move |&gadget| scale * gadget)
+                                    })
+                                    .collect::<Vec<_>>()
+                            });
+                        (opening, commitment, None)
+                    }
+                    (
+                        Some(PreparedCoefficientFunctional::ReducedEvaluation { .. }),
+                        Some([a_functional, b_functional, d_functional]),
+                    ) => {
+                        if a_functional.len() != group.role_dims.d_a()
+                            || b_functional.len() != group.role_dims.d_b()
+                            || d_functional.len() != group.role_dims.d_d()
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "structured reduced functionals have malformed dimensions".into(),
+                            ));
+                        }
+                        // E, T, and Z gadgets are constant native-ring
+                        // polynomials. Their complete reduced coefficient
+                        // contraction is therefore H[0]. Distinct physical
+                        // subcolumns remain in the high equality weights.
+                        let opening_scale =
+                            *d_functional.first().ok_or(AkitaError::InvalidProof)?;
+                        let commitment_scale =
+                            *b_functional.first().ok_or(AkitaError::InvalidProof)?;
+                        let witness_scale =
+                            *a_functional.first().ok_or(AkitaError::InvalidProof)?;
+                        (
+                            Some(
+                                (0..opening_subcolumns)
+                                    .flat_map(|_| {
+                                        opening_gadget
+                                            .iter()
+                                            .map(move |&gadget| opening_scale * gadget)
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                            Some(
+                                (0..outer_subcolumns)
+                                    .flat_map(|_| {
+                                        commitment_gadget
+                                            .iter()
+                                            .map(move |&gadget| commitment_scale * gadget)
+                                    })
+                                    .collect::<Vec<_>>(),
+                            ),
+                            Some(
+                                witness_gadget
+                                    .iter()
+                                    .map(|&gadget| witness_scale * gadget)
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                    }
+                    _ => {
+                        return Err(AkitaError::InvalidSetup(
+                            "structured relation weights disagree with their coefficient functional"
+                                .into(),
+                        ));
+                    }
+                };
             let direct_opening_gadget = projected_opening_gadget
                 .as_deref()
                 .unwrap_or(&opening_gadget);
-            let projected_commitment_gadget = outer_scales.as_ref().map(|scales| {
-                scales
-                    .iter()
-                    .flat_map(|&scale| commitment_gadget.iter().map(move |&gadget| scale * gadget))
-                    .collect::<Vec<_>>()
-            });
             let direct_commitment_gadget = projected_commitment_gadget
                 .as_deref()
                 .unwrap_or(&commitment_gadget);
+            let direct_witness_gadget = projected_witness_gadget
+                .as_deref()
+                .unwrap_or(&witness_gadget);
             let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("structured T row stride overflow".into())
@@ -175,7 +258,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 )?;
                 let inner = eq
                     .iter()
-                    .zip(&witness_gadget)
+                    .zip(direct_witness_gadget)
                     .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
                 Ok(acc?
                     + *opening_a_evals
@@ -217,6 +300,12 @@ impl<E: Field> SetupContributionPlan<E> {
             });
         }
 
+        let opening_scales = (opening_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
+            .transpose()?;
+        let outer_scales = (outer_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+            .transpose()?;
         let point = self.relation_address.point();
         let base_ring_dim = self
             .relation_address_geometry

@@ -12,7 +12,7 @@ use std::ops::Range;
 
 use crate::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionMapPlan, FpExtEncoding, ReducedCoefficientFunctional, RelationRowFamily,
+    CompressionWitnessSpan, FpExtEncoding, ReducedCoefficientFunctional, RelationRowFamily,
     RingRelationInstance, WitnessLayout,
 };
 
@@ -59,28 +59,30 @@ pub struct NegativeBinarySupport {
 /// retained at a time.
 pub fn evaluate_reduced_compression_map<F, E>(
     setup: &AkitaExpandedSetup<F>,
-    map: CompressionMapPlan,
+    span: &CompressionWitnessSpan,
     point: &[E],
     physical_field_len: usize,
-    digit_span_start: usize,
     alpha: E,
 ) -> Result<E, AkitaError>
 where
     F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    let equality = OffsetEqWindow::new(point)?;
     if !physical_field_len.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
             "compression relation domain must be a power of two".into(),
         ));
     }
-    if equality.variable_count() != physical_field_len.trailing_zeros() as usize {
+    let expected_variables = physical_field_len.trailing_zeros() as usize;
+    if point.len() != expected_variables {
         return Err(AkitaError::InvalidSize {
-            expected: physical_field_len.trailing_zeros() as usize,
-            actual: equality.variable_count(),
+            expected: expected_variables,
+            actual: point.len(),
         });
     }
+    let equality = OffsetEqWindow::new(point)?;
+    let map = span.map();
+    let digit_span = span.range();
     let matrix = setup
         .shared_matrix()
         .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
@@ -89,12 +91,11 @@ where
         .input_width()
         .checked_mul(map.ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("compression map digit span overflow".into()))?;
-    digit_span_start
-        .checked_add(digit_span_len)
-        .filter(|&end| end <= physical_field_len)
-        .ok_or_else(|| {
-            AkitaError::InvalidInput("compression map digit span is out of range".into())
-        })?;
+    if digit_span.len() != digit_span_len || digit_span.end > physical_field_len {
+        return Err(AkitaError::InvalidSetup(
+            "compression witness span disagrees with its canonical map".into(),
+        ));
+    }
     (0..map.input_width()).try_fold(E::zero(), |evaluation, column| {
         let column_offset = column
             .checked_mul(map.ring_dimension())
@@ -104,7 +105,8 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("compression map column extent overflow".into())
             })?;
-        let physical_start = digit_span_start
+        let physical_start = digit_span
+            .start
             .checked_add(column_offset)
             .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
         let functional = ReducedCoefficientFunctional::prepare(
@@ -767,44 +769,45 @@ mod tests {
         let point = (0..11)
             .map(|index| F::from_u64(503 + index as u64))
             .collect::<Vec<_>>();
-        let equality = OffsetEqWindow::new(&point).unwrap();
         let digit_span_start = 11;
+        let span = CompressionWitnessSpan::new_for_test(
+            map,
+            digit_span_start..digit_span_start + setup_coefficients,
+        );
+        let alpha = F::from_u64(19);
+        let alpha_powers = scalar_powers(alpha, map.ring_dimension());
+        let setup_row = setup.shared_matrix().as_field_slice();
+        // Independent literal oracle: multiply each public map column by every
+        // possible witness monomial, reduce X^d = -1, and place the resulting
+        // scalar at its full physical witness address before the MLE fold.
         let expected = (0..map.input_width()).fold(F::zero(), |evaluation, column| {
-            let start = column * map.ring_dimension();
-            let functional = ReducedCoefficientFunctional::prepare(
-                &equality,
-                2048,
-                digit_span_start + start,
-                map.ring_dimension(),
-                F::from_u64(19),
-            )
-            .unwrap();
-            evaluation
-                + functional
-                    .evaluate_multiplier(
-                        setup
-                            .shared_matrix()
-                            .as_field_slice()
-                            .get(start..start + map.ring_dimension())
-                            .unwrap(),
-                    )
-                    .unwrap()
+            (0..map.ring_dimension()).fold(evaluation, |evaluation, witness_coefficient| {
+                let residue = (0..map.ring_dimension()).fold(F::zero(), |sum, map_coefficient| {
+                    let exponent = map_coefficient + witness_coefficient;
+                    let product = setup_row[column * map.ring_dimension() + map_coefficient]
+                        * alpha_powers[exponent % map.ring_dimension()];
+                    if exponent < map.ring_dimension() {
+                        sum + product
+                    } else {
+                        sum - product
+                    }
+                });
+                let physical =
+                    digit_span_start + column * map.ring_dimension() + witness_coefficient;
+                evaluation + akita_algebra::offset_eq::eq_eval_at_index(&point, physical) * residue
+            })
         });
         assert_eq!(
-            evaluate_reduced_compression_map(
-                &setup,
-                map,
-                &point,
-                2048,
-                digit_span_start,
-                F::from_u64(19)
-            )
-            .unwrap(),
+            evaluate_reduced_compression_map(&setup, &span, &point, 2048, alpha).unwrap(),
             expected
         );
+        let malformed_span = CompressionWitnessSpan::new_for_test(map, 2040..2048);
         assert!(
-            evaluate_reduced_compression_map(&setup, map, &point, 2048, 2040, F::from_u64(19))
-                .is_err()
+            evaluate_reduced_compression_map(&setup, &malformed_span, &point, 2048, alpha).is_err()
+        );
+        let oversized_point = vec![F::one(); 4_096];
+        assert!(
+            evaluate_reduced_compression_map(&setup, &span, &oversized_point, 2048, alpha).is_err()
         );
     }
 }

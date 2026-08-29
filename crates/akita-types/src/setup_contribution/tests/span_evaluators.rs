@@ -191,6 +191,159 @@ pub(super) fn structured_slice_reference(
     evaluation
 }
 
+fn literal_constant_terminal_weight(
+    coefficient_point: &[F],
+    lane_point: &[F],
+    dimension: usize,
+    alpha: F,
+) -> F {
+    let mut native_point = coefficient_point.to_vec();
+    native_point.extend_from_slice(lane_point);
+    assert_eq!(native_point.len(), dimension.trailing_zeros() as usize);
+    let powers = scalar_powers(alpha, dimension);
+    (0..dimension).fold(F::zero(), |sum, coefficient| {
+        sum + eq_eval_at_index(&native_point, coefficient) * powers[coefficient]
+    })
+}
+
+fn reduced_structured_slice_reference(
+    group: &SetupContributionGroupPlan<F>,
+    block_challenges: &[F],
+    opening_a_evals: &[F],
+    coefficient_point: &[F],
+    relation_point: &[F],
+    coefficient_dimension: usize,
+    alpha: F,
+) -> F {
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
+    let lane_point = |dimension: usize| {
+        let ratio = dimension / coefficient_dimension;
+        &relation_point[..ratio.trailing_zeros() as usize]
+    };
+    let a_terminal = literal_constant_terminal_weight(
+        coefficient_point,
+        lane_point(group.role_dims.d_a()),
+        group.role_dims.d_a(),
+        alpha,
+    );
+    let b_terminal = literal_constant_terminal_weight(
+        coefficient_point,
+        lane_point(group.role_dims.d_b()),
+        group.role_dims.d_b(),
+        alpha,
+    );
+    let d_terminal = literal_constant_terminal_weight(
+        coefficient_point,
+        lane_point(group.role_dims.d_d()),
+        group.role_dims.d_d(),
+        alpha,
+    );
+    let (outer_subcolumns, _) =
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
+    let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
+    let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
+    let witness_gadget = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+    let mut evaluation = F::zero();
+    for (block_claim, &block_challenge) in block_challenges.iter().enumerate() {
+        for subcolumn in 0..group.opening_subcolumns {
+            for (digit, &gadget) in opening_gadget.iter().enumerate() {
+                let column =
+                    (block_claim * group.opening_subcolumns + subcolumn) * group.depth_open + digit;
+                evaluation += block_challenge
+                    * group.consistency_weight
+                    * e_eq_slice[column]
+                    * gadget
+                    * d_terminal;
+            }
+        }
+        for row in 0..group.n_a {
+            for subcolumn in 0..outer_subcolumns {
+                for (digit, &gadget) in commitment_gadget.iter().enumerate() {
+                    let column = ((block_claim * group.n_a + row) * outer_subcolumns + subcolumn)
+                        * group.depth_commit
+                        + digit;
+                    evaluation += block_challenge
+                        * group.a_row_weights[row]
+                        * t_eq_slice[column]
+                        * gadget
+                        * b_terminal;
+                }
+            }
+        }
+    }
+    for (position, &opening) in opening_a_evals.iter().enumerate() {
+        for (digit, &gadget) in witness_gadget.iter().enumerate() {
+            evaluation += group.consistency_weight
+                * opening
+                * z_eq_slice[position * group.depth_witness + digit]
+                * gadget
+                * a_terminal;
+        }
+    }
+    evaluation
+}
+
+#[test]
+fn reduced_structured_terms_use_complete_native_terminal_functionals() {
+    let role_dims = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 64,
+    };
+    let outgoing_ring_dim = 32;
+    let (inputs, groups, layout, _, _, relation_point, fold_gadget) =
+        structured_weight_fixture_with_outgoing(8, &[3, 5], role_dims, outgoing_ring_dim);
+    let geometry =
+        crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, layout.live_coeff_len())
+            .unwrap();
+    let coefficient_point = (0..geometry.relation_coefficient_variable_count())
+        .map(|index| test_scalar(701 + index as u128))
+        .collect::<Vec<_>>();
+    let alpha = test_scalar(17);
+    let mut plan = SetupContributionPlan::prepare::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        1,
+        inputs.eq_tau1,
+        &layout,
+        &groups,
+        PreparedRelationAddress::new(&relation_point).unwrap(),
+        Some(&fold_gadget),
+        geometry,
+    )
+    .unwrap();
+    plan.materialize_direct_scan(
+        PreparedCoefficientFunctional::reduced_evaluation(alpha, &coefficient_point, geometry)
+            .unwrap(),
+    )
+    .unwrap();
+    let group = &plan.groups[0];
+    let block_challenges = (0..group.num_claims * group.num_live_blocks)
+        .map(|index| test_scalar(801 + index as u128))
+        .collect::<Vec<_>>();
+    let opening_a_evals = (0..group.num_positions_per_block)
+        .map(|index| test_scalar(901 + index as u128))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        plan.evaluate_structured_group::<F>(
+            group.group_id,
+            &block_challenges,
+            &opening_a_evals,
+            alpha,
+        )
+        .unwrap(),
+        reduced_structured_slice_reference(
+            group,
+            &block_challenges,
+            &opening_a_evals,
+            &coefficient_point,
+            &relation_point,
+            geometry.relation_coefficient_block_len(),
+            alpha,
+        )
+    );
+}
+
 #[test]
 fn canonical_tensors_match_dense_oracles_across_geometries() {
     let cases = [

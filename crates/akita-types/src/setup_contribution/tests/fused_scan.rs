@@ -1,5 +1,147 @@
 use super::*;
 
+fn literal_terminal_functional(point: &[F], dimension: usize, alpha: F) -> Vec<F> {
+    assert_eq!(point.len(), dimension.trailing_zeros() as usize);
+    let equality = (0..dimension)
+        .map(|index| eq_eval_at_index(point, index))
+        .collect::<Vec<_>>();
+    let powers = scalar_powers(alpha, dimension);
+    (0..dimension)
+        .map(|multiplier_coefficient| {
+            (0..dimension).fold(F::zero(), |sum, witness_coefficient| {
+                let exponent = multiplier_coefficient + witness_coefficient;
+                let term = equality[witness_coefficient] * powers[exponent % dimension];
+                if exponent < dimension {
+                    sum + term
+                } else {
+                    sum - term
+                }
+            })
+        })
+        .collect()
+}
+
+fn literal_native_functional(
+    plan: &SetupContributionPlan<F>,
+    coefficient_point: &[F],
+    dimension: usize,
+    alpha: F,
+) -> Vec<F> {
+    let coefficient_dimension = plan
+        .relation_address_geometry()
+        .relation_coefficient_block_len();
+    let ratio = dimension / coefficient_dimension;
+    let mut native_point = coefficient_point.to_vec();
+    native_point
+        .extend_from_slice(&plan.relation_address.point()[..ratio.trailing_zeros() as usize]);
+    literal_terminal_functional(&native_point, dimension, alpha)
+}
+
+fn literal_ring_dot(ring: &[F], functional: &[F]) -> F {
+    assert_eq!(ring.len(), functional.len());
+    ring.iter()
+        .zip(functional)
+        .fold(F::zero(), |sum, (&coefficient, &weight)| {
+            sum + coefficient * weight
+        })
+}
+
+fn naive_physical_b_weights(group: &SetupContributionGroupPlan<F>) -> Vec<F> {
+    let logical = &group.direct_scan_weights.as_ref().unwrap().t;
+    let slice_count = group.physical_b.geometry().slice_count().get();
+    let rows = group.physical_b.physical_rows();
+    let columns = group.physical_b.physical_input_width();
+    let maximum_blocks = group.num_live_blocks.div_ceil(slice_count);
+    let per_block = columns / (group.num_claims * maximum_blocks);
+    let mut physical = vec![F::zero(); rows * columns];
+    for slice in 0..slice_count {
+        let block_start = slice * group.num_live_blocks / slice_count;
+        let block_end = (slice + 1) * group.num_live_blocks / slice_count;
+        for row in 0..rows {
+            let row_weight = group.physical_b.logical_row_weights()[slice * rows + row];
+            for claim in 0..group.num_claims {
+                for block in block_start..block_end {
+                    for offset in 0..per_block {
+                        let physical_column =
+                            (claim * maximum_blocks + block - block_start) * per_block + offset;
+                        let logical_column =
+                            (claim * group.num_live_blocks + block) * per_block + offset;
+                        physical[row * columns + physical_column] +=
+                            row_weight * logical[logical_column];
+                    }
+                }
+            }
+        }
+    }
+    physical
+}
+
+pub(super) fn reduced_direct_literal_oracle(
+    plan: &SetupContributionPlan<F>,
+    setup: &AkitaExpandedSetup<F>,
+    coefficient_point: &[F],
+    alpha: F,
+) -> F {
+    let mut evaluation = F::zero();
+    for group in &plan.groups {
+        let direct = group.direct_scan_weights.as_ref().unwrap();
+        let a_functional =
+            literal_native_functional(plan, coefficient_point, group.role_dims.d_a(), alpha);
+        let b_functional =
+            literal_native_functional(plan, coefficient_point, group.role_dims.d_b(), alpha);
+        let d_functional =
+            literal_native_functional(plan, coefficient_point, group.role_dims.d_d(), alpha);
+
+        let d_view = setup
+            .shared_matrix()
+            .ring_view_dyn(plan.d_rows, plan.d_physical_cols, group.role_dims.d_d())
+            .unwrap();
+        for row in 0..plan.d_rows {
+            for (local_column, &column_weight) in direct.e.iter().enumerate() {
+                let column = group.d_col_range.start + local_column;
+                let ring = d_view.row_flat(row).unwrap()
+                    [column * group.role_dims.d_d()..(column + 1) * group.role_dims.d_d()]
+                    .as_ref();
+                evaluation +=
+                    plan.d_weights[row] * column_weight * literal_ring_dot(ring, &d_functional);
+            }
+        }
+
+        let a_view = setup
+            .shared_matrix()
+            .ring_view_dyn(group.n_a, group.z_cols, group.role_dims.d_a())
+            .unwrap();
+        for row in 0..group.n_a {
+            for (column, &column_weight) in direct.z.iter().enumerate() {
+                let ring = &a_view.row_flat(row).unwrap()
+                    [column * group.role_dims.d_a()..(column + 1) * group.role_dims.d_a()];
+                evaluation += group.a_row_weights[row]
+                    * column_weight
+                    * literal_ring_dot(ring, &a_functional);
+            }
+        }
+
+        let b_weights = naive_physical_b_weights(group);
+        let b_view = setup
+            .shared_matrix()
+            .ring_view_dyn(
+                group.physical_b.physical_rows(),
+                group.physical_b.physical_input_width(),
+                group.role_dims.d_b(),
+            )
+            .unwrap();
+        for row in 0..group.physical_b.physical_rows() {
+            for column in 0..group.physical_b.physical_input_width() {
+                let ring = &b_view.row_flat(row).unwrap()
+                    [column * group.role_dims.d_b()..(column + 1) * group.role_dims.d_b()];
+                evaluation += b_weights[row * group.physical_b.physical_input_width() + column]
+                    * literal_ring_dot(ring, &b_functional);
+            }
+        }
+    }
+    evaluation
+}
+
 #[test]
 fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     const D_A: usize = 128;
@@ -174,16 +316,8 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
         ),
     );
     let direct = plan.groups[0].direct_scan_weights.as_ref().unwrap();
-    let [a_functional, b_functional, d_functional] = direct.reduced_functionals.as_ref().unwrap();
+    let [_a_functional, b_functional, d_functional] = direct.reduced_functionals.as_ref().unwrap();
     assert!(std::sync::Arc::ptr_eq(b_functional, d_functional));
-    let expected = plan
-        .evaluate_direct_by_rows::<F>(
-            &setup,
-            a_functional,
-            b_functional,
-            d_functional,
-            role_dims.d_a(),
-        )
-        .unwrap();
+    let expected = reduced_direct_literal_oracle(&plan, &setup, &coefficient_point, test_scalar(7));
     assert_eq!(plan.evaluate_direct::<F>(&setup).unwrap(), expected);
 }

@@ -123,7 +123,7 @@ impl<E: FieldCore> ReducedCoefficientFunctional<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use akita_field::{Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7 as F};
 
     fn quadratic_reduced_evaluation(
         multiplier: &[F],
@@ -212,5 +212,44 @@ mod tests {
             .evaluate_sparse_multiplier(&[(2, F::one()), (2, F::one())])
             .is_err());
         assert!(first.evaluate_sparse_multiplier(&[(8, F::one())]).is_err());
+    }
+
+    #[test]
+    fn base_multiplier_matches_literal_oracle_at_genuine_extension_point() {
+        type B = Fp32<251>;
+        type X = FpExt2<B, NegOneNr>;
+        let extension = |lo, hi| X::from_base_slice(&[B::from_u64(lo), B::from_u64(hi)]);
+        let point = [
+            extension(3, 5),
+            extension(7, 11),
+            extension(13, 17),
+            extension(19, 23),
+        ];
+        let equality = OffsetEqWindow::new(&point).unwrap();
+        let alpha = extension(29, 31);
+        let multiplier = (0..8)
+            .map(|index| B::from_u64(37 + index as u64))
+            .collect::<Vec<_>>();
+        let functional = ReducedCoefficientFunctional::prepare(&equality, 16, 5, 8, alpha).unwrap();
+        let powers = akita_algebra::ring::scalar_powers(alpha, 8);
+        let expected = (0..8).fold(X::zero(), |evaluation, witness_coefficient| {
+            let residue = multiplier.iter().enumerate().fold(
+                X::zero(),
+                |sum, (multiplier_coefficient, &coefficient)| {
+                    let exponent = multiplier_coefficient + witness_coefficient;
+                    let product = powers[exponent % 8].mul_base(coefficient);
+                    if exponent < 8 {
+                        sum + product
+                    } else {
+                        sum - product
+                    }
+                },
+            );
+            evaluation + eq_eval_at_index(&point, 5 + witness_coefficient) * residue
+        });
+        assert_eq!(
+            functional.evaluate_multiplier(&multiplier).unwrap(),
+            expected
+        );
     }
 }
