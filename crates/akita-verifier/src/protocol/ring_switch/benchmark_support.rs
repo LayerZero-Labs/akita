@@ -140,12 +140,14 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
         groups: vec![RelationMatrixGroupEvaluator {
-            c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
-                .map(|index| scalar(307 + index as u128))
-                .collect(),
-            opening_a_evals: (0..NUM_POSITIONS_PER_BLOCK)
-                .map(|index| scalar(401 + index as u128))
-                .collect(),
+            multipliers: super::PreparedRelationGroupMultipliers::QuotientLift {
+                c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
+                    .map(|index| scalar(307 + index as u128))
+                    .collect(),
+                opening_a_evals: (0..NUM_POSITIONS_PER_BLOCK)
+                    .map(|index| scalar(401 + index as u128))
+                    .collect(),
+            },
             group_id: 0,
             num_claims: NUM_CLAIMS,
             depth_fold,

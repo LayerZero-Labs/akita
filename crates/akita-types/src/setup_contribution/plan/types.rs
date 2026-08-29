@@ -406,9 +406,15 @@ pub(crate) struct DirectScanWeights<E> {
     pub(crate) e: Vec<E>,
     pub(crate) t: Vec<E>,
     pub(crate) z: Vec<E>,
-    /// Native A/B/D terminal kernels in role order. Lifted evaluation keeps
-    /// this absent and uses the specialized common-power scanner.
-    pub(crate) reduced_functionals: Option<[Arc<[E]>; 3]>,
+    /// Native A/B/D terminal coefficient state in role order. Lifted
+    /// evaluation keeps this absent and uses the common-power scanner.
+    pub(crate) reduced_roles: Option<[ReducedRoleCoefficientState<E>; 3]>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ReducedRoleCoefficientState<E> {
+    pub(crate) functional: Arc<[E]>,
+    pub(crate) equality: Arc<[E]>,
 }
 
 #[derive(Clone, Copy)]

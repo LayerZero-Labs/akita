@@ -105,7 +105,134 @@ pub enum RingMultiplierOpeningPoint<F: Field> {
     Subfield(SubfieldMultiplierOpeningPoint<F>),
 }
 
+/// Position multipliers prepared for contraction against an arbitrary
+/// terminal ring functional.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PreparedRingMultiplierKind<E: Field> {
+    Base(Vec<E>),
+    Subfield {
+        position_coordinates: Vec<E>,
+        extension_degree: usize,
+        ring_dim: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedRingMultiplier<E: Field> {
+    kind: PreparedRingMultiplierKind<E>,
+}
+
+impl<E: Field> PreparedRingMultiplier<E> {
+    /// Prepare degree-one position multipliers.
+    pub fn from_base_weights(weights: Vec<E>) -> Result<Self, AkitaError> {
+        if weights.is_empty() {
+            return Err(AkitaError::InvalidInput(
+                "ring multiplier positions must be nonempty".into(),
+            ));
+        }
+        Ok(Self {
+            kind: PreparedRingMultiplierKind::Base(weights),
+        })
+    }
+
+    /// Evaluate one position multiplier against a complete terminal
+    /// coefficient functional for `F[X]/(X^D + 1)`.
+    pub fn evaluate_position_functional(
+        &self,
+        position: usize,
+        functional: &[E],
+    ) -> Result<E, AkitaError> {
+        match &self.kind {
+            PreparedRingMultiplierKind::Base(weights) => {
+                let multiplier = *weights.get(position).ok_or(AkitaError::InvalidProof)?;
+                let constant_weight = *functional.first().ok_or(AkitaError::InvalidProof)?;
+                Ok(constant_weight * multiplier)
+            }
+            PreparedRingMultiplierKind::Subfield {
+                position_coordinates,
+                extension_degree,
+                ring_dim,
+            } => {
+                if functional.len() != *ring_dim || *extension_degree == 0 {
+                    return Err(AkitaError::InvalidProof);
+                }
+                let start = position
+                    .checked_mul(*extension_degree)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let end = start
+                    .checked_add(*extension_degree)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let coordinates = position_coordinates
+                    .get(start..end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let (&constant, nonconstant) =
+                    coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
+                let stride = ring_dim
+                    .checked_div(
+                        2usize
+                            .checked_mul(*extension_degree)
+                            .ok_or(AkitaError::InvalidProof)?,
+                    )
+                    .filter(|&stride| stride != 0)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut evaluation = functional[0] * constant;
+                for (offset, &coordinate) in nonconstant.iter().enumerate() {
+                    let basis_index = offset
+                        .checked_add(1)
+                        .ok_or(AkitaError::InvalidProof)?
+                        .checked_mul(stride)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let inverse_index = ring_dim
+                        .checked_sub(basis_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let positive = *functional
+                        .get(basis_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let negative = *functional
+                        .get(inverse_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    evaluation += (positive - negative) * coordinate;
+                }
+                Ok(evaluation)
+            }
+        }
+    }
+}
+
 impl<F: Field> RingMultiplierOpeningPoint<F> {
+    /// Lift compact multiplier coordinates once so reduced verification can
+    /// evaluate them against terminal residue functionals without
+    /// materializing ring elements.
+    pub fn prepare_functional_multiplier<E>(&self) -> PreparedRingMultiplier<E>
+    where
+        E: ExtField<F>,
+    {
+        match self {
+            Self::Base(point) => PreparedRingMultiplier {
+                kind: PreparedRingMultiplierKind::Base(
+                    point
+                        .position_weights
+                        .iter()
+                        .copied()
+                        .map(E::lift_base)
+                        .collect(),
+                ),
+            },
+            Self::Subfield(point) => PreparedRingMultiplier {
+                kind: PreparedRingMultiplierKind::Subfield {
+                    position_coordinates: point
+                        .position_coordinates_flat()
+                        .iter()
+                        .copied()
+                        .map(E::lift_base)
+                        .collect(),
+                    extension_degree: point.extension_degree(),
+                    ring_dim: point.ring_dim(),
+                },
+            },
+        }
+    }
+
     /// Keep base-field scalar weights in their compact scalar form.
     pub fn from_base(point: &RingOpeningPoint<F>) -> Self {
         Self::Base(point.clone())
@@ -657,6 +784,29 @@ mod tests {
 
     type F = Fp32<251>;
     type E = FpExt4<F>;
+
+    #[test]
+    fn prepared_subfield_multiplier_uses_full_terminal_functional() {
+        let prepared = PreparedRingMultiplier {
+            kind: PreparedRingMultiplierKind::Subfield {
+                position_coordinates: vec![E::zero(), E::one()],
+                extension_degree: 2,
+                ring_dim: 4,
+            },
+        };
+        let functional = [
+            E::from_u64(2),
+            E::from_u64(3),
+            E::from_u64(5),
+            E::from_u64(7),
+        ];
+        assert_eq!(
+            prepared
+                .evaluate_position_functional(0, &functional)
+                .unwrap(),
+            functional[1] - functional[3]
+        );
+    }
 
     fn packed_inner_lp() -> CommittedGroupParams {
         CommittedGroupParams::params_only(

@@ -1,6 +1,6 @@
 use super::*;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
     AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
@@ -81,15 +81,37 @@ fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationF
         .map(|index| MixedF::from_u64(11 + index as u64))
         .collect::<Vec<_>>()
         .into();
-    let evaluator = RelationMatrixEvaluator {
-        relation_address_geometry,
-        groups: vec![RelationMatrixGroupEvaluator {
+    let multipliers = match mode {
+        RingRelationMode::QuotientLift => PreparedRelationGroupMultipliers::QuotientLift {
             c_alphas: (0..lp.blocks().live_blocks)
                 .map(|index| MixedF::from_u64(31 + index as u64))
                 .collect(),
             opening_a_evals: (0..lp.blocks().positions_per_block)
                 .map(|index| MixedF::from_u64(41 + index as u64))
                 .collect(),
+        },
+        RingRelationMode::ReducedEvaluation => {
+            let sparse = (0..lp.blocks().live_blocks)
+                .map(|index| SparseChallenge {
+                    positions: vec![(index % D_INNER) as u32].into(),
+                    coeffs: vec![1].into(),
+                })
+                .collect();
+            PreparedRelationGroupMultipliers::ReducedEvaluation {
+                challenges: Challenges::from_sparse(sparse, lp.blocks().live_blocks, 1).unwrap(),
+                opening: akita_types::PreparedRingMultiplier::from_base_weights(
+                    (0..lp.blocks().positions_per_block)
+                        .map(|index| MixedF::from_u64(41 + index as u64))
+                        .collect(),
+                )
+                .unwrap(),
+            }
+        }
+    };
+    let evaluator = RelationMatrixEvaluator {
+        relation_address_geometry,
+        groups: vec![RelationMatrixGroupEvaluator {
+            multipliers,
             group_id: 0,
             num_claims: 1,
             depth_fold: lp.num_digits_fold(),
@@ -315,11 +337,18 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .groups
         .iter()
         .try_fold(MixedF::zero(), |sum, group| {
+            let PreparedRelationGroupMultipliers::ReducedEvaluation {
+                challenges,
+                opening,
+            } = &group.multipliers
+            else {
+                return Err(AkitaError::InvalidProof);
+            };
             Ok::<_, AkitaError>(
-                sum + plan.evaluate_structured_group::<MixedF>(
+                sum + plan.evaluate_reduced_structured_group::<MixedF>(
                     group.group_id,
-                    &group.c_alphas,
-                    &group.opening_a_evals,
+                    challenges,
+                    opening,
                     alpha,
                 )?,
             )

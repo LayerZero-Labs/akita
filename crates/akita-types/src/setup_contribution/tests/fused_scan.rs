@@ -328,14 +328,19 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     .unwrap()
     .into();
     for group in &mut plan.groups {
-        group
-            .direct_scan_weights
-            .as_mut()
-            .unwrap()
-            .reduced_functionals = Some([
-            a_functional.clone(),
-            projected_functional.clone(),
-            projected_functional.clone(),
+        group.direct_scan_weights.as_mut().unwrap().reduced_roles = Some([
+            ReducedRoleCoefficientState {
+                functional: a_functional.clone(),
+                equality: vec![F::one(); D_A].into(),
+            },
+            ReducedRoleCoefficientState {
+                functional: projected_functional.clone(),
+                equality: vec![F::one(); D_B].into(),
+            },
+            ReducedRoleCoefficientState {
+                functional: projected_functional.clone(),
+                equality: vec![F::one(); D_D].into(),
+            },
         ]);
     }
     plan.direct_scan_functional = Some(
@@ -411,8 +416,12 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
         ),
     );
     let direct = plan.groups[0].direct_scan_weights.as_ref().unwrap();
-    let [_a_functional, b_functional, d_functional] = direct.reduced_functionals.as_ref().unwrap();
-    assert!(std::sync::Arc::ptr_eq(b_functional, d_functional));
+    let [_a_role, b_role, d_role] = direct.reduced_roles.as_ref().unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &b_role.functional,
+        &d_role.functional
+    ));
+    assert!(std::sync::Arc::ptr_eq(&b_role.equality, &d_role.equality));
     let expected = reduced_direct_literal_oracle(
         &plan,
         &setup,

@@ -16,6 +16,11 @@
 //! `relation_lane_weight(lane) = sum_i eq(tau1, i) * M_alpha(i, lane)`.
 //!
 //! The table stored in `relation_lane_weights` is exactly this lane weight.
+//! This is the quotient-lift oracle. Reduced evaluation instead compiles the
+//! complete ordinary-plus-compression relation weight `p(address)` over the
+//! padded flat domain. The sumcheck engine folds either representation through
+//! [`RelationWeightOracle`] while the witness and structured-linear terms keep
+//! the same coefficient/lane geometry.
 //!
 //! If
 //!
@@ -27,9 +32,7 @@
 //! then the linear relation claim over physical quotient rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
-//! `               = sum_address digit_witness(address)`
-//! `                   * common_alpha(coeff_within_common_block(address))`
-//! `                   * relation_lane_weight(relation_lane(address))`.
+//! `               = sum_address digit_witness(address) * p(address)`.
 //!
 //! There is no public-output `y_ring` row: the fold-opening trace check is
 //! internalized as the `EvaluationTrace` relation row (last padded logical row),
@@ -61,17 +64,14 @@
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_address [ gamma * eq(stage1_point, address)`
 //! `                  * digit_witness(address) * (digit_witness(address) + 1)`
-//! `           + digit_witness(address)`
-//! `               * common_alpha(coeff_within_common_block(address))`
-//! `               * relation_lane_weight(relation_lane(address))`
+//! `           + digit_witness(address) * p(address)`
 //! `           + eq(tau1, EvaluationTrace_row_index)`
 //! `               * digit_witness(address) * TraceWeight(address) ]`.
 //!
 //! After all rounds, at the complete flat point `r_stage2`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * common_alpha(common_point)`
-//! `      * relation_lane_weight(lane_point)`
+//! `  + w(r_stage2) * p(r_stage2)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
@@ -238,8 +238,7 @@ pub struct RelationRangeImageProver<E: Field> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    common_alpha_factor: Vec<E>,
-    relation_lane_weights: Vec<E>,
+    relation_weights: RelationWeightOracle<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
@@ -267,6 +266,7 @@ mod evaluation_trace;
 mod lane_prefix;
 mod lifecycle;
 mod round_flow;
+mod weight_oracle;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
 pub(in crate::protocol) use coefficient_packing_terms::prepare_coefficient_packing_linear_terms;
@@ -275,8 +275,62 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+pub(crate) use weight_oracle::{
+    CompiledRelationWeights, DenseRelationWeights, RelationWeightOracle,
+};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    #[inline]
+    fn common_alpha_factor(&self) -> &[E] {
+        match &self.relation_weights {
+            RelationWeightOracle::QuotientFactored {
+                common_alpha_factor,
+                ..
+            } => common_alpha_factor,
+            RelationWeightOracle::ReducedDense { .. } => {
+                unreachable!("dense relation weights do not expose a factored low axis")
+            }
+        }
+    }
+
+    #[inline]
+    fn relation_lane_weights(&self) -> &[E] {
+        match &self.relation_weights {
+            RelationWeightOracle::QuotientFactored {
+                relation_lane_weights,
+                ..
+            } => relation_lane_weights,
+            RelationWeightOracle::ReducedDense { .. } => {
+                unreachable!("dense relation weights do not expose factored lanes")
+            }
+        }
+    }
+
+    #[inline]
+    fn quotient_factored_weights_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
+        match &mut self.relation_weights {
+            RelationWeightOracle::QuotientFactored {
+                common_alpha_factor,
+                relation_lane_weights,
+            } => (common_alpha_factor, relation_lane_weights),
+            RelationWeightOracle::ReducedDense { .. } => {
+                unreachable!("dense relation weights do not expose factored lanes")
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn replace_common_alpha_factor(&mut self, replacement: Vec<E>) {
+        let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
+        *common_alpha_factor = replacement;
+    }
+
+    #[cfg(test)]
+    fn replace_relation_lane_weights(&mut self, replacement: Vec<E>) {
+        let (_, relation_lane_weights) = self.quotient_factored_weights_mut();
+        *relation_lane_weights = replacement;
+    }
+
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).
@@ -292,10 +346,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p0: E,
         p1: E,
     ) {
-        let coeff_count = self.common_alpha_factor.len();
-        let (t0, t1) = self
-            .linear_terms
-            .pair_from_flat_index(witness_idx0, coeff_count);
+        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
         accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
@@ -310,10 +361,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         p0: E,
         p1: E,
     ) {
-        let coeff_count = self.common_alpha_factor.len();
-        let (t0, t1) = self
-            .linear_terms
-            .pair_from_flat_index(witness_idx0, coeff_count);
+        let (t0, t1) = self.linear_terms.pair_from_flat_index(witness_idx0);
         accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 

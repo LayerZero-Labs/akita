@@ -3,12 +3,27 @@ use super::*;
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
-        let use_deferred_compact_prefix = self.using_deferred_compact_prefix();
+        let use_reduced_dense = self.relation_weights.is_reduced_dense();
+        let use_deferred_compact_prefix =
+            !use_reduced_dense && self.using_deferred_compact_prefix();
         let use_partial_lane_coefficient_round =
             !use_deferred_compact_prefix && self.use_partial_lane_coefficient_round();
         let use_partial_lane_round = !use_deferred_compact_prefix && self.use_partial_lane_round();
         let rounds_completed = self.rounds_completed;
-        let poly = if use_deferred_compact_prefix {
+        let poly = if use_reduced_dense {
+            match &self.witness_state {
+                WitnessState::CompactPrefix(compact_witness) => {
+                    let (virt_terms, rel_terms) =
+                        self.compute_round_compact_reduced_dense_terms(compact_witness.view());
+                    self.combine_terms(virt_terms, rel_terms)
+                }
+                WitnessState::FoldedSuffix(folded_witness) => {
+                    let (virt_terms, rel_terms) =
+                        self.compute_folded_reduced_dense_round_terms(folded_witness);
+                    self.combine_terms(virt_terms, rel_terms)
+                }
+            }
+        } else if use_deferred_compact_prefix {
             let (virt_poly, rel_poly) = {
                 let prefix = self.ensure_deferred_compact_prefix();
                 if rounds_completed == 0 {
@@ -89,11 +104,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         compact_witness: PackedSignedDigitView<'_>,
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
-        cfg_into_iter!(0..compact_witness.len() / 2)
+        cfg_into_iter!(0..compact_witness.len().div_ceil(2))
             .map(|j| {
                 fold_lut.fold(
-                    i16::from(compact_witness.at(2 * j)),
-                    i16::from(compact_witness.at(2 * j + 1)),
+                    compact_witness.get(2 * j).map_or(0, i16::from),
+                    compact_witness.get(2 * j + 1).map_or(0, i16::from),
                 )
             })
             .collect()
@@ -140,6 +155,52 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }
 
+        if self.relation_weights.is_reduced_dense() {
+            self.split_eq.bind(r);
+            let folding_lane_round = !self.in_coefficient_round();
+            self.witness_state = match mem::replace(
+                &mut self.witness_state,
+                WitnessState::FoldedSuffix(Vec::new()),
+            ) {
+                WitnessState::CompactPrefix(compact_witness) => {
+                    let compact_view = compact_witness.view();
+                    let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
+                    self.fold_linear_terms_for_current_round(r);
+                    WitnessState::FoldedSuffix(Self::materialize_compact_witness(
+                        compact_view,
+                        &fold_lut,
+                    ))
+                }
+                WitnessState::FoldedSuffix(folded_witness) => {
+                    let next = cfg_into_iter!(0..folded_witness.len().div_ceil(2))
+                        .map(|pair| fold_folded_lane_pair(&folded_witness, 2 * pair, r))
+                        .collect();
+                    self.fold_linear_terms_for_current_round(r);
+                    WitnessState::FoldedSuffix(next)
+                }
+            };
+            self.relation_weights
+                .bind_dense(r)
+                .expect("reduced dense relation weights remain mode-stable");
+            if folding_lane_round {
+                self.live_lane_count = self.live_lane_count.div_ceil(2);
+            }
+            self.rounds_completed += 1;
+            self.cached_round_poly = (self.rounds_completed < self.num_vars)
+                .then(|| self.compute_current_round_poly_from_state());
+            drop(_span);
+            self.fold_time_total += t_fold.elapsed().as_secs_f64();
+            if self.rounds_completed == self.num_vars {
+                tracing::debug!(
+                    rounds = self.num_vars,
+                    scan_s = self.scan_time_total,
+                    fold_s = self.fold_time_total,
+                    "stage2 sumcheck rounds complete"
+                );
+            }
+            return;
+        }
+
         if self.using_deferred_compact_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
@@ -152,8 +213,8 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
-                let coeff_count = self.common_alpha_factor.len();
-                let alpha_round2 = Self::fold_alpha_two_rounds(&self.common_alpha_factor, r0, r);
+                let coeff_count = self.common_alpha_factor().len();
+                let alpha_round2 = Self::fold_alpha_two_rounds(self.common_alpha_factor(), r0, r);
                 self.linear_terms.fold_two_coefficients(r0, r);
                 // This is the two-round coefficient handoff, so the ordinary one-round
                 // linear-term transition below is deliberately bypassed.
@@ -188,7 +249,8 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                         unreachable!("two-round prefix should hold compact witness")
                     }
                 };
-                self.common_alpha_factor = alpha_round2;
+                let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
+                *common_alpha_factor = alpha_round2;
                 self.deferred_compact_prefix = None;
                 self.compact_prefix_stage1_point = None;
                 if let Some((virt_terms, rel_coeffs)) = round2_terms {
@@ -225,7 +287,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             && self.rounds_completed + 1 < self.coefficient_bits();
         let fuse_next_folded_partial_lane =
             use_partial_lane_round && self.next_uses_partial_lane_round();
-        let coeff_count = self.common_alpha_factor.len();
+        let coeff_count = self.common_alpha_factor().len();
         let live_lane_count = self.live_lane_count;
         let mut fused_coefficient_round = false;
         let mut fused_folded_partial_lane = false;
@@ -263,7 +325,8 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                             rel_coeffs,
                         ) = self
                             .fuse_folded_partial_lane_and_compute_next_round(&folded_witness, r);
-                        self.relation_lane_weights = next_relation_lane_weights;
+                        let (_, relation_lane_weights) = self.quotient_factored_weights_mut();
+                        *relation_lane_weights = next_relation_lane_weights;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_folded_partial_lane = true;
                         WitnessState::FoldedSuffix(next_folded_witness)
@@ -280,7 +343,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 } else if in_coefficient_round && use_partial_lane_coefficient_round {
                     self.fold_linear_terms_for_current_round(r);
                     if fuse_next_coefficient_round {
-                        let mut next_alpha_factor = self.common_alpha_factor.clone();
+                        let mut next_alpha_factor = self.common_alpha_factor().to_vec();
                         fold_evals_in_place(&mut next_alpha_factor, r);
                         let (next_folded_witness, virt_terms, rel_coeffs) = self
                             .fuse_folded_coefficients_and_compute_next_round(
@@ -288,7 +351,8 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                                 &next_alpha_factor,
                                 r,
                             );
-                        self.common_alpha_factor = next_alpha_factor;
+                        let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
+                        *common_alpha_factor = next_alpha_factor;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_coefficient_round = true;
                         WitnessState::FoldedSuffix(next_folded_witness)
@@ -312,15 +376,19 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
         if folding_lane_round {
             if use_partial_lane_round {
                 if !fused_folded_partial_lane {
-                    self.relation_lane_weights =
-                        Self::fold_relation_lane_weights(&self.relation_lane_weights, r);
+                    let next_relation_lane_weights =
+                        Self::fold_relation_lane_weights(self.relation_lane_weights(), r);
+                    let (_, relation_lane_weights) = self.quotient_factored_weights_mut();
+                    *relation_lane_weights = next_relation_lane_weights;
                 }
             } else {
-                fold_evals_in_place(&mut self.relation_lane_weights, r);
+                let (_, relation_lane_weights) = self.quotient_factored_weights_mut();
+                fold_evals_in_place(relation_lane_weights, r);
             }
             self.live_lane_count = self.live_lane_count.div_ceil(2);
         } else if !fused_coefficient_round {
-            fold_evals_in_place(&mut self.common_alpha_factor, r);
+            let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
+            fold_evals_in_place(common_alpha_factor, r);
         }
 
         self.rounds_completed += 1;

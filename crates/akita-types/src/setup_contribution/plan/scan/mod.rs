@@ -87,7 +87,7 @@ impl<E: Field> SetupContributionPlan<E> {
                         let direct = group.direct_scan_weights.as_ref().ok_or_else(|| {
                             AkitaError::InvalidSetup("direct setup scan weights are missing".into())
                         })?;
-                        let functionals = direct.reduced_functionals.as_ref().ok_or_else(|| {
+                        let roles = direct.reduced_roles.as_ref().ok_or_else(|| {
                             AkitaError::InvalidSetup(
                                 "reduced setup coefficient functionals are missing".into(),
                             )
@@ -109,7 +109,7 @@ impl<E: Field> SetupContributionPlan<E> {
                                 t: &direct.t,
                                 z: &direct.z,
                                 role_ratios: [group.a_ratio, group.b_ratio, group.d_ratio],
-                                functionals,
+                                roles,
                             },
                             &mut coefficient_weights,
                         )?;

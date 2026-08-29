@@ -5,7 +5,10 @@
 //! coefficient functionals, performs the same structured/direct setup work,
 //! and returns that already-complete flat MLE without either lifted-only step.
 
-use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
+use super::{
+    prepared_relation_point::PreparedRelationPoint, PreparedRelationGroupMultipliers,
+    RelationMatrixEvaluator,
+};
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
@@ -101,19 +104,41 @@ where
     {
         let _span = tracing::info_span!("relation_structured_groups").entered();
         for group in &evaluator.groups {
-            structured_evaluation += plan
-                .evaluate_structured_group::<F>(
+            let group_evaluation = match (&group.multipliers, mode) {
+                (
+                    PreparedRelationGroupMultipliers::QuotientLift {
+                        c_alphas,
+                        opening_a_evals,
+                    },
+                    RingRelationMode::QuotientLift,
+                ) => plan.evaluate_structured_group::<F>(
                     group.group_id,
-                    &group.c_alphas,
-                    &group.opening_a_evals,
+                    c_alphas,
+                    opening_a_evals,
                     alpha,
-                )
-                .map_err(|error| {
-                    AkitaError::InvalidInput(format!(
-                        "relation group {} contraction failed: {error:?}",
-                        group.group_id
-                    ))
-                })?;
+                ),
+                (
+                    PreparedRelationGroupMultipliers::ReducedEvaluation {
+                        challenges,
+                        opening,
+                    },
+                    RingRelationMode::ReducedEvaluation,
+                ) => plan.evaluate_reduced_structured_group::<F>(
+                    group.group_id,
+                    challenges,
+                    opening,
+                    alpha,
+                ),
+                _ => Err(AkitaError::InvalidSetup(
+                    "relation multiplier preparation disagrees with relation mode".into(),
+                )),
+            };
+            structured_evaluation += group_evaluation.map_err(|error| {
+                AkitaError::InvalidInput(format!(
+                    "relation group {} contraction failed: {error:?}",
+                    group.group_id
+                ))
+            })?;
         }
     }
 

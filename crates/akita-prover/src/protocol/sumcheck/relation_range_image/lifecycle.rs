@@ -43,8 +43,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             stage1_point,
             range_image_evaluation,
             b,
-            vec![E::zero(); coeff_count],
-            vec![E::zero(); lane_capacity],
+            RelationWeightOracle::QuotientFactored {
+                common_alpha_factor: vec![E::zero(); coeff_count],
+                relation_lane_weights: vec![E::zero(); lane_capacity],
+            },
             live_lane_count,
             lane_bits,
             coefficient_bits,
@@ -64,8 +66,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
-        common_alpha_factor: Vec<E>,
-        relation_lane_weights: Vec<E>,
+        relation_weights: RelationWeightOracle<E>,
         live_lane_count: usize,
         lane_bits: usize,
         coefficient_bits: usize,
@@ -104,17 +105,35 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 actual: stage1_point.len(),
             });
         }
-        if common_alpha_factor.len() != coeff_count {
-            return Err(AkitaError::InvalidSize {
-                expected: coeff_count,
-                actual: common_alpha_factor.len(),
-            });
-        }
-        if relation_lane_weights.len() != lane_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: lane_capacity,
-                actual: relation_lane_weights.len(),
-            });
+        match &relation_weights {
+            RelationWeightOracle::QuotientFactored {
+                common_alpha_factor,
+                relation_lane_weights,
+            } => {
+                if common_alpha_factor.len() != coeff_count {
+                    return Err(AkitaError::InvalidSize {
+                        expected: coeff_count,
+                        actual: common_alpha_factor.len(),
+                    });
+                }
+                if relation_lane_weights.len() != lane_capacity {
+                    return Err(AkitaError::InvalidSize {
+                        expected: lane_capacity,
+                        actual: relation_lane_weights.len(),
+                    });
+                }
+            }
+            RelationWeightOracle::ReducedDense { lane_evaluations } => {
+                let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
+                    AkitaError::InvalidInput("stage-2 relation domain overflow".into())
+                })?;
+                if lane_evaluations.len() != domain_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: domain_len,
+                        actual: lane_evaluations.len(),
+                    });
+                }
+            }
         }
         linear_terms.validate_len(witness_len)?;
 
@@ -127,30 +146,28 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let (ordinary_relation_sum, structured_relation_sum) = relation_lane_weights
-                .iter()
-                .take(live_lane_count)
-                .enumerate()
-                .fold(
-                    (E::zero(), E::zero()),
-                    |(ordinary, structured), (lane, &lane_weight)| {
-                        common_alpha_factor.iter().enumerate().fold(
-                            (ordinary, structured),
-                            |(ordinary, structured), (coefficient, &alpha)| {
-                                let w = w_evals_compact
-                                    .get(lane * coeff_count + coefficient)
-                                    .expect("debug relation witness index is in bounds");
-                                let witness = E::from_i64(i64::from(w));
-                                (
-                                    ordinary + witness * lane_weight * alpha,
-                                    structured
-                                        + witness
-                                            * linear_terms.get(lane, coefficient, coeff_count),
-                                )
-                            },
-                        )
-                    },
-                );
+            let (ordinary_relation_sum, structured_relation_sum) =
+                (0..witness_len).fold((E::zero(), E::zero()), |(ordinary, structured), index| {
+                    let lane = index / coeff_count;
+                    let coefficient = index % coeff_count;
+                    let w = w_evals_compact
+                        .get(index)
+                        .expect("debug relation witness index is in bounds");
+                    let witness = E::from_i64(i64::from(w));
+                    let relation_weight = match &relation_weights {
+                        RelationWeightOracle::QuotientFactored {
+                            common_alpha_factor,
+                            relation_lane_weights,
+                        } => common_alpha_factor[coefficient] * relation_lane_weights[lane],
+                        RelationWeightOracle::ReducedDense {
+                            lane_evaluations, ..
+                        } => lane_evaluations[index],
+                    };
+                    (
+                        ordinary + witness * relation_weight,
+                        structured + witness * linear_terms.get(lane, coefficient, coeff_count),
+                    )
+                });
             if ordinary_relation_sum + structured_relation_sum
                 != relation_claim + linear_opening_claim
             {
@@ -166,7 +183,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
             batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
-        let use_two_round_prefix = can_use_stage2_two_round_prefix(coefficient_bits, b);
+        let use_two_round_prefix = !relation_weights.is_reduced_dense()
+            && can_use_stage2_two_round_prefix(coefficient_bits, b);
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
@@ -175,8 +193,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
-            common_alpha_factor,
-            relation_lane_weights,
+            relation_weights,
             additional_relation_terms,
             linear_terms,
             live_lane_count,
@@ -212,13 +229,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
-        if self.common_alpha_factor.len() != 1 || self.relation_lane_weights.len() != 1 {
-            return Err(AkitaError::InvalidProof);
-        }
         let witness = self.final_w_eval();
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
-        let ordinary_relation =
-            witness * self.common_alpha_factor[0] * self.relation_lane_weights[0];
+        let ordinary_relation = witness * self.relation_weights.terminal_weight()?;
         let linear_claim = witness * self.linear_terms.final_value()?;
         let additional = self
             .additional_relation_terms
@@ -388,8 +401,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             };
             let proof = build_stage2_bivariate_skip_proof_from_m_compact(
                 compact_witness,
-                &self.common_alpha_factor,
-                &self.relation_lane_weights,
+                self.common_alpha_factor(),
+                self.relation_lane_weights(),
                 &self.linear_terms,
                 &stage1_point,
                 self.b,

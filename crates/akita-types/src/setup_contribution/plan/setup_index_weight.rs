@@ -25,7 +25,7 @@ impl<E: Field> SetupContributionPlan<E> {
         output_len: usize,
         alpha: E,
         coefficient_point: &[E],
-    ) -> Result<(Vec<E>, std::sync::Arc<[E]>), AkitaError> {
+    ) -> Result<(Vec<E>, ReducedRoleCoefficientState<E>), AkitaError> {
         let coefficient_dimension = self
             .relation_address_geometry
             .relation_coefficient_block_len();
@@ -93,6 +93,8 @@ impl<E: Field> SetupContributionPlan<E> {
             });
         }
         let native_equality = OffsetEqWindow::new(&native_point)?;
+        let mut native_equality_weights = vec![E::zero(); role_dimension];
+        native_equality.fill_interval(0, &mut native_equality_weights)?;
         let functional = crate::ReducedCoefficientFunctional::prepare(
             &native_equality,
             role_dimension,
@@ -100,7 +102,13 @@ impl<E: Field> SetupContributionPlan<E> {
             role_dimension,
             alpha,
         )?;
-        Ok((column_weights, functional.into_weights()))
+        Ok((
+            column_weights,
+            ReducedRoleCoefficientState {
+                functional: functional.into_weights(),
+                equality: native_equality_weights.into(),
+            },
+        ))
     }
 
     pub(super) fn materialize_role_tensor_weights(

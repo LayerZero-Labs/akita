@@ -120,29 +120,20 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    let (common_alpha_factor, relation_lane_weights) = rs
-        .relation_weight_factorization
-        .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = geometry.relation_coefficient_block_len();
-    if common_alpha_factor.len() != expected_factor_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "common alpha factor has length {}, expected {expected_factor_len}",
-            common_alpha_factor.len(),
-        )));
-    }
+    let (relation_weights, compression_relation_weights) = rs.relation_weights.into_stage2();
     let domain_len = domain.domain_len();
     let mut linear_weights = Vec::new();
     let mut binary_intervals = Vec::new();
-    if let Some(weights) = rs.compression_relation_weights {
+    if let Some(weights) = compression_relation_weights {
         if weights.physical_field_len() != domain_len {
             return Err(AkitaError::InvalidSetup(
                 "compression relation domain disagrees with Stage 2".into(),
             ));
         }
         linear_weights = weights.into_sparse_entries()?;
-        binary_intervals = NegativeBinarySupport::new(plan.witness_layout(), domain_len)?
-            .intervals()
-            .to_vec();
+    }
+    if let Some(support) = rs.negative_binary_support {
+        binary_intervals = support.intervals().to_vec();
     }
     let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
     if let Some(norm) = &physical_l2 {
@@ -178,8 +169,7 @@ where
         stage1_point,
         range_image_evaluation,
         plan.digit_range_plan().basis(),
-        common_alpha_factor,
-        relation_lane_weights,
+        relation_weights,
         live_relation_lane_count,
         relation_lane_variable_count,
         relation_coefficient_variable_count,

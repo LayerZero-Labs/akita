@@ -1,4 +1,6 @@
-use super::plan::{DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan};
+use super::plan::{
+    DirectScanWeights, PhysicalBSetupPlan, ReducedRoleCoefficientState, SetupContributionGroupPlan,
+};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeighting};
 use super::*;
 use crate::{
@@ -9,7 +11,7 @@ use crate::{
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::ring::scalar_powers;
-use akita_challenges::SparseChallengeConfig;
+use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use jolt_field::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
 mod address_spans;
@@ -536,7 +538,7 @@ fn test_group_plan(
             e: e_eq_slice,
             t: t_eq_slice,
             z: z_eq_slice,
-            reduced_functionals: None,
+            reduced_roles: None,
         }),
         active_unit_ranges: Vec::new().into(),
         num_physical_units: 0,

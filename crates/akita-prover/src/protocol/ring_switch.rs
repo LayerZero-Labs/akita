@@ -9,8 +9,8 @@ use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
-    CompressionRelationWeights, FpExtEncoding, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    NegativeBinarySupport, RingVec,
 };
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
@@ -43,10 +43,10 @@ pub struct RingSwitchOutput<E: Field> {
     pub(crate) w_evals_compact: crate::backend::packed_digits::PackedSignedDigits,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
-    /// Exact common-alpha factorization of the tau1-weighted relation table.
-    pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
-    /// Sparse-compilable compact-geometry F/H relation weights.
-    pub(crate) compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    /// Mode-typed ordinary and compression ring-relation weights.
+    pub(crate) relation_weights: crate::protocol::sumcheck::CompiledRelationWeights<E>,
+    /// Compression digit-alphabet support, independent of ring-weight realization.
+    pub(crate) negative_binary_support: Option<NegativeBinarySupport>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.

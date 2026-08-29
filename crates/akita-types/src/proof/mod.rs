@@ -49,7 +49,7 @@ pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, validate_batched_inputs, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
+    PreparedRingMultiplier, RingMultiplierOpeningPoint, SubfieldMultiplierOpeningPoint,
 };
 pub use coefficient_functional::ReducedCoefficientFunctional;
 pub use coefficient_packing_relation::{

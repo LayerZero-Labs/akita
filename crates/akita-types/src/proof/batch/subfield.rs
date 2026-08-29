@@ -73,6 +73,14 @@ impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
         self.live_block_coordinates.len() / self.extension_degree
     }
 
+    pub(super) fn position_coordinates_flat(&self) -> &[F] {
+        &self.position_coordinates
+    }
+
+    pub(super) const fn extension_degree(&self) -> usize {
+        self.extension_degree
+    }
+
     pub(super) fn is_constant(&self) -> bool {
         self.position_coordinates
             .chunks_exact(self.extension_degree)

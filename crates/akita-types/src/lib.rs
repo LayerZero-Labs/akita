@@ -142,7 +142,7 @@ pub use proof::{
     GroupBatchStatement, GroupFoldChallenges, LevelProofShape, NegativeBinarySupport,
     NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PhysicalL2NormProof, PhysicalResponsePlan, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation,
+    PreparedOpeningPoint, PreparedRingMultiplier, ProverCommitmentRows, PublicMatrixDerivation,
     ReducedCoefficientFunctional, ReducedCompressionRelationWeights, RelationAddressGeometry,
     RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
     RelationRowFamily, RelationRowGeometry, RelationWeightContribution, RelationWeightEvent,

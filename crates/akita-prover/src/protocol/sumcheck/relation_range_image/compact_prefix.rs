@@ -146,7 +146,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         r1: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.coefficient_bits() > 2);
-        let coeff_count = self.common_alpha_factor.len();
+        let coeff_count = self.common_alpha_factor().len();
         debug_assert_eq!(compact_witness.len(), self.live_lane_count * coeff_count);
         debug_assert_eq!(alpha_round2.len(), coeff_count >> 2);
 
@@ -156,7 +156,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
         let block_size = num_first.min(current_coefficient_half);
-        let relation_lane_weights = &self.relation_lane_weights;
+        let relation_lane_weights = self.relation_lane_weights();
         let quad_fold_lut = match self.b {
             4 => Self::build_round2_w_lookup_b4(r0, r1),
             8 => Self::build_round2_w_lookup_b8(r0, r1),

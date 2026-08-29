@@ -172,58 +172,94 @@ where
         }
     };
 
-    let prepare_relation_weight_factorization = || {
+    let prepare_relation_weights = || {
         let _span = tracing::info_span!("relation_weight_compilation").entered();
-        let (events, opening_semantics) =
-            build_relation_weight_events(RelationWeightEventInputs {
-                setup: RelationSetupSource::Matrix(setup),
-                instance,
-                alpha,
-                level_params: lp,
-                relation_row_point: &tau1,
-                claim_coefficients: relation_claim_coefficients,
-                opening_source_len,
-                opening_ring_dim,
-                relation_plan: &relation_plan,
-                opening_points,
-            })?;
-        let ordinary = events.factor_common_alpha()?;
-        let compression = lp
-            .payload_mode
-            .is_compressed()
-            .then(|| {
-                akita_types::build_compression_relation_weights(
+        match lp.ring_relation_mode {
+            akita_types::RingRelationMode::QuotientLift => {
+                let (events, opening_semantics) =
+                    build_relation_weight_events(RelationWeightEventInputs {
+                        setup: RelationSetupSource::Matrix(setup),
+                        instance,
+                        alpha,
+                        level_params: lp,
+                        relation_row_point: &tau1,
+                        claim_coefficients: relation_claim_coefficients,
+                        opening_source_len,
+                        opening_ring_dim,
+                        relation_plan: &relation_plan,
+                        opening_points,
+                    })?;
+                let ordinary = events.factor_common_alpha()?;
+                let compression = lp
+                    .payload_mode
+                    .is_compressed()
+                    .then(|| {
+                        akita_types::build_compression_relation_weights(
+                            setup,
+                            instance,
+                            alpha,
+                            lp,
+                            &tau1,
+                            &witness_layout,
+                            opening_ring_dim,
+                            physical_field_len,
+                        )
+                    })
+                    .transpose()?;
+                Ok::<_, AkitaError>((
+                    crate::protocol::sumcheck::CompiledRelationWeights::QuotientLift {
+                        ordinary,
+                        compression,
+                    },
+                    opening_semantics,
+                ))
+            }
+            akita_types::RingRelationMode::ReducedEvaluation => {
+                if !matches!(
+                    opening_points,
+                    akita_types::OpeningFamily::EvaluationTrace(())
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "reduced relation weights require evaluation-trace openings".into(),
+                    ));
+                }
+                let evaluations = relation_weights::build_reduced_dense_relation_weights(
                     setup,
                     instance,
                     alpha,
                     lp,
                     &tau1,
-                    &witness_layout,
+                    opening_source_len,
                     opening_ring_dim,
-                    physical_field_len,
-                )
-            })
-            .transpose()?;
-        Ok::<_, AkitaError>((ordinary, compression, opening_semantics))
+                    &relation_plan,
+                )?;
+                let dense = crate::protocol::sumcheck::DenseRelationWeights::new(
+                    evaluations,
+                    witness_layout.live_coeff_len(),
+                )?;
+                Ok((
+                    crate::protocol::sumcheck::CompiledRelationWeights::ReducedEvaluation(dense),
+                    akita_types::OpeningFamily::EvaluationTrace(()),
+                ))
+            }
+        }
     };
 
     #[cfg(feature = "parallel")]
-    let (relation_weight_factorization_result, w_result) =
-        rayon::join(prepare_relation_weight_factorization, || {
-            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count)
-        });
+    let (relation_weights_result, w_result) = rayon::join(prepare_relation_weights, || {
+        build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count)
+    });
     #[cfg(not(feature = "parallel"))]
-    let (relation_weight_factorization_result, w_result) = {
-        let relation_weight_factorization = prepare_relation_weight_factorization();
+    let (relation_weights_result, w_result) = {
+        let relation_weights = prepare_relation_weights();
         let w_compact =
             build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count);
-        (relation_weight_factorization, w_compact)
+        (relation_weights, w_compact)
     };
 
-    let (relation_weight_factorization, compression_relation_weights, opening_semantics) =
-        relation_weight_factorization_result.map_err(|err| {
-            AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
-        })?;
+    let (relation_weights, opening_semantics) = relation_weights_result.map_err(|err| {
+        AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
+    })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
         AkitaError::InvalidInput(format!("witness opening preparation failed: {err:?}"))
     })?;
@@ -232,13 +268,18 @@ where
             "prepared witness geometry disagrees with the current relation split".into(),
         ));
     }
+    let negative_binary_support = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| akita_types::NegativeBinarySupport::new(&witness_layout, physical_field_len))
+        .transpose()?;
 
     Ok(RingSwitchFinalization {
         output: RingSwitchOutput {
             w_evals_compact,
             relation_address_geometry: geometry,
-            relation_weight_factorization,
-            compression_relation_weights,
+            relation_weights,
+            negative_binary_support,
             digit_range_equality_low_variable_count,
             tau0,
             tau1,

@@ -196,8 +196,8 @@ fn reduced_structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
     layout: &WitnessLayout,
     fold_gadget: &[F],
-    block_challenges: &[F],
-    opening_a_evals: &[F],
+    block_challenges: &Challenges,
+    opening_base_weights: &[F],
     coefficient_point: &[F],
     relation_point: &[F],
     alpha: F,
@@ -214,7 +214,7 @@ fn reduced_structured_slice_reference(
     for claim in 0..group.num_claims {
         for global_block in 0..group.num_live_blocks {
             let block_claim = claim * group.num_live_blocks + global_block;
-            let block_challenge = block_challenges[block_claim];
+            let block_challenge = &block_challenges.as_slice()[block_claim];
             let unit = layout.unit_for_block(group.group_id, global_block).unwrap();
             for subcolumn in 0..group.opening_subcolumns {
                 for (digit, &gadget) in opening_gadget.iter().enumerate() {
@@ -230,11 +230,26 @@ fn reduced_structured_slice_reference(
                             0,
                         )
                         .unwrap();
-                    let scalar = block_challenge * group.consistency_weight * gadget;
                     for coefficient in 0..group.role_dims.d_d() {
-                        evaluation += scalar
-                            * eq_eval_at_index(&full_point, physical_start + coefficient)
-                            * alpha_powers[subcolumn * group.role_dims.d_d() + coefficient];
+                        let ambient_coefficient = subcolumn * group.role_dims.d_d() + coefficient;
+                        let multiplier_weight = block_challenge
+                            .positions
+                            .iter()
+                            .zip(&block_challenge.coeffs)
+                            .fold(F::zero(), |sum, (&position, &value)| {
+                                let exponent = position as usize + ambient_coefficient;
+                                let term = F::from_i64(i64::from(value))
+                                    * alpha_powers[exponent % group.role_dims.d_a()];
+                                if exponent < group.role_dims.d_a() {
+                                    sum + term
+                                } else {
+                                    sum - term
+                                }
+                            });
+                        evaluation += group.consistency_weight
+                            * gadget
+                            * multiplier_weight
+                            * eq_eval_at_index(&full_point, physical_start + coefficient);
                     }
                 }
             }
@@ -256,18 +271,34 @@ fn reduced_structured_slice_reference(
                                 0,
                             )
                             .unwrap();
-                        let scalar = block_challenge * group.a_row_weights[row] * gadget;
                         for coefficient in 0..group.role_dims.d_b() {
-                            evaluation += scalar
-                                * eq_eval_at_index(&full_point, physical_start + coefficient)
-                                * alpha_powers[subcolumn * group.role_dims.d_b() + coefficient];
+                            let ambient_coefficient =
+                                subcolumn * group.role_dims.d_b() + coefficient;
+                            let multiplier_weight = block_challenge
+                                .positions
+                                .iter()
+                                .zip(&block_challenge.coeffs)
+                                .fold(F::zero(), |sum, (&position, &value)| {
+                                    let exponent = position as usize + ambient_coefficient;
+                                    let term = F::from_i64(i64::from(value))
+                                        * alpha_powers[exponent % group.role_dims.d_a()];
+                                    if exponent < group.role_dims.d_a() {
+                                        sum + term
+                                    } else {
+                                        sum - term
+                                    }
+                                });
+                            evaluation += group.a_row_weights[row]
+                                * gadget
+                                * multiplier_weight
+                                * eq_eval_at_index(&full_point, physical_start + coefficient);
                         }
                     }
                 }
             }
         }
     }
-    for (position, &opening) in opening_a_evals.iter().enumerate() {
+    for (position, &opening) in opening_base_weights.iter().enumerate() {
         for (commit_digit, &gadget) in witness_gadget.iter().enumerate() {
             for unit in layout.units_for_group(group.group_id).unwrap() {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
@@ -333,13 +364,24 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     )
     .unwrap();
     let group_id = plan.groups[0].group_id;
-    let block_challenges = (0..plan.groups[0].num_claims * plan.groups[0].num_live_blocks)
-        .map(|index| test_scalar(801 + index as u128))
+    let block_claim_count = plan.groups[0].num_claims * plan.groups[0].num_live_blocks;
+    let sparse_challenges = (0..block_claim_count)
+        .map(|index| SparseChallenge {
+            positions: vec![(127 - index % 5) as u32].into(),
+            coeffs: vec![if index % 2 == 0 { 1 } else { -1 }].into(),
+        })
         .collect::<Vec<_>>();
-    let opening_a_evals = (0..plan.groups[0].num_positions_per_block)
+    let block_challenges = Challenges::from_sparse(
+        sparse_challenges,
+        plan.groups[0].num_live_blocks,
+        plan.groups[0].num_claims,
+    )
+    .unwrap();
+    let opening_base_weights = (0..plan.groups[0].num_positions_per_block)
         .map(|index| test_scalar(901 + index as u128))
         .collect::<Vec<_>>();
-    let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &[F], openings: &[F]| {
+    let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &Challenges, openings: &[F]| {
+        let opening = crate::PreparedRingMultiplier::from_base_weights(openings.to_vec()).unwrap();
         let expected = reduced_structured_slice_reference(
             &plan.groups[0],
             &layout,
@@ -352,11 +394,23 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         );
         assert_ne!(expected, F::zero());
         assert_eq!(
-            plan.evaluate_structured_group::<F>(group_id, blocks, openings, alpha)
+            plan.evaluate_reduced_structured_group::<F>(group_id, blocks, &opening, alpha)
                 .unwrap(),
             expected
         );
     };
+
+    let zero_challenges = Challenges::from_sparse(
+        (0..block_claim_count)
+            .map(|_| SparseChallenge {
+                positions: Vec::new().into(),
+                coeffs: Vec::new().into(),
+            })
+            .collect(),
+        plan.groups[0].num_live_blocks,
+        plan.groups[0].num_claims,
+    )
+    .unwrap();
 
     let original_a_weights = plan.groups[0].a_row_weights.to_vec();
     let original_consistency = plan.groups[0].consistency_weight;
@@ -364,7 +418,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     assert_literal(
         &plan,
         &block_challenges,
-        &vec![F::zero(); opening_a_evals.len()],
+        &vec![F::zero(); opening_base_weights.len()],
     );
 
     std::sync::Arc::make_mut(&mut plan.groups[0].a_row_weights)
@@ -373,15 +427,11 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
     assert_literal(
         &plan,
         &block_challenges,
-        &vec![F::zero(); opening_a_evals.len()],
+        &vec![F::zero(); opening_base_weights.len()],
     );
 
     plan.groups[0].consistency_weight = original_consistency;
-    assert_literal(
-        &plan,
-        &vec![F::zero(); block_challenges.len()],
-        &opening_a_evals,
-    );
+    assert_literal(&plan, &zero_challenges, &opening_base_weights);
 }
 
 #[test]

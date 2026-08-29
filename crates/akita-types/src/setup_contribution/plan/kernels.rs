@@ -1,4 +1,4 @@
-use super::PhysicalBWeightTerm;
+use super::{PhysicalBWeightTerm, ReducedRoleCoefficientState};
 #[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::ring::eval_ring_at_pows_fast;
@@ -87,7 +87,7 @@ pub(super) struct ReducedScanGroupWeights<'a, E: Field> {
     pub(super) t: &'a [E],
     pub(super) z: &'a [E],
     pub(super) role_ratios: [usize; 3],
-    pub(super) functionals: &'a [std::sync::Arc<[E]>; 3],
+    pub(super) roles: &'a [ReducedRoleCoefficientState<E>; 3],
 }
 
 impl<E: Field> RoleProjection<E> {
@@ -148,7 +148,13 @@ pub(super) fn add_reduced_base_ring_weights<E: Field, const D: usize>(
             .checked_sub(segment.d_start_abs)
             .ok_or(AkitaError::InvalidProof)?;
         let weight = segment.d_weight * *group.e.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
-        add_functional_chunk(base_idx, d_ratio, &group.functionals[2], weight, output)?;
+        add_functional_chunk(
+            base_idx,
+            d_ratio,
+            &group.roles[2].functional,
+            weight,
+            output,
+        )?;
     }
     if segment.has_b {
         let role_idx = projected_role_index(base_idx, b_ratio)?;
@@ -165,7 +171,13 @@ pub(super) fn add_reduced_base_ring_weights<E: Field, const D: usize>(
                 .ok_or(AkitaError::InvalidProof)?;
             weight += term.row_weight * logical;
         }
-        add_functional_chunk(base_idx, b_ratio, &group.functionals[1], weight, output)?;
+        add_functional_chunk(
+            base_idx,
+            b_ratio,
+            &group.roles[1].functional,
+            weight,
+            output,
+        )?;
     }
     if segment.has_a {
         let role_idx = projected_role_index(base_idx, a_ratio)?;
@@ -173,7 +185,13 @@ pub(super) fn add_reduced_base_ring_weights<E: Field, const D: usize>(
             .checked_sub(segment.a_start_abs)
             .ok_or(AkitaError::InvalidProof)?;
         let weight = segment.a_row_weight * *group.z.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
-        add_functional_chunk(base_idx, a_ratio, &group.functionals[0], weight, output)?;
+        add_functional_chunk(
+            base_idx,
+            a_ratio,
+            &group.roles[0].functional,
+            weight,
+            output,
+        )?;
     }
     Ok(())
 }

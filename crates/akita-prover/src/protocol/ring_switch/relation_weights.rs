@@ -1,5 +1,7 @@
 //! Semantic relation-weight events and their canonical consumers.
 
+#[path = "relation_weights/reduced_dense.rs"]
+mod reduced_dense;
 #[path = "relation_weights/setup_columns.rs"]
 mod setup_columns;
 
@@ -47,6 +49,7 @@ pub struct RelationWeightEventInputs<'a, F: Field, E: Field> {
 
 mod events;
 pub use events::{RelationWeightEvents, RelationWeightFactorization};
+pub(super) use reduced_dense::build_reduced_dense_relation_weights;
 
 fn relation_d_group_width(
     lp: &CommittedGroupParams,

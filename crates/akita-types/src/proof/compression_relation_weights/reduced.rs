@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::ring::residue_kernel;
 use akita_field::ExtField;
 
 #[derive(Clone, Debug)]
@@ -95,6 +96,90 @@ where
 }
 
 impl<E: FieldCore> ReducedCompressionRelationWeights<E> {
+    /// Add the complete reduced F/H ring-relation table to one checked padded
+    /// Stage-2 destination.
+    ///
+    /// Linear recomposition events retain their canonical sparse alpha
+    /// windows. Each universal compression-map column is read from its typed
+    /// [`CompressionWitnessSpan`] and transposed through the shared
+    /// negacyclic residue recurrence. No quotient row or independently
+    /// reconstructed map geometry participates in this path.
+    pub fn accumulate_dense<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        destination: &mut [E],
+    ) -> Result<(), AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        if destination.len() != self.linear.physical_field_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.linear.physical_field_len,
+                actual: destination.len(),
+            });
+        }
+        for (weight, addition) in destination.iter_mut().zip(self.linear.materialize_dense()?) {
+            *weight += addition;
+        }
+        for event in &self.maps {
+            let map = event.span.map();
+            let digit_span = event.span.range();
+            let expected_len = map
+                .input_width()
+                .checked_mul(map.ring_dimension())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression map digit span overflow".into())
+                })?;
+            if digit_span.len() != expected_len || digit_span.end > destination.len() {
+                return Err(AkitaError::InvalidSetup(
+                    "compression witness span disagrees with its canonical map".into(),
+                ));
+            }
+            let matrix =
+                setup
+                    .shared_matrix()
+                    .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
+            let row = matrix.row_flat(0)?;
+            for column in 0..map.input_width() {
+                let source_start = column.checked_mul(map.ring_dimension()).ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression map column overflow".into())
+                })?;
+                let source_end =
+                    source_start
+                        .checked_add(map.ring_dimension())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "compression map column extent overflow".into(),
+                            )
+                        })?;
+                let destination_start =
+                    digit_span.start.checked_add(source_start).ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression map address overflow".into())
+                    })?;
+                let destination_end = destination_start
+                    .checked_add(map.ring_dimension())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression map address overflow".into())
+                    })?;
+                let kernel = residue_kernel::<F, E>(
+                    row.get(source_start..source_end)
+                        .ok_or(AkitaError::InvalidProof)?,
+                    self.alpha,
+                )?;
+                for (weight, kernel) in destination
+                    .get_mut(destination_start..destination_end)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .iter_mut()
+                    .zip(kernel)
+                {
+                    *weight += event.row_weight * kernel;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Evaluate the complete reduced compression relation at one full witness
     /// point.
     pub fn evaluate_at_point<F>(
@@ -429,6 +514,26 @@ mod tests {
         assert_eq!(
             evaluate_reduced_compression_map(&setup, &span, &point, 2048, alpha).unwrap(),
             expected
+        );
+        let row_weight = F::from_u64(23);
+        let program = ReducedCompressionRelationWeights {
+            linear: CompressionRelationWeights {
+                events: Vec::new(),
+                alpha_powers: Vec::new(),
+                coefficient_block_len: 1,
+                physical_field_len: 2048,
+            },
+            maps: vec![ReducedCompressionMapEvent {
+                span: span.clone(),
+                row_weight,
+            }],
+            alpha,
+        };
+        let mut dense = vec![F::zero(); 2048];
+        program.accumulate_dense(&setup, &mut dense).unwrap();
+        assert_eq!(
+            akita_algebra::poly::multilinear_eval(&dense, &point).unwrap(),
+            row_weight * expected
         );
         let malformed_span = CompressionWitnessSpan::new_for_test(map, 2040..2048);
         assert!(

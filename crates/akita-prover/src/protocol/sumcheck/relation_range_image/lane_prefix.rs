@@ -70,16 +70,16 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
         let old_live_lane_count = self.live_lane_count;
         let next_live_lane_count = old_live_lane_count.div_ceil(2);
-        let coeff_count = self.common_alpha_factor.len();
+        let coeff_count = self.common_alpha_factor().len();
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let first_bits = num_first.trailing_zeros() as usize;
         let next_current_lane_half = 1usize << (self.current_lane_width() - 2);
         let live_pairs = next_live_lane_count.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let common_alpha_factor = &self.common_alpha_factor;
+        let common_alpha_factor = self.common_alpha_factor();
         let next_relation_lane_weights =
-            Self::fold_relation_lane_weights(&self.relation_lane_weights, r);
+            Self::fold_relation_lane_weights(self.relation_lane_weights(), r);
         let mut out = vec![E::zero(); coeff_count * next_live_lane_count];
         let linear_terms = &self.linear_terms;
 
@@ -424,7 +424,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
         debug_assert_eq!(
             compact_witness.len(),
-            self.live_lane_count * self.common_alpha_factor.len()
+            self.live_lane_count * self.common_alpha_factor().len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -433,8 +433,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let current_lane_half = 1usize << (self.current_lane_width() - 1);
         let live_pairs = self.live_lane_count.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let common_alpha_factor = &self.common_alpha_factor;
-        let relation_lane_weights = &self.relation_lane_weights;
+        let common_alpha_factor = self.common_alpha_factor();
+        let relation_lane_weights = self.relation_lane_weights();
         let linear_terms = &self.linear_terms;
         let coeff_count = common_alpha_factor.len();
         debug_assert_eq!(relation_lane_weights.len(), self.current_lane_capacity());
@@ -629,7 +629,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
         debug_assert_eq!(
             folded_witness.len(),
-            self.live_lane_count * self.common_alpha_factor.len()
+            self.live_lane_count * self.common_alpha_factor().len()
         );
 
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
@@ -638,8 +638,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let current_lane_half = 1usize << (self.current_lane_width() - 1);
         let live_pairs = self.live_lane_count.div_ceil(2);
         let block_size = num_first.min(live_pairs);
-        let common_alpha_factor = &self.common_alpha_factor;
-        let relation_lane_weights = &self.relation_lane_weights;
+        let common_alpha_factor = self.common_alpha_factor();
+        let relation_lane_weights = self.relation_lane_weights();
         let linear_terms = &self.linear_terms;
         let coeff_count = common_alpha_factor.len();
         let tiles =

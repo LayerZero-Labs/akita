@@ -1,14 +1,16 @@
 use super::*;
 
 fn intern_reduced_functional<E: Field>(
-    cache: &mut Vec<(usize, std::sync::Arc<[E]>)>,
+    cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
     dimension: usize,
-    candidate: std::sync::Arc<[E]>,
-) -> Result<std::sync::Arc<[E]>, AkitaError> {
+    candidate: ReducedRoleCoefficientState<E>,
+) -> Result<ReducedRoleCoefficientState<E>, AkitaError> {
     if let Some((_, prepared)) = cache.iter().find(|(cached, _)| *cached == dimension) {
-        if prepared.as_ref() != candidate.as_ref() {
+        if prepared.functional.as_ref() != candidate.functional.as_ref()
+            || prepared.equality.as_ref() != candidate.equality.as_ref()
+        {
             return Err(AkitaError::InvalidSetup(
-                "equal native dimensions produced different reduced functionals".into(),
+                "equal native dimensions produced different reduced coefficient state".into(),
             ));
         }
         return Ok(prepared.clone());
@@ -382,9 +384,9 @@ impl<E: Field> SetupContributionPlan<E> {
         group: &SetupContributionGroupPlan<E>,
         alpha: E,
         coefficient_point: &[E],
-        cache: &mut Vec<(usize, std::sync::Arc<[E]>)>,
+        cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
     ) -> Result<DirectScanWeights<E>, AkitaError> {
-        let (e, d_functional) = self.materialize_reduced_role_tensor_weights(
+        let (e, d_role) = self.materialize_reduced_role_tensor_weights(
             group.d_relation_ratio,
             group.role_dims.d_d(),
             &group.d_tensors,
@@ -392,7 +394,7 @@ impl<E: Field> SetupContributionPlan<E> {
             alpha,
             coefficient_point,
         )?;
-        let (t, b_functional) = self.materialize_reduced_role_tensor_weights(
+        let (t, b_role) = self.materialize_reduced_role_tensor_weights(
             group.b_relation_ratio,
             group.role_dims.d_b(),
             &group.physical_b.relation_tensors,
@@ -400,7 +402,7 @@ impl<E: Field> SetupContributionPlan<E> {
             alpha,
             coefficient_point,
         )?;
-        let (z, a_functional) = self.materialize_reduced_role_tensor_weights(
+        let (z, a_role) = self.materialize_reduced_role_tensor_weights(
             group.a_relation_ratio,
             group.role_dims.d_a(),
             &group.a_tensors,
@@ -408,15 +410,14 @@ impl<E: Field> SetupContributionPlan<E> {
             alpha,
             coefficient_point,
         )?;
+        let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), a_role)?;
+        let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), b_role)?;
+        let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), d_role)?;
         Ok(DirectScanWeights {
             e,
             t,
             z,
-            reduced_functionals: Some([
-                intern_reduced_functional(cache, group.role_dims.d_a(), a_functional)?,
-                intern_reduced_functional(cache, group.role_dims.d_b(), b_functional)?,
-                intern_reduced_functional(cache, group.role_dims.d_d(), d_functional)?,
-            ]),
+            reduced_roles: Some([a_role, b_role, d_role]),
         })
     }
 
@@ -470,7 +471,7 @@ impl<E: Field> SetupContributionPlan<E> {
             e,
             t,
             z,
-            reduced_functionals: None,
+            reduced_roles: None,
         })
     }
 
