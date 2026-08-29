@@ -777,6 +777,9 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
             }
             let relation_layout = relation_geometry.rhs_layout();
+            let row_families = relation_layout
+                .row_families()
+                .expect("canonical row families");
             assert_eq!(layout.tail_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
@@ -856,6 +859,22 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 let layer = &layout.compression_layers()[map_index];
                 assert_eq!(layer.map_index(), map_index);
                 assert_eq!(layer.f_spans().len(), group_order.len());
+                let canonical_f_quotient_rows = row_families
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(row_index, row)| match row {
+                        crate::RelationRowFamily::CompressionF {
+                            group_index,
+                            map_index: row_map_index,
+                            ..
+                        } if *row_map_index == map_index => Some((*group_index, row_index)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    layer.f_quotient_rows(),
+                    Some(canonical_f_quotient_rows.as_slice())
+                );
                 for (relation_group_index, &group_index) in group_order.iter().enumerate() {
                     let (planned_group_index, plan) = relation_layout
                         .group_compression_plan(relation_group_index)

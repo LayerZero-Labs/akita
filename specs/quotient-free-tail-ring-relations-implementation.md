@@ -900,5 +900,3 @@ lengths can expose suffix states that did not exist in the baseline.
 
 Mitigation: preserve cache quotas, add phase-specific diagnostics, compare an
 unpruned small oracle, and publish dense-family wall/RSS evidence.
-
-### Concurrent protocol PRs

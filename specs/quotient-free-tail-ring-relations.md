@@ -759,8 +759,6 @@ it MUST prove that claim against the complete objective, downstream ranks,
 L2 route changes, setup capacity, and canonical descriptor. Empirical proof
 size results are guidance, not a pruning proof.
 
-## Architecture
-
 ## Normative implementation contract
 
 The cross-crate architecture, verifier and prover realization, performance
@@ -790,12 +788,3 @@ That record is operational context and is not normative.
   L0/L1 packing policy and later evaluation-trace cutover.
 - [`specs/SPEC_REVIEW.md`](SPEC_REVIEW.md), required review rubric before
   implementation approval.
-- [PR #448](https://github.com/LayerZero-Labs/akita/pull/448), transcript
-  grinding integration inspected at head `303ddbca5`.
-- [PR #428](https://github.com/LayerZero-Labs/akita/pull/428), trusted schedule
-  artifact proposal inspected at head `d6499748e`.
-- [PR #434](https://github.com/LayerZero-Labs/akita/pull/434), certified planner
-  architecture inspected at head `d7261d916`.
-- [PR #437](https://github.com/LayerZero-Labs/akita/pull/437) and
-  [PR #441](https://github.com/LayerZero-Labs/akita/pull/441), packed recursive
-  witness and commitment-stage changes already present in the current stack.

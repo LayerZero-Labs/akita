@@ -93,11 +93,10 @@ trait TailSink: Sized {
         width_overflow: &'static str,
         range_overflow: &'static str,
     ) -> Result<(), AkitaError>;
+    fn record_f_quotient_row(&mut self, group_index: usize, row_index: usize);
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
-        first_compression_row: usize,
-        num_groups: usize,
         h_quotient_row: usize,
         plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError>;
@@ -110,6 +109,7 @@ struct MaterializingTailSink {
     compression_alignment_ranges: Vec<std::ops::Range<usize>>,
     quotient_rows: Vec<Option<WitnessQuotientRowLayout>>,
     current_f_spans: Vec<(usize, CompressionWitnessSpan)>,
+    current_f_quotient_rows: Vec<(usize, usize)>,
     current_h_span: Option<CompressionWitnessSpan>,
 }
 
@@ -121,6 +121,7 @@ impl MaterializingTailSink {
             compression_alignment_ranges: Vec::new(),
             quotient_rows: Vec::new(),
             current_f_spans: Vec::new(),
+            current_f_quotient_rows: Vec::new(),
             current_h_span: None,
         }
     }
@@ -192,11 +193,13 @@ impl TailSink for MaterializingTailSink {
         Ok(())
     }
 
+    fn record_f_quotient_row(&mut self, group_index: usize, row_index: usize) {
+        self.current_f_quotient_rows.push((group_index, row_index));
+    }
+
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
-        first_compression_row: usize,
-        num_groups: usize,
         h_quotient_row: usize,
         plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError> {
@@ -204,30 +207,18 @@ impl TailSink for MaterializingTailSink {
             AkitaError::InvalidSetup("compression H witness span is missing".into())
         })?;
         let f_spans = std::mem::take(&mut self.current_f_spans);
+        let canonical_f_quotient_rows = std::mem::take(&mut self.current_f_quotient_rows);
+        if canonical_f_quotient_rows.len() != f_spans.len() {
+            return Err(AkitaError::InvalidSetup(
+                "compression F quotient ownership disagrees with witness spans".into(),
+            ));
+        }
         let lifted = plan.quotient_depth().is_some();
-        let f_quotient_rows = if lifted {
-            let layer_start = first_compression_row
-                .checked_add(map_index * (num_groups + 1))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression quotient index overflow".into())
-                })?;
-            Some(
-                f_spans
-                    .iter()
-                    .enumerate()
-                    .map(|(relation_group_index, (group_index, _))| {
-                        (*group_index, layer_start + relation_group_index)
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        };
         self.compression_layers.push(CompressionWitnessLayerLayout {
             map_index,
             f_spans,
             h_span,
-            f_quotient_rows,
+            f_quotient_rows: lifted.then_some(canonical_f_quotient_rows),
             h_quotient_row: lifted.then_some(h_quotient_row),
         });
         Ok(())
@@ -308,11 +299,11 @@ impl TailSink for MeasuringTailSink {
         Ok(())
     }
 
+    fn record_f_quotient_row(&mut self, _group_index: usize, _row_index: usize) {}
+
     fn finish_compression_layer(
         &mut self,
         _map_index: usize,
-        _first_compression_row: usize,
-        _num_groups: usize,
         _h_quotient_row: usize,
         _plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError> {
@@ -433,18 +424,25 @@ fn resolve<S: TailSink>(
             let row = *row_families.get(row_index).ok_or_else(|| {
                 AkitaError::InvalidSetup("compression F quotient row is missing".into())
             })?;
-            let geometry = match row {
+            let (group_index, geometry) = match row {
                 RelationRowFamily::CompressionF {
+                    group_index,
                     map_index: row_map_index,
                     geometry,
-                    ..
-                } if row_map_index == map_index => geometry,
+                } if row_map_index == map_index => (group_index, geometry),
                 _ => {
                     return Err(AkitaError::InvalidSetup(
                         "compression F quotient order disagrees with relation rows".into(),
                     ))
                 }
             };
+            let (planned_group_index, _) =
+                relation_layout.group_compression_plan(relation_group_index)?;
+            if group_index != planned_group_index {
+                return Err(AkitaError::InvalidSetup(
+                    "compression F quotient group disagrees with its compression plan".into(),
+                ));
+            }
             sink.place_quotient_row(
                 row_index,
                 geometry,
@@ -452,6 +450,7 @@ fn resolve<S: TailSink>(
                 "compression quotient width overflow",
                 "compression quotient range overflow",
             )?;
+            sink.record_f_quotient_row(group_index, row_index);
         }
         let h_quotient_row = first_compression_row
             .checked_add(map_index * (num_groups + 1) + num_groups)
@@ -479,13 +478,7 @@ fn resolve<S: TailSink>(
             "compression quotient width overflow",
             "compression quotient range overflow",
         )?;
-        sink.finish_compression_layer(
-            map_index,
-            first_compression_row,
-            num_groups,
-            h_quotient_row,
-            plan,
-        )?;
+        sink.finish_compression_layer(map_index, h_quotient_row, plan)?;
     }
     sink.align(
         successor_a_alignment,
