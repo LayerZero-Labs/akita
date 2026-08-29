@@ -441,11 +441,14 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         });
     let expected = witness_evaluation * relation_weight
         + binary_batching * binary_weight * witness_evaluation * (witness_evaluation + E::one());
+    let compression = Stage2CompressionOracle::Compressed {
+        weights: &prepared,
+        support: &support,
+        binary_batching,
+    };
     assert_eq!(
         evaluate_compression_oracle(
-            Some(&prepared),
-            Some(&support),
-            Some(binary_batching),
+            &compression,
             &setup,
             &stage1_point,
             &point,
@@ -510,9 +513,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
     let tampered_witness_evaluation = witness_evaluation + eq_eval_at_index(&point, digit_index);
     assert_ne!(
         evaluate_compression_oracle(
-            Some(&prepared),
-            Some(&support),
-            Some(binary_batching),
+            &compression,
             &setup,
             &stage1_point,
             &point,
@@ -535,14 +536,15 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         physical_field_len,
     )
     .is_err());
-    assert!(evaluate_compression_oracle(
-        Some(&prepared),
-        None,
-        Some(binary_batching),
-        &setup,
-        &stage1_point,
-        &point,
-        witness_evaluation,
-    )
-    .is_err());
+    assert_eq!(
+        evaluate_compression_oracle(
+            &Stage2CompressionOracle::Raw,
+            &setup,
+            &stage1_point,
+            &point,
+            witness_evaluation,
+        )
+        .unwrap(),
+        E::zero()
+    );
 }

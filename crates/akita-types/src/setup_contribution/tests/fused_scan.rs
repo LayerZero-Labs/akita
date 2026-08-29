@@ -327,30 +327,36 @@ fn multi_group_packed_direct_matches_row_fallback_with_nested_role_dims() {
     )
     .unwrap()
     .into();
-    for group in &mut plan.groups {
-        group.direct_scan_weights.as_mut().unwrap().reduced_roles = Some([
-            ReducedRoleCoefficientState {
-                functional: a_functional.clone(),
-                equality: vec![F::one(); D_A].into(),
-            },
-            ReducedRoleCoefficientState {
-                functional: projected_functional.clone(),
-                equality: vec![F::one(); D_B].into(),
-            },
-            ReducedRoleCoefficientState {
-                functional: projected_functional.clone(),
-                equality: vec![F::one(); D_D].into(),
-            },
-        ]);
-    }
-    plan.direct_scan_functional = Some(
-        PreparedCoefficientFunctional::reduced_evaluation(
-            test_scalar(5),
-            &[test_scalar(3); 6],
-            plan.relation_address_geometry(),
-        )
-        .unwrap(),
-    );
+    let lifted_groups =
+        match std::mem::replace(&mut plan.direct_scan_state, DirectScanState::Unprepared) {
+            DirectScanState::Lifted { groups, .. } => groups,
+            _ => panic!("fixture must start with lifted direct-scan state"),
+        };
+    let reduced_groups = lifted_groups
+        .into_iter()
+        .map(|weights| ReducedDirectScanWeights {
+            weights,
+            roles: [
+                ReducedRoleCoefficientState {
+                    functional: a_functional.clone(),
+                    equality: vec![F::one(); D_A].into(),
+                },
+                ReducedRoleCoefficientState {
+                    functional: projected_functional.clone(),
+                    equality: vec![F::one(); D_B].into(),
+                },
+                ReducedRoleCoefficientState {
+                    functional: projected_functional.clone(),
+                    equality: vec![F::one(); D_D].into(),
+                },
+            ],
+        })
+        .collect();
+    plan.direct_scan_state = DirectScanState::Reduced {
+        alpha: test_scalar(5),
+        coefficient_point: vec![test_scalar(3); 6].into(),
+        groups: reduced_groups,
+    };
     let reduced_expected = plan
         .evaluate_direct_by_rows::<F>(
             &setup,
@@ -415,8 +421,10 @@ fn reduced_fused_scan_matches_dense_rows_for_mixed_dimensions_and_chunks() {
                 .collect(),
         ),
     );
-    let direct = plan.groups[0].direct_scan_weights.as_ref().unwrap();
-    let [_a_role, b_role, d_role] = direct.reduced_roles.as_ref().unwrap();
+    let DirectScanState::Reduced { groups: direct, .. } = &plan.direct_scan_state else {
+        panic!("reduced fixture must prepare reduced direct-scan state");
+    };
+    let [_a_role, b_role, d_role] = &direct[0].roles;
     assert!(std::sync::Arc::ptr_eq(
         &b_role.functional,
         &d_role.functional

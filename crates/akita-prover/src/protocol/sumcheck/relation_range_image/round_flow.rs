@@ -3,27 +3,38 @@ use super::*;
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
-        let use_reduced_dense = self.relation_weights.is_reduced_dense();
-        let use_deferred_compact_prefix =
-            !use_reduced_dense && self.using_deferred_compact_prefix();
-        let use_partial_lane_coefficient_round =
-            !use_deferred_compact_prefix && self.use_partial_lane_coefficient_round();
-        let use_partial_lane_round = !use_deferred_compact_prefix && self.use_partial_lane_round();
         let rounds_completed = self.rounds_completed;
-        let poly = if use_reduced_dense {
-            match &self.witness_state {
+        let poly = match &self.relation_weights {
+            RelationWeightOracle::ReducedDense(dense) => match &self.witness_state {
                 WitnessState::CompactPrefix(compact_witness) => {
-                    let (virt_terms, rel_terms) =
-                        self.compute_round_compact_reduced_dense_terms(compact_witness.view());
+                    let (virt_terms, rel_terms) = self.compute_round_compact_reduced_dense_terms(
+                        compact_witness.view(),
+                        dense.evaluations(),
+                    );
                     self.combine_terms(virt_terms, rel_terms)
                 }
                 WitnessState::FoldedSuffix(folded_witness) => {
-                    let (virt_terms, rel_terms) =
-                        self.compute_folded_reduced_dense_round_terms(folded_witness);
+                    let (virt_terms, rel_terms) = self.compute_folded_reduced_dense_round_terms(
+                        folded_witness,
+                        dense.evaluations(),
+                    );
                     self.combine_terms(virt_terms, rel_terms)
                 }
+            },
+            RelationWeightOracle::QuotientFactored(_) => {
+                self.compute_quotient_round_from_state(rounds_completed)
             }
-        } else if use_deferred_compact_prefix {
+        };
+        self.scan_time_total += t_scan.elapsed().as_secs_f64();
+        poly
+    }
+
+    fn compute_quotient_round_from_state(&mut self, rounds_completed: usize) -> UniPoly<E> {
+        let use_deferred_compact_prefix = self.using_deferred_compact_prefix();
+        let use_partial_lane_coefficient_round =
+            !use_deferred_compact_prefix && self.use_partial_lane_coefficient_round();
+        let use_partial_lane_round = !use_deferred_compact_prefix && self.use_partial_lane_round();
+        if use_deferred_compact_prefix {
             let (virt_poly, rel_poly) = {
                 let prefix = self.ensure_deferred_compact_prefix();
                 if rounds_completed == 0 {
@@ -75,9 +86,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     }
                 }
             }
-        };
-        self.scan_time_total += t_scan.elapsed().as_secs_f64();
-        poly
+        }
     }
 
     #[inline]
@@ -155,50 +164,54 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }
 
-        if self.relation_weights.is_reduced_dense() {
-            self.split_eq.bind(r);
-            let folding_lane_round = !self.in_coefficient_round();
-            self.witness_state = match mem::replace(
-                &mut self.witness_state,
-                WitnessState::FoldedSuffix(Vec::new()),
-            ) {
-                WitnessState::CompactPrefix(compact_witness) => {
-                    let compact_view = compact_witness.view();
-                    let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
-                    self.fold_linear_terms_for_current_round(r);
-                    WitnessState::FoldedSuffix(Self::materialize_compact_witness(
-                        compact_view,
-                        &fold_lut,
-                    ))
+        match &self.relation_weights {
+            RelationWeightOracle::ReducedDense(_) => {
+                self.split_eq.bind(r);
+                let folding_lane_round = !self.in_coefficient_round();
+                self.witness_state = match mem::replace(
+                    &mut self.witness_state,
+                    WitnessState::FoldedSuffix(Vec::new()),
+                ) {
+                    WitnessState::CompactPrefix(compact_witness) => {
+                        let compact_view = compact_witness.view();
+                        let fold_lut = Self::build_compact_w_fold_lut(compact_view, r);
+                        self.fold_linear_terms_for_current_round(r);
+                        WitnessState::FoldedSuffix(Self::materialize_compact_witness(
+                            compact_view,
+                            &fold_lut,
+                        ))
+                    }
+                    WitnessState::FoldedSuffix(folded_witness) => {
+                        let next = cfg_into_iter!(0..folded_witness.len().div_ceil(2))
+                            .map(|pair| fold_folded_lane_pair(&folded_witness, 2 * pair, r))
+                            .collect();
+                        self.fold_linear_terms_for_current_round(r);
+                        WitnessState::FoldedSuffix(next)
+                    }
+                };
+                match &mut self.relation_weights {
+                    RelationWeightOracle::ReducedDense(dense) => dense.bind(r),
+                    RelationWeightOracle::QuotientFactored(_) => return,
                 }
-                WitnessState::FoldedSuffix(folded_witness) => {
-                    let next = cfg_into_iter!(0..folded_witness.len().div_ceil(2))
-                        .map(|pair| fold_folded_lane_pair(&folded_witness, 2 * pair, r))
-                        .collect();
-                    self.fold_linear_terms_for_current_round(r);
-                    WitnessState::FoldedSuffix(next)
+                if folding_lane_round {
+                    self.live_lane_count = self.live_lane_count.div_ceil(2);
                 }
-            };
-            self.relation_weights
-                .bind_dense(r)
-                .expect("reduced dense relation weights remain mode-stable");
-            if folding_lane_round {
-                self.live_lane_count = self.live_lane_count.div_ceil(2);
+                self.rounds_completed += 1;
+                self.cached_round_poly = (self.rounds_completed < self.num_vars)
+                    .then(|| self.compute_current_round_poly_from_state());
+                drop(_span);
+                self.fold_time_total += t_fold.elapsed().as_secs_f64();
+                if self.rounds_completed == self.num_vars {
+                    tracing::debug!(
+                        rounds = self.num_vars,
+                        scan_s = self.scan_time_total,
+                        fold_s = self.fold_time_total,
+                        "stage2 sumcheck rounds complete"
+                    );
+                }
+                return;
             }
-            self.rounds_completed += 1;
-            self.cached_round_poly = (self.rounds_completed < self.num_vars)
-                .then(|| self.compute_current_round_poly_from_state());
-            drop(_span);
-            self.fold_time_total += t_fold.elapsed().as_secs_f64();
-            if self.rounds_completed == self.num_vars {
-                tracing::debug!(
-                    rounds = self.num_vars,
-                    scan_s = self.scan_time_total,
-                    fold_s = self.fold_time_total,
-                    "stage2 sumcheck rounds complete"
-                );
-            }
-            return;
+            RelationWeightOracle::QuotientFactored(_) => {}
         }
 
         if self.using_deferred_compact_prefix() {

@@ -38,10 +38,8 @@ pub use benchmark_support::{
 pub(crate) struct RingSwitchVerifyOutput<E: Field> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
-    pub compression_relation_weights: Option<PreparedCompressionRelation<E>>,
-    /// Sparse support of every F/H negative-binary digit span.
-    pub negative_binary_support: Option<NegativeBinarySupport>,
+    /// Atomic payload-mode state for Stage-2 compression and binary terms.
+    pub compression: PreparedStage2Compression<E>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -58,8 +56,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: Field> {
 
 struct RingSwitchVerifyCoreOutput<E: Field> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    compression_relation_weights: Option<PreparedCompressionRelation<E>>,
-    negative_binary_support: Option<NegativeBinarySupport>,
+    compression: PreparedStage2Compression<E>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
@@ -71,6 +68,20 @@ struct RingSwitchVerifyCoreOutput<E: Field> {
 pub(crate) enum PreparedCompressionRelation<E: Field> {
     QuotientLift(CompressionRelationWeights<E>),
     ReducedEvaluation(ReducedCompressionRelationWeights<E>),
+}
+
+pub(crate) enum PreparedStage2Compression<E: Field> {
+    Raw,
+    Compressed {
+        weights: PreparedCompressionRelation<E>,
+        support: NegativeBinarySupport,
+    },
+}
+
+impl<E: Field> PreparedStage2Compression<E> {
+    pub(crate) const fn is_compressed(&self) -> bool {
+        matches!(self, Self::Compressed { .. })
+    }
 }
 
 impl<E: Field> PreparedCompressionRelation<E> {
@@ -95,8 +106,7 @@ impl<E: Field> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            compression_relation_weights: self.compression_relation_weights,
-            negative_binary_support: self.negative_binary_support,
+            compression: self.compression,
             relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
@@ -116,7 +126,7 @@ impl<E: Field> RingSwitchVerifyCoreOutput<E> {
 #[derive(Clone)]
 pub struct RelationMatrixEvaluator<F: Field> {
     pub(crate) relation_address_geometry: RelationAddressGeometry,
-    pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
+    pub(crate) groups: PreparedRelationGroups<F>,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
     pub(crate) eq_tau1: Arc<[F]>,
@@ -138,8 +148,8 @@ pub(crate) struct FlatRelationContext {
 }
 
 #[derive(Clone)]
-pub(crate) struct RelationMatrixGroupEvaluator<F: Field> {
-    pub(crate) multipliers: PreparedRelationGroupMultipliers<F>,
+pub(crate) struct RelationMatrixGroupEvaluator<M> {
+    pub(crate) multipliers: M,
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
     pub(crate) depth_fold: usize,
@@ -148,15 +158,21 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: Field> {
 }
 
 #[derive(Clone)]
-pub(crate) enum PreparedRelationGroupMultipliers<E: Field> {
-    QuotientLift {
-        c_alphas: Vec<E>,
-        opening_a_evals: Vec<E>,
-    },
-    ReducedEvaluation {
-        challenges: Challenges,
-        opening: PreparedRingMultiplier<E>,
-    },
+pub(crate) struct QuotientRelationMultipliers<E: Field> {
+    pub(crate) c_alphas: Vec<E>,
+    pub(crate) opening_a_evals: Vec<E>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ReducedRelationMultipliers<E: Field> {
+    pub(crate) challenges: Challenges,
+    pub(crate) opening: PreparedRingMultiplier<E>,
+}
+
+#[derive(Clone)]
+pub(crate) enum PreparedRelationGroups<E: Field> {
+    QuotientLift(Vec<RelationMatrixGroupEvaluator<QuotientRelationMultipliers<E>>>),
+    ReducedEvaluation(Vec<RelationMatrixGroupEvaluator<ReducedRelationMultipliers<E>>>),
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
@@ -312,10 +328,20 @@ where
         .is_compressed()
         .then(|| NegativeBinarySupport::new(&witness_layout, physical_field_len))
         .transpose()?;
+    let compression = match (compression_relation_weights, negative_binary_support) {
+        (None, None) if !lp.payload_mode.is_compressed() => PreparedStage2Compression::Raw,
+        (Some(weights), Some(support)) if lp.payload_mode.is_compressed() => {
+            PreparedStage2Compression::Compressed { weights, support }
+        }
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "prepared compression state disagrees with payload mode".into(),
+            ));
+        }
+    };
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
-        compression_relation_weights,
-        negative_binary_support,
+        compression,
         relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,
@@ -440,7 +466,8 @@ where
         ));
     }
 
-    let mut groups = Vec::with_capacity(order.len());
+    let mut quotient_groups = Vec::with_capacity(order.len());
+    let mut reduced_groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_role_dims = lp.group_role_dims(opening_batch, group_index)?;
@@ -495,8 +522,8 @@ where
                 actual: challenges.len(),
             });
         }
-        let multipliers = match lp.ring_relation_mode {
-            RingRelationMode::QuotientLift => dispatch_for_field!(
+        let quotient_multipliers = match lp.ring_relation_mode {
+            RingRelationMode::QuotientLift => Some(dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 F,
                 group_role_dims.d_a(),
@@ -514,25 +541,13 @@ where
                             .collect::<Result<Vec<_>, _>>()?,
                         None => vec![E::zero(); num_positions_per_block],
                     };
-                    Ok::<_, AkitaError>(PreparedRelationGroupMultipliers::QuotientLift {
+                    Ok::<_, AkitaError>(QuotientRelationMultipliers {
                         c_alphas,
                         opening_a_evals,
                     })
                 }
-            )?,
-            RingRelationMode::ReducedEvaluation => {
-                let opening = ring_multiplier_point
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "reduced relation requires ring-multiplier openings".into(),
-                        )
-                    })?
-                    .prepare_functional_multiplier::<E>();
-                PreparedRelationGroupMultipliers::ReducedEvaluation {
-                    challenges: challenges.clone(),
-                    opening,
-                }
-            }
+            )?),
+            RingRelationMode::ReducedEvaluation => None,
         };
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
@@ -543,15 +558,50 @@ where
             ));
         }
 
-        groups.push(RelationMatrixGroupEvaluator {
-            multipliers,
-            group_id: group_index,
-            num_claims: k_g,
-            depth_fold,
-            a_row_start: a_range.start,
-            b_row_start: b_range.start,
-        });
+        if let Some(multipliers) = quotient_multipliers {
+            quotient_groups.push(RelationMatrixGroupEvaluator {
+                multipliers,
+                group_id: group_index,
+                num_claims: k_g,
+                depth_fold,
+                a_row_start: a_range.start,
+                b_row_start: b_range.start,
+            });
+        } else {
+            let opening = ring_multiplier_point
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "reduced relation requires ring-multiplier openings".into(),
+                    )
+                })?
+                .prepare_functional_multiplier::<E>();
+            reduced_groups.push(RelationMatrixGroupEvaluator {
+                multipliers: ReducedRelationMultipliers {
+                    challenges: challenges.clone(),
+                    opening,
+                },
+                group_id: group_index,
+                num_claims: k_g,
+                depth_fold,
+                a_row_start: a_range.start,
+                b_row_start: b_range.start,
+            });
+        }
     }
+
+    let groups = match lp.ring_relation_mode {
+        RingRelationMode::QuotientLift if reduced_groups.is_empty() => {
+            PreparedRelationGroups::QuotientLift(quotient_groups)
+        }
+        RingRelationMode::ReducedEvaluation if quotient_groups.is_empty() => {
+            PreparedRelationGroups::ReducedEvaluation(reduced_groups)
+        }
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "relation group preparation produced mixed modes".into(),
+            ));
+        }
+    };
 
     let layout = Arc::new(layout);
 
@@ -640,7 +690,7 @@ where
     let num_positions_per_block = lp.blocks().positions_per_block;
     let n_a = lp.inner().matrix.output_rank();
 
-    let multipliers = match lp.ring_relation_mode {
+    let groups = match lp.ring_relation_mode {
         RingRelationMode::QuotientLift => {
             let alpha_pows = scalar_powers(alpha, D);
             let c_alphas = prepare_challenge_evals::<F, E>(
@@ -655,10 +705,17 @@ where
                     .collect::<Result<Vec<_>, _>>()?,
                 None => vec![E::zero(); num_positions_per_block],
             };
-            PreparedRelationGroupMultipliers::QuotientLift {
-                c_alphas,
-                opening_a_evals,
-            }
+            PreparedRelationGroups::QuotientLift(vec![RelationMatrixGroupEvaluator {
+                multipliers: QuotientRelationMultipliers {
+                    c_alphas,
+                    opening_a_evals,
+                },
+                group_id: 0,
+                num_claims,
+                depth_fold,
+                a_row_start: 1,
+                b_row_start: 1 + n_a,
+            }])
         }
         RingRelationMode::ReducedEvaluation => {
             let opening = ring_multiplier_point
@@ -668,22 +725,19 @@ where
                     )
                 })?
                 .prepare_functional_multiplier::<E>();
-            PreparedRelationGroupMultipliers::ReducedEvaluation {
-                challenges: challenges.clone(),
-                opening,
-            }
+            PreparedRelationGroups::ReducedEvaluation(vec![RelationMatrixGroupEvaluator {
+                multipliers: ReducedRelationMultipliers {
+                    challenges: challenges.clone(),
+                    opening,
+                },
+                group_id: 0,
+                num_claims,
+                depth_fold,
+                a_row_start: 1,
+                b_row_start: 1 + n_a,
+            }])
         }
     };
-    let group = RelationMatrixGroupEvaluator {
-        multipliers,
-        group_id: 0,
-        num_claims,
-        depth_fold,
-        a_row_start: 1,
-        b_row_start: 1 + n_a,
-    };
-
-    let groups = vec![group];
     let layout = Arc::new(layout);
     let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
@@ -703,18 +757,24 @@ where
 }
 
 pub(crate) fn setup_contribution_group_inputs<F: Field>(
-    groups: &[RelationMatrixGroupEvaluator<F>],
+    groups: &PreparedRelationGroups<F>,
 ) -> Vec<SetupContributionGroupInputs> {
-    groups
-        .iter()
-        .map(|group| SetupContributionGroupInputs {
-            group_id: group.group_id,
-            num_claims: group.num_claims,
-            depth_fold: group.depth_fold,
-            a_row_start: group.a_row_start,
-            b_row_start: group.b_row_start,
-        })
-        .collect()
+    fn collect<M>(groups: &[RelationMatrixGroupEvaluator<M>]) -> Vec<SetupContributionGroupInputs> {
+        groups
+            .iter()
+            .map(|group| SetupContributionGroupInputs {
+                group_id: group.group_id,
+                num_claims: group.num_claims,
+                depth_fold: group.depth_fold,
+                a_row_start: group.a_row_start,
+                b_row_start: group.b_row_start,
+            })
+            .collect()
+    }
+    match groups {
+        PreparedRelationGroups::QuotientLift(groups) => collect(groups),
+        PreparedRelationGroups::ReducedEvaluation(groups) => collect(groups),
+    }
 }
 
 impl<E: Field> RelationMatrixEvaluator<E> {

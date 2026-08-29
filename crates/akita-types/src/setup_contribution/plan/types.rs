@@ -312,7 +312,7 @@ pub struct SetupContributionPlan<E: Field> {
     pub(crate) relation_base_bridge_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-    pub(crate) direct_scan_functional: Option<PreparedCoefficientFunctional<E>>,
+    pub(crate) direct_scan_state: DirectScanState<E>,
 }
 
 /// Coefficient functional used by the one fused direct-setup traversal.
@@ -395,10 +395,13 @@ impl<E: Field> SetupContributionPlan<E> {
     /// the same opening equality addresses a second time.
     #[must_use]
     pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
-        self.groups
+        let group_index = self
+            .groups
             .iter()
-            .find(|group| group.group_id == group_id)
-            .and_then(SetupContributionGroupPlan::column_eq_slices)
+            .position(|group| group.group_id == group_id)?;
+        self.direct_scan_state
+            .weights(group_index)
+            .map(DirectScanWeights::slices)
     }
 }
 
@@ -406,9 +409,40 @@ pub(crate) struct DirectScanWeights<E> {
     pub(crate) e: Vec<E>,
     pub(crate) t: Vec<E>,
     pub(crate) z: Vec<E>,
-    /// Native A/B/D terminal coefficient state in role order. Lifted
-    /// evaluation keeps this absent and uses the common-power scanner.
-    pub(crate) reduced_roles: Option<[ReducedRoleCoefficientState<E>; 3]>,
+}
+
+impl<E> DirectScanWeights<E> {
+    pub(crate) fn slices(&self) -> (&[E], &[E], &[E]) {
+        (&self.e, &self.t, &self.z)
+    }
+}
+
+pub(crate) struct ReducedDirectScanWeights<E> {
+    pub(crate) weights: DirectScanWeights<E>,
+    pub(crate) roles: [ReducedRoleCoefficientState<E>; 3],
+}
+
+pub(crate) enum DirectScanState<E: Field> {
+    Unprepared,
+    Lifted {
+        alpha: E,
+        groups: Vec<DirectScanWeights<E>>,
+    },
+    Reduced {
+        alpha: E,
+        coefficient_point: Arc<[E]>,
+        groups: Vec<ReducedDirectScanWeights<E>>,
+    },
+}
+
+impl<E: Field> DirectScanState<E> {
+    pub(crate) fn weights(&self, group_index: usize) -> Option<&DirectScanWeights<E>> {
+        match self {
+            Self::Unprepared => None,
+            Self::Lifted { groups, .. } => groups.get(group_index),
+            Self::Reduced { groups, .. } => groups.get(group_index).map(|group| &group.weights),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -501,9 +535,6 @@ impl<E: Field> PhysicalBSetupPlan<E> {
     }
 }
 
-#[cfg(test)]
-type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
-
 pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) group_id: usize,
     pub(crate) opening_method: crate::OpeningMethod,
@@ -533,7 +564,6 @@ pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
     /// Exact non-empty block ranges used by the partitioned E and T roles.
     pub(crate) active_unit_ranges: Arc<[SetupUnitRange]>,
     /// All physical units, including empty chunks that retain replicated Z.
@@ -549,21 +579,6 @@ pub(crate) struct SetupUnitRange {
 }
 
 impl<E: Field> SetupContributionGroupPlan<E> {
-    pub(crate) fn column_eq_slices(&self) -> Option<(&[E], &[E], &[E])> {
-        self.direct_scan_weights
-            .as_ref()
-            .map(|weights| (&weights.e[..], &weights.t[..], &weights.z[..]))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {
-        self.column_eq_slices().ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "direct setup operation requires prepared column weights".into(),
-            )
-        })
-    }
-
     pub(crate) fn set_projection_ratios(
         &mut self,
         setup_base_ring_dim: usize,

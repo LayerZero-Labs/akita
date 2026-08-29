@@ -127,9 +127,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-    compression_relation_weights: Option<&'a PreparedCompressionRelation<E>>,
-    negative_binary_support: Option<&'a NegativeBinarySupport>,
-    binary_batching: Option<E>,
+    compression: Stage2CompressionOracle<'a, E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
@@ -139,6 +137,15 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
     _marker: std::marker::PhantomData<F>,
+}
+
+pub(crate) enum Stage2CompressionOracle<'a, E: FieldCore> {
+    Raw,
+    Compressed {
+        weights: &'a PreparedCompressionRelation<E>,
+        support: &'a NegativeBinarySupport,
+        binary_batching: E,
+    },
 }
 
 impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
@@ -156,9 +163,7 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression_relation_weights: Option<&'a PreparedCompressionRelation<E>>,
-        negative_binary_support: Option<&'a NegativeBinarySupport>,
-        binary_batching: Option<E>,
+        compression: Stage2CompressionOracle<'a, E>,
         setup: &'a AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
@@ -187,9 +192,7 @@ where
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
-            compression_relation_weights,
-            negative_binary_support,
-            binary_batching,
+            compression,
             setup_claim,
             setup,
             alpha,
@@ -249,9 +252,7 @@ where
             }
         };
         let compression_oracle = evaluate_compression_oracle(
-            self.compression_relation_weights,
-            self.negative_binary_support,
-            self.binary_batching,
+            &self.compression,
             self.setup,
             &self.stage1_point,
             challenges,
@@ -296,9 +297,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn evaluate_compression_oracle<F, E>(
-    weights: Option<&PreparedCompressionRelation<E>>,
-    support: Option<&NegativeBinarySupport>,
-    binary_batching: Option<E>,
+    compression: &Stage2CompressionOracle<'_, E>,
     setup: &AkitaExpandedSetup<F>,
     stage1_point: &[E],
     point: &[E],
@@ -308,19 +307,22 @@ where
     F: FieldCore,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
-    match (weights, support, binary_batching) {
-        (Some(weights), Some(support), Some(binary_batching)) => {
+    match compression {
+        Stage2CompressionOracle::Compressed {
+            weights,
+            support,
+            binary_batching,
+        } => {
             let relation_weight = weights.evaluate_at_point(setup, point)?;
             let binary_weight =
                 support.evaluate_restricted_equality_at_point(stage1_point, point)?;
             Ok(witness_evaluation * relation_weight
-                + binary_batching
+                + *binary_batching
                     * binary_weight
                     * witness_evaluation
                     * (witness_evaluation + E::one()))
         }
-        (None, None, None) => Ok(E::zero()),
-        _ => Err(AkitaError::InvalidProof),
+        Stage2CompressionOracle::Raw => Ok(E::zero()),
     }
 }
 
@@ -491,7 +493,7 @@ mod tests {
             .unwrap();
         let evaluator = RelationMatrixEvaluator {
             relation_address_geometry,
-            groups: Vec::new(),
+            groups: crate::protocol::ring_switch::PreparedRelationGroups::QuotientLift(Vec::new()),
             log_basis: params.open().digits.log_basis,
             eq_tau1: Arc::from(Vec::<E>::new()),
             flat_context: Some(FlatRelationContext {
@@ -520,9 +522,7 @@ mod tests {
             E::from_u64(23),
             vec![E::zero(); domain.num_vars()],
             &evaluator,
-            None,
-            None,
-            None,
+            Stage2CompressionOracle::Raw,
             &setup,
             alpha,
             None,

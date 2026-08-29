@@ -19,24 +19,26 @@ fn evaluate_sparse_functional<E: FieldCore + FromPrimitiveInt>(
     )
 }
 
-fn evaluate_embedded_multiplier<E: FieldCore + FromPrimitiveInt>(
-    challenge: &SparseChallenge,
+fn embedded_terminal_functionals<E: FieldCore>(
     native_equality: &[E],
     ambient_dimension: usize,
-    subcolumn: usize,
+    subcolumns: usize,
     alpha: E,
-) -> Result<E, AkitaError> {
-    let start = subcolumn
-        .checked_mul(native_equality.len())
-        .ok_or(AkitaError::InvalidProof)?;
-    let end = start
-        .checked_add(native_equality.len())
-        .filter(|&end| end <= ambient_dimension)
-        .ok_or(AkitaError::InvalidProof)?;
-    let mut embedded = vec![E::zero(); ambient_dimension];
-    embedded[start..end].copy_from_slice(native_equality);
-    let functional = terminal_residue_kernel(&embedded, alpha)?;
-    evaluate_sparse_functional(challenge, &functional)
+) -> Result<Vec<Vec<E>>, AkitaError> {
+    (0..subcolumns)
+        .map(|subcolumn| {
+            let start = subcolumn
+                .checked_mul(native_equality.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let end = start
+                .checked_add(native_equality.len())
+                .filter(|&end| end <= ambient_dimension)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut embedded = vec![E::zero(); ambient_dimension];
+            embedded[start..end].copy_from_slice(native_equality);
+            terminal_residue_kernel(&embedded, alpha)
+        })
+        .collect()
 }
 
 impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
@@ -47,24 +49,31 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
         group_id: usize,
         challenges: &Challenges,
         opening_multiplier: &crate::PreparedRingMultiplier<E>,
-        alpha: E,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
-        let group = self
+        let group_index = self
             .groups
             .iter()
-            .find(|group| group.group_id == group_id)
+            .position(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
-        if !matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace)
-            || !matches!(
-                self.direct_scan_functional,
-                Some(PreparedCoefficientFunctional::ReducedEvaluation { alpha: prepared, .. })
-                    if prepared == alpha
-            )
-        {
+        let group = &self.groups[group_index];
+        let (alpha, weights) = match &self.direct_scan_state {
+            DirectScanState::Reduced { alpha, groups, .. } => (
+                *alpha,
+                groups.get(group_index).ok_or_else(|| {
+                    AkitaError::InvalidSetup("reduced direct-scan group is missing".into())
+                })?,
+            ),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "reduced structured contraction requires prepared reduced state".into(),
+                ));
+            }
+        };
+        if !matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace) {
             return Err(AkitaError::InvalidSetup(
                 "reduced structured contraction disagrees with its prepared mode".into(),
             ));
@@ -79,13 +88,8 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
         {
             return Err(AkitaError::InvalidProof);
         }
-        let weights = group
-            .direct_scan_weights
-            .as_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("direct setup weights are missing".into()))?;
-        let [a_role, b_role, d_role] = weights.reduced_roles.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("reduced coefficient state is missing".into())
-        })?;
+        let [a_role, b_role, d_role] = &weights.roles;
+        let weights = &weights.weights;
         let (a_functional, a_equality) = (&a_role.functional, &a_role.equality);
         let (b_functional, b_equality) = (&b_role.functional, &b_role.equality);
         let (d_functional, d_equality) = (&d_role.functional, &d_role.equality);
@@ -108,6 +112,10 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
         let (outer_subcolumns, _) =
             SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
         let opening_subcolumns = group.opening_subcolumns;
+        let opening_functionals =
+            embedded_terminal_functionals(d_equality, d_a, opening_subcolumns, alpha)?;
+        let commitment_functionals =
+            embedded_terminal_functionals(b_equality, d_a, outer_subcolumns, alpha)?;
         let e_stride = checked::product([opening_subcolumns, group.depth_open])
             .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
         let t_row_stride = checked::product([outer_subcolumns, group.depth_commit])
@@ -142,9 +150,8 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
                 .ok_or(AkitaError::InvalidProof)?;
             let e_weights = checked_slice(&weights.e, e_start, e_stride, "reduced structured E")?;
             let mut e = E::zero();
-            for subcolumn in 0..opening_subcolumns {
-                let multiplier =
-                    evaluate_embedded_multiplier(challenge, d_equality, d_a, subcolumn, alpha)?;
+            for (subcolumn, functional) in opening_functionals.iter().enumerate() {
+                let multiplier = evaluate_sparse_functional(challenge, functional)?;
                 let digit_start = subcolumn
                     .checked_mul(group.depth_open)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -165,10 +172,9 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
                 .checked_mul(t_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             let t_weights = checked_slice(&weights.t, t_start, t_stride, "reduced structured T")?;
-            let commitment_multipliers = (0..outer_subcolumns)
-                .map(|subcolumn| {
-                    evaluate_embedded_multiplier(challenge, b_equality, d_a, subcolumn, alpha)
-                })
+            let commitment_multipliers = commitment_functionals
+                .iter()
+                .map(|functional| evaluate_sparse_functional(challenge, functional))
                 .collect::<Result<Vec<_>, _>>()?;
             let mut t = E::zero();
             for (row, &row_weight) in t_weights
@@ -233,8 +239,8 @@ mod tests {
         let native_equality = [F::zero(), F::one(), F::zero(), F::zero()];
         let alpha = F::from_u64(2);
 
-        let reduced =
-            evaluate_embedded_multiplier(&challenge, &native_equality, 4, 0, alpha).unwrap();
+        let functional = embedded_terminal_functionals(&native_equality, 4, 1, alpha).unwrap();
+        let reduced = evaluate_sparse_functional(&challenge, &functional[0]).unwrap();
 
         // In F[X]/(X^4 + 1), X^3 * X = -1. Evaluating the two
         // polynomials independently first would incorrectly produce 16.

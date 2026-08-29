@@ -43,10 +43,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             stage1_point,
             range_image_evaluation,
             b,
-            RelationWeightOracle::QuotientFactored {
-                common_alpha_factor: vec![E::zero(); coeff_count],
-                relation_lane_weights: vec![E::zero(); lane_capacity],
-            },
+            RelationWeightOracle::QuotientFactored(RelationWeightFactorization::new(
+                vec![E::zero(); coeff_count],
+                vec![E::zero(); lane_capacity],
+            )?),
             live_lane_count,
             lane_bits,
             coefficient_bits,
@@ -106,31 +106,28 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             });
         }
         match &relation_weights {
-            RelationWeightOracle::QuotientFactored {
-                common_alpha_factor,
-                relation_lane_weights,
-            } => {
-                if common_alpha_factor.len() != coeff_count {
+            RelationWeightOracle::QuotientFactored(factorization) => {
+                if factorization.common_alpha_factor().len() != coeff_count {
                     return Err(AkitaError::InvalidSize {
                         expected: coeff_count,
-                        actual: common_alpha_factor.len(),
+                        actual: factorization.common_alpha_factor().len(),
                     });
                 }
-                if relation_lane_weights.len() != lane_capacity {
+                if factorization.relation_lane_weights().len() != lane_capacity {
                     return Err(AkitaError::InvalidSize {
                         expected: lane_capacity,
-                        actual: relation_lane_weights.len(),
+                        actual: factorization.relation_lane_weights().len(),
                     });
                 }
             }
-            RelationWeightOracle::ReducedDense { lane_evaluations } => {
+            RelationWeightOracle::ReducedDense(dense) => {
                 let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
                     AkitaError::InvalidInput("stage-2 relation domain overflow".into())
                 })?;
-                if lane_evaluations.len() != domain_len {
+                if dense.evaluations().len() != domain_len {
                     return Err(AkitaError::InvalidSize {
                         expected: domain_len,
-                        actual: lane_evaluations.len(),
+                        actual: dense.evaluations().len(),
                     });
                 }
             }
@@ -155,13 +152,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         .expect("debug relation witness index is in bounds");
                     let witness = E::from_i64(i64::from(w));
                     let relation_weight = match &relation_weights {
-                        RelationWeightOracle::QuotientFactored {
-                            common_alpha_factor,
-                            relation_lane_weights,
-                        } => common_alpha_factor[coefficient] * relation_lane_weights[lane],
-                        RelationWeightOracle::ReducedDense {
-                            lane_evaluations, ..
-                        } => lane_evaluations[index],
+                        RelationWeightOracle::QuotientFactored(factorization) => {
+                            factorization.common_alpha_factor()[coefficient]
+                                * factorization.relation_lane_weights()[lane]
+                        }
+                        RelationWeightOracle::ReducedDense(dense) => dense.evaluations()[index],
                     };
                     (
                         ordinary + witness * relation_weight,
@@ -183,8 +178,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
             batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
-        let use_two_round_prefix = !relation_weights.is_reduced_dense()
-            && can_use_stage2_two_round_prefix(coefficient_bits, b);
+        let use_two_round_prefix = match &relation_weights {
+            RelationWeightOracle::QuotientFactored(_) => {
+                can_use_stage2_two_round_prefix(coefficient_bits, b)
+            }
+            RelationWeightOracle::ReducedDense(_) => false,
+        };
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),

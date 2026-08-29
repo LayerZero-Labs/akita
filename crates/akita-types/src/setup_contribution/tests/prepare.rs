@@ -64,7 +64,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.groups[0].column_eq_slices().unwrap().2, expected);
+    assert_eq!(plan.group_column_eq_slices(0).unwrap().2, expected);
 }
 
 #[test]
@@ -254,6 +254,7 @@ fn deferred_structured_setup_supports_empty_chunk_slots() {
     let alpha = test_scalar(3);
     let expected = span_evaluators::structured_slice_reference(
         &direct.groups[0],
+        direct.direct_scan_state.weights(0).unwrap(),
         &block_challenges,
         &opening_a_evals,
         alpha,

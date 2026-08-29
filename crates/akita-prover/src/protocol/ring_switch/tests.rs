@@ -16,13 +16,15 @@ use crate::protocol::ring_relation_witness::{
     FoldChunkCoefficients, RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
 use crate::{AkitaProverSetup, DecomposeFoldWitness};
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    relation_rhs_coeff_len, AkitaCommitmentHint, CommitmentPayloadMode, CommittedGroupParams,
-    CompressionWitnessSpan, DigitBlocks, OpeningClaimsLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationGroupOpening, RingRelationInstance, RingRelationMode, RingVec,
-    SetupMatrixCapacity, SisModulusProfileId,
+    active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget, AkitaCommitmentHint,
+    CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
+    DigitRangePlan, OpeningClaimsLayout, PreparedCoefficientFunctional, PreparedRelationAddress,
+    RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationGroupOpening, RingRelationInstance, RingRelationMode, RingVec,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
 use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring};
 use std::array::from_fn;
@@ -165,6 +167,141 @@ fn expected_packed_digits(
         .collect()
 }
 
+fn assert_reduced_compiler_matches_structured_verifier(
+    params: &CommittedGroupParams,
+    instance: &RingRelationInstance<ReducedF>,
+    setup: &akita_types::AkitaExpandedSetup<ReducedF>,
+) {
+    let opening_batch = instance.opening_batch();
+    let witness_layout = instance
+        .segment_layout(params, None)
+        .expect("reduced witness layout");
+    let live_len = witness_layout.live_coeff_len();
+    let physical_field_len = live_len.next_power_of_two();
+    let opening_source_len = physical_field_len / REDUCED_D;
+    let geometry = RelationAddressGeometry::for_relation(
+        &akita_types::RelationWitnessGeometry::for_level(params, opening_batch, 1)
+            .expect("relation geometry"),
+        REDUCED_D,
+        live_len,
+    )
+    .expect("relation address geometry");
+    let relation_geometry =
+        akita_types::RelationWitnessGeometry::for_level(params, opening_batch, 1)
+            .expect("relation geometry");
+    let relation_plan = RelationRangeImagePlan::new(
+        relation_geometry,
+        geometry,
+        DigitRangePlan::new(1usize << params.open().digits.log_basis).expect("digit range plan"),
+        witness_layout.clone(),
+        opening_batch,
+    )
+    .expect("relation plan");
+    let tau1 = (0..params
+        .relation_row_index_num_vars(opening_batch)
+        .expect("row variables"))
+        .map(|index| ReducedF::from_u64(17 + index as u64))
+        .collect::<Vec<_>>();
+    let alpha = ReducedF::from_u64(29);
+    let dense = super::relation_weights::build_reduced_dense_relation_weights(
+        setup,
+        instance,
+        alpha,
+        params,
+        &tau1,
+        opening_source_len,
+        REDUCED_D,
+        &relation_plan,
+    )
+    .expect("reduced dense relation weights");
+    let point = (0..geometry.relation_point_variable_count())
+        .map(|index| ReducedF::from_u64(41 + index as u64))
+        .collect::<Vec<_>>();
+    let dense_evaluation = multilinear_eval(&dense, &point).expect("dense MLE");
+
+    let row_count = params
+        .relation_matrix_row_count(opening_batch.num_groups())
+        .expect("relation rows");
+    let eq_tau1 = EqPolynomial::evals_prefix(&tau1, row_count)
+        .expect("row equality")
+        .into();
+    let group_params = params.group_params(opening_batch, 0).expect("group params");
+    let setup_groups = vec![SetupContributionGroupInputs {
+        group_id: 0,
+        num_claims: opening_batch
+            .group_layout(0)
+            .expect("group layout")
+            .num_polynomials(),
+        depth_fold: group_params.num_digits_fold(),
+        a_row_start: params.a_row_range(opening_batch, 0).expect("A rows").start,
+        b_row_start: params
+            .commitment_row_range(opening_batch, 0)
+            .expect("B rows")
+            .start,
+    }];
+    let fold_gadget = shared_setup_fold_gadget(params, opening_batch, &setup_groups)
+        .expect("evaluation-trace fold gadget");
+    let coefficient_bits = geometry.relation_coefficient_variable_count();
+    let mut setup_plan = SetupContributionPlan::prepare::<ReducedF>(
+        params,
+        opening_batch,
+        1,
+        eq_tau1,
+        &witness_layout,
+        &setup_groups,
+        PreparedRelationAddress::new(&point[coefficient_bits..]).expect("relation address"),
+        Some(&fold_gadget),
+        geometry,
+    )
+    .expect("setup contribution plan");
+    setup_plan
+        .materialize_direct_scan(
+            PreparedCoefficientFunctional::reduced_evaluation(
+                alpha,
+                &point[..coefficient_bits],
+                geometry,
+            )
+            .expect("reduced coefficient functional"),
+        )
+        .expect("reduced direct scan");
+    let structured = setup_plan
+        .evaluate_reduced_structured_group::<ReducedF>(
+            0,
+            instance
+                .group_ambient_a_challenges(0)
+                .expect("ambient challenges"),
+            &instance
+                .group_ring_multiplier_point(0)
+                .expect("ring multiplier")
+                .prepare_functional_multiplier(),
+        )
+        .expect("structured reduced evaluation");
+    let compression_evaluation = if params.payload_mode.is_compressed() {
+        akita_types::build_reduced_compression_relation_weights::<ReducedF, ReducedF>(
+            alpha,
+            params,
+            opening_batch,
+            1,
+            &tau1,
+            &witness_layout,
+            REDUCED_D,
+            physical_field_len,
+        )
+        .expect("reduced compression relation weights")
+        .evaluate_at_point(setup, &point)
+        .expect("reduced compression evaluation")
+    } else {
+        ReducedF::zero()
+    };
+    let verifier_evaluation = structured
+        + setup_plan
+            .evaluate_direct::<ReducedF>(setup)
+            .expect("direct reduced setup evaluation")
+        + compression_evaluation;
+    assert_eq!(dense_evaluation, verifier_evaluation);
+    assert!(dense[live_len..].iter().all(ReducedF::is_zero));
+}
+
 #[test]
 fn centered_i32_decompose_matches_ring_decompose() {
     type F = Prime128OffsetA7F7;
@@ -233,13 +370,17 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
         .opening_compression_plan()
         .expect("opening compression plan")
         .clone();
-    let setup_coefficients = outer_plan
+    let compression_setup_coefficients = outer_plan
         .maps()
         .iter()
         .chain(opening_plan.maps())
         .map(|map| map.input_width() * map.ring_dimension())
         .max()
         .expect("compression maps");
+    let setup_coefficients = compression_setup_coefficients.max(
+        active_setup_field_len(&compressed_params, compressed_instance.opening_batch())
+            .expect("active setup field length"),
+    );
     let setup = AkitaProverSetup::<ReducedF>::generate_with_capacity(
         8,
         1,
@@ -363,6 +504,11 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
     for (span, expected) in retained_compression_digits {
         assert_eq!(&compressed_digits[span.range()], expected);
     }
+    assert_reduced_compiler_matches_structured_verifier(
+        &compressed_params,
+        &compressed_instance,
+        setup.expanded.as_ref(),
+    );
 
     let raw_params = reduced_params(CommitmentPayloadMode::Raw);
     let (raw_instance, _) = reduced_instance(&raw_params);
@@ -385,6 +531,11 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
     assert_eq!(raw_layout.quotient_depth(), None);
     assert!(raw_layout.compression_layers().is_empty());
     assert_eq!(raw_w.live_coeff_len(), raw_layout.live_coeff_len());
+    assert_reduced_compiler_matches_structured_verifier(
+        &raw_params,
+        &raw_instance,
+        setup.expanded.as_ref(),
+    );
 
     let mismatched_hint =
         AkitaCommitmentHint::singleton(inner_rows(&raw_params)).expect("mismatched hint");

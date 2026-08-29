@@ -12,8 +12,7 @@ use akita_algebra::ring::residue_kernel;
 use akita_challenges::Challenges;
 use akita_field::{ExtField, MulBaseUnreduced};
 use akita_types::{
-    dispatch_for_field, CommitmentSliceGeometry, RelationQuotientLayout,
-    RingMultiplierOpeningPoint, RingRelationMode,
+    dispatch_for_field, RelationQuotientLayout, RingMultiplierOpeningPoint, RingRelationMode,
 };
 
 struct SetupColumnKernels<E> {
@@ -187,6 +186,88 @@ fn add_scaled_kernel<E: FieldCore>(
     Ok(())
 }
 
+struct ReducedGroupSink<'a, E> {
+    dense: &'a mut [E],
+    plan: &'a compiler::RelationWeightGroupPlan<E>,
+    challenge_kernels: Option<&'a [Vec<E>]>,
+    opening_kernels: Option<&'a [Vec<E>]>,
+    d_setup_kernels: Option<&'a SetupColumnKernels<E>>,
+    b_setup_kernels: Option<&'a SetupColumnKernels<E>>,
+    a_setup_kernels: Option<&'a SetupColumnKernels<E>>,
+}
+
+impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
+    fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
+        let kernel = self
+            .challenge_kernels
+            .ok_or(AkitaError::InvalidProof)?
+            .get(address.challenge_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let kernel_start = address.role_subcolumn * self.plan.group_d_d;
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            kernel
+                .get(kernel_start..kernel_start + self.plan.group_d_d)
+                .ok_or(AkitaError::InvalidProof)?,
+            address.constraint_scale,
+        )?;
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            self.d_setup_kernels
+                .ok_or(AkitaError::InvalidProof)?
+                .get(0, address.setup_column)?,
+            E::one(),
+        )
+    }
+
+    fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError> {
+        let kernel = self
+            .challenge_kernels
+            .ok_or(AkitaError::InvalidProof)?
+            .get(address.challenge_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let kernel_start = address.role_subcolumn * self.plan.group_d_b;
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            kernel
+                .get(kernel_start..kernel_start + self.plan.group_d_b)
+                .ok_or(AkitaError::InvalidProof)?,
+            address.constraint_scale,
+        )?;
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            self.b_setup_kernels
+                .ok_or(AkitaError::InvalidProof)?
+                .get(address.slice_index, address.setup_column)?,
+            E::one(),
+        )
+    }
+
+    fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            self.opening_kernels
+                .ok_or(AkitaError::InvalidProof)?
+                .get(address.position)
+                .ok_or(AkitaError::InvalidProof)?,
+            address.constraint_scale,
+        )?;
+        add_scaled_kernel(
+            self.dense,
+            address.physical_start,
+            self.a_setup_kernels
+                .ok_or(AkitaError::InvalidProof)?
+                .get(0, address.setup_column)?,
+            address.setup_scale,
+        )
+    }
+}
+
 /// Compile the complete padded ordinary and compression relation-weight MLE
 /// for one reduced-evaluation fold.
 #[allow(clippy::too_many_arguments)]
@@ -248,6 +329,13 @@ where
     }
     let row_families = relation_geometry.rhs_layout().row_families()?;
     let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
+    let compilation = RelationWeightCompilationPlan::new::<F>(
+        lp,
+        opening_batch,
+        relation_plan,
+        &row_families,
+        &row_weights,
+    )?;
     let n_d_active = lp.open().matrix.output_rank();
     let d_column_ranges = relation_d_column_ranges(lp, opening_batch, &relation_geometry)?;
     let d_physical_columns = d_column_ranges
@@ -271,25 +359,12 @@ where
         .ok_or(AkitaError::InvalidProof)?;
     let mut dense = vec![E::zero(); physical_field_len];
 
-    for group_index in 0..opening_batch.num_groups() {
+    for group_plan in &compilation.groups {
+        let group_index = group_plan.group_index;
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
-        let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
-        let group_d_a = group_dims.d_a();
-        let group_d_b = group_dims.d_b();
-        let group_d_d = group_dims.d_d();
-        let (b_ratio, _) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
-        let opening_width = relation_geometry
-            .group_opening_geometry(group_index)?
-            .physical_coefficient_width();
-        let d_ratio = opening_width
-            .checked_div(group_d_d)
-            .filter(|count| *count > 0 && opening_width.is_multiple_of(group_d_d))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("opening width does not factor the D role".into())
-            })?;
-        let group_layout = opening_batch.group_layout(group_index)?;
-        let units = witness_layout.units_for_group(group_index)?;
-        let k_g = group_layout.num_polynomials();
+        let group_d_a = group_plan.group_d_a;
+        let group_d_b = group_plan.group_d_b;
+        let k_g = group_plan.num_claims;
         let challenges = instance.group_ambient_a_challenges(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
         let total_blocks = k_g
@@ -304,32 +379,10 @@ where
         let challenge_kernels = (0..total_blocks)
             .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, group_d_a, alpha))
             .collect::<Result<Vec<_>, _>>()?;
-        let opening_kernels = position_multiplier_kernels::<F, E>(
-            ring_multiplier_point,
-            group_lp.num_positions_per_block(),
-            group_d_a,
-            alpha,
-        )?;
-
-        let depth_witness = group_lp.num_digits_inner();
-        let depth_commit = group_lp.num_digits_outer();
-        let depth_open = group_lp.num_digits_open();
-        let depth_fold = group_lp.num_digits_fold();
-        let n_a = group_lp.a_rows_len();
+        let n_a = group_plan.n_a;
         let physical_n_b = group_lp.b_rows_len();
-        let n_b = group_lp.logical_b_rows_len()?;
-        let inner_width = group_lp.a_col_len();
-        let num_live_blocks = group_lp.num_live_blocks();
-        let num_positions = group_lp.num_positions_per_block();
-        let slice_geometry = CommitmentSliceGeometry::try_new(
-            group_lp.outer_slice_count(),
-            num_live_blocks,
-            k_g,
-            n_a,
-            depth_commit,
-            group_d_a,
-            group_d_b,
-        )?;
+        let inner_width = group_plan.inner_width;
+        let slice_geometry = &group_plan.slice_geometry;
         let b_width = slice_geometry.physical_input_width();
         let a_view = setup
             .shared_matrix()
@@ -349,51 +402,13 @@ where
                 .collect::<Result<Vec<_>, _>>()?,
             ring_d: group_d_b,
         };
-        let a_range = matching_row_range(
-            &row_families,
-            |family| matches!(family, RelationRowFamily::Inner { group_index: group, .. } if *group == group_index),
-        )?;
-        let b_range = matching_row_range(
-            &row_families,
-            |family| matches!(family, RelationRowFamily::Outer { group_index: group, .. } if *group == group_index),
-        )?;
-        let consistency_row = row_families
-            .iter()
-            .position(|family| {
-                matches!(family, RelationRowFamily::Consistency { group_index: group, opening_method: OpeningMethod::EvaluationTrace, .. } if *group == group_index)
-            })
-            .ok_or(AkitaError::InvalidProof)?;
-        if a_range.end > row_weights.len()
-            || b_range.end > row_weights.len()
-            || b_range.len() != n_b
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let consistency_weight = row_weights[consistency_row];
-        let opening_gadget = gadget_row_scalars::<F>(depth_open, group_lp.log_basis_open())
-            .into_iter()
-            .map(E::lift_base)
-            .collect::<Vec<_>>();
-        let commitment_gadget = gadget_row_scalars::<F>(depth_commit, group_lp.log_basis_outer())
-            .into_iter()
-            .map(E::lift_base)
-            .collect::<Vec<_>>();
-        let witness_gadget = gadget_row_scalars::<F>(depth_witness, group_lp.log_basis_inner())
-            .into_iter()
-            .map(E::lift_base)
-            .collect::<Vec<_>>();
-        let fold_gadget = gadget_row_scalars::<F>(depth_fold, group_lp.log_basis_open())
-            .into_iter()
-            .map(E::lift_base)
-            .collect::<Vec<_>>();
-
         let d_setup_start = d_column_ranges
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?
             .start;
         let d_setup_len = total_blocks
-            .checked_mul(d_ratio)
-            .and_then(|len| len.checked_mul(depth_open))
+            .checked_mul(group_plan.d_ratio)
+            .and_then(|len| len.checked_mul(group_plan.depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
         let d_setup_end = d_setup_start
             .checked_add(d_setup_len)
@@ -424,11 +439,9 @@ where
             .map(|row| {
                 let weights = (0..slice_count)
                     .map(|slice| {
-                        let logical = slice_geometry
-                            .logical_row_index(slice, row, physical_n_b)?
-                            .checked_add(b_range.start)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        row_weights
+                        let logical = slice_geometry.logical_row_index(slice, row, physical_n_b)?;
+                        group_plan
+                            .b_row_weights
                             .get(logical)
                             .copied()
                             .ok_or(AkitaError::InvalidProof)
@@ -449,101 +462,30 @@ where
             alpha,
         )?;
 
-        for claim in 0..k_g {
-            for block in 0..num_live_blocks {
-                let unit = witness_layout.unit_for_block(group_index, block)?;
-                let challenge_index = claim
-                    .checked_mul(num_live_blocks)
-                    .and_then(|base| base.checked_add(block))
-                    .ok_or(AkitaError::InvalidProof)?;
-                let challenge_kernel = challenge_kernels
-                    .get(challenge_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let (slice_index, slice_block) = slice_geometry.block_coordinates(block)?;
-                for (digit, &gadget) in opening_gadget.iter().enumerate() {
-                    for subcolumn in 0..d_ratio {
-                        let physical_start = unit.e_coefficient_index(
-                            group_d_d, k_g, depth_open, claim, block, subcolumn, digit, 0,
-                        )?;
-                        let kernel_start = subcolumn * group_d_d;
-                        add_scaled_kernel(
-                            &mut dense,
-                            physical_start,
-                            challenge_kernel
-                                .get(kernel_start..kernel_start + group_d_d)
-                                .ok_or(AkitaError::InvalidProof)?,
-                            consistency_weight * gadget,
-                        )?;
-                        let logical_block = claim * num_live_blocks + block;
-                        let d_column = logical_block
-                            .checked_mul(d_ratio)
-                            .and_then(|base| base.checked_add(subcolumn))
-                            .and_then(|base| base.checked_mul(depth_open))
-                            .and_then(|base| base.checked_add(digit))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        add_scaled_kernel(
-                            &mut dense,
-                            physical_start,
-                            d_setup_kernels.get(0, d_column)?,
-                            E::one(),
-                        )?;
-                    }
-                }
-                for a_row in 0..n_a {
-                    let a_weight = row_weights[a_range.start + a_row];
-                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                        let block_claim = slice_geometry
-                            .max_blocks_per_slice()
-                            .checked_mul(claim)
-                            .and_then(|base| base.checked_add(slice_block))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let row_block_claim = n_a
-                            .checked_mul(block_claim)
-                            .and_then(|base| base.checked_add(a_row))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        for subcolumn in 0..b_ratio {
-                            let local_column = row_block_claim
-                                .checked_mul(b_ratio)
-                                .and_then(|base| base.checked_add(subcolumn))
-                                .and_then(|base| base.checked_mul(depth_commit))
-                                .and_then(|base| base.checked_add(digit))
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let physical_start = unit.t_coefficient_index(
-                                group_d_a,
-                                group_d_b,
-                                k_g,
-                                n_a,
-                                depth_commit,
-                                claim,
-                                block,
-                                a_row,
-                                subcolumn,
-                                digit,
-                                0,
-                            )?;
-                            let kernel_start = subcolumn * group_d_b;
-                            add_scaled_kernel(
-                                &mut dense,
-                                physical_start,
-                                challenge_kernel
-                                    .get(kernel_start..kernel_start + group_d_b)
-                                    .ok_or(AkitaError::InvalidProof)?,
-                                a_weight * gadget,
-                            )?;
-                            add_scaled_kernel(
-                                &mut dense,
-                                physical_start,
-                                b_setup_kernels.get(slice_index, local_column)?,
-                                E::one(),
-                            )?;
-                        }
-                    }
-                }
-            }
+        {
+            let mut et_sink = ReducedGroupSink {
+                dense: &mut dense,
+                plan: group_plan,
+                challenge_kernels: Some(&challenge_kernels),
+                opening_kernels: None,
+                d_setup_kernels: Some(&d_setup_kernels),
+                b_setup_kernels: Some(&b_setup_kernels),
+                a_setup_kernels: None,
+            };
+            compile_group_et_addresses(group_plan, &witness_layout, &mut et_sink)?;
         }
+        drop(challenge_kernels);
+        drop(d_setup_kernels);
+        drop(b_setup_kernels);
 
+        let opening_kernels = position_multiplier_kernels::<F, E>(
+            ring_multiplier_point,
+            group_lp.num_positions_per_block(),
+            group_d_a,
+            alpha,
+        )?;
         let a_row_weights = (0..n_a)
-            .map(|row| Ok((row, vec![row_weights[a_range.start + row]])))
+            .map(|row| Ok((row, vec![group_plan.a_row_weights[row]])))
             .filter_map(|result| match result {
                 Ok((_, ref weights)) if weights[0].is_zero() => None,
                 other => Some(other),
@@ -551,43 +493,16 @@ where
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let a_setup_kernels =
             evaluate_setup_column_kernels(&a_family, 0..inner_width, &a_row_weights, 1, alpha)?;
-        for unit in units {
-            for position in 0..num_positions {
-                let opening_kernel = opening_kernels
-                    .get(position)
-                    .ok_or(AkitaError::InvalidProof)?;
-                for (witness_digit, &witness_scale) in witness_gadget.iter().enumerate() {
-                    let source_column = position
-                        .checked_mul(depth_witness)
-                        .and_then(|base| base.checked_add(witness_digit))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    for (fold_digit, &fold_scale) in fold_gadget.iter().enumerate() {
-                        let physical_start = unit.z_coefficient_index(
-                            group_d_a,
-                            num_positions,
-                            depth_witness,
-                            depth_fold,
-                            position,
-                            witness_digit,
-                            fold_digit,
-                            0,
-                        )?;
-                        add_scaled_kernel(
-                            &mut dense,
-                            physical_start,
-                            opening_kernel,
-                            -(consistency_weight * witness_scale * fold_scale),
-                        )?;
-                        add_scaled_kernel(
-                            &mut dense,
-                            physical_start,
-                            a_setup_kernels.get(0, source_column)?,
-                            -fold_scale,
-                        )?;
-                    }
-                }
-            }
-        }
+        let mut z_sink = ReducedGroupSink {
+            dense: &mut dense,
+            plan: group_plan,
+            challenge_kernels: None,
+            opening_kernels: Some(&opening_kernels),
+            d_setup_kernels: None,
+            b_setup_kernels: None,
+            a_setup_kernels: Some(&a_setup_kernels),
+        };
+        compile_group_z_addresses(group_plan, &witness_layout, &mut z_sink)?;
     }
 
     if lp.payload_mode.is_compressed() {

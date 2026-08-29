@@ -29,10 +29,10 @@ fn projected_setup_weight_reference(
     let materialized_b = plan
         .groups
         .iter()
-        .map(|group| {
-            group
-                .physical_b
-                .contract_logical_column_weights(&group.direct_scan_weights.as_ref().unwrap().t)
+        .enumerate()
+        .map(|(group_index, group)| {
+            let direct = plan.direct_scan_state.weights(group_index).unwrap();
+            group.physical_b.contract_logical_column_weights(&direct.t)
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -40,7 +40,11 @@ fn projected_setup_weight_reference(
     for base_idx in 0..required {
         let mut weight = F::zero();
         for (group_index, group) in plan.groups.iter().enumerate() {
-            let (e_eq_slice, _t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
+            let (e_eq_slice, _t_eq_slice, z_eq_slice) = plan
+                .direct_scan_state
+                .weights(group_index)
+                .unwrap()
+                .slices();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -95,8 +99,10 @@ fn assert_fixture_setup_index_mle_matches_dense(
     assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
-fn naive_sliced_physical_b_weights(group: &SetupContributionGroupPlan<F>) -> Vec<F> {
-    let (_, logical_t, _) = group.column_eq_slices().unwrap();
+fn naive_sliced_physical_b_weights(
+    group: &SetupContributionGroupPlan<F>,
+    logical_t: &[F],
+) -> Vec<F> {
     let slice_count = group.physical_b.geometry().slice_count().get();
     let physical_rows = group.physical_b.physical_rows();
     let physical_cols = group.physical_b.physical_input_width();
@@ -131,11 +137,12 @@ fn naive_sliced_physical_b_weights(group: &SetupContributionGroupPlan<F>) -> Vec
 
 pub(super) fn structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
+    direct: &DirectScanWeights<F>,
     block_challenges: &[F],
     opening_a_evals: &[F],
     alpha: F,
 ) -> F {
-    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = direct.slices();
     let (outer_subcolumns, _) =
         SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
     let opening_subcolumns = group.opening_subcolumns;
@@ -381,7 +388,11 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         .map(|index| test_scalar(901 + index as u128))
         .collect::<Vec<_>>();
     let assert_literal = |plan: &SetupContributionPlan<F>, blocks: &Challenges, openings: &[F]| {
-        let opening = crate::PreparedRingMultiplier::from_base_weights(openings.to_vec()).unwrap();
+        let opening = crate::RingMultiplierOpeningPoint::from_base(&crate::RingOpeningPoint {
+            position_weights: openings.to_vec(),
+            live_block_weights: vec![F::zero(); plan.groups[0].num_live_blocks],
+        })
+        .prepare_functional_multiplier();
         let expected = reduced_structured_slice_reference(
             &plan.groups[0],
             &layout,
@@ -394,7 +405,7 @@ fn reduced_structured_terms_use_complete_native_terminal_functionals() {
         );
         assert_ne!(expected, F::zero());
         assert_eq!(
-            plan.evaluate_reduced_structured_group::<F>(group_id, blocks, &opening, alpha)
+            plan.evaluate_reduced_structured_group::<F>(group_id, blocks, &opening)
                 .unwrap(),
             expected
         );
@@ -489,8 +500,9 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
         let opening_a_evals = (0..group.num_positions_per_block)
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
+        let direct = full.direct_scan_state.weights(0).unwrap();
         let reference =
-            structured_slice_reference(group, &block_challenges, &opening_a_evals, alpha);
+            structured_slice_reference(group, direct, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
             full.evaluate_structured_group::<F>(
                 group.group_id,
@@ -579,8 +591,8 @@ fn sliced_b_setup_weights_contract_logical_rows_onto_one_physical_matrix() {
             slice_count,
         );
         let group = &plan.groups[0];
-        let expected = naive_sliced_physical_b_weights(group);
-        let direct = group.direct_scan_weights.as_ref().unwrap();
+        let direct = plan.direct_scan_state.weights(0).unwrap();
+        let expected = naive_sliced_physical_b_weights(group, &direct.t);
         assert_eq!(
             group
                 .physical_b

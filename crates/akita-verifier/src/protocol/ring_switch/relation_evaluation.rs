@@ -6,8 +6,7 @@
 //! and returns that already-complete flat MLE without either lifted-only step.
 
 use super::{
-    prepared_relation_point::PreparedRelationPoint, PreparedRelationGroupMultipliers,
-    RelationMatrixEvaluator,
+    prepared_relation_point::PreparedRelationPoint, PreparedRelationGroups, RelationMatrixEvaluator,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
@@ -33,7 +32,15 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let mode = context.level_params.ring_relation_mode;
+    let mode = match &evaluator.groups {
+        PreparedRelationGroups::QuotientLift(_) => RingRelationMode::QuotientLift,
+        PreparedRelationGroups::ReducedEvaluation(_) => RingRelationMode::ReducedEvaluation,
+    };
+    if context.level_params.ring_relation_mode != mode {
+        return Err(AkitaError::InvalidSetup(
+            "prepared relation groups disagree with the authenticated mode".into(),
+        ));
+    }
     if mode.is_reduced_evaluation() && deferred_setup_claim.is_some() {
         return Err(AkitaError::InvalidProof);
     }
@@ -103,42 +110,40 @@ where
     let mut structured_evaluation = E::zero();
     {
         let _span = tracing::info_span!("relation_structured_groups").entered();
-        for group in &evaluator.groups {
-            let group_evaluation = match (&group.multipliers, mode) {
-                (
-                    PreparedRelationGroupMultipliers::QuotientLift {
-                        c_alphas,
-                        opening_a_evals,
-                    },
-                    RingRelationMode::QuotientLift,
-                ) => plan.evaluate_structured_group::<F>(
-                    group.group_id,
-                    c_alphas,
-                    opening_a_evals,
-                    alpha,
-                ),
-                (
-                    PreparedRelationGroupMultipliers::ReducedEvaluation {
-                        challenges,
-                        opening,
-                    },
-                    RingRelationMode::ReducedEvaluation,
-                ) => plan.evaluate_reduced_structured_group::<F>(
-                    group.group_id,
-                    challenges,
-                    opening,
-                    alpha,
-                ),
-                _ => Err(AkitaError::InvalidSetup(
-                    "relation multiplier preparation disagrees with relation mode".into(),
-                )),
-            };
-            structured_evaluation += group_evaluation.map_err(|error| {
-                AkitaError::InvalidInput(format!(
-                    "relation group {} contraction failed: {error:?}",
-                    group.group_id
-                ))
-            })?;
+        match &evaluator.groups {
+            PreparedRelationGroups::QuotientLift(groups) => {
+                for group in groups {
+                    structured_evaluation += plan
+                        .evaluate_structured_group::<F>(
+                            group.group_id,
+                            &group.multipliers.c_alphas,
+                            &group.multipliers.opening_a_evals,
+                            alpha,
+                        )
+                        .map_err(|error| {
+                            AkitaError::InvalidInput(format!(
+                                "relation group {} contraction failed: {error:?}",
+                                group.group_id
+                            ))
+                        })?;
+                }
+            }
+            PreparedRelationGroups::ReducedEvaluation(groups) => {
+                for group in groups {
+                    structured_evaluation += plan
+                        .evaluate_reduced_structured_group::<F>(
+                            group.group_id,
+                            &group.multipliers.challenges,
+                            &group.multipliers.opening,
+                        )
+                        .map_err(|error| {
+                            AkitaError::InvalidInput(format!(
+                                "relation group {} contraction failed: {error:?}",
+                                group.group_id
+                            ))
+                        })?;
+                }
+            }
         }
     }
 

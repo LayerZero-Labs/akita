@@ -5,7 +5,7 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
-use crate::stages::stage2::Stage2OpeningSemantics;
+use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
@@ -147,11 +147,16 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: Field, E: Field> {
 
 struct Stage1Replay<E: Field> {
     batching_coeff: E,
-    binary_batching: Option<E>,
+    compression_batching: CompressionBatching<E>,
     range_image_evaluation: E,
     stage1_point: Vec<E>,
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
+}
+
+enum CompressionBatching<E: FieldCore> {
+    Raw,
+    Compressed(E),
 }
 
 fn verify_stage1<F, E, T>(
@@ -250,20 +255,20 @@ where
             (None, None) => (E::zero(), Vec::new()),
             _ => return Err(AkitaError::InvalidProof),
         };
-    let binary_batching = if rs.compression_relation_weights.is_some() {
+    let compression_batching = if rs.compression.is_compressed() {
         transcript.grind_query(akita_types::GrindingSite::CompressionBinary { level })?;
-        Some(sample_ext_challenge::<F, E, T>(
+        CompressionBatching::Compressed(sample_ext_challenge::<F, E, T>(
             transcript,
             CHALLENGE_COMPRESSION_BINARY,
         ))
     } else {
-        None
+        CompressionBatching::Raw
     };
     transcript.grind_query(akita_types::GrindingSite::Stage2Batch { level })?;
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
-        binary_batching,
+        compression_batching,
         range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
         physical_l2_claim,
@@ -289,15 +294,31 @@ where
     T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let witness_eval = stage2.next_w_eval();
+    let compression = match (&rs.compression, stage1.compression_batching) {
+        (
+            crate::protocol::ring_switch::PreparedStage2Compression::Raw,
+            CompressionBatching::Raw,
+        ) => Stage2CompressionOracle::Raw,
+        (
+            crate::protocol::ring_switch::PreparedStage2Compression::Compressed {
+                weights,
+                support,
+            },
+            CompressionBatching::Compressed(binary_batching),
+        ) => Stage2CompressionOracle::Compressed {
+            weights,
+            support,
+            binary_batching,
+        },
+        _ => return Err(AkitaError::InvalidProof),
+    };
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
         stage1.range_image_evaluation,
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
-        rs.compression_relation_weights.as_ref(),
-        rs.negative_binary_support.as_ref(),
-        stage1.binary_batching,
+        compression,
         &setup.expanded,
         rs.alpha,
         setup_claim,

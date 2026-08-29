@@ -207,10 +207,8 @@ where
                     })
                     .transpose()?;
                 Ok::<_, AkitaError>((
-                    crate::protocol::sumcheck::CompiledRelationWeights::QuotientLift {
-                        ordinary,
-                        compression,
-                    },
+                    crate::protocol::sumcheck::CompiledRelationWeights::QuotientLift(ordinary),
+                    compression,
                     opening_semantics,
                 ))
             }
@@ -239,6 +237,7 @@ where
                 )?;
                 Ok((
                     crate::protocol::sumcheck::CompiledRelationWeights::ReducedEvaluation(dense),
+                    None,
                     akita_types::OpeningFamily::EvaluationTrace(()),
                 ))
             }
@@ -257,9 +256,10 @@ where
         (relation_weights, w_compact)
     };
 
-    let (relation_weights, opening_semantics) = relation_weights_result.map_err(|err| {
-        AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
-    })?;
+    let (relation_weights, compression_weights, opening_semantics) = relation_weights_result
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
+        })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
         AkitaError::InvalidInput(format!("witness opening preparation failed: {err:?}"))
     })?;
@@ -273,13 +273,32 @@ where
         .is_compressed()
         .then(|| akita_types::NegativeBinarySupport::new(&witness_layout, physical_field_len))
         .transpose()?;
+    let compression = match (
+        lp.payload_mode.is_compressed(),
+        lp.ring_relation_mode,
+        compression_weights,
+        negative_binary_support,
+    ) {
+        (false, _, None, None) => super::RingSwitchCompression::Raw,
+        (true, akita_types::RingRelationMode::QuotientLift, Some(weights), Some(support)) => {
+            super::RingSwitchCompression::QuotientLift { weights, support }
+        }
+        (true, akita_types::RingRelationMode::ReducedEvaluation, None, Some(support)) => {
+            super::RingSwitchCompression::ReducedEvaluation { support }
+        }
+        _ => {
+            return Err(AkitaError::InvalidSetup(
+                "compression state disagrees with payload and relation modes".into(),
+            ));
+        }
+    };
 
     Ok(RingSwitchFinalization {
         output: RingSwitchOutput {
             w_evals_compact,
             relation_address_geometry: geometry,
             relation_weights,
-            negative_binary_support,
+            compression,
             digit_range_equality_low_variable_count,
             tau0,
             tau1,

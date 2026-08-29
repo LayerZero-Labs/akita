@@ -8,8 +8,11 @@ enum DirectScanKernel<'a, E: Field> {
     LiftedPower {
         base_powers: &'a [E],
         projections: &'a [[RoleProjection<E>; 3]],
+        weights: &'a [DirectScanWeights<E>],
     },
-    ReducedEvaluation,
+    ReducedEvaluation {
+        weights: &'a [ReducedDirectScanWeights<E>],
+    },
 }
 
 impl<E: Field> SetupContributionPlan<E> {
@@ -18,25 +21,32 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        match self
-            .direct_scan_functional
-            .as_ref()
-            .ok_or_else(|| AkitaError::InvalidSetup("direct setup scan is not prepared".into()))?
-        {
-            PreparedCoefficientFunctional::LiftedPower { alpha } => {
+        match &self.direct_scan_state {
+            DirectScanState::Unprepared => Err(AkitaError::InvalidSetup(
+                "direct setup scan is not prepared".into(),
+            )),
+            DirectScanState::Lifted { alpha, groups } => {
                 let geometry = self.projection_geometry;
                 let alpha_pows_a = scalar_powers(*alpha, geometry.role_dims().d_a());
                 let alpha_pows_b = scalar_powers(*alpha, geometry.role_dims().d_b());
                 let alpha_pows_d = scalar_powers(*alpha, geometry.role_dims().d_d());
-                self.evaluate_role_dims_direct(setup, &alpha_pows_a, &alpha_pows_b, &alpha_pows_d)
+                self.evaluate_role_dims_direct(
+                    setup,
+                    &alpha_pows_a,
+                    &alpha_pows_b,
+                    &alpha_pows_d,
+                    groups,
+                )
             }
-            PreparedCoefficientFunctional::ReducedEvaluation { .. } => {
-                self.evaluate_reduced_direct(setup)
-            }
+            DirectScanState::Reduced { groups, .. } => self.evaluate_reduced_direct(setup, groups),
         }
     }
 
-    fn evaluate_reduced_direct<F>(&self, setup: &AkitaExpandedSetup<F>) -> Result<E, AkitaError>
+    fn evaluate_reduced_direct<F>(
+        &self,
+        setup: &AkitaExpandedSetup<F>,
+        weights: &[ReducedDirectScanWeights<E>],
+    ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: ExtField<F> + MulBaseUnreduced<F>,
@@ -47,7 +57,10 @@ impl<E: Field> SetupContributionPlan<E> {
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_direct_typed::<F, BASE_D>(setup, DirectScanKernel::ReducedEvaluation)
+                self.evaluate_direct_typed::<F, BASE_D>(
+                    setup,
+                    DirectScanKernel::ReducedEvaluation { weights },
+                )
             }
         )
     }
@@ -55,6 +68,7 @@ impl<E: Field> SetupContributionPlan<E> {
     fn evaluate_groups_reduced<F, const BASE_D: usize>(
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
+        weights: &[ReducedDirectScanWeights<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -83,15 +97,7 @@ impl<E: Field> SetupContributionPlan<E> {
                 for (offset, ring) in setup.iter().enumerate() {
                     let base_idx = lo.checked_add(offset).ok_or(AkitaError::InvalidProof)?;
                     let mut coefficient_weights = [E::zero(); BASE_D];
-                    for group in &self.groups {
-                        let direct = group.direct_scan_weights.as_ref().ok_or_else(|| {
-                            AkitaError::InvalidSetup("direct setup scan weights are missing".into())
-                        })?;
-                        let roles = direct.reduced_roles.as_ref().ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "reduced setup coefficient functionals are missing".into(),
-                            )
-                        })?;
+                    for (group, direct) in self.groups.iter().zip(weights) {
                         let segment_index = group
                             .segments
                             .partition_point(|segment| segment.hi <= base_idx);
@@ -105,11 +111,11 @@ impl<E: Field> SetupContributionPlan<E> {
                             base_idx,
                             segment,
                             &ReducedScanGroupWeights {
-                                e: &direct.e,
-                                t: &direct.t,
-                                z: &direct.z,
+                                e: &direct.weights.e,
+                                t: &direct.weights.t,
+                                z: &direct.weights.z,
                                 role_ratios: [group.a_ratio, group.b_ratio, group.d_ratio],
-                                roles,
+                                roles: &direct.roles,
                             },
                             &mut coefficient_weights,
                         )?;
@@ -130,6 +136,7 @@ impl<E: Field> SetupContributionPlan<E> {
         alpha_pows_a: &[E],
         alpha_pows_b: &[E],
         alpha_pows_d: &[E],
+        weights: &[DirectScanWeights<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
@@ -200,6 +207,7 @@ impl<E: Field> SetupContributionPlan<E> {
                     DirectScanKernel::LiftedPower {
                         base_powers: base_pows,
                         projections: &projections,
+                        weights,
                     },
                 )
             }
@@ -216,7 +224,7 @@ impl<E: Field> SetupContributionPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let fused_groups = self.groups.len() > 1;
-        let reduced_evaluation = matches!(&kernel, DirectScanKernel::ReducedEvaluation);
+        let reduced_evaluation = matches!(&kernel, DirectScanKernel::ReducedEvaluation { .. });
         let logical_group_rings = self
             .groups
             .iter()
@@ -260,12 +268,15 @@ impl<E: Field> SetupContributionPlan<E> {
         }
         // The scan reads only the `required` leading rings.
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, required)?;
-        let DirectScanKernel::LiftedPower {
-            base_powers,
-            projections,
-        } = kernel
-        else {
-            return self.evaluate_groups_reduced(&setup_view);
+        let (base_powers, projections, weights) = match kernel {
+            DirectScanKernel::LiftedPower {
+                base_powers,
+                projections,
+                weights,
+            } => (base_powers, projections, weights),
+            DirectScanKernel::ReducedEvaluation { weights } => {
+                return self.evaluate_groups_reduced(&setup_view, weights);
+            }
         };
         if base_powers.len() != BASE_D {
             return Err(AkitaError::InvalidSize {
@@ -274,12 +285,18 @@ impl<E: Field> SetupContributionPlan<E> {
             });
         }
         if fused_groups {
-            return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_powers, projections);
+            return self.evaluate_groups_fused::<F, BASE_D>(
+                &setup_view,
+                base_powers,
+                projections,
+                weights,
+            );
         }
         let mut acc = E::zero();
-        for (group, projection) in self.groups.iter().zip(projections) {
+        for ((group, projection), weights) in self.groups.iter().zip(projections).zip(weights) {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
+                weights,
                 base_powers,
                 &self.d_weights,
                 &projection[0],
@@ -297,6 +314,7 @@ impl<E: Field> SetupContributionPlan<E> {
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
         projections: &[[RoleProjection<E>; 3]],
+        direct_weights: &[DirectScanWeights<E>],
     ) -> Result<E, AkitaError>
     where
         F: Field,
@@ -319,10 +337,9 @@ impl<E: Field> SetupContributionPlan<E> {
                 let hi = lo.saturating_add(job_rings).min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
-                for (group, projection) in self.groups.iter().zip(projections) {
-                    let direct = group.direct_scan_weights.as_ref().ok_or_else(|| {
-                        AkitaError::InvalidSetup("direct setup scan weights are missing".into())
-                    })?;
+                for ((group, projection), direct) in
+                    self.groups.iter().zip(projections).zip(direct_weights)
+                {
                     let (e_eq_slice, t_eq_slice, z_eq_slice) =
                         (&direct.e[..], &direct.t[..], &direct.z[..]);
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);

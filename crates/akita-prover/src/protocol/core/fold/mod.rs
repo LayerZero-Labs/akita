@@ -552,17 +552,17 @@ where
         None
     };
     let stage1_proof = Some(stage1_proof);
-    let binary_batching = if lp.payload_mode.is_compressed() {
+    let compression_batching = if rs.compression.is_compressed() {
         transcript.grind_query(akita_types::GrindingSite::CompressionBinary {
             level: u32::try_from(level)
                 .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
         })?;
-        Some(sample_ext_challenge::<F, E, T>(
+        stages::CompressionBatching::Compressed(sample_ext_challenge::<F, E, T>(
             transcript,
             CHALLENGE_COMPRESSION_BINARY,
         ))
     } else {
-        None
+        stages::CompressionBatching::Raw
     };
     transcript.grind_query(akita_types::GrindingSite::Stage2Batch {
         level: u32::try_from(level)
@@ -675,7 +675,7 @@ where
         &stage1_point,
         range_image_evaluation,
         relation_claim,
-        binary_batching,
+        compression_batching,
         physical_l2,
         linear_terms,
         scalar_opening_claim,

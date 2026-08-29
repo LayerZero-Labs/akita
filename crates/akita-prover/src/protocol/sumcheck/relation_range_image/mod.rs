@@ -102,6 +102,7 @@ use std::time::Instant;
 use crate::backend::packed_digits::{
     PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
 };
+use crate::protocol::ring_switch::RelationWeightFactorization;
 
 enum WitnessState<E: Field> {
     CompactPrefix(PackedSignedDigits),
@@ -283,11 +284,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     fn common_alpha_factor(&self) -> &[E] {
         match &self.relation_weights {
-            RelationWeightOracle::QuotientFactored {
-                common_alpha_factor,
-                ..
-            } => common_alpha_factor,
-            RelationWeightOracle::ReducedDense { .. } => {
+            RelationWeightOracle::QuotientFactored(factorization) => {
+                factorization.common_alpha_factor()
+            }
+            RelationWeightOracle::ReducedDense(_) => {
                 unreachable!("dense relation weights do not expose a factored low axis")
             }
         }
@@ -296,11 +296,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     fn relation_lane_weights(&self) -> &[E] {
         match &self.relation_weights {
-            RelationWeightOracle::QuotientFactored {
-                relation_lane_weights,
-                ..
-            } => relation_lane_weights,
-            RelationWeightOracle::ReducedDense { .. } => {
+            RelationWeightOracle::QuotientFactored(factorization) => {
+                factorization.relation_lane_weights()
+            }
+            RelationWeightOracle::ReducedDense(_) => {
                 unreachable!("dense relation weights do not expose factored lanes")
             }
         }
@@ -309,11 +308,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     fn quotient_factored_weights_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
         match &mut self.relation_weights {
-            RelationWeightOracle::QuotientFactored {
-                common_alpha_factor,
-                relation_lane_weights,
-            } => (common_alpha_factor, relation_lane_weights),
-            RelationWeightOracle::ReducedDense { .. } => {
+            RelationWeightOracle::QuotientFactored(factorization) => factorization.components_mut(),
+            RelationWeightOracle::ReducedDense(_) => {
                 unreachable!("dense relation weights do not expose factored lanes")
             }
         }

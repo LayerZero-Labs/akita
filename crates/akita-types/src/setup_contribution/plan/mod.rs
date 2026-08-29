@@ -33,7 +33,8 @@ mod types;
 pub(crate) use types::validate_setup_inputs;
 pub(crate) use types::ReducedRoleCoefficientState;
 pub(crate) use types::{
-    DirectScanWeights, PhysicalBSetupPlan, SetupContributionGroupPlan, SetupUnitRange,
+    DirectScanState, DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights,
+    SetupContributionGroupPlan, SetupUnitRange,
 };
 pub(super) use types::{PhysicalBWeightSegment, PhysicalBWeightTerm};
 pub use types::{

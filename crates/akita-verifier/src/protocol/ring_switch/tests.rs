@@ -81,15 +81,24 @@ fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationF
         .map(|index| MixedF::from_u64(11 + index as u64))
         .collect::<Vec<_>>()
         .into();
-    let multipliers = match mode {
-        RingRelationMode::QuotientLift => PreparedRelationGroupMultipliers::QuotientLift {
-            c_alphas: (0..lp.blocks().live_blocks)
-                .map(|index| MixedF::from_u64(31 + index as u64))
-                .collect(),
-            opening_a_evals: (0..lp.blocks().positions_per_block)
-                .map(|index| MixedF::from_u64(41 + index as u64))
-                .collect(),
-        },
+    let groups = match mode {
+        RingRelationMode::QuotientLift => {
+            PreparedRelationGroups::QuotientLift(vec![RelationMatrixGroupEvaluator {
+                multipliers: QuotientRelationMultipliers {
+                    c_alphas: (0..lp.blocks().live_blocks)
+                        .map(|index| MixedF::from_u64(31 + index as u64))
+                        .collect(),
+                    opening_a_evals: (0..lp.blocks().positions_per_block)
+                        .map(|index| MixedF::from_u64(41 + index as u64))
+                        .collect(),
+                },
+                group_id: 0,
+                num_claims: 1,
+                depth_fold: lp.num_digits_fold(),
+                a_row_start: 1,
+                b_row_start: 1 + lp.inner().matrix.output_rank(),
+            }])
+        }
         RingRelationMode::ReducedEvaluation => {
             let sparse = (0..lp.blocks().live_blocks)
                 .map(|index| SparseChallenge {
@@ -97,27 +106,31 @@ fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationF
                     coeffs: vec![1].into(),
                 })
                 .collect();
-            PreparedRelationGroupMultipliers::ReducedEvaluation {
-                challenges: Challenges::from_sparse(sparse, lp.blocks().live_blocks, 1).unwrap(),
-                opening: akita_types::PreparedRingMultiplier::from_base_weights(
-                    (0..lp.blocks().positions_per_block)
-                        .map(|index| MixedF::from_u64(41 + index as u64))
-                        .collect(),
-                )
-                .unwrap(),
-            }
+            PreparedRelationGroups::ReducedEvaluation(vec![RelationMatrixGroupEvaluator {
+                multipliers: ReducedRelationMultipliers {
+                    challenges: Challenges::from_sparse(sparse, lp.blocks().live_blocks, 1)
+                        .unwrap(),
+                    opening: akita_types::RingMultiplierOpeningPoint::from_base(
+                        &akita_types::RingOpeningPoint {
+                            position_weights: (0..lp.blocks().positions_per_block)
+                                .map(|index| MixedF::from_u64(41 + index as u64))
+                                .collect(),
+                            live_block_weights: vec![MixedF::zero(); lp.blocks().live_blocks],
+                        },
+                    )
+                    .prepare_functional_multiplier(),
+                },
+                group_id: 0,
+                num_claims: 1,
+                depth_fold: lp.num_digits_fold(),
+                a_row_start: 1,
+                b_row_start: 1 + lp.inner().matrix.output_rank(),
+            }])
         }
     };
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
-        groups: vec![RelationMatrixGroupEvaluator {
-            multipliers,
-            group_id: 0,
-            num_claims: 1,
-            depth_fold: lp.num_digits_fold(),
-            a_row_start: 1,
-            b_row_start: 1 + lp.inner().matrix.output_rank(),
-        }],
+        groups,
         log_basis: lp.open().digits.log_basis,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
@@ -333,23 +346,17 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .unwrap(),
     )
     .unwrap();
-    let structured = evaluator
-        .groups
+    let PreparedRelationGroups::ReducedEvaluation(groups) = &evaluator.groups else {
+        panic!("fixture must prepare reduced relation groups");
+    };
+    let structured = groups
         .iter()
         .try_fold(MixedF::zero(), |sum, group| {
-            let PreparedRelationGroupMultipliers::ReducedEvaluation {
-                challenges,
-                opening,
-            } = &group.multipliers
-            else {
-                return Err(AkitaError::InvalidProof);
-            };
             Ok::<_, AkitaError>(
                 sum + plan.evaluate_reduced_structured_group::<MixedF>(
                     group.group_id,
-                    challenges,
-                    opening,
-                    alpha,
+                    &group.multipliers.challenges,
+                    &group.multipliers.opening,
                 )?,
             )
         })

@@ -181,11 +181,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_round_compact_reduced_dense_terms(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
+        dense: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        let dense = self
-            .relation_weights
-            .dense_evaluations()
-            .expect("reduced dense round requires dense relation weights");
         self.compute_round_compact_dense_terms_with(
             compact_witness,
             compact_witness.len().div_ceil(2),
@@ -341,11 +338,8 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_folded_reduced_dense_round_terms(
         &self,
         folded_witness: &[E],
+        dense: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
-        let dense = self
-            .relation_weights
-            .dense_evaluations()
-            .expect("reduced dense round requires dense relation weights");
         self.compute_folded_dense_round_terms_with(
             folded_witness,
             folded_witness.len().div_ceil(2),

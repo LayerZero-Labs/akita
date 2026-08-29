@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) enum CompressionBatching<E: FieldCore> {
+    Raw,
+    Compressed(E),
+}
+
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
     level: u32,
@@ -95,7 +100,7 @@ pub(super) fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
-    binary_batching: Option<E>,
+    compression_batching: CompressionBatching<E>,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
@@ -120,21 +125,42 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    let (relation_weights, compression_relation_weights) = rs.relation_weights.into_stage2();
+    let relation_weights = rs.relation_weights.into_stage2();
     let domain_len = domain.domain_len();
-    let mut linear_weights = Vec::new();
-    let mut binary_intervals = Vec::new();
-    if let Some(weights) = compression_relation_weights {
-        if weights.physical_field_len() != domain_len {
-            return Err(AkitaError::InvalidSetup(
-                "compression relation domain disagrees with Stage 2".into(),
-            ));
-        }
-        linear_weights = weights.into_sparse_entries()?;
-    }
-    if let Some(support) = rs.negative_binary_support {
-        binary_intervals = support.intervals().to_vec();
-    }
+    let (mut linear_weights, binary_intervals, binary_batching) =
+        match (rs.compression, compression_batching) {
+            (
+                crate::protocol::ring_switch::RingSwitchCompression::Raw,
+                CompressionBatching::Raw,
+            ) => (Vec::new(), Vec::new(), E::zero()),
+            (
+                crate::protocol::ring_switch::RingSwitchCompression::QuotientLift {
+                    weights,
+                    support,
+                },
+                CompressionBatching::Compressed(binary_batching),
+            ) => {
+                if weights.physical_field_len() != domain_len {
+                    return Err(AkitaError::InvalidSetup(
+                        "compression relation domain disagrees with Stage 2".into(),
+                    ));
+                }
+                (
+                    weights.into_sparse_entries()?,
+                    support.intervals().to_vec(),
+                    binary_batching,
+                )
+            }
+            (
+                crate::protocol::ring_switch::RingSwitchCompression::ReducedEvaluation { support },
+                CompressionBatching::Compressed(binary_batching),
+            ) => (Vec::new(), support.intervals().to_vec(), binary_batching),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "compression batching disagrees with ring-switch payload state".into(),
+                ));
+            }
+        };
     let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
     if let Some(norm) = &physical_l2 {
         let families = norm.plan.virtualization_families(&norm.batching)?;
@@ -155,7 +181,7 @@ where
                 linear_weights,
                 &binary_intervals,
                 stage1_point,
-                binary_batching.unwrap_or_else(E::zero),
+                binary_batching,
             )
         })
         .transpose()?;

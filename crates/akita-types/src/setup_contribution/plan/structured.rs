@@ -18,22 +18,26 @@ impl<E: Field> SetupContributionPlan<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let group = self
+        let group_index = self
             .groups
             .iter()
-            .find(|group| group.group_id == group_id)
+            .position(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
+        let group = &self.groups[group_index];
         let uses_evaluation_trace_consistency =
             matches!(group.opening_method, crate::OpeningMethod::EvaluationTrace);
-        if self
-            .direct_scan_functional
-            .as_ref()
-            .is_some_and(|prepared| prepared.alpha() != alpha)
-        {
-            return Err(AkitaError::InvalidInput(
-                "structured relation alpha disagrees with direct setup weights".into(),
-            ));
-        }
+        let direct_weights = match &self.direct_scan_state {
+            DirectScanState::Unprepared => None,
+            DirectScanState::Lifted {
+                alpha: prepared,
+                groups,
+            } if *prepared == alpha => groups.get(group_index),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "structured relation requires matching lifted direct-scan state".into(),
+                ));
+            }
+        };
         let block_claims = group
             .num_claims
             .checked_mul(group.num_live_blocks)
@@ -65,7 +69,7 @@ impl<E: Field> SetupContributionPlan<E> {
             .checked_mul(group.depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("structured Z width overflow".into()))?;
 
-        if let Some(weights) = &group.direct_scan_weights {
+        if let Some(weights) = direct_weights {
             if weights.e.len() != e_len
                 || weights.t.len() != t_len
                 || weights.z.len() != z_cols
@@ -73,54 +77,28 @@ impl<E: Field> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
-            let (projected_opening_gadget, projected_commitment_gadget) = match (
-                self.direct_scan_functional.as_ref(),
-                weights.reduced_roles.as_ref(),
-            ) {
-                (Some(PreparedCoefficientFunctional::LiftedPower { .. }), None) => {
-                    let opening = (opening_subcolumns != 1)
-                        .then(|| {
-                            scalar_powers_with_stride(
-                                alpha,
-                                group.role_dims.d_d(),
-                                opening_subcolumns,
-                            )
+            let projected_opening_gadget = (opening_subcolumns != 1)
+                .then(|| {
+                    scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns)
+                })
+                .transpose()?
+                .map(|scales| {
+                    scales
+                        .iter()
+                        .flat_map(|&scale| opening_gadget.iter().map(move |&gadget| scale * gadget))
+                        .collect::<Vec<_>>()
+                });
+            let projected_commitment_gadget = (outer_subcolumns != 1)
+                .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+                .transpose()?
+                .map(|scales| {
+                    scales
+                        .iter()
+                        .flat_map(|&scale| {
+                            commitment_gadget.iter().map(move |&gadget| scale * gadget)
                         })
-                        .transpose()?
-                        .map(|scales| {
-                            scales
-                                .iter()
-                                .flat_map(|&scale| {
-                                    opening_gadget.iter().map(move |&gadget| scale * gadget)
-                                })
-                                .collect::<Vec<_>>()
-                        });
-                    let commitment = (outer_subcolumns != 1)
-                        .then(|| {
-                            scalar_powers_with_stride(
-                                alpha,
-                                group.role_dims.d_b(),
-                                outer_subcolumns,
-                            )
-                        })
-                        .transpose()?
-                        .map(|scales| {
-                            scales
-                                .iter()
-                                .flat_map(|&scale| {
-                                    commitment_gadget.iter().map(move |&gadget| scale * gadget)
-                                })
-                                .collect::<Vec<_>>()
-                        });
-                    (opening, commitment)
-                }
-                _ => {
-                    return Err(AkitaError::InvalidSetup(
-                        "structured relation weights disagree with their coefficient functional"
-                            .into(),
-                    ));
-                }
-            };
+                        .collect::<Vec<_>>()
+                });
             let direct_opening_gadget = projected_opening_gadget
                 .as_deref()
                 .unwrap_or(&opening_gadget);

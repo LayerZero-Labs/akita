@@ -8,6 +8,73 @@ struct ReducedCompressionMapEvent<E: FieldCore> {
     row_weight: E,
 }
 
+/// Checked physical/setup-column view for one canonical compression map.
+struct CompressionMapColumns<F> {
+    row: Vec<F>,
+    physical_start: usize,
+    input_width: usize,
+    ring_dimension: usize,
+}
+
+impl<F: FieldCore> CompressionMapColumns<F> {
+    fn new(
+        setup: &AkitaExpandedSetup<F>,
+        span: &CompressionWitnessSpan,
+        physical_field_len: usize,
+    ) -> Result<Self, AkitaError> {
+        let map = span.map();
+        let digit_span = span.range();
+        let expected_len = map
+            .input_width()
+            .checked_mul(map.ring_dimension())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression map digit span overflow".into())
+            })?;
+        if digit_span.len() != expected_len || digit_span.end > physical_field_len {
+            return Err(AkitaError::InvalidSetup(
+                "compression witness span disagrees with its canonical map".into(),
+            ));
+        }
+        let matrix =
+            setup
+                .shared_matrix()
+                .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
+        Ok(Self {
+            row: matrix.row_flat(0)?.to_vec(),
+            physical_start: digit_span.start,
+            input_width: map.input_width(),
+            ring_dimension: map.ring_dimension(),
+        })
+    }
+
+    fn column(&self, column: usize) -> Result<(std::ops::Range<usize>, &[F]), AkitaError> {
+        if column >= self.input_width {
+            return Err(AkitaError::InvalidProof);
+        }
+        let source_start = column
+            .checked_mul(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map column overflow".into()))?;
+        let source_end = source_start
+            .checked_add(self.ring_dimension)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression map column extent overflow".into())
+            })?;
+        let physical_start = self
+            .physical_start
+            .checked_add(source_start)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
+        let physical_end = physical_start
+            .checked_add(self.ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
+        Ok((
+            physical_start..physical_end,
+            self.row
+                .get(source_start..source_end)
+                .ok_or(AkitaError::InvalidProof)?,
+        ))
+    }
+}
+
 /// Complete reduced-evaluation weights for the retained F/H compression
 /// digits.
 ///
@@ -52,45 +119,17 @@ where
             actual: point.len(),
         });
     }
-    let map = span.map();
-    let digit_span = span.range();
-    let digit_span_len = map
-        .input_width()
-        .checked_mul(map.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("compression map digit span overflow".into()))?;
-    if digit_span.len() != digit_span_len || digit_span.end > physical_field_len {
-        return Err(AkitaError::InvalidSetup(
-            "compression witness span disagrees with its canonical map".into(),
-        ));
-    }
-    let matrix = setup
-        .shared_matrix()
-        .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-    let row = matrix.row_flat(0)?;
+    let columns = CompressionMapColumns::new(setup, span, physical_field_len)?;
     let equality = OffsetEqWindow::new(point)?;
-    (0..map.input_width()).try_fold(E::zero(), |evaluation, column| {
-        let column_offset = column
-            .checked_mul(map.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("compression map column overflow".into()))?;
-        let column_end = column_offset
-            .checked_add(map.ring_dimension())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression map column extent overflow".into())
-            })?;
-        let physical_start = digit_span
-            .start
-            .checked_add(column_offset)
-            .ok_or_else(|| AkitaError::InvalidSetup("compression map address overflow".into()))?;
+    (0..columns.input_width).try_fold(E::zero(), |evaluation, column| {
+        let (physical, coefficients) = columns.column(column)?;
         let functional = crate::ReducedCoefficientFunctional::prepare(
             &equality,
             physical_field_len,
-            physical_start,
-            map.ring_dimension(),
+            physical.start,
+            columns.ring_dimension,
             alpha,
         )?;
-        let coefficients = row
-            .get(column_offset..column_end)
-            .ok_or(AkitaError::InvalidProof)?;
         Ok(evaluation + functional.evaluate_multiplier(coefficients)?)
     })
 }
@@ -123,52 +162,12 @@ impl<E: FieldCore> ReducedCompressionRelationWeights<E> {
             *weight += addition;
         }
         for event in &self.maps {
-            let map = event.span.map();
-            let digit_span = event.span.range();
-            let expected_len = map
-                .input_width()
-                .checked_mul(map.ring_dimension())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression map digit span overflow".into())
-                })?;
-            if digit_span.len() != expected_len || digit_span.end > destination.len() {
-                return Err(AkitaError::InvalidSetup(
-                    "compression witness span disagrees with its canonical map".into(),
-                ));
-            }
-            let matrix =
-                setup
-                    .shared_matrix()
-                    .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
-            let row = matrix.row_flat(0)?;
-            for column in 0..map.input_width() {
-                let source_start = column.checked_mul(map.ring_dimension()).ok_or_else(|| {
-                    AkitaError::InvalidSetup("compression map column overflow".into())
-                })?;
-                let source_end =
-                    source_start
-                        .checked_add(map.ring_dimension())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "compression map column extent overflow".into(),
-                            )
-                        })?;
-                let destination_start =
-                    digit_span.start.checked_add(source_start).ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression map address overflow".into())
-                    })?;
-                let destination_end = destination_start
-                    .checked_add(map.ring_dimension())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("compression map address overflow".into())
-                    })?;
-                let kernel = residue_kernel::<F, E>(
-                    row.get(source_start..source_end)
-                        .ok_or(AkitaError::InvalidProof)?,
-                    self.alpha,
-                )?;
+            let columns = CompressionMapColumns::new(setup, &event.span, destination.len())?;
+            for column in 0..columns.input_width {
+                let (physical, coefficients) = columns.column(column)?;
+                let kernel = residue_kernel::<F, E>(coefficients, self.alpha)?;
                 for (weight, kernel) in destination
-                    .get_mut(destination_start..destination_end)
+                    .get_mut(physical)
                     .ok_or(AkitaError::InvalidProof)?
                     .iter_mut()
                     .zip(kernel)

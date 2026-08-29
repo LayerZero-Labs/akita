@@ -139,8 +139,8 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let depth_fold = level_params.num_digits_fold();
     let evaluator = RelationMatrixEvaluator {
         relation_address_geometry,
-        groups: vec![RelationMatrixGroupEvaluator {
-            multipliers: super::PreparedRelationGroupMultipliers::QuotientLift {
+        groups: super::PreparedRelationGroups::QuotientLift(vec![RelationMatrixGroupEvaluator {
+            multipliers: super::QuotientRelationMultipliers {
                 c_alphas: (0..NUM_CLAIMS * NUM_LIVE_BLOCKS)
                     .map(|index| scalar(307 + index as u128))
                     .collect(),
@@ -153,7 +153,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
             depth_fold,
             a_row_start: 1,
             b_row_start: 1 + N_A,
-        }],
+        }]),
         log_basis: LOG_BASIS,
         eq_tau1,
         flat_context: Some(FlatRelationContext {

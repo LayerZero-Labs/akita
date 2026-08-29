@@ -9,8 +9,8 @@ use akita_error::AkitaError;
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::sample_ext_challenge;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
-    NegativeBinarySupport, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
+    CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, RingVec,
 };
 use akita_types::{
     CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
@@ -45,8 +45,8 @@ pub struct RingSwitchOutput<E: Field> {
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Mode-typed ordinary and compression ring-relation weights.
     pub(crate) relation_weights: crate::protocol::sumcheck::CompiledRelationWeights<E>,
-    /// Compression digit-alphabet support, independent of ring-weight realization.
-    pub(crate) negative_binary_support: Option<NegativeBinarySupport>,
+    /// Atomic payload-mode state for Stage-2 compression and binary terms.
+    pub(crate) compression: RingSwitchCompression<E>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.
@@ -57,6 +57,23 @@ pub struct RingSwitchOutput<E: Field> {
     pub b: usize,
     /// Ring-switch challenge alpha.
     pub alpha: E,
+}
+
+pub(crate) enum RingSwitchCompression<E: FieldCore> {
+    Raw,
+    QuotientLift {
+        weights: CompressionRelationWeights<E>,
+        support: NegativeBinarySupport,
+    },
+    ReducedEvaluation {
+        support: NegativeBinarySupport,
+    },
+}
+
+impl<E: FieldCore> RingSwitchCompression<E> {
+    pub(crate) const fn is_compressed(&self) -> bool {
+        !matches!(self, Self::Raw)
+    }
 }
 
 /// Transcript-complete ring-switch state and the exact relation authority

@@ -1,5 +1,6 @@
 use super::plan::{
-    DirectScanWeights, PhysicalBSetupPlan, ReducedRoleCoefficientState, SetupContributionGroupPlan,
+    DirectScanState, DirectScanWeights, PhysicalBSetupPlan, ReducedDirectScanWeights,
+    ReducedRoleCoefficientState, SetupContributionGroupPlan,
 };
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec, RoleLaneWeighting};
 use super::*;
@@ -412,9 +413,10 @@ fn prepare_test_plan(
 fn finalize_test_plan(
     d_rows: usize,
     d_physical_cols: usize,
-    groups: Vec<SetupContributionGroupPlan<F>>,
+    groups: Vec<(SetupContributionGroupPlan<F>, DirectScanWeights<F>)>,
     role_dims: CommitmentRingDims,
 ) -> SetupContributionPlan<F> {
+    let (groups, direct_groups): (Vec<_>, Vec<_>) = groups.into_iter().unzip();
     let a_footprint = groups
         .iter()
         .map(|group| group.n_a * group.z_cols)
@@ -452,9 +454,9 @@ fn finalize_test_plan(
         )
         .unwrap(),
         projection_geometry,
-        direct_scan_functional: Some(PreparedCoefficientFunctional::lifted_power(test_scalar(3))),
+        direct_scan_state: DirectScanState::Unprepared,
     };
-    for group in &mut plan.groups {
+    for (group, weights) in plan.groups.iter_mut().zip(&direct_groups) {
         group.role_dims = role_dims;
         group
             .set_projection_ratios(
@@ -464,16 +466,13 @@ fn finalize_test_plan(
             )
             .expect("valid test group projection");
         group
-            .refresh_segments(
-                &plan.d_weights,
-                plan.d_rows,
-                plan.d_physical_cols,
-                group.a_ratio,
-                group.b_ratio,
-                group.d_ratio,
-            )
+            .refresh_segments(weights, &plan.d_weights, plan.d_rows, plan.d_physical_cols)
             .expect("valid cached setup scan segments");
     }
+    plan.direct_scan_state = DirectScanState::Lifted {
+        alpha: test_scalar(3),
+        groups: direct_groups,
+    };
     plan
 }
 
@@ -489,7 +488,7 @@ fn test_group_plan(
     z_eq_slice: Vec<F>,
     a_row_weights: Vec<F>,
     b_weights: Vec<F>,
-) -> SetupContributionGroupPlan<F> {
+) -> (SetupContributionGroupPlan<F>, DirectScanWeights<F>) {
     let physical_b = PhysicalBSetupPlan::new(
         crate::CommitmentSliceGeometry::try_new(
             crate::CommitmentSliceCount::ONE,
@@ -505,7 +504,7 @@ fn test_group_plan(
         b_weights.into(),
     )
     .unwrap();
-    SetupContributionGroupPlan {
+    let group = SetupContributionGroupPlan {
         group_id: 0,
         opening_method: OpeningMethod::EvaluationTrace,
         role_dims: CommitmentRingDims::uniform(64),
@@ -534,22 +533,24 @@ fn test_group_plan(
         segments: Vec::new().into(),
         a_row_weights: a_row_weights.into(),
         fold_gadget: vec![F::one()].into(),
-        direct_scan_weights: Some(DirectScanWeights {
-            e: e_eq_slice,
-            t: t_eq_slice,
-            z: z_eq_slice,
-            reduced_roles: None,
-        }),
         active_unit_ranges: Vec::new().into(),
         num_physical_units: 0,
         d_tensors: Vec::new(),
         a_tensors: Vec::new(),
-    }
+    };
+    (
+        group,
+        DirectScanWeights {
+            e: e_eq_slice,
+            t: t_eq_slice,
+            z: z_eq_slice,
+        },
+    )
 }
 
 #[test]
-fn structured_evaluation_rejects_alpha_mismatch_after_partial_direct_materialization() {
-    let mut plan = finalize_test_plan(
+fn structured_evaluation_rejects_alpha_mismatch_after_direct_materialization() {
+    let plan = finalize_test_plan(
         1,
         1,
         vec![test_group_plan(
@@ -566,11 +567,9 @@ fn structured_evaluation_rejects_alpha_mismatch_after_partial_direct_materializa
         )],
         CommitmentRingDims::uniform(TEST_D),
     );
-    plan.groups[0].direct_scan_weights = None;
-
     assert!(matches!(
         plan.evaluate_structured_group::<F>(0, &[], &[], test_scalar(17)),
-        Err(AkitaError::InvalidInput(_))
+        Err(AkitaError::InvalidSetup(_))
     ));
 }
 
@@ -989,7 +988,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         dense_mle,
         "multi-group setup-index MLE must match the full plan"
     );
-    for group in &plan.groups {
+    for (group_index, group) in plan.groups.iter().enumerate() {
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(1501 + 17 * group.group_id as u128 + index as u128))
             .collect::<Vec<_>>();
@@ -998,6 +997,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             .collect::<Vec<_>>();
         let reference = span_evaluators::structured_slice_reference(
             group,
+            plan.direct_scan_state.weights(group_index).unwrap(),
             &block_challenges,
             &opening_a_evals,
             alpha,
@@ -1074,7 +1074,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-    let z_eq_slice = plan.groups[0].column_eq_slices().unwrap().2;
+    let z_eq_slice = plan.group_column_eq_slices(0).unwrap().2;
     assert_eq!(z_eq_slice, expected);
     assert_ne!(
         z_eq_slice, wrong_with_commit_gadget,
