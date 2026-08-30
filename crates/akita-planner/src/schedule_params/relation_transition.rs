@@ -78,14 +78,8 @@ impl RelationSearchDomain {
 
     /// Whether this fold domain admits the complete typed transition.
     #[must_use]
-    pub(crate) const fn admits(self, transition: RelationTransition) -> bool {
-        match (self, transition.mode()) {
-            (Self::QuotientOnly, RingRelationMode::QuotientLift)
-            | (Self::ReducedOnly, RingRelationMode::ReducedEvaluation)
-            | (Self::QuotientAndReduced, _) => true,
-            (Self::QuotientOnly, RingRelationMode::ReducedEvaluation)
-            | (Self::ReducedOnly, RingRelationMode::QuotientLift) => false,
-        }
+    pub(crate) fn admits(self, transition: RelationTransition) -> bool {
+        self.transitions().contains(&transition)
     }
 
     #[must_use]
