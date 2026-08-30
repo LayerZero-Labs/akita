@@ -19,6 +19,7 @@ pub(crate) struct SelectedScheduleDiagnostics {
     proof_bytes: usize,
     setup_field_elements: usize,
     first_direct_setup_capacity: usize,
+    root_output_witness_len: usize,
     folds: Vec<SelectedFoldDiagnostics>,
 }
 
@@ -73,11 +74,12 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
         if let Some(selected) = &self.selected {
             write!(
                 formatter,
-                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} cutover={} dims=[",
+                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} root_output={} cutover={} dims=[",
                 selected.objective,
                 selected.proof_bytes,
                 selected.setup_field_elements,
                 selected.first_direct_setup_capacity,
+                selected.root_output_witness_len,
                 selected
                     .folds
                     .iter()
@@ -205,6 +207,7 @@ impl PlannerDiagnostics {
         proof_bytes: usize,
         setup_field_elements: usize,
         first_direct_setup_capacity: usize,
+        root_output_witness_len: usize,
         folds: Vec<SelectedFoldDiagnostics>,
     ) {
         self.selected.replace(Some(SelectedScheduleDiagnostics {
@@ -212,6 +215,7 @@ impl PlannerDiagnostics {
             proof_bytes,
             setup_field_elements,
             first_direct_setup_capacity,
+            root_output_witness_len,
             folds,
         }));
     }

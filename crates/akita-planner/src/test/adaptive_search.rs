@@ -136,7 +136,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let mut uniform_policy = policy_of::<OneHot>();
     uniform_policy.ring_dimension_schedule_mode =
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-    uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     let candidate = find_schedule(
         key,
         &uniform_policy,
@@ -188,7 +188,7 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -237,8 +237,8 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
                     .map(|fold| fold.output_witness_len),
             )
             .collect::<Vec<_>>(),
-        vec![215_104, 162_624, 130_048, 96_256],
-        "the complete objective must retain the canonical level-2 split tie-break",
+        vec![173_888, 163_648, 130_048, 96_256],
+        "the complete objective must minimize the root output witness before the canonical tie-break",
     );
     let root = &selected.schedule.root.params;
     assert!(matches!(
@@ -276,7 +276,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),

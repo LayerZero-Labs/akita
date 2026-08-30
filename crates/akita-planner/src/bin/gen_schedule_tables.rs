@@ -349,7 +349,7 @@ fn catalog_row_metrics(
         .map_err(|error| format!("estimate setup capacity: {error}"))?
         .num_field_elements;
     let first_direct_setup_capacity = (spec.policy.selection_policy
-        == akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayload)
+        == akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2)
         .then(|| {
             akita_schedules::planner_support::first_direct_setup_capacity_for_schedule(
                 schedule,

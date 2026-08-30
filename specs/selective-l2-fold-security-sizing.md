@@ -965,11 +965,14 @@ the profile's declared objective, its comparison includes:
 * T decomposition and the next recursive witness.
 * Every later fold.
 * The terminal response and its encoding.
+* The root output-witness length.
 * A canonical descriptor tie-break.
 
 Uniform direct profiles minimize proof bytes, then total setup. Adaptive direct
 and recursive-setup profiles minimize first-direct padded setup capacity, then
-proof bytes and total setup. These are product objectives, not security rules.
+proof bytes and total setup. Numeric ties then minimize the root output-witness
+length before the canonical descriptor. These are product objectives, not
+security rules.
 
 The memo key includes `M`, `P`, ring dimensions, setup-prefix state, witness
 length, basis, level, and payload phase. Pareto pruning keeps candidates that a

@@ -3,7 +3,8 @@
 The `akita-planner` crate computes the parameters of each fold level in the
 Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
 direct and recursive schedules minimize first-direct padded setup capacity,
-then proof bytes and total setup.
+then proof bytes and total setup. Complete numeric ties prefer a smaller root
+output witness before the canonical descriptor tie-break.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -22,9 +23,9 @@ best complete schedule under the configured selection policy.
 The complete schedule orders are:
 
 ```text
-uniform direct: (proof bytes, total setup, descriptor)
+uniform direct: (proof bytes, total setup, root output witness, descriptor)
 adaptive direct or recursive: (first-direct padded capacity, proof bytes,
-                               total setup, descriptor)
+                               total setup, root output witness, descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
@@ -276,8 +277,8 @@ scripts/generate-schedule-tables.sh fp32_dense fp64_dense
 
 Add `--row-progress` when one of those searches is slow. It reports start,
 completion, elapsed time, and the selected objective, proof bytes, total setup,
-first-direct capacity, dimensions, and fold count for each flattened row
-request. It is disabled by default.
+first-direct capacity, root output-witness length, dimensions, and fold count
+for each flattened row request. It is disabled by default.
 
 `--check-catalog` is a same-revision drift guard. It compares the union of the
 compiled and regenerated keys and labels those sides explicitly in its stable

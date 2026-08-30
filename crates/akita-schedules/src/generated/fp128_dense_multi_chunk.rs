@@ -43,7 +43,7 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     protocol_epoch: 4,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-    selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+    selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
     recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
     recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
     setup_field_budget: None,

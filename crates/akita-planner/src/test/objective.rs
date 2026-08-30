@@ -6,6 +6,7 @@ use crate::schedule_params::CandidateFoldChain;
 fn score(objective: CompleteObjectiveBound, descriptor: u8) -> CompleteScheduleScore {
     CompleteScheduleScore {
         objective,
+        output_witness_len: 1_000,
         descriptor: vec![descriptor],
     }
 }
@@ -61,6 +62,25 @@ fn setup_first_score_uses_total_setup_only_after_primary_coordinates() {
 
     let same_proof_smaller_total_setup = setup_first(16, 99, 999, 3);
     assert!(same_proof_smaller_total_setup < smaller_proof);
+}
+
+#[test]
+fn output_witness_precedes_the_canonical_descriptor() {
+    let objective = CompleteObjectiveBound::Direct {
+        proof_bytes: 100,
+        setup_field_elements: 1_000,
+    };
+    let smaller_output = CompleteScheduleScore {
+        objective,
+        output_witness_len: 999,
+        descriptor: vec![2],
+    };
+    let smaller_descriptor = CompleteScheduleScore {
+        objective,
+        output_witness_len: 1_000,
+        descriptor: vec![1],
+    };
+    assert!(smaller_output < smaller_descriptor);
 }
 
 #[test]
@@ -186,7 +206,7 @@ fn complete_candidate(
 #[test]
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     let contractive = complete_candidate(101, 64, 1_000);
     let noncontractive = complete_candidate(100, 64, 12_000);
     let input_bits = 256 * policy.decomposition.field_bits() as usize;
@@ -207,7 +227,7 @@ fn actual_policy_can_select_a_noncontractive_complete_candidate() {
 #[test]
 fn exact_proof_tie_selects_the_smaller_setup_envelope() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     let larger_setup = complete_candidate(100, 65, 1_000);
     let smaller_setup = complete_candidate(100, 64, 1_000);
 
@@ -219,5 +239,23 @@ fn exact_proof_tie_selects_the_smaller_setup_envelope() {
             .expect("complete candidate selection")
             .expect("selected complete candidate");
         assert!(std::ptr::eq(selected, &smaller_setup));
+    }
+}
+
+#[test]
+fn exact_numeric_tie_selects_the_smaller_root_output_witness() {
+    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+    let larger_output = complete_candidate(100, 64, 1_001);
+    let smaller_output = complete_candidate(100, 64, 1_000);
+
+    for candidates in [
+        [&larger_output, &smaller_output],
+        [&smaller_output, &larger_output],
+    ] {
+        let selected = select_complete_candidate(&policy, candidates, None)
+            .expect("complete candidate selection")
+            .expect("selected complete candidate");
+        assert!(std::ptr::eq(selected, &smaller_output));
     }
 }

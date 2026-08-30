@@ -795,6 +795,19 @@ impl Fnv64 {
 }
 
 #[cfg(test)]
+mod selection_policy_identity_tests {
+    use crate::SelectionPolicyId;
+
+    #[test]
+    fn root_output_objectives_do_not_reuse_legacy_catalog_tags() {
+        assert_eq!(SelectionPolicyId::MinEstimatedProofPayloadV2.tag(), 4);
+        assert_eq!(SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag(), 5);
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinEstimatedProofPayloadV2.tag()));
+        assert!(![1, 2, 3].contains(&SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag()));
+    }
+}
+
+#[cfg(test)]
 mod terminal_dimension_tests {
     use super::*;
 

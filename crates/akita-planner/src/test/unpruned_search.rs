@@ -265,7 +265,7 @@ pub(super) fn find_schedule(
         ));
     };
     let cached_first_direct_setup_field_len =
-        if policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload {
+        if policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 {
             selected.first_direct_setup_field_len.map(NonZeroUsize::get)
         } else {
             None

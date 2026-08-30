@@ -79,7 +79,8 @@ decides the count.
 
 The selected schedule minimizes the padded capacity of the first remaining direct setup footprint and
 then exact estimated proof bytes, including Stage 3. Equal candidates then use
-the smaller total physical setup envelope and the canonical schedule descriptor.
+the smaller total physical setup envelope, root output-witness length, and
+canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
 prefix as a precommitted group and the folded witness as the final group.
 Recursive multi-group generated schedules are stored separately from ordinary
@@ -256,14 +257,16 @@ Among feasible complete schedules, the PR #318 policy compares:
     first_direct_padded_setup_capacity,
     exact_estimated_proof_bytes,
     total_setup_field_elements,
+    root_output_witness_len,
     canonical_descriptor,
 )
 ```
 
 where `exact_estimated_proof_bytes` includes every Stage 3 payload. Adaptive
 direct and recursive planning share the projected suffix frontier over these
-coordinates. The descriptor is only a complete-schedule tie-break. Generated
-catalogs bind the selection policy that produced them.
+coordinates. Root output-witness length and the descriptor are only
+complete-schedule tie-breaks. Generated catalogs bind the versioned selection
+policy that produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the
@@ -283,16 +286,16 @@ The generated catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
-uniform direct policy = MinEstimatedProofPayload
-adaptive and recursive policy = MinFirstDirectSetupThenPayload
+uniform direct policy = MinEstimatedProofPayloadV2
+adaptive and recursive policy = MinFirstDirectSetupThenPayloadV2
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
-schedule mode. Uniform direct planning selects `MinEstimatedProofPayload`.
+schedule mode. Uniform direct planning selects `MinEstimatedProofPayloadV2`.
 Adaptive dimension or recursive setup planning selects
-`MinFirstDirectSetupThenPayload`. The scalar boundary disables recursive setup
+`MinFirstDirectSetupThenPayloadV2`. The scalar boundary disables recursive setup
 search but retains the adaptive objective when its dimension domain remains
 adaptive.
 
@@ -1051,8 +1054,8 @@ the candidate score that decides whether and how long to offload.
       full-field prefix inputs, and strictly reduces the padded capacity of the
       first remaining direct setup scan.
 - [x] The selected schedule lexicographically minimizes first direct padded setup
-      capacity, exact estimated proof bytes, total setup, and the canonical
-      descriptor within the supported setup envelope.
+      capacity, exact estimated proof bytes, total setup, root output-witness
+      length, and the canonical descriptor within the supported setup envelope.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
 - [x] Exact proof accounting includes every Stage 3 payload before candidate

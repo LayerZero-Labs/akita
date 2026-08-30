@@ -53,7 +53,8 @@ remains an automatic failure.
 The two fp32 dense nv20 rows have a sharp choice between setup size and proof
 size. Adaptive direct schedules now use the same objective as recursive
 schedules: first direct setup capacity, then proof bytes, total setup, and the
-canonical descriptor. No amortized or weighted objective was added.
+root output-witness length before the canonical descriptor. No amortized or
+weighted objective was added.
 
 | Row | First-direct capacity | Setup fields | Proof bytes | Fold levels |
 | --- | ---: | ---: | ---: | ---: |

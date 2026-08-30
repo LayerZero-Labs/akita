@@ -526,7 +526,7 @@ pub fn find_schedule(
         policy
     };
     let setup_field_budget = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
     {
         active_policy.setup_field_budget
     } else {
@@ -575,10 +575,10 @@ pub fn find_schedule(
     }
     let suffix = suffix?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
@@ -602,7 +602,7 @@ pub fn find_schedule(
         )));
     };
     let first_direct_setup_field_len = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
     {
         Some(
             best.first_direct_setup_field_len
@@ -619,11 +619,18 @@ pub fn find_schedule(
     if let Some(diagnostics) = diagnostics {
         let metrics = best.metrics();
         let folds = best.folds.to_vec();
+        let root_output_witness_len = folds
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("selected schedule is missing its root fold".into())
+            })?
+            .output_witness_len;
         diagnostics.record_selected(
             active_policy.selection_policy,
             metrics.proof_bytes(),
             metrics.setup_field_elements,
             metrics.first_direct_setup_capacity.field_elements(),
+            root_output_witness_len,
             folds
                 .iter()
                 .map(|fold| crate::diagnostics::SelectedFoldDiagnostics {

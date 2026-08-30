@@ -853,7 +853,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,

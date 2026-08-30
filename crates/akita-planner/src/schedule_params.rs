@@ -503,7 +503,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
         || candidates.len() <= 1
     {
         return Ok(candidates);

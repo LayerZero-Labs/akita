@@ -3,17 +3,18 @@ use akita_error::AkitaError;
 use super::{candidate_schedule_descriptor_bytes, CandidateMetrics, ScheduleCandidate};
 use crate::{PlannerPolicy, SelectionPolicyId};
 
-/// Complete-schedule ordering: numeric policy coordinates followed by the
-/// canonical descriptor tie-break.
+/// Complete-schedule ordering: numeric policy coordinates, root output-witness
+/// length, then the canonical descriptor tie-break.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CompleteScheduleScore {
     objective: CompleteObjectiveBound,
+    output_witness_len: usize,
     descriptor: Vec<u8>,
 }
 
 /// Numeric prefix of a complete-schedule objective. These coordinates omit
-/// the canonical descriptor, so a bound may prune only when it is strictly
-/// worse than an already completed candidate.
+/// the root output-witness length and canonical descriptor, so a bound may
+/// prune only when it is strictly worse than an already completed candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompleteObjectiveBound {
     Direct {
@@ -35,11 +36,11 @@ impl CompleteObjectiveBound {
         setup_field_elements: usize,
     ) -> Self {
         match policy.selection_policy {
-            SelectionPolicyId::MinEstimatedProofPayload => Self::Direct {
+            SelectionPolicyId::MinEstimatedProofPayloadV2 => Self::Direct {
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinFirstDirectSetupThenPayload => Self::SetupFirst {
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => Self::SetupFirst {
                 first_direct_setup_capacity,
                 proof_bytes,
                 setup_field_elements,
@@ -86,7 +87,7 @@ impl CompleteObjectiveBound {
     /// Compare the coordinates that remain ordered after a parent can mask
     /// the child's setup envelope. The total-setup coordinate is deliberately
     /// excluded; if capacity and proof tie, the parent may make setup tie too,
-    /// leaving the canonical descriptor decisive.
+    /// leaving the root output-witness length and canonical descriptor decisive.
     pub(crate) fn is_strictly_worse_for_recursive_parent(
         self,
         incumbent: CandidateMetrics,
@@ -109,8 +110,8 @@ impl CompleteObjectiveBound {
 
     /// Compare only the proof coordinate that an offloaded parent reads from
     /// the child's payload projection. Strictness is required because equal
-    /// proof bounds can still be separated by parent-owned setup and the
-    /// canonical descriptor.
+    /// proof bounds can still be separated by parent-owned setup, the root
+    /// output-witness length, and the canonical descriptor.
     pub(crate) fn is_strictly_worse_for_recursive_payload(
         self,
         incumbent: CandidateMetrics,
@@ -127,9 +128,16 @@ pub(crate) fn complete_schedule_score(
     candidate: &ScheduleCandidate,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<CompleteScheduleScore, AkitaError> {
+    let output_witness_len = candidate
+        .folds
+        .first()
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
+        })?
+        .output_witness_len;
     let descriptor = candidate_schedule_descriptor_bytes(candidate, diagnostics)?;
     let metrics = candidate.metrics();
-    if policy.selection_policy == SelectionPolicyId::MinFirstDirectSetupThenPayload
+    if policy.selection_policy == SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
         && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(
@@ -138,6 +146,7 @@ pub(crate) fn complete_schedule_score(
     }
     Ok(CompleteScheduleScore {
         objective: CompleteObjectiveBound::for_candidate(policy, metrics),
+        output_witness_len,
         descriptor,
     })
 }

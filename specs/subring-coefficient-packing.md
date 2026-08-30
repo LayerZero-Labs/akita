@@ -85,8 +85,8 @@ The planner searches the challenge subring dimension `s` independently of the
 A ring dimension `d_A` at levels 0 and 1. Both values are candidate
 coordinates. They are not explicit optimization components. The planner
 retains the current adaptive catalog objective, which minimizes first-direct
-padded setup capacity, proof payload, total setup, and the canonical descriptor
-in that order.
+padded setup capacity, proof payload, total setup, root output-witness length,
+and the canonical descriptor in that order.
 
 This implementation includes the selective L2 fold sizing work merged in
 [PR #369](https://github.com/LayerZero-Labs/akita/pull/369). It also assumes the
@@ -1259,10 +1259,10 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 ### Objective and exact pricing
 
 Adaptive direct and recursive catalogs use the shared
-`MinFirstDirectSetupThenPayload` objective. They minimize first-direct padded
-setup capacity, proof payload, total setup, and the canonical descriptor in
-that order. No objective component for `s`, `d_A`, rank, fold count, or prover
-time is added.
+`MinFirstDirectSetupThenPayloadV2` objective. They minimize first-direct padded
+setup capacity, proof payload, total setup, root output-witness length, and the
+canonical descriptor in that order. No objective component for `s`, `d_A`,
+rank, fold count, or prover time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1323,7 +1323,7 @@ coordinates. The eight proof regressions remain explicit per-row review data;
 aggregate improvement does not hide them.
 
 The fp32 dense nv20 rows now use the same
-`MinFirstDirectSetupThenPayload` objective as recursive schedules. Their
+`MinFirstDirectSetupThenPayloadV2` objective as recursive schedules. Their
 first-direct padded capacities are 131,072 and 262,144 fields. Their six-level
 schedules use 458,752 and 655,360 total setup fields and produce 64,896 and
 66,912 proof bytes. The checked decision and the rejected weighted-objective
@@ -1501,8 +1501,9 @@ The planner MUST keep the search bounded in the following ways.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
 - [x] Adaptive direct and recursive catalogs use first direct setup capacity,
-      proof payload, total setup, and the canonical descriptor in that order.
-      The objective has no explicit `s`, `d_A`, or fold-count component.
+      proof payload, total setup, root output-witness length, and the canonical
+      descriptor in that order. The objective has no explicit `s`, `d_A`, or
+      fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
 - [x] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.

@@ -64,10 +64,11 @@ impl PlannerCostModelId {
 /// Deterministic schedule-selection policy bound into generated catalogs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionPolicyId {
-    /// Pick proof bytes, then physical setup fields, then canonical descriptor.
-    MinEstimatedProofPayload,
-    /// Pick first direct setup, proof bytes, total setup, then descriptor.
-    MinFirstDirectSetupThenPayload,
+    /// Pick proof bytes, physical setup fields, root output witness, then descriptor.
+    MinEstimatedProofPayloadV2,
+    /// Pick first direct setup, proof bytes, total setup, root output witness,
+    /// then descriptor.
+    MinFirstDirectSetupThenPayloadV2,
 }
 
 impl SelectionPolicyId {
@@ -82,27 +83,28 @@ impl SelectionPolicyId {
                 RingDimensionScheduleMode::AdaptiveDimension { .. }
             )
         {
-            Self::MinFirstDirectSetupThenPayload
+            Self::MinFirstDirectSetupThenPayloadV2
         } else {
-            Self::MinEstimatedProofPayload
+            Self::MinEstimatedProofPayloadV2
         }
     }
 
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
-            Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayload => 2,
-            // Tag 3 belonged to the retired setup-envelope-first policy and
-            // must never be reused.
+            Self::MinEstimatedProofPayloadV2 => 4,
+            Self::MinFirstDirectSetupThenPayloadV2 => 5,
+            // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
+            // belonged to the retired setup-envelope-first policy. Never reuse
+            // an objective tag: generated catalog admission depends on it.
         }
     }
 
     /// Stable identity name.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinFirstDirectSetupThenPayload => "MinFirstDirectSetupThenPayload",
+            Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
+            Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
         }
     }
 }
@@ -760,8 +762,8 @@ pub fn materialize_candidate_schedule(
         )));
     }
     let first_direct_setup_field_len = match policy.selection_policy {
-        SelectionPolicyId::MinEstimatedProofPayload => None,
-        SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(
+        SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
         ),
     };
@@ -900,7 +902,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,

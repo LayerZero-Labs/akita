@@ -292,7 +292,8 @@ impl ProjectedFrontier {
         let choices = self.by_parent_cost.get(&parent_cost);
         let keep = |projection| match projection {
             Projection::FirstDirectSetup => {
-                policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+                policy.selection_policy
+                    == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
                     && !choices.is_some_and(|choices| {
                         choices.projected(projection).iter().any(|existing| {
                             setup_primary_strictly_dominates(

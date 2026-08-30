@@ -16,6 +16,7 @@ enum OracleObjective {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct OracleScore {
     objective: OracleObjective,
+    output_witness_len: usize,
     descriptor: Vec<u8>,
 }
 
@@ -57,11 +58,11 @@ pub(super) fn score(
         .first_direct_setup_field_len
         .map(|natural_len| padded_setup_prefix_len(natural_len.get()));
     let objective = match policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => OracleObjective::Payload {
+        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => OracleObjective::Payload {
             proof_bytes: candidate.cost.proof_bytes(),
             setup_field_elements: candidate.setup_field_elements,
         },
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => OracleObjective::SetupFirst {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => OracleObjective::SetupFirst {
             first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "unpruned setup-first candidate is missing direct setup size".into(),
@@ -73,6 +74,13 @@ pub(super) fn score(
     };
     Ok(OracleScore {
         objective,
+        output_witness_len: candidate
+            .folds
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
+            })?
+            .output_witness_len,
         descriptor: schedule_descriptor_bytes(candidate)?,
     })
 }

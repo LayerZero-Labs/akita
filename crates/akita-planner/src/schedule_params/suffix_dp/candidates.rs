@@ -285,7 +285,7 @@ impl<'a> CandidateDomain<'a> {
             crate::policy::log_basis_search_range_at_level(policy, state.level);
         let opening_work = opening_work_domain(ctx, state, root_level_key, opening_shape)?;
         let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
-            || policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
+            || policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
             || matches!(
                 policy.ring_dimension_schedule_mode,
                 crate::RingDimensionScheduleMode::AdaptiveDimension {
