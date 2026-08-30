@@ -228,7 +228,7 @@ where
                 "reduced relation requires evaluation-trace openings".into(),
             ));
         };
-        let total_blocks = group_plan.witness.num_claims * group_plan.witness.num_live_blocks;
+        let total_blocks = challenges.len();
         let challenge_kernels = (0..total_blocks)
             .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, group_d_a, alpha))
             .collect::<Result<Vec<_>, _>>()?;

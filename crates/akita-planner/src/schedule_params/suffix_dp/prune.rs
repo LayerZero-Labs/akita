@@ -66,6 +66,7 @@ pub(super) fn level_candidates(
                 candidate_source_moment,
             )| {
                 best_params.payload_mode == candidate_params.payload_mode
+                    && best_params.ring_relation_mode == candidate_params.ring_relation_mode
                     && best_params.role_dims() == candidate_params.role_dims()
                     && matches!(
                         best_params.opening_method(),

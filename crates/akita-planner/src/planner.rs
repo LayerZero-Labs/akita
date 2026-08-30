@@ -556,6 +556,7 @@ pub fn find_schedule(
         incoming_setup_prefix: None,
         dimension_ceiling,
         payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
@@ -610,15 +611,16 @@ pub fn find_schedule(
     };
     if let Some(diagnostics) = diagnostics {
         let metrics = best.metrics();
+        let folds = best.folds.to_vec();
         diagnostics.record_selected(
             active_policy.selection_policy,
             metrics.proof_bytes(),
             metrics.setup_field_elements,
             metrics.first_direct_setup_capacity.field_elements(),
-            best.folds
-                .to_vec()
+            folds.iter().map(|fold| fold.params.role_dims()).collect(),
+            folds
                 .iter()
-                .map(|fold| fold.params.role_dims())
+                .map(|fold| fold.params.ring_relation_mode)
                 .collect(),
         );
     }

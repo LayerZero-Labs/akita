@@ -168,6 +168,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         RecursiveCandidateRequest {
             policy: &policy,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
             opening: PlannerOpeningCandidate::evaluation_trace(challenge),
             dimensions: CommitmentRingDims::uniform(64),
             current_witness_len: 948_672,
@@ -235,6 +236,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     let request = RecursiveCandidateRequest {
         policy: &policy,
         payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
         opening,
         dimensions,
         current_witness_len: 948_672,
@@ -398,6 +400,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             let request = RecursiveCandidateRequest {
                 policy: &policy,
                 payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+                ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
                 opening,
                 dimensions,
                 current_witness_len: 948_672,

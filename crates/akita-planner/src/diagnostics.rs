@@ -3,7 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::Duration;
 
-use akita_types::CommitmentRingDims;
+use akita_types::{CommitmentRingDims, RingRelationMode};
 
 use crate::SelectionPolicyId;
 
@@ -14,6 +14,7 @@ pub(crate) struct SelectedScheduleDiagnostics {
     setup_field_elements: usize,
     first_direct_setup_capacity: usize,
     dimensions: Vec<CommitmentRingDims>,
+    relation_modes: Vec<RingRelationMode>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -67,11 +68,16 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
         if let Some(selected) = &self.selected {
             write!(
                 formatter,
-                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} dims=[",
+                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} cutover={} dims=[",
                 selected.objective,
                 selected.proof_bytes,
                 selected.setup_field_elements,
                 selected.first_direct_setup_capacity,
+                selected
+                    .relation_modes
+                    .iter()
+                    .position(|mode| mode.is_reduced_evaluation())
+                    .map_or_else(|| "none".to_string(), |level| level.to_string()),
             )?;
             for (index, dimensions) in selected.dimensions.iter().enumerate() {
                 if index != 0 {
@@ -84,6 +90,16 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
                     dimensions.d_b(),
                     dimensions.d_d(),
                 )?;
+            }
+            formatter.write_str("] rel=[")?;
+            for (index, mode) in selected.relation_modes.iter().enumerate() {
+                if index != 0 {
+                    formatter.write_str(",")?;
+                }
+                formatter.write_str(match mode {
+                    RingRelationMode::QuotientLift => "quotient",
+                    RingRelationMode::ReducedEvaluation => "reduced-evaluation",
+                })?;
             }
             formatter.write_str("]}")?;
         }
@@ -185,6 +201,7 @@ impl PlannerDiagnostics {
         setup_field_elements: usize,
         first_direct_setup_capacity: usize,
         dimensions: Vec<CommitmentRingDims>,
+        relation_modes: Vec<RingRelationMode>,
     ) {
         self.selected.replace(Some(SelectedScheduleDiagnostics {
             objective,
@@ -192,6 +209,7 @@ impl PlannerDiagnostics {
             setup_field_elements,
             first_direct_setup_capacity,
             dimensions,
+            relation_modes,
         }));
     }
 

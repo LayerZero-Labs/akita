@@ -12,6 +12,7 @@ fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::Schedu
         d_b: 64,
         d_d: 64,
         payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: super::RingRelationPhase::QuotientPrefix,
     }
 }
 
@@ -31,6 +32,32 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
+}
+
+#[test]
+fn relation_phase_is_monotone_and_part_of_the_memo_identity() {
+    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+
+    let prefix = super::RingRelationPhase::QuotientPrefix;
+    let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
+    assert_eq!(prefix.candidate_modes(1, false, true), &[QuotientLift]);
+    assert_eq!(
+        prefix.candidate_modes(2, false, true),
+        &[QuotientLift, ReducedEvaluation]
+    );
+    assert_eq!(
+        reduced.candidate_modes(2, false, true),
+        &[ReducedEvaluation]
+    );
+    assert!(reduced.candidate_modes(2, true, true).is_empty());
+    assert_eq!(prefix.after(QuotientLift), prefix);
+    assert_eq!(prefix.after(ReducedEvaluation), reduced);
+    assert_eq!(reduced.after(ReducedEvaluation), reduced);
+
+    let quotient_key = memo_key(2, None);
+    let mut reduced_key = quotient_key;
+    reduced_key.relation_phase = reduced;
+    assert_ne!(quotient_key, reduced_key);
 }
 
 #[test]
@@ -155,6 +182,7 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
         incoming_setup_prefix: None,
         dimension_ceiling,
         payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: super::RingRelationPhase::QuotientPrefix,
     };
     let d64 = akita_types::CommitmentRingDims::uniform(64);
     let d256 = akita_types::CommitmentRingDims::uniform(256);
@@ -196,6 +224,7 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         incoming_setup_prefix: None,
         dimension_ceiling,
         payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: super::RingRelationPhase::QuotientPrefix,
     };
 
     assert_eq!(

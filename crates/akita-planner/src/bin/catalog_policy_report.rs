@@ -19,6 +19,13 @@ fn security_route_signature(value: akita_types::InnerCommitSecurityRoute) -> &'s
     }
 }
 
+fn relation_mode_signature(value: akita_types::RingRelationMode) -> &'static str {
+    match value {
+        akita_types::RingRelationMode::QuotientLift => "quotient",
+        akita_types::RingRelationMode::ReducedEvaluation => "reduced-evaluation",
+    }
+}
+
 fn opening_policy_signature(
     opening_method: akita_types::OpeningMethod,
     source_encoding: akita_types::CommittedSourceEncoding,
@@ -62,6 +69,15 @@ pub(super) fn catalog_policy_signature(
     use std::fmt::Write as _;
 
     let mut signature = String::new();
+    let cutover = std::iter::once(&schedule.root.params)
+        .chain(schedule.recursive_folds.iter().map(|fold| &fold.params))
+        .position(|params| params.ring_relation_mode.is_reduced_evaluation());
+    write!(
+        signature,
+        "cutover={};",
+        cutover.map_or_else(|| "none".to_string(), |level| format!("L{level}"))
+    )
+    .map_err(|error| format!("write catalog relation cutover: {error}"))?;
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params,
@@ -111,9 +127,10 @@ pub(super) fn catalog_policy_signature(
         }
         write!(
             signature,
-            "L{level}[chunks={}@{},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
+            "L{level}[chunks={}@{},rel={},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
             params.witness_chunk.num_chunks,
             params.witness_chunk.num_activated_levels,
+            relation_mode_signature(params.ring_relation_mode),
             opening_policy_signature(
                 params.opening_method(),
                 params.source_encoding,

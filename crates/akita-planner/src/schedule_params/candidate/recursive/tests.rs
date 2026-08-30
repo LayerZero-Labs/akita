@@ -19,6 +19,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         let request = RecursiveCandidateRequest {
             policy: &policy,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+            ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
             opening,
             dimensions,
             current_witness_len: 948_672,
@@ -67,6 +68,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
             RecursiveCandidateRequest {
                 policy: &policy,
                 payload_mode: akita_types::CommitmentPayloadMode::Raw,
+                ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
                 opening,
                 dimensions: CommitmentRingDims::uniform(64),
                 current_witness_len,
@@ -103,6 +105,7 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     let request = RecursiveCandidateRequest {
         policy: &policy,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
+        ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
         opening: PlannerOpeningCandidate::evaluation_trace(challenge),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 1 << 16,
@@ -127,4 +130,53 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         .iter()
         .flatten()
         .any(|slot| { slot.profile.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
+}
+
+#[test]
+fn reduced_candidates_enforce_tail_and_direct_setup_eligibility() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
+    let request = RecursiveCandidateRequest {
+        policy: &policy,
+        payload_mode: akita_types::CommitmentPayloadMode::Raw,
+        ring_relation_mode: akita_types::RingRelationMode::ReducedEvaluation,
+        opening: PlannerOpeningCandidate::evaluation_trace(challenge),
+        dimensions: CommitmentRingDims::uniform(64),
+        current_witness_len: 1 << 16,
+        source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        log_basis_inner: 4,
+        log_basis_open: 4,
+        fold_level: 1,
+        source_moment: None,
+    };
+    assert!(derive_fold_candidates(
+        request,
+        RecursiveSetupPrefix::None,
+        FoldCandidatePolicy::Best,
+    )
+    .is_err());
+    assert!(derive_terminal_candidates(RecursiveCandidateRequest {
+        fold_level: 2,
+        ..request
+    })
+    .is_err());
+
+    let mut cache = SetupPrefixSearchCache::default();
+    assert!(derive_fold_candidates(
+        RecursiveCandidateRequest {
+            fold_level: 2,
+            ..request
+        },
+        RecursiveSetupPrefix::Search {
+            cache: &mut cache,
+            natural_len: 1 << 12,
+        },
+        FoldCandidatePolicy::Best,
+    )
+    .is_err());
 }

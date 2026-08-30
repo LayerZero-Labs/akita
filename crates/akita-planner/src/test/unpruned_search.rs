@@ -15,6 +15,7 @@ struct UnprunedState {
     source_moment: Option<crate::response_model::SourceMomentEstimate>,
     dimension_ceiling: CommitmentRingDims,
     payload_phase: akita_types::CommitmentPayloadPhase,
+    relation_phase: RingRelationPhase,
 }
 
 type UnprunedMemo = Vec<(UnprunedState, Arc<Vec<ScheduleCandidate>>)>;
@@ -51,6 +52,7 @@ fn enumerate_suffixes(
         source_moment,
         dimension_ceiling,
         payload_phase,
+        relation_phase,
     } = state;
     if level > MAX_RECURSION_DEPTH {
         return Ok(Arc::new(Vec::new()));
@@ -87,11 +89,15 @@ fn enumerate_suffixes(
                 })
                 .transpose()?;
             let derive_candidates =
-                |opening, payload_mode| -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+                |opening,
+                 payload_mode,
+                 ring_relation_mode|
+                 -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
                     let exhaustive = level < akita_schedules::ADAPTIVE_SEARCH_LEVELS;
                     let request = RecursiveCandidateRequest {
                         policy,
                         payload_mode,
+                        ring_relation_mode,
                         opening,
                         dimensions: candidate_dimensions,
                         current_witness_len: input_witness_len,
@@ -116,6 +122,7 @@ fn enumerate_suffixes(
                     for params in derive_terminal_candidates(RecursiveCandidateRequest {
                         policy,
                         payload_mode,
+                        ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
                         opening: trace_opening,
                         dimensions: candidate_dimensions,
                         current_witness_len: input_witness_len,
@@ -176,78 +183,89 @@ fn enumerate_suffixes(
             };
             for (opening, opening_reduction_bytes) in fold_work {
                 for &payload_mode in payload_phase.candidate_modes(level, false) {
-                    for (params, output_witness_len) in derive_candidates(opening, payload_mode)? {
-                        let child_ceiling = params.role_dims();
-                        let next_source_moment = if policy.selective_l2_response_model_enabled() {
-                            let opening_layout = suffix_opening_layout(input_witness_len, None)?;
-                            Some(crate::response_model::next_source_moment(
-                                &params,
-                                &opening_layout,
-                                &[source_moment.ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "unpruned response source moment is missing".into(),
-                                    )
-                                })?],
-                                field_bits,
-                                policy.claim_ext_degree,
-                            )?)
-                        } else {
-                            None
-                        };
-                        for child in enumerate_suffixes(
-                            ctx,
-                            UnprunedState {
-                                level: level + 1,
-                                input_witness_len: output_witness_len,
-                                current_log_basis: log_basis,
-                                source_moment: next_source_moment,
-                                dimension_ceiling: child_ceiling,
-                                payload_phase: payload_phase.after(params.payload_mode),
-                            },
-                            memo,
-                        )?
-                        .iter()
+                    for &ring_relation_mode in relation_phase.candidate_modes(
+                        level,
+                        false,
+                        !opening.is_coefficient_packing(),
+                    ) {
+                        for (params, output_witness_len) in
+                            derive_candidates(opening, payload_mode, ring_relation_mode)?
                         {
-                            let child_is_terminal = child.folds.is_empty();
-                            let direct_bytes = level_proof_bytes(
-                                field_bits,
-                                challenge_field_bits,
-                                &params,
-                                child.first_fold_params(),
-                                output_witness_len,
-                                Some(if child_is_terminal {
-                                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                                } else {
-                                    akita_types::NextWitnessBindingPolicy::OuterPayload
-                                }),
+                            let child_ceiling = params.role_dims();
+                            let next_source_moment = if policy.selective_l2_response_model_enabled()
+                            {
+                                let opening_layout =
+                                    suffix_opening_layout(input_witness_len, None)?;
+                                Some(crate::response_model::next_source_moment(
+                                    &params,
+                                    &opening_layout,
+                                    &[source_moment.ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "unpruned response source moment is missing".into(),
+                                        )
+                                    })?],
+                                    field_bits,
+                                    policy.claim_ext_degree,
+                                )?)
+                            } else {
+                                None
+                            };
+                            for child in enumerate_suffixes(
+                                ctx,
+                                UnprunedState {
+                                    level: level + 1,
+                                    input_witness_len: output_witness_len,
+                                    current_log_basis: log_basis,
+                                    source_moment: next_source_moment,
+                                    dimension_ceiling: child_ceiling,
+                                    payload_phase: payload_phase.after(params.payload_mode),
+                                    relation_phase: relation_phase.after(params.ring_relation_mode),
+                                },
+                                memo,
                             )?
-                            .checked_add(opening_reduction_bytes)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "unpruned traversal fold proof size overflow".into(),
-                                )
-                            })?;
-                            let folds = child.folds.prepend(CandidateFoldStep {
-                                params: Arc::new(params.clone()),
-                                input_witness_len,
-                                output_witness_len,
-                                estimated_direct_payload_bytes: direct_bytes,
-                                estimated_stage3_payload_bytes: 0,
-                            });
-                            let cost = child.cost.checked_prepend(direct_bytes, 0)?;
-                            schedules.push(ScheduleCandidate {
-                                first_direct_setup_field_len: std::num::NonZeroUsize::new(
-                                    akita_types::active_setup_field_len(
-                                        &params,
-                                        &suffix_opening_layout(input_witness_len, None)?,
-                                    )?,
-                                ),
-                                cost,
-                                setup_field_elements: level_setup_field_elements(&params)?
-                                    .max(child.setup_field_elements),
-                                folds,
-                                terminal: Arc::clone(&child.terminal),
-                            });
+                            .iter()
+                            {
+                                let child_is_terminal = child.folds.is_empty();
+                                let direct_bytes = level_proof_bytes(
+                                    field_bits,
+                                    challenge_field_bits,
+                                    &params,
+                                    child.first_fold_params(),
+                                    output_witness_len,
+                                    Some(if child_is_terminal {
+                                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                                    } else {
+                                        akita_types::NextWitnessBindingPolicy::OuterPayload
+                                    }),
+                                )?
+                                .checked_add(opening_reduction_bytes)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "unpruned traversal fold proof size overflow".into(),
+                                    )
+                                })?;
+                                let folds = child.folds.prepend(CandidateFoldStep {
+                                    params: Arc::new(params.clone()),
+                                    input_witness_len,
+                                    output_witness_len,
+                                    estimated_direct_payload_bytes: direct_bytes,
+                                    estimated_stage3_payload_bytes: 0,
+                                });
+                                let cost = child.cost.checked_prepend(direct_bytes, 0)?;
+                                schedules.push(ScheduleCandidate {
+                                    first_direct_setup_field_len: std::num::NonZeroUsize::new(
+                                        akita_types::active_setup_field_len(
+                                            &params,
+                                            &suffix_opening_layout(input_witness_len, None)?,
+                                        )?,
+                                    ),
+                                    cost,
+                                    setup_field_elements: level_setup_field_elements(&params)?
+                                        .max(child.setup_field_elements),
+                                    folds,
+                                    terminal: Arc::clone(&child.terminal),
+                                });
+                            }
                         }
                     }
                 }
@@ -342,6 +360,7 @@ pub(super) fn find_schedule(
                                 dimension_ceiling: root_dimensions,
                                 payload_phase:
                                     akita_types::CommitmentPayloadPhase::CompressedPrefix,
+                                relation_phase: RingRelationPhase::QuotientPrefix,
                             },
                             &mut memo,
                         )?

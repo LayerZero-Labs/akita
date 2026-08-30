@@ -262,6 +262,13 @@ impl<'a> CandidateDomain<'a> {
                 "raw commitment suffix cannot consume a recursive setup prefix".into(),
             ));
         }
+        if state.relation_phase == super::RingRelationPhase::ReducedEvaluationSuffix
+            && state.incoming_setup_prefix.is_some()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "reduced-evaluation suffix cannot consume a recursive setup prefix".into(),
+            ));
+        }
 
         let opening_layout = if let Some(root_key) = root_level_key {
             root_key.opening_layout()?
@@ -369,9 +376,10 @@ impl<'a> CandidateDomain<'a> {
                     .payload_phase
                     .candidate_modes(state.level, state.incoming_setup_prefix.is_some())
                 {
-                    let request = RecursiveCandidateRequest {
+                    let request = |ring_relation_mode| RecursiveCandidateRequest {
                         policy,
                         payload_mode,
+                        ring_relation_mode,
                         opening: work.opening,
                         dimensions: work.dimensions,
                         current_witness_len: state.current_witness_len,
@@ -381,10 +389,19 @@ impl<'a> CandidateDomain<'a> {
                         fold_level: state.level,
                         source_moment: state.source_moment,
                     };
-                    if work.purpose == OpeningPurpose::TerminalAndFold
+                    let relation_modes = state.relation_phase.candidate_modes(
+                        state.level,
+                        state.incoming_setup_prefix.is_some(),
+                        !work.opening.is_coefficient_packing(),
+                    );
+                    let shares_quotient_search = work.purpose == OpeningPurpose::TerminalAndFold
                         && state.incoming_setup_prefix.is_none()
-                    {
-                        let views = derive_recursive_candidate_views(request, self.fold_policy)?;
+                        && relation_modes.contains(&akita_types::RingRelationMode::QuotientLift);
+                    if shares_quotient_search {
+                        let views = derive_recursive_candidate_views(
+                            request(akita_types::RingRelationMode::QuotientLift),
+                            self.fold_policy,
+                        )?;
                         terminal.extend(views.terminal.into_iter().map(|params| {
                             RawLevelCandidate {
                                 params,
@@ -399,36 +416,48 @@ impl<'a> CandidateDomain<'a> {
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             }
                         }));
-                        continue;
-                    }
-                    if work.purpose.allows_terminal() {
-                        terminal.extend(derive_terminal_candidates(request)?.into_iter().map(
-                            |params| RawLevelCandidate {
+                    } else if work.purpose.allows_terminal() {
+                        terminal.extend(
+                            derive_terminal_candidates(request(
+                                akita_types::RingRelationMode::QuotientLift,
+                            ))?
+                            .into_iter()
+                            .map(|params| RawLevelCandidate {
                                 params,
                                 next_witness_len: 0,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
-                            },
-                        ));
+                            }),
+                        );
                     }
                     if !work.purpose.allows_fold() {
                         continue;
                     }
-                    let setup_prefix = if let Some(natural_len) = state.incoming_setup_prefix {
-                        RecursiveSetupPrefix::Search {
-                            cache: setup_prefixes,
-                            natural_len,
+                    for &ring_relation_mode in relation_modes {
+                        if shares_quotient_search
+                            && ring_relation_mode == akita_types::RingRelationMode::QuotientLift
+                        {
+                            continue;
                         }
-                    } else {
-                        RecursiveSetupPrefix::None
-                    };
-                    let level_candidates =
-                        derive_fold_candidates(request, setup_prefix, self.fold_policy)?;
-                    for (params, next_witness_len) in level_candidates {
-                        folds.push(RawLevelCandidate {
-                            params,
-                            next_witness_len,
-                            opening_reduction_bytes: work.opening_reduction_bytes,
-                        });
+                        let setup_prefix = if let Some(natural_len) = state.incoming_setup_prefix {
+                            RecursiveSetupPrefix::Search {
+                                cache: setup_prefixes,
+                                natural_len,
+                            }
+                        } else {
+                            RecursiveSetupPrefix::None
+                        };
+                        let level_candidates = derive_fold_candidates(
+                            request(ring_relation_mode),
+                            setup_prefix,
+                            self.fold_policy,
+                        )?;
+                        for (params, next_witness_len) in level_candidates {
+                            folds.push(RawLevelCandidate {
+                                params,
+                                next_witness_len,
+                                opening_reduction_bytes: work.opening_reduction_bytes,
+                            });
+                        }
                     }
                 }
             }

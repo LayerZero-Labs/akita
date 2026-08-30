@@ -17,6 +17,7 @@ pub(super) use split::{
 pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) payload_mode: akita_types::CommitmentPayloadMode,
+    pub(crate) ring_relation_mode: akita_types::RingRelationMode,
     pub(crate) opening: PlannerOpeningCandidate,
     pub(crate) dimensions: CommitmentRingDims,
     pub(crate) current_witness_len: usize,
@@ -285,7 +286,7 @@ impl RecursiveCandidateContext<'_, '_> {
                 }],
                 core.open_commit_matrix,
                 request.payload_mode,
-                akita_types::RingRelationMode::QuotientLift,
+                request.ring_relation_mode,
                 source_encoding,
                 crate::policy::witness_chunk_at_level(request.policy, request.fold_level),
             )?);
@@ -577,6 +578,11 @@ fn derive_best_fold_candidates(
 pub(crate) fn derive_terminal_candidates(
     request: RecursiveCandidateRequest<'_>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
+    if request.ring_relation_mode.is_reduced_evaluation() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal candidate derivation requires quotient-lift relation geometry".into(),
+        ));
+    }
     if request.opening.is_coefficient_packing() {
         return Err(AkitaError::InvalidSetup(
             "terminal candidates require EvaluationTrace opening parameters".into(),
@@ -633,6 +639,11 @@ pub(crate) fn derive_recursive_candidate_views(
     request: RecursiveCandidateRequest<'_>,
     fold_policy: FoldCandidatePolicy,
 ) -> Result<RecursiveCandidateViews, AkitaError> {
+    if request.ring_relation_mode.is_reduced_evaluation() {
+        return Err(AkitaError::InvalidSetup(
+            "combined terminal/fold derivation requires quotient-lift relation geometry".into(),
+        ));
+    }
     if request.opening.is_coefficient_packing() {
         return Err(AkitaError::InvalidSetup(
             "combined terminal/fold search requires EvaluationTrace".into(),

@@ -117,6 +117,7 @@ pub(super) struct ScheduleMemoKey {
     pub(super) d_b: usize,
     pub(super) d_d: usize,
     pub(super) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(super) relation_phase: RingRelationPhase,
 }
 
 impl ScheduleMemoKey {
@@ -268,6 +269,66 @@ pub(crate) struct SuffixState {
     pub(crate) incoming_setup_prefix: Option<usize>,
     pub(crate) dimension_ceiling: CommitmentRingDims,
     pub(crate) payload_phase: akita_types::CommitmentPayloadPhase,
+    pub(crate) relation_phase: RingRelationPhase,
+}
+
+/// Monotone planner phase for recursive ring-relation realization.
+///
+/// This is search state rather than proof or schedule data. The selected
+/// per-fold [`akita_types::RingRelationMode`] remains the authenticated
+/// protocol value.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) enum RingRelationPhase {
+    /// Quotient lifting remains available and the search may begin a reduced
+    /// evaluation suffix at an eligible direct fold.
+    #[default]
+    QuotientPrefix,
+    /// Every later committed fold uses reduced evaluation and setup offloading
+    /// remains disabled.
+    ReducedEvaluationSuffix,
+}
+
+impl RingRelationPhase {
+    const NONE: &[akita_types::RingRelationMode] = &[];
+    const QUOTIENT_ONLY: &[akita_types::RingRelationMode] =
+        &[akita_types::RingRelationMode::QuotientLift];
+    const QUOTIENT_OR_REDUCED: &[akita_types::RingRelationMode] = &[
+        akita_types::RingRelationMode::QuotientLift,
+        akita_types::RingRelationMode::ReducedEvaluation,
+    ];
+    const REDUCED_ONLY: &[akita_types::RingRelationMode] =
+        &[akita_types::RingRelationMode::ReducedEvaluation];
+
+    /// Relation modes admitted for one concrete opening candidate.
+    pub(crate) const fn candidate_modes(
+        self,
+        absolute_fold_level: usize,
+        consumes_setup_prefix: bool,
+        uses_evaluation_trace: bool,
+    ) -> &'static [akita_types::RingRelationMode] {
+        match self {
+            Self::QuotientPrefix
+                if absolute_fold_level >= 2 && !consumes_setup_prefix && uses_evaluation_trace =>
+            {
+                Self::QUOTIENT_OR_REDUCED
+            }
+            Self::QuotientPrefix => Self::QUOTIENT_ONLY,
+            Self::ReducedEvaluationSuffix
+                if absolute_fold_level >= 2 && !consumes_setup_prefix && uses_evaluation_trace =>
+            {
+                Self::REDUCED_ONLY
+            }
+            Self::ReducedEvaluationSuffix => Self::NONE,
+        }
+    }
+
+    /// Advance the one-way cutover after selecting one emitted fold.
+    pub(crate) const fn after(self, mode: akita_types::RingRelationMode) -> Self {
+        match mode {
+            akita_types::RingRelationMode::QuotientLift => self,
+            akita_types::RingRelationMode::ReducedEvaluation => Self::ReducedEvaluationSuffix,
+        }
+    }
 }
 
 impl SuffixState {
@@ -296,6 +357,7 @@ impl SuffixState {
             d_b: memo_dimensions.d_b(),
             d_d: memo_dimensions.d_d(),
             payload_phase: self.payload_phase,
+            relation_phase: self.relation_phase,
         }
     }
 }

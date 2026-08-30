@@ -33,7 +33,7 @@ mod terminal;
 pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
 use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 use state::*;
-pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use state::{RingRelationPhase, ScheduleMemo, SuffixCtx, SuffixState};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
 
 const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =
@@ -606,6 +606,7 @@ pub(crate) fn derive_selected_suffix_schedule(
         incoming_setup_prefix,
         dimension_ceiling: _,
         payload_phase,
+        relation_phase,
     } = state;
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
@@ -830,6 +831,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         incoming_setup_prefix: None,
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase: payload_phase.after(candidate_params.payload_mode),
+                        relation_phase: relation_phase.after(candidate_params.ring_relation_mode),
                     },
                     depth + 1,
                 )?)
@@ -839,6 +841,8 @@ pub(crate) fn derive_selected_suffix_schedule(
                     .recursive_setup_search_policy
                     .admits_offloaded_edge_at(level)
                 && candidate_params.payload_mode.is_compressed()
+                && candidate_params.ring_relation_mode
+                    == akita_types::RingRelationMode::QuotientLift
                 // An offloaded edge accepts only a child suffix with at
                 // least two folds. At the last two admissible depths that
                 // topology cannot fit, so planning the child can only
@@ -856,6 +860,7 @@ pub(crate) fn derive_selected_suffix_schedule(
                         incoming_setup_prefix: Some(natural_len),
                         dimension_ceiling: candidate_params.role_dims(),
                         payload_phase,
+                        relation_phase,
                     },
                     depth + 1,
                 )?)
