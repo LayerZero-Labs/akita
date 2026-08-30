@@ -1,4 +1,6 @@
 use super::*;
+#[path = "adaptive_search/relation_cutover.rs"]
+mod relation_cutover;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 
@@ -465,106 +467,6 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     assert!(
         selected.schedule.terminal.response_l2_sq_cap().is_some(),
         "terminal-only planning must preserve the PR369 selective-L2 route",
-    );
-}
-
-#[test]
-fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
-
-    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
-    let base_policy = policy_of::<OneHot>();
-    let mut policy = policy_for_domain(base_policy, &domain);
-    // The oracle enumerates every complete suffix, so keep this correctness
-    // fixture focused on relation cutovers rather than multiplying it by the
-    // independent basis-search axis.
-    policy.inner_basis_range.1 = policy.inner_basis_range.0;
-    policy.opening_basis_range.1 = policy.opening_basis_range.0;
-    let key = onehot_group(20, 1);
-    let selected = find_schedule(
-        key,
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        &domain,
-        OneHot::ring_challenge_config,
-    )
-    .unwrap();
-    assert!(
-        selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
-        "bounded oracle must cover the production winner's recursion depth",
-    );
-    let unpruned = unpruned_search::find_schedule(
-        key,
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        OneHot::ring_challenge_config,
-        unpruned_search::OracleRelationPlan::EarliestReduced,
-    )
-    .unwrap();
-    assert!(unpruned.reduced_fold_candidates > 0);
-    assert!(unpruned.suffix_states <= unpruned_search::MAX_ORACLE_SUFFIX_STATES);
-    assert!(unpruned.complete_schedules <= unpruned_search::MAX_ORACLE_COMPLETE_SCHEDULES);
-    let unpruned = &unpruned.planned;
-
-    // Frozen acceptance data makes this test sensitive to defects in the
-    // production candidate constructor and byte model that the bounded
-    // traversal deliberately reuses. A candidate-filter mutation changes the
-    // descriptor digest; a pricing mutation changes the exact payload value.
-    assert_eq!(
-        akita_types::digest_descriptor_bytes(&unpruned.schedule.canonical_descriptor_bytes()),
-        [
-            85, 179, 106, 151, 191, 26, 198, 172, 121, 188, 187, 183, 116, 249, 185, 29, 34, 176,
-            111, 15, 77, 190, 189, 176, 156, 115, 12, 145, 108, 75, 133, 242,
-        ],
-        "the independently reviewed fixed-cutover descriptor changed",
-    );
-    assert_eq!(
-        unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
-        130_022,
-        "the independently reviewed fixed-cutover price changed",
-    );
-    assert_eq!(
-        unpruned.estimate.estimated_num_setup_field_elements, 131_072,
-        "the independently reviewed fixed-cutover setup footprint changed",
-    );
-    assert_eq!(
-        std::iter::once(unpruned.schedule.root.output_witness_len)
-            .chain(
-                unpruned
-                    .schedule
-                    .recursive_folds
-                    .iter()
-                    .map(|fold| fold.output_witness_len),
-            )
-            .collect::<Vec<_>>(),
-        [554_240, 510_720, 372_736],
-        "the fixed-cutover witness chain changed",
-    );
-    assert_eq!(
-        unpruned
-            .schedule
-            .recursive_folds
-            .iter()
-            .map(|fold| fold.params.ring_relation_mode)
-            .collect::<Vec<_>>(),
-        [
-            akita_types::RingRelationMode::QuotientLift,
-            akita_types::RingRelationMode::ReducedEvaluation,
-        ],
-        "the fixture must cross from a quotient prefix into a reduced suffix",
-    );
-
-    assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
-    );
-    assert_eq!(
-        selected.estimate.estimated_num_setup_field_elements,
-        unpruned.estimate.estimated_num_setup_field_elements,
-    );
-    assert_eq!(
-        selected.schedule.canonical_descriptor_bytes(),
-        unpruned.schedule.canonical_descriptor_bytes()
     );
 }
 
