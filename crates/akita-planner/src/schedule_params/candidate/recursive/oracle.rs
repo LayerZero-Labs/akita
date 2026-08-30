@@ -129,8 +129,9 @@ fn independently_enumerated_l2_candidates(
     Ok(candidates)
 }
 
-/// Enumerate every contracting candidate without production split bounds,
-/// slice pruning, objective selection, or the production split walker.
+/// Enumerate every candidate admitted by the reference purpose without
+/// production split bounds, slice pruning, objective selection, or the
+/// production split walker.
 ///
 /// This reference path shares only the canonical materializers for an explicit
 /// split. Linf and modeled L2 candidates are both enumerated without reusing
