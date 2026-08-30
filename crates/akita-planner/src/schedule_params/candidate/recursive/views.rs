@@ -66,7 +66,6 @@ pub(crate) fn derive_recursive_candidate_views(
         >::new();
         context.walk_splits(
             search_domain,
-            SliceRetention::ObjectiveLocal,
             |_, bounds| {
                 if !split_bounds.is_enabled() {
                     return true;
@@ -155,7 +154,6 @@ pub(crate) fn derive_recursive_candidate_views(
             &request,
             &search,
             SuccessorPolicy::AllowNonContracting,
-            SliceRetention::ObjectiveLocal,
         )?;
     }
     for best in &fold_best_modeled {
@@ -165,7 +163,6 @@ pub(crate) fn derive_recursive_candidate_views(
             &request,
             &search,
             SuccessorPolicy::RequireContraction,
-            SliceRetention::ObjectiveLocal,
         )?;
     }
     Ok(RecursiveCandidateViews {

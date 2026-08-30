@@ -30,7 +30,6 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
-        unpruned_search::OracleRelationPlan::EarliestReduced,
     )
     .unwrap();
     assert!(unpruned.reduced_fold_candidates > 0);
@@ -38,10 +37,8 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     assert!(unpruned.complete_schedules <= unpruned_search::MAX_ORACLE_COMPLETE_SCHEDULES);
     let unpruned = &unpruned.planned;
 
-    // Frozen acceptance data makes this test sensitive to defects in the
-    // production candidate constructor and byte model that the bounded
-    // traversal deliberately reuses. A candidate-filter mutation changes the
-    // descriptor digest; a pricing mutation changes the exact payload value.
+    // Frozen acceptance data makes this test sensitive to candidate-domain,
+    // relation-cutover, and pricing changes in the independent traversal.
     assert_eq!(
         akita_types::digest_descriptor_bytes(&unpruned.schedule.canonical_descriptor_bytes()),
         [

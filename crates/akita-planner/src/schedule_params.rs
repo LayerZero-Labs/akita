@@ -23,9 +23,7 @@ use akita_types::{
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
 #[cfg(test)]
-use akita_types::{
-    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
-};
+use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
 
 use crate::{InnerBasisSource, PlannerPolicy};
 
@@ -42,13 +40,15 @@ pub(crate) use akita_schedules::planner_support::{
     materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
-#[cfg(test)]
-pub(crate) use candidate::derive_unpruned_fold_candidates_for_oracle;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
     FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
     SetupPrefixSearchCache, SplitBoundPolicy,
+};
+#[cfg(test)]
+pub(crate) use candidate::{
+    derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
 pub(crate) use relation_transition::{

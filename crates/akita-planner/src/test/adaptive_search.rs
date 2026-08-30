@@ -205,7 +205,6 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
-        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .unwrap();
     let unpruned = &unpruned.planned;
@@ -291,7 +290,6 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
-        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .expect_err("the bounds-disabled oracle must use the same hard packing policy");
     assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
@@ -337,7 +335,6 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
-        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .expect("unpruned packing schedule from mixed domain");
     let unpruned = &unpruned.planned;
@@ -586,7 +583,6 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
             &policy,
             akita_config::honest_fold_policy_of::<OneHot>(),
             OneHot::ring_challenge_config,
-            unpruned_search::OracleRelationPlan::AllLegal,
         )
         .expect("unpruned adaptive search");
         let unpruned = &unpruned.planned;

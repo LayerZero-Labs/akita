@@ -15,40 +15,25 @@ pub(super) struct OracleRelationTransition {
     pub(super) next_state: OracleRelationState,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum OracleRelationPlan {
-    AllLegal,
-    EarliestReduced,
-}
+const QUOTIENT: OracleRelationTransition = OracleRelationTransition {
+    mode: akita_types::RingRelationMode::QuotientLift,
+    next_state: OracleRelationState::QuotientPrefix,
+};
+const REDUCED: OracleRelationTransition = OracleRelationTransition {
+    mode: akita_types::RingRelationMode::ReducedEvaluation,
+    next_state: OracleRelationState::ReducedSuffix,
+};
+const QUOTIENT_ONLY: &[OracleRelationTransition] = &[QUOTIENT];
+const REDUCED_ONLY: &[OracleRelationTransition] = &[REDUCED];
+const QUOTIENT_OR_REDUCED: &[OracleRelationTransition] = &[QUOTIENT, REDUCED];
 
-impl OracleRelationPlan {
-    const QUOTIENT: OracleRelationTransition = OracleRelationTransition {
-        mode: akita_types::RingRelationMode::QuotientLift,
-        next_state: OracleRelationState::QuotientPrefix,
-    };
-    const REDUCED: OracleRelationTransition = OracleRelationTransition {
-        mode: akita_types::RingRelationMode::ReducedEvaluation,
-        next_state: OracleRelationState::ReducedSuffix,
-    };
-    const QUOTIENT_ONLY: &[OracleRelationTransition] = &[Self::QUOTIENT];
-    const REDUCED_ONLY: &[OracleRelationTransition] = &[Self::REDUCED];
-    const QUOTIENT_OR_REDUCED: &[OracleRelationTransition] = &[Self::QUOTIENT, Self::REDUCED];
-
-    pub(super) const fn transitions(
-        self,
-        state: OracleRelationState,
-        level: usize,
-    ) -> &'static [OracleRelationTransition] {
-        match (self, state, level >= 2) {
-            (Self::AllLegal, OracleRelationState::QuotientPrefix, true) => {
-                Self::QUOTIENT_OR_REDUCED
-            }
-            (Self::AllLegal, OracleRelationState::QuotientPrefix, false)
-            | (Self::EarliestReduced, OracleRelationState::QuotientPrefix, false) => {
-                Self::QUOTIENT_ONLY
-            }
-            (Self::EarliestReduced, OracleRelationState::QuotientPrefix, true)
-            | (_, OracleRelationState::ReducedSuffix, _) => Self::REDUCED_ONLY,
-        }
+pub(super) const fn transitions(
+    state: OracleRelationState,
+    level: usize,
+) -> &'static [OracleRelationTransition] {
+    match (state, level >= 2) {
+        (OracleRelationState::QuotientPrefix, true) => QUOTIENT_OR_REDUCED,
+        (OracleRelationState::QuotientPrefix, false) => QUOTIENT_ONLY,
+        (OracleRelationState::ReducedSuffix, _) => REDUCED_ONLY,
     }
 }

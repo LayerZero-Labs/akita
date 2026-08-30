@@ -13,7 +13,9 @@ use level_search::{
     prepare_recursive_level_search, RecursiveLevelSearch,
 };
 #[cfg(test)]
-pub(crate) use oracle::derive_unpruned_fold_candidates_for_oracle;
+pub(crate) use oracle::{
+    derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
+};
 pub(crate) use split::recursive_split_search_domain;
 use split::recursive_witness_body_lower_bound;
 pub(super) use split::{
@@ -93,13 +95,6 @@ pub(crate) enum FoldCandidatePolicy {
 enum SuccessorPolicy {
     AllowNonContracting,
     RequireContraction,
-}
-
-#[derive(Clone, Copy)]
-enum SliceRetention {
-    ObjectiveLocal,
-    #[cfg(test)]
-    Exhaustive,
 }
 
 impl SuccessorPolicy {
@@ -367,7 +362,6 @@ impl RecursiveCandidateContext<'_, '_> {
     fn walk_splits(
         &self,
         relation_domain: RelationSearchDomain,
-        slice_retention: SliceRetention,
         mut admit_split: impl FnMut(usize, RecursiveSplitBounds) -> bool,
         mut visit: impl FnMut(LayoutCandidateScore, usize, RecursiveRelationCandidate, usize),
     ) -> Result<(), AkitaError> {
@@ -436,26 +430,21 @@ impl RecursiveCandidateContext<'_, '_> {
                         .filter(|candidate| candidate.relation_transition == *transition)
                         .cloned()
                         .collect::<Vec<_>>();
-                    let retained_slices: Vec<RecursiveRelationCandidate> = match slice_retention {
-                        SliceRetention::ObjectiveLocal => {
-                            crate::schedule_params::prune_locally_unprofitable_slices(
-                                policy,
-                                &search.opening_layout,
-                                mode_slices
-                                    .into_iter()
-                                    .map(|candidate| candidate.params)
-                                    .collect(),
-                            )?
-                            .into_iter()
-                            .map(|params| RecursiveRelationCandidate {
-                                params,
-                                relation_transition: *transition,
-                            })
-                            .collect()
-                        }
-                        #[cfg(test)]
-                        SliceRetention::Exhaustive => mode_slices,
-                    };
+                    let retained_slices =
+                        crate::schedule_params::prune_locally_unprofitable_slices(
+                            policy,
+                            &search.opening_layout,
+                            mode_slices
+                                .into_iter()
+                                .map(|candidate| candidate.params)
+                                .collect(),
+                        )?
+                        .into_iter()
+                        .map(|params| RecursiveRelationCandidate {
+                            params,
+                            relation_transition: *transition,
+                        })
+                        .collect::<Vec<_>>();
                     for candidate in retained_slices {
                         let relation_mode = candidate.relation_transition.mode();
                         let Some((score, params, next_witness_len)) =
@@ -516,7 +505,6 @@ fn best_linf_candidates_for(
     let best_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
     context.walk_splits(
         relation_domain,
-        SliceRetention::ObjectiveLocal,
         |_, bounds| {
             relation_domain.has_multiple_modes()
                 || best_score
@@ -555,7 +543,6 @@ fn append_selective_l2_candidates(
     request: &RecursiveCandidateRequest<'_>,
     search: &RecursiveLevelSearch,
     successor_policy: SuccessorPolicy,
-    slice_retention: SliceRetention,
 ) -> Result<(), AkitaError> {
     let RecursiveCandidateRequest {
         policy,
@@ -646,26 +633,20 @@ fn append_selective_l2_candidates(
                 });
             }
         }
-        let retained_slices: Vec<RecursiveRelationCandidate> = match slice_retention {
-            SliceRetention::ObjectiveLocal => {
-                crate::schedule_params::prune_locally_unprofitable_slices(
-                    policy,
-                    &search.opening_layout,
-                    sliced
-                        .into_iter()
-                        .map(|candidate| candidate.params)
-                        .collect(),
-                )?
+        let retained_slices = crate::schedule_params::prune_locally_unprofitable_slices(
+            policy,
+            &search.opening_layout,
+            sliced
                 .into_iter()
-                .map(|params| RecursiveRelationCandidate {
-                    params,
-                    relation_transition,
-                })
-                .collect()
-            }
-            #[cfg(test)]
-            SliceRetention::Exhaustive => sliced,
-        };
+                .map(|candidate| candidate.params)
+                .collect(),
+        )?
+        .into_iter()
+        .map(|params| RecursiveRelationCandidate {
+            params,
+            relation_transition,
+        })
+        .collect::<Vec<_>>();
         for candidate in retained_slices {
             let Some((_, params, next_witness_len)) =
                 finalize_recursive_level_candidate(policy, search, candidate.params)?
@@ -725,7 +706,6 @@ fn derive_best_fold_candidates(
                 &request,
                 &search,
                 SuccessorPolicy::RequireContraction,
-                SliceRetention::ObjectiveLocal,
             )?;
         }
     }
@@ -776,7 +756,6 @@ pub(crate) fn derive_terminal_candidates(
             &request,
             &search,
             SuccessorPolicy::AllowNonContracting,
-            SliceRetention::ObjectiveLocal,
         )?;
     }
     Ok(candidates

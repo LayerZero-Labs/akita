@@ -41,7 +41,6 @@ pub(super) fn derive_fold_candidate_frontier(
         };
         context.walk_splits(
             relation_domain,
-            SliceRetention::ObjectiveLocal,
             |_, bounds| {
                 if !split_bounds.is_enabled() {
                     return true;
@@ -100,7 +99,6 @@ pub(super) fn derive_fold_candidate_frontier(
                 &request,
                 &search,
                 SuccessorPolicy::RequireContraction,
-                SliceRetention::ObjectiveLocal,
             )?;
         }
     }

@@ -53,7 +53,7 @@ fn retain_terminal_candidates(
             fold_level: state.level,
             source_moment: state.source_moment,
         };
-        for params in derive_terminal_candidates(request)? {
+        for params in derive_unpruned_terminal_candidates_for_oracle(request)? {
             if let Some(candidate) = terminal(ctx, state, opening_reduction_bytes, &params)? {
                 retain_frontier_candidate(frontier, candidate)?;
             }
@@ -99,10 +99,7 @@ fn visit_fold_opening(
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
-        for relation_transition in ctx
-            .relation_plan
-            .transitions(state.relation_state, state.level)
-        {
+        for relation_transition in relation::transitions(state.relation_state, state.level) {
             let request = RecursiveCandidateRequest {
                 policy,
                 payload_mode,

@@ -24,6 +24,12 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
+#[cfg(test)]
+#[path = "test/root_candidates.rs"]
+mod root_candidates;
+#[cfg(test)]
+pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
+
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
 
 fn materialize_precommitted_group_for_open_basis(

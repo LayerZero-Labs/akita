@@ -13,7 +13,6 @@ mod suffix;
 
 use candidate::{prepend_fold, prepend_root, terminal};
 use frontier::retain as retain_frontier_candidate;
-pub(super) use relation::OracleRelationPlan;
 use relation::OracleRelationState;
 use score::{schedule_descriptor_bytes, score, OracleScore};
 use suffix::visit_suffixes;
@@ -21,8 +20,6 @@ use suffix::visit_suffixes;
 struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    key: PolynomialGroupLayout,
-    relation_plan: OracleRelationPlan,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -143,7 +140,6 @@ pub(super) fn find_schedule(
     policy: &PlannerPolicy,
     honest_fold_policy: HonestFoldPolicySpec,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
-    relation_plan: OracleRelationPlan,
 ) -> Result<OracleSearchResult, AkitaError> {
     key.validate()?;
     akita_schedules::planner_support::validate_policy(policy)?;
@@ -161,8 +157,6 @@ pub(super) fn find_schedule(
     let ctx = UnprunedCtx {
         policy,
         ring_challenge_config: &ring_challenge_config,
-        key,
-        relation_plan,
     };
     let inner_source =
         root_inner_basis_source(honest_fold_policy, policy.decomposition.log_commit_bound);
@@ -186,7 +180,7 @@ pub(super) fn find_schedule(
                     )?;
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
-                        crate::planner::root_level_candidates_for_basis(
+                        crate::planner::exhaustive_root_candidates_for_reference(
                             &schedule_key,
                             honest_fold_policy,
                             &[],
