@@ -453,14 +453,26 @@ fn assert_q32_exact_cache_matches_ring_arithmetic<const D: usize>() {
     assert_eq!(actual, expected);
 }
 
+fn run_with_large_test_stack(f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .name("exact-ntt-cache-test".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn exact NTT cache test")
+        .join()
+        .expect("exact NTT cache test thread");
+}
+
 #[test]
 fn q32_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
-    assert_q32_exact_cache_matches_ring_arithmetic::<64>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<128>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<256>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<512>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<1024>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<2048>();
+    run_with_large_test_stack(|| {
+        assert_q32_exact_cache_matches_ring_arithmetic::<64>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<128>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<256>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<512>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<1024>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<2048>();
+    });
 }
 
 fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
@@ -535,11 +547,13 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
 
 #[test]
 fn q128_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
-    assert_q128_exact_cache_matches_ring_arithmetic::<64>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<128>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<256>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<512>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<1024>();
+    run_with_large_test_stack(|| {
+        assert_q128_exact_cache_matches_ring_arithmetic::<64>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<128>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<256>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<512>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<1024>();
+    });
 }
 
 #[test]

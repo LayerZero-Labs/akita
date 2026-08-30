@@ -465,6 +465,16 @@ mod tests {
 
     #[test]
     fn verifier_setup_installs_only_its_bound_artifact() {
+        std::thread::Builder::new()
+            .name("prepared-verifier-ntt-cache-test".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(verifier_setup_installs_only_its_bound_artifact_inner)
+            .expect("spawn prepared-cache test")
+            .join()
+            .expect("prepared-cache test thread");
+    }
+
+    fn verifier_setup_installs_only_its_bound_artifact_inner() {
         let matrix = matrix();
         let seed: crate::AkitaSetupSeed = [9; 32].into();
         let setup = crate::AkitaVerifierSetup::from_parts(

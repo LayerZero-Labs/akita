@@ -9,18 +9,6 @@ use rand::SeedableRng;
 
 type F = Prime128OffsetA7F7;
 
-fn decode_golden_hex(encoded: &str) -> Vec<u8> {
-    encoded
-        .trim()
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            u8::from_str_radix(std::str::from_utf8(pair).expect("fixture is ASCII"), 16)
-                .expect("fixture is hexadecimal")
-        })
-        .collect()
-}
-
 fn test_fold_response_nonce(site: crate::GrindingSite) -> u32 {
     site.canonical_bytes()
         .into_iter()

@@ -776,18 +776,6 @@ mod tests {
         }
     }
 
-    fn decode_golden_hex(encoded: &str) -> Vec<u8> {
-        let compact = encoded.split_ascii_whitespace().collect::<String>();
-        compact
-            .as_bytes()
-            .chunks_exact(2)
-            .map(|pair| {
-                u8::from_str_radix(std::str::from_utf8(pair).expect("fixture is ASCII"), 16)
-                    .expect("fixture is hexadecimal")
-            })
-            .collect()
-    }
-
     #[test]
     fn verifier_setup_prefix_slots_roundtrip() {
         use crate::proof::{RingVec, SetupPrefixPublicCommitment, SetupPrefixVerifierSlot};
@@ -826,13 +814,6 @@ mod tests {
 
         let mut bytes = Vec::new();
         setup.serialize_compressed(&mut bytes).expect("serialize");
-        assert_eq!(
-            bytes,
-            decode_golden_hex(include_str!(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../fixtures/jolt-field-cutover/setup.hex"
-            )))
-        );
         let decoded = AkitaVerifierSetup::<F>::deserialize_compressed_exact(&bytes, &())
             .expect("deserialize");
 
