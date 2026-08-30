@@ -33,6 +33,7 @@ fn retain_terminal_candidates(
     log_basis: u32,
     dimensions: CommitmentRingDims,
     trace_work: Option<OpeningWork>,
+    work: &mut OracleWork,
     frontier: &mut Vec<ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     let Some((opening, opening_reduction_bytes)) = trace_work else {
@@ -54,6 +55,7 @@ fn retain_terminal_candidates(
             source_moment: state.source_moment,
         };
         for params in derive_unpruned_terminal_candidates_for_oracle(request)? {
+            work.record_candidate_route(&params)?;
             if let Some(candidate) = terminal(ctx, state, opening_reduction_bytes, &params)? {
                 retain_frontier_candidate(frontier, candidate)?;
             }
@@ -129,6 +131,7 @@ fn visit_fold_opening(
                     ));
                 }
                 let params = candidate.params;
+                work.record_candidate_route(&params)?;
                 let next_state = UnprunedState {
                     level: state.level + 1,
                     input_witness_len: output_witness_len,
@@ -144,8 +147,6 @@ fn visit_fold_opening(
                         prepend_fold(
                             policy,
                             state.level,
-                            policy.decomposition.field_bits(),
-                            policy.challenge_field_bits()?,
                             state.input_witness_len,
                             output_witness_len,
                             fold_opening.reduction_bytes,
@@ -189,6 +190,7 @@ pub(super) fn visit_suffixes(
                 log_basis,
                 dimensions,
                 trace_work,
+                work,
                 &mut frontier,
             )?;
             let fold_work = if state.level <= 1 {

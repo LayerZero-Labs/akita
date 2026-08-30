@@ -222,12 +222,9 @@ pub(super) fn terminal(
     }))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn prepend_fold(
     policy: &PlannerPolicy,
     level: usize,
-    field_bits: u32,
-    challenge_field_bits: u32,
     input_witness_len: usize,
     output_witness_len: usize,
     opening_reduction_bytes: usize,
@@ -236,8 +233,8 @@ pub(super) fn prepend_fold(
 ) -> Result<ScheduleCandidate, AkitaError> {
     let opening_layout = suffix_opening_layout(input_witness_len, None)?;
     let direct_bytes = reference_level_proof_bytes(
-        field_bits,
-        challenge_field_bits,
+        policy.decomposition.field_bits(),
+        policy.challenge_field_bits()?,
         params,
         child.first_fold_params(),
         output_witness_len,
@@ -255,7 +252,7 @@ pub(super) fn prepend_fold(
         output_witness_len,
         &opening_layout,
         successor,
-        field_bits,
+        policy.decomposition.field_bits(),
         policy.claim_ext_degree,
         u32::try_from(level)
             .map_err(|_| AkitaError::InvalidSetup("unpruned fold level exceeds u32".into()))?,

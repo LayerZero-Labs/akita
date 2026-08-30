@@ -1,5 +1,27 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+enum ReferenceCandidatePurpose {
+    Fold(RelationSearchDomain),
+    Terminal,
+}
+
+impl ReferenceCandidatePurpose {
+    const fn successor_policy(self) -> SuccessorPolicy {
+        match self {
+            Self::Fold(_) => SuccessorPolicy::RequireContraction,
+            Self::Terminal => SuccessorPolicy::AllowNonContracting,
+        }
+    }
+
+    const fn relation_domain(self) -> RelationSearchDomain {
+        match self {
+            Self::Fold(domain) => domain,
+            Self::Terminal => RelationSearchDomain::QuotientOnly,
+        }
+    }
+}
+
 fn retain_finalized_candidates(
     request: &RecursiveCandidateRequest<'_>,
     search: &RecursiveLevelSearch,
@@ -35,8 +57,6 @@ fn retain_finalized_candidates(
 
 fn independently_enumerated_l2_candidates(
     context: &RecursiveCandidateContext<'_, '_>,
-    linf_core: &RecursiveCandidateCore,
-    linf_slices: &[RecursiveRelationCandidate],
     split: usize,
     relation_domain: RelationSearchDomain,
 ) -> Result<Vec<RecursiveRelationCandidate>, AkitaError> {
@@ -72,6 +92,11 @@ fn independently_enumerated_l2_candidates(
     let Some(mut l2_core) = l2_context.candidate_core(split)? else {
         return Ok(Vec::new());
     };
+    let l2_challenge_linf_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
+    if l2_challenge_linf_slices.is_empty() {
+        return Ok(Vec::new());
+    }
+    let l2_challenge_linf_rank = l2_core.inner_commit_matrix.output_rank();
     let Some(inner_commit_matrix) = selective_l2_inner_matrix(
         request.policy,
         SelectiveL2CandidateGeometry {
@@ -90,13 +115,13 @@ fn independently_enumerated_l2_candidates(
     else {
         return Ok(Vec::new());
     };
-    if inner_commit_matrix.output_rank() >= linf_core.inner_commit_matrix.output_rank() {
+    if inner_commit_matrix.output_rank() >= l2_challenge_linf_rank {
         return Ok(Vec::new());
     }
     l2_core.inner_commit_matrix = inner_commit_matrix;
     let mut candidates = l2_context.candidates_from_core(&l2_core, relation_domain)?;
     candidates.retain(|candidate| {
-        linf_slices.iter().any(|linf| {
+        l2_challenge_linf_slices.iter().any(|linf| {
             linf.relation_transition == candidate.relation_transition
                 && linf.params.outer_slice_count() == candidate.params.outer_slice_count()
         })
@@ -112,18 +137,17 @@ fn independently_enumerated_l2_candidates(
 /// the production choice of which split should receive the L2 alternative.
 fn enumerate_unpruned_candidates(
     request: RecursiveCandidateRequest<'_>,
-    relation_domain: RelationSearchDomain,
-    successor_policy: SuccessorPolicy,
-    include_recursive_l2: bool,
+    purpose: ReferenceCandidatePurpose,
 ) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(&request, RecursiveSetupPrefix::None)? else {
         return Ok(Vec::new());
     };
+    let relation_domain = purpose.relation_domain();
     let base_context = RecursiveCandidateContext {
         request: &request,
         search: &search,
         source_moment: request.source_moment,
-        successor_policy,
+        successor_policy: purpose.successor_policy(),
     };
     let mut candidates = Vec::new();
     for (source_index, source_moment) in [request.source_moment, None].into_iter().enumerate() {
@@ -139,28 +163,22 @@ fn enumerate_unpruned_candidates(
                 continue;
             };
             let linf_slices = context.candidates_from_core(&core, relation_domain)?;
-            let l2_slices = if include_recursive_l2 && source_index == 0 {
-                independently_enumerated_l2_candidates(
-                    &context,
-                    &core,
-                    &linf_slices,
-                    split,
-                    relation_domain,
-                )?
+            let l2_slices = if source_index == 0 {
+                independently_enumerated_l2_candidates(&context, split, relation_domain)?
             } else {
                 Vec::new()
             };
             retain_finalized_candidates(
                 &request,
                 &search,
-                successor_policy,
+                purpose.successor_policy(),
                 linf_slices,
                 &mut candidates,
             )?;
             retain_finalized_candidates(
                 &request,
                 &search,
-                successor_policy,
+                purpose.successor_policy(),
                 l2_slices,
                 &mut candidates,
             )?;
@@ -173,24 +191,16 @@ pub(crate) fn derive_unpruned_fold_candidates_for_oracle(
     request: RecursiveCandidateRequest<'_>,
     relation_domain: RelationSearchDomain,
 ) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
-    enumerate_unpruned_candidates(
-        request,
-        relation_domain,
-        SuccessorPolicy::RequireContraction,
-        true,
-    )
+    enumerate_unpruned_candidates(request, ReferenceCandidatePurpose::Fold(relation_domain))
 }
 
 pub(crate) fn derive_unpruned_terminal_candidates_for_oracle(
     request: RecursiveCandidateRequest<'_>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    Ok(enumerate_unpruned_candidates(
-        request,
-        RelationSearchDomain::QuotientOnly,
-        SuccessorPolicy::AllowNonContracting,
-        false,
-    )?
-    .into_iter()
-    .map(|(candidate, _)| candidate.params)
-    .collect())
+    Ok(
+        enumerate_unpruned_candidates(request, ReferenceCandidatePurpose::Terminal)?
+            .into_iter()
+            .map(|(candidate, _)| candidate.params)
+            .collect(),
+    )
 }

@@ -55,6 +55,8 @@ pub(super) const MAX_ORACLE_RECURSION_DEPTH: usize = 4;
 struct OracleWork {
     suffix_states: usize,
     reduced_fold_candidates: usize,
+    linf_candidates: usize,
+    l2_candidates: usize,
 }
 
 type OracleMemo = std::collections::HashMap<UnprunedState, Arc<Vec<ScheduleCandidate>>>;
@@ -81,6 +83,17 @@ impl OracleWork {
                 })?;
         Ok(())
     }
+
+    fn record_candidate_route(&mut self, params: &CommittedGroupParams) -> Result<(), AkitaError> {
+        let counter = match params.inner().matrix.security_route() {
+            akita_types::InnerCommitSecurityRoute::Linf(_) => &mut self.linf_candidates,
+            akita_types::InnerCommitSecurityRoute::L2 { .. } => &mut self.l2_candidates,
+        };
+        *counter = counter.checked_add(1).ok_or_else(|| {
+            AkitaError::InvalidSetup("unpruned candidate-route counter overflow".into())
+        })?;
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -89,6 +102,8 @@ pub(super) struct OracleSearchResult {
     pub(super) suffix_states: usize,
     pub(super) complete_schedules: usize,
     pub(super) reduced_fold_candidates: usize,
+    pub(super) linf_candidates: usize,
+    pub(super) l2_candidates: usize,
 }
 
 struct RootCandidate<'a> {
@@ -183,11 +198,9 @@ pub(super) fn find_schedule(
                         crate::planner::exhaustive_root_candidates_for_reference(
                             &schedule_key,
                             honest_fold_policy,
-                            &[],
                             policy,
                             root_dimensions,
                             root_opening,
-                            &[],
                             inner_basis,
                             log_basis,
                         )?
@@ -277,5 +290,7 @@ pub(super) fn find_schedule(
         suffix_states: work.suffix_states,
         complete_schedules: complete_schedules.get(),
         reduced_fold_candidates: work.reduced_fold_candidates,
+        linf_candidates: work.linf_candidates,
+        l2_candidates: work.l2_candidates,
     })
 }

@@ -1,6 +1,8 @@
 use super::*;
 #[path = "adaptive_search/relation_cutover.rs"]
 mod relation_cutover;
+#[path = "adaptive_search/selective_l2.rs"]
+mod selective_l2;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 

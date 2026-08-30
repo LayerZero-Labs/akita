@@ -495,8 +495,9 @@ pub(crate) type RingChallengeConfigFn<'a> =
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
-/// For setup-primary planning, retain the smallest slice count that reaches
-/// the best local setup objective before witness sizing and suffix recursion.
+/// For setup-primary planning, retain every slice that reaches the best local
+/// setup objective before witness sizing and suffix recursion. Equal setup
+/// candidates can still differ in proof size or the complete descriptor.
 pub(crate) fn prune_locally_unprofitable_slices(
     policy: &PlannerPolicy,
     opening_layout: &OpeningClaimsLayout,
@@ -507,18 +508,21 @@ pub(crate) fn prune_locally_unprofitable_slices(
     {
         return Ok(candidates);
     }
-    let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
+    let mut best_setup = None;
+    let mut retained = Vec::new();
     for params in candidates {
         let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
-        let score = (setup_score, params.outer_slice_count().get());
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score < *best_score)
-        {
-            best = Some((score, params));
+        match best_setup.map(|best| setup_score.cmp(&best)) {
+            None | Some(std::cmp::Ordering::Less) => {
+                best_setup = Some(setup_score);
+                retained.clear();
+                retained.push(params);
+            }
+            Some(std::cmp::Ordering::Equal) => retained.push(params),
+            Some(std::cmp::Ordering::Greater) => {}
         }
     }
-    Ok(best.map(|(_, params)| vec![params]).unwrap_or_default())
+    Ok(retained)
 }
 
 /// Combine exact physical width, challenge work, chunk evaluator work,

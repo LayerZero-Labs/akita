@@ -3,25 +3,19 @@ use super::*;
 /// Enumerate every root split and slice for the single-group oracle fixture.
 /// Candidate materialization stays canonical, while this reference domain is
 /// independent of production split bounds and local slice pruning.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn exhaustive_root_candidates_for_reference(
     key: &AkitaScheduleLookupKey,
     final_honest_fold_policy: HonestFoldPolicySpec,
-    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     dimensions: CommitmentRingDims,
     opening: PlannerOpeningCandidate,
-    precommitted_openings: &[PlannerOpeningCandidate],
     candidate_log_basis_inner: u32,
     candidate_log_basis_open: u32,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     key.validate(policy.decomposition.field_bits())?;
     dimensions.validate_role_projection()?;
     opening.validate_for(0, policy.claim_ext_degree, dimensions)?;
-    if !key.precommitteds.is_empty()
-        || !precommitted_honest_fold_policies.is_empty()
-        || !precommitted_openings.is_empty()
-    {
+    if !key.precommitteds.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "the exhaustive root reference supports one uncommitted group".into(),
         ));
