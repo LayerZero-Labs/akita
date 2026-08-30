@@ -469,6 +469,14 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    let reversed = unpruned_search::find_schedule_with_cutover_order(
+        key,
+        &policy,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        OneHot::ring_challenge_config,
+        true,
+    )
+    .unwrap();
 
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
@@ -481,6 +489,11 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     assert_eq!(
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        unpruned.schedule.canonical_descriptor_bytes(),
+        reversed.schedule.canonical_descriptor_bytes(),
+        "explicit cutover enumeration must be independent of traversal order",
     );
 }
 

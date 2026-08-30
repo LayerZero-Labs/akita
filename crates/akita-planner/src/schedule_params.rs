@@ -32,6 +32,7 @@ use crate::{InnerBasisSource, PlannerPolicy};
 mod candidate;
 mod objective;
 mod pareto;
+mod relation_transition;
 mod setup_score;
 mod suffix_dp;
 #[cfg(test)]
@@ -48,9 +49,12 @@ pub(crate) use candidate::{
     SetupPrefixSearchCache, SplitBoundPolicy,
 };
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
+pub(crate) use relation_transition::{
+    RelationCandidateTopology, RelationTransition, RingRelationPhase,
+};
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
-    derive_selected_suffix_schedule, RingRelationPhase, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology,
 };
 
 pub(crate) fn root_inner_basis_source(

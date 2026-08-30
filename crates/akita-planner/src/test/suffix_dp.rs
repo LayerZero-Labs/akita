@@ -2,17 +2,22 @@ use super::offloaded_witness_contracts;
 use std::collections::VecDeque;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
+    let topology = incoming_setup_prefix.map_or(
+        super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+        |natural_len| super::SuffixTopology::SetupPrefixed { natural_len },
+    );
     super::ScheduleMemoKey {
         level,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix,
         d_a: 64,
         d_b: 64,
         d_d: 64,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        relation_phase: super::RingRelationPhase::QuotientPrefix,
+        topology,
     }
 }
 
@@ -35,28 +40,47 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
 }
 
 #[test]
-fn relation_phase_is_monotone_and_part_of_the_memo_identity() {
+fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
     use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
 
     let prefix = super::RingRelationPhase::QuotientPrefix;
     let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
-    assert_eq!(prefix.candidate_modes(1, false, true), &[QuotientLift]);
+    let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
     assert_eq!(
-        prefix.candidate_modes(2, false, true),
-        &[QuotientLift, ReducedEvaluation]
+        prefix
+            .transitions(1, direct_trace)
+            .unwrap()
+            .iter()
+            .map(|transition| transition.mode())
+            .collect::<Vec<_>>(),
+        vec![QuotientLift]
     );
     assert_eq!(
-        reduced.candidate_modes(2, false, true),
-        &[ReducedEvaluation]
+        prefix
+            .transitions(2, direct_trace)
+            .unwrap()
+            .iter()
+            .map(|transition| transition.mode())
+            .collect::<Vec<_>>(),
+        vec![QuotientLift, ReducedEvaluation]
     );
-    assert!(reduced.candidate_modes(2, true, true).is_empty());
-    assert_eq!(prefix.after(QuotientLift), prefix);
-    assert_eq!(prefix.after(ReducedEvaluation), reduced);
-    assert_eq!(reduced.after(ReducedEvaluation), reduced);
+    let reduced_transition = reduced.transitions(2, direct_trace).unwrap()[0];
+    assert_eq!(reduced_transition.mode(), ReducedEvaluation);
+    assert_eq!(reduced_transition.next_phase(), reduced);
+    assert!(!reduced_transition.allows_setup_offload());
+    assert!(reduced
+        .transitions(
+            2,
+            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace,
+        )
+        .is_err());
 
     let quotient_key = memo_key(2, None);
     let mut reduced_key = quotient_key;
-    reduced_key.relation_phase = reduced;
+    reduced_key.topology = super::SuffixTopology::Direct {
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: reduced,
+    };
     assert_ne!(quotient_key, reduced_key);
 }
 
@@ -179,10 +203,11 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        relation_phase: super::RingRelationPhase::QuotientPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
     let d64 = akita_types::CommitmentRingDims::uniform(64);
     let d256 = akita_types::CommitmentRingDims::uniform(256);
@@ -221,10 +246,11 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        relation_phase: super::RingRelationPhase::QuotientPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
 
     assert_eq!(

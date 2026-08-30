@@ -7,14 +7,19 @@ use akita_types::{CommitmentRingDims, RingRelationMode};
 
 use crate::SelectionPolicyId;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SelectedFoldDiagnostics {
+    pub(crate) dimensions: CommitmentRingDims,
+    pub(crate) relation_mode: RingRelationMode,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SelectedScheduleDiagnostics {
     objective: SelectionPolicyId,
     proof_bytes: usize,
     setup_field_elements: usize,
     first_direct_setup_capacity: usize,
-    dimensions: Vec<CommitmentRingDims>,
-    relation_modes: Vec<RingRelationMode>,
+    folds: Vec<SelectedFoldDiagnostics>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,29 +79,29 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
                 selected.setup_field_elements,
                 selected.first_direct_setup_capacity,
                 selected
-                    .relation_modes
+                    .folds
                     .iter()
-                    .position(|mode| mode.is_reduced_evaluation())
+                    .position(|fold| fold.relation_mode.is_reduced_evaluation())
                     .map_or_else(|| "none".to_string(), |level| level.to_string()),
             )?;
-            for (index, dimensions) in selected.dimensions.iter().enumerate() {
+            for (index, fold) in selected.folds.iter().enumerate() {
                 if index != 0 {
                     formatter.write_str(",")?;
                 }
                 write!(
                     formatter,
                     "{}/{}/{}",
-                    dimensions.d_a(),
-                    dimensions.d_b(),
-                    dimensions.d_d(),
+                    fold.dimensions.d_a(),
+                    fold.dimensions.d_b(),
+                    fold.dimensions.d_d(),
                 )?;
             }
             formatter.write_str("] rel=[")?;
-            for (index, mode) in selected.relation_modes.iter().enumerate() {
+            for (index, fold) in selected.folds.iter().enumerate() {
                 if index != 0 {
                     formatter.write_str(",")?;
                 }
-                formatter.write_str(match mode {
+                formatter.write_str(match fold.relation_mode {
                     RingRelationMode::QuotientLift => "quotient",
                     RingRelationMode::ReducedEvaluation => "reduced-evaluation",
                 })?;
@@ -200,16 +205,14 @@ impl PlannerDiagnostics {
         proof_bytes: usize,
         setup_field_elements: usize,
         first_direct_setup_capacity: usize,
-        dimensions: Vec<CommitmentRingDims>,
-        relation_modes: Vec<RingRelationMode>,
+        folds: Vec<SelectedFoldDiagnostics>,
     ) {
         self.selected.replace(Some(SelectedScheduleDiagnostics {
             objective,
             proof_bytes,
             setup_field_elements,
             first_direct_setup_capacity,
-            dimensions,
-            relation_modes,
+            folds,
         }));
     }
 

@@ -19,7 +19,6 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         let request = RecursiveCandidateRequest {
             policy: &policy,
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
             opening,
             dimensions,
             current_witness_len: 948_672,
@@ -35,11 +34,19 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
             FoldCandidatePolicy::Best
         };
         let expected_terminal = derive_terminal_candidates(request).expect("terminal search");
-        let expected_folds =
-            derive_fold_candidates(request, RecursiveSetupPrefix::None, fold_policy)
-                .expect("fold search");
-        let actual =
-            derive_recursive_candidate_views(request, fold_policy).expect("combined search");
+        let expected_folds = derive_fold_candidates(
+            request,
+            RecursiveSetupPrefix::None,
+            fold_policy,
+            RelationTransition::quotient_only(),
+        )
+        .expect("fold search");
+        let actual = derive_recursive_candidate_views(
+            request,
+            fold_policy,
+            RelationTransition::quotient_only(),
+        )
+        .expect("combined search");
 
         assert_eq!(actual.terminal, expected_terminal);
         assert_eq!(actual.folds, expected_folds);
@@ -48,6 +55,63 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
             InnerCommitSecurityRoute::L2 { .. }
         )));
     }
+}
+
+#[test]
+fn combined_relation_views_match_mode_specific_searches() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    let request = RecursiveCandidateRequest {
+        policy: &policy,
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        opening: PlannerOpeningCandidate::evaluation_trace(
+            Recursive::ring_challenge_config(64).expect("challenge config"),
+        ),
+        dimensions: CommitmentRingDims::uniform(64),
+        current_witness_len: 948_672,
+        source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        log_basis_inner: 4,
+        log_basis_open: 4,
+        fold_level: 3,
+        source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
+    };
+    let transitions = RingRelationPhase::QuotientPrefix
+        .transitions(
+            request.fold_level,
+            RelationCandidateTopology::DirectEvaluationTrace,
+        )
+        .expect("direct relation transitions");
+    let expected = [QuotientLift, ReducedEvaluation]
+        .into_iter()
+        .flat_map(|mode| {
+            derive_fold_candidates(
+                request,
+                RecursiveSetupPrefix::None,
+                FoldCandidatePolicy::Best,
+                RelationTransition::for_mode(mode),
+            )
+            .expect("mode-specific fold search")
+        })
+        .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual = derive_recursive_candidate_views(request, FoldCandidatePolicy::Best, transitions)
+        .expect("shared relation search");
+    let actual_folds = actual
+        .folds
+        .into_iter()
+        .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(actual_folds, expected);
+    assert!(actual
+        .terminal
+        .iter()
+        .all(|params| params.ring_relation_mode == QuotientLift));
 }
 
 #[test]
@@ -68,7 +132,6 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
             RecursiveCandidateRequest {
                 policy: &policy,
                 payload_mode: akita_types::CommitmentPayloadMode::Raw,
-                ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
                 opening,
                 dimensions: CommitmentRingDims::uniform(64),
                 current_witness_len,
@@ -79,6 +142,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
                 source_moment: None,
             },
             FoldCandidatePolicy::Best,
+            RelationTransition::quotient_only(),
         )
         .expect("combined search");
         if !views.terminal.is_empty() && views.folds.is_empty() {
@@ -105,7 +169,6 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
     let request = RecursiveCandidateRequest {
         policy: &policy,
         payload_mode: akita_types::CommitmentPayloadMode::Raw,
-        ring_relation_mode: akita_types::RingRelationMode::QuotientLift,
         opening: PlannerOpeningCandidate::evaluation_trace(challenge),
         dimensions: CommitmentRingDims::uniform(64),
         current_witness_len: 1 << 16,
@@ -130,53 +193,4 @@ fn late_consumer_keeps_setup_prefix_slices_eligible() {
         .iter()
         .flatten()
         .any(|slot| { slot.profile.outer_slice_count > akita_types::CommitmentSliceCount::ONE }));
-}
-
-#[test]
-fn reduced_candidates_enforce_tail_and_direct_setup_eligibility() {
-    use akita_config::{
-        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
-    };
-
-    type Recursive = RecursiveCommitmentConfig<OneHot>;
-    let policy = policy_of::<Recursive>();
-    let challenge = Recursive::ring_challenge_config(64).expect("challenge config");
-    let request = RecursiveCandidateRequest {
-        policy: &policy,
-        payload_mode: akita_types::CommitmentPayloadMode::Raw,
-        ring_relation_mode: akita_types::RingRelationMode::ReducedEvaluation,
-        opening: PlannerOpeningCandidate::evaluation_trace(challenge),
-        dimensions: CommitmentRingDims::uniform(64),
-        current_witness_len: 1 << 16,
-        source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
-        log_basis_inner: 4,
-        log_basis_open: 4,
-        fold_level: 1,
-        source_moment: None,
-    };
-    assert!(derive_fold_candidates(
-        request,
-        RecursiveSetupPrefix::None,
-        FoldCandidatePolicy::Best,
-    )
-    .is_err());
-    assert!(derive_terminal_candidates(RecursiveCandidateRequest {
-        fold_level: 2,
-        ..request
-    })
-    .is_err());
-
-    let mut cache = SetupPrefixSearchCache::default();
-    assert!(derive_fold_candidates(
-        RecursiveCandidateRequest {
-            fold_level: 2,
-            ..request
-        },
-        RecursiveSetupPrefix::Search {
-            cache: &mut cache,
-            natural_len: 1 << 12,
-        },
-        FoldCandidatePolicy::Best,
-    )
-    .is_err());
 }

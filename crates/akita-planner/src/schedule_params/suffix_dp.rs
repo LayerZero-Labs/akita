@@ -18,8 +18,8 @@ use super::{
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
     CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
-    RecursiveSetupPrefix, ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache,
-    SplitBoundPolicy,
+    RecursiveSetupPrefix, RelationCandidateTopology, RelationTransition, RingRelationPhase,
+    ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -33,7 +33,7 @@ mod terminal;
 pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
 use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 use state::*;
-pub(crate) use state::{RingRelationPhase, ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use state::{ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology};
 pub(crate) use terminal::try_terminal_direct_suffix_cost;
 
 const SETUP_AND_PAYLOAD_PROJECTIONS: &[Projection] =
@@ -437,14 +437,15 @@ fn price_terminal_candidate(
     frontiers: &mut StateFrontiers,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
-    let direct_projections =
-        if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
-            SETUP_AND_PAYLOAD_PROJECTIONS
-        } else {
-            PAYLOAD_PROJECTION
-        };
+    let direct_projections = if state.topology.incoming_setup_prefix().is_some()
+        || (ctx.level_zero_is_root && state.level == 0)
+    {
+        SETUP_AND_PAYLOAD_PROJECTIONS
+    } else {
+        PAYLOAD_PROJECTION
+    };
     if (ctx.level_zero_is_root && state.level == 0)
-        || state.incoming_setup_prefix.is_some()
+        || state.topology.incoming_setup_prefix().is_some()
         || candidate_params.has_preceding_groups()
     {
         return Ok(());
@@ -506,12 +507,13 @@ fn price_level_candidate_with_children(
     // root setup projection. Ordinary direct suffixes are consumed solely
     // through the payload projection, so retaining a parallel setup winner
     // there duplicates frontier work and memo ownership with no observer.
-    let direct_projections =
-        if state.incoming_setup_prefix.is_some() || (ctx.level_zero_is_root && state.level == 0) {
-            SETUP_AND_PAYLOAD_PROJECTIONS
-        } else {
-            PAYLOAD_PROJECTION
-        };
+    let direct_projections = if state.topology.incoming_setup_prefix().is_some()
+        || (ctx.level_zero_is_root && state.level == 0)
+    {
+        SETUP_AND_PAYLOAD_PROJECTIONS
+    } else {
+        PAYLOAD_PROJECTION
+    };
     let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
@@ -533,7 +535,7 @@ fn price_level_candidate_with_children(
             consider_child_suffixes(
                 &direct_edge,
                 candidates,
-                state.incoming_setup_prefix,
+                state.topology.incoming_setup_prefix(),
                 direct_projections,
                 &mut frontiers.projected,
             )?;
@@ -542,7 +544,7 @@ fn price_level_candidate_with_children(
             consider_child_suffixes(
                 &direct_edge,
                 choices.payload_candidates(),
-                state.incoming_setup_prefix,
+                state.topology.incoming_setup_prefix(),
                 direct_projections,
                 &mut frontiers.projected,
             )?;
@@ -557,14 +559,14 @@ fn price_level_candidate_with_children(
             consider_child_suffixes(
                 &offloaded_edge,
                 choices.setup_candidates(),
-                state.incoming_setup_prefix,
+                state.topology.incoming_setup_prefix(),
                 SETUP_PROJECTION,
                 &mut frontiers.projected,
             )?;
             consider_child_suffixes(
                 &offloaded_edge,
                 choices.payload_candidates(),
-                state.incoming_setup_prefix,
+                state.topology.incoming_setup_prefix(),
                 PAYLOAD_PROJECTION,
                 &mut frontiers.projected,
             )?;
@@ -603,11 +605,10 @@ pub(crate) fn derive_selected_suffix_schedule(
         current_witness_len,
         current_lb,
         source_moment,
-        incoming_setup_prefix,
         dimension_ceiling: _,
-        payload_phase,
-        relation_phase,
+        topology,
     } = state;
+    let incoming_setup_prefix = topology.incoming_setup_prefix();
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
         let cached = memo.get(&memo_key);
@@ -815,6 +816,16 @@ pub(crate) fn derive_selected_suffix_schedule(
                     continue;
                 }
             }
+            let relation_transition = topology
+                .relation_transitions(level, candidate_params.opening_method())?
+                .iter()
+                .copied()
+                .find(|transition| transition.mode() == candidate_params.ring_relation_mode)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "materialized fold has no legal relation transition".into(),
+                    )
+                })?;
             let direct_child = if !direct_edge_is_admissible || prune_direct_edge {
                 None
             } else if depth == MAX_RECURSION_DEPTH {
@@ -828,21 +839,23 @@ pub(crate) fn derive_selected_suffix_schedule(
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
                         source_moment: next_source_moment,
-                        incoming_setup_prefix: None,
                         dimension_ceiling: candidate_params.role_dims(),
-                        payload_phase: payload_phase.after(candidate_params.payload_mode),
-                        relation_phase: relation_phase.after(candidate_params.ring_relation_mode),
+                        topology: topology
+                            .direct_successor(candidate_params.payload_mode, relation_transition),
                     },
                     depth + 1,
                 )?)
             };
+            let offloaded_topology = SuffixTopology::offloaded_successor(
+                relation_transition,
+                candidate_params.payload_mode,
+                natural_len,
+            );
             let offloaded_child = if policy.recursive_setup_planning
                 && policy
                     .recursive_setup_search_policy
                     .admits_offloaded_edge_at(level)
-                && candidate_params.payload_mode.is_compressed()
-                && candidate_params.ring_relation_mode
-                    == akita_types::RingRelationMode::QuotientLift
+                && offloaded_topology.is_some()
                 // An offloaded edge accepts only a child suffix with at
                 // least two folds. At the last two admissible depths that
                 // topology cannot fit, so planning the child can only
@@ -857,10 +870,12 @@ pub(crate) fn derive_selected_suffix_schedule(
                         current_witness_len: next_witness_len,
                         current_lb: open_lb,
                         source_moment: next_source_moment,
-                        incoming_setup_prefix: Some(natural_len),
                         dimension_ceiling: candidate_params.role_dims(),
-                        payload_phase,
-                        relation_phase,
+                        topology: offloaded_topology.ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "offloaded child lost its typed suffix topology".into(),
+                            )
+                        })?,
                     },
                     depth + 1,
                 )?)

@@ -23,24 +23,6 @@ pub(super) fn prepare_recursive_level_search(
         fold_level,
         ..
     } = *request;
-    if request.ring_relation_mode.is_reduced_evaluation() {
-        if fold_level < 2 {
-            return Err(AkitaError::InvalidSetup(
-                "reduced-evaluation planner candidate requires absolute fold level 2 or later"
-                    .into(),
-            ));
-        }
-        if opening.is_coefficient_packing() {
-            return Err(AkitaError::InvalidSetup(
-                "reduced-evaluation planner candidate requires EvaluationTrace".into(),
-            ));
-        }
-        if matches!(&setup_prefix, RecursiveSetupPrefix::Search { .. }) {
-            return Err(AkitaError::InvalidSetup(
-                "reduced-evaluation planner candidate cannot consume a setup prefix".into(),
-            ));
-        }
-    }
     let num_chunks = policy.chunks_at_level(fold_level);
     dimensions.validate_role_projection()?;
     opening.validate_for(fold_level, policy.claim_ext_degree, dimensions)?;

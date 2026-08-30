@@ -137,7 +137,7 @@ fn opening_work_domain(
     let early_packing_level = state.level <= 1;
     let terminal_seed_is_relevant = state_allows_terminal_seed(
         root_level_key.is_some(),
-        state.incoming_setup_prefix.is_some(),
+        state.topology.incoming_setup_prefix().is_some(),
     );
     let mut trace_work = Vec::new();
     let mut packing_work = Vec::new();
@@ -245,7 +245,8 @@ impl<'a> CandidateDomain<'a> {
     pub(super) fn prepare(ctx: &SuffixCtx<'a>, state: SuffixState) -> Result<Self, AkitaError> {
         let policy = ctx.policy;
         let root_level_key = ctx.root_lookup_key.filter(|_| state.level == 0);
-        if root_level_key.is_some() && state.incoming_setup_prefix.is_some() {
+        let incoming_setup_prefix = state.topology.incoming_setup_prefix();
+        if root_level_key.is_some() && incoming_setup_prefix.is_some() {
             return Err(AkitaError::InvalidSetup(
                 "root batch cannot consume an incoming setup prefix".into(),
             ));
@@ -255,25 +256,10 @@ impl<'a> CandidateDomain<'a> {
                 "root-level suffix state is missing its opening lookup key".into(),
             ));
         }
-        if state.payload_phase == akita_types::CommitmentPayloadPhase::RawSuffix
-            && state.incoming_setup_prefix.is_some()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "raw commitment suffix cannot consume a recursive setup prefix".into(),
-            ));
-        }
-        if state.relation_phase == super::RingRelationPhase::ReducedEvaluationSuffix
-            && state.incoming_setup_prefix.is_some()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "reduced-evaluation suffix cannot consume a recursive setup prefix".into(),
-            ));
-        }
-
         let opening_layout = if let Some(root_key) = root_level_key {
             root_key.opening_layout()?
         } else {
-            suffix_opening_layout(state.current_witness_len, state.incoming_setup_prefix)?
+            suffix_opening_layout(state.current_witness_len, incoming_setup_prefix)?
         };
         let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         let inner_source = if ctx.level_zero_is_root && state.level == 0 {
@@ -292,7 +278,7 @@ impl<'a> CandidateDomain<'a> {
         let (min_open_basis, max_open_basis) =
             crate::policy::log_basis_search_range_at_level(policy, state.level);
         let opening_work = opening_work_domain(ctx, state, root_level_key, opening_shape)?;
-        let retain_split_frontier = state.incoming_setup_prefix.is_some()
+        let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
             || (policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
                 && state.level < akita_schedules::ADAPTIVE_SEARCH_LEVELS)
             || matches!(
@@ -330,6 +316,7 @@ impl<'a> CandidateDomain<'a> {
         setup_prefixes: &mut SetupPrefixSearchCache,
     ) -> Result<GeneratedCandidates, AkitaError> {
         let policy = ctx.policy;
+        let incoming_setup_prefix = state.topology.incoming_setup_prefix();
         let mut terminal = Vec::new();
         let mut folds = Vec::new();
 
@@ -373,13 +360,13 @@ impl<'a> CandidateDomain<'a> {
 
             for work in &self.opening_work {
                 for &payload_mode in state
-                    .payload_phase
-                    .candidate_modes(state.level, state.incoming_setup_prefix.is_some())
+                    .topology
+                    .payload_phase()
+                    .candidate_modes(state.level, incoming_setup_prefix.is_some())
                 {
-                    let request = |ring_relation_mode| RecursiveCandidateRequest {
+                    let request = RecursiveCandidateRequest {
                         policy,
                         payload_mode,
-                        ring_relation_mode,
                         opening: work.opening,
                         dimensions: work.dimensions,
                         current_witness_len: state.current_witness_len,
@@ -389,18 +376,14 @@ impl<'a> CandidateDomain<'a> {
                         fold_level: state.level,
                         source_moment: state.source_moment,
                     };
-                    let relation_modes = state.relation_phase.candidate_modes(
-                        state.level,
-                        state.incoming_setup_prefix.is_some(),
-                        !work.opening.is_coefficient_packing(),
-                    );
-                    let shares_quotient_search = work.purpose == OpeningPurpose::TerminalAndFold
-                        && state.incoming_setup_prefix.is_none()
-                        && relation_modes.contains(&akita_types::RingRelationMode::QuotientLift);
-                    if shares_quotient_search {
+                    let relation_transitions = state
+                        .topology
+                        .relation_transitions(state.level, work.opening.method())?;
+                    if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
-                            request(akita_types::RingRelationMode::QuotientLift),
+                            request,
                             self.fold_policy,
+                            relation_transitions,
                         )?;
                         terminal.extend(views.terminal.into_iter().map(|params| {
                             RawLevelCandidate {
@@ -416,48 +399,40 @@ impl<'a> CandidateDomain<'a> {
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             }
                         }));
-                    } else if work.purpose.allows_terminal() {
-                        terminal.extend(
-                            derive_terminal_candidates(request(
-                                akita_types::RingRelationMode::QuotientLift,
-                            ))?
-                            .into_iter()
-                            .map(|params| RawLevelCandidate {
+                        continue;
+                    }
+                    if work.purpose.allows_terminal() {
+                        terminal.extend(derive_terminal_candidates(request)?.into_iter().map(
+                            |params| RawLevelCandidate {
                                 params,
                                 next_witness_len: 0,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
-                            }),
-                        );
+                            },
+                        ));
                     }
                     if !work.purpose.allows_fold() {
                         continue;
                     }
-                    for &ring_relation_mode in relation_modes {
-                        if shares_quotient_search
-                            && ring_relation_mode == akita_types::RingRelationMode::QuotientLift
-                        {
-                            continue;
+                    let setup_prefix = if let Some(natural_len) = incoming_setup_prefix {
+                        RecursiveSetupPrefix::Search {
+                            cache: setup_prefixes,
+                            natural_len,
                         }
-                        let setup_prefix = if let Some(natural_len) = state.incoming_setup_prefix {
-                            RecursiveSetupPrefix::Search {
-                                cache: setup_prefixes,
-                                natural_len,
-                            }
-                        } else {
-                            RecursiveSetupPrefix::None
-                        };
-                        let level_candidates = derive_fold_candidates(
-                            request(ring_relation_mode),
-                            setup_prefix,
-                            self.fold_policy,
-                        )?;
-                        for (params, next_witness_len) in level_candidates {
-                            folds.push(RawLevelCandidate {
-                                params,
-                                next_witness_len,
-                                opening_reduction_bytes: work.opening_reduction_bytes,
-                            });
-                        }
+                    } else {
+                        RecursiveSetupPrefix::None
+                    };
+                    let level_candidates = derive_fold_candidates(
+                        request,
+                        setup_prefix,
+                        self.fold_policy,
+                        relation_transitions,
+                    )?;
+                    for (params, next_witness_len) in level_candidates {
+                        folds.push(RawLevelCandidate {
+                            params,
+                            next_witness_len,
+                            opening_reduction_bytes: work.opening_reduction_bytes,
+                        });
                     }
                 }
             }

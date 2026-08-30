@@ -26,6 +26,70 @@ fn relation_mode_signature(value: akita_types::RingRelationMode) -> &'static str
     }
 }
 
+fn removed_quotient_coefficients(
+    spec: &EmitSpec,
+    params: &akita_types::CommittedGroupParams,
+    input_witness_len: usize,
+) -> Result<(usize, usize), String> {
+    if !params.ring_relation_mode.is_reduced_evaluation() {
+        return Ok((0, 0));
+    }
+    let mut lifted = params.clone();
+    lifted.ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
+    let final_group = akita_types::PolynomialGroupLayout::singleton(
+        akita_types::padded_boolean_opening_vars(input_witness_len)
+            .map_err(|error| format!("derive quotient-report opening arity: {error}"))?,
+    );
+    let opening_layout = lifted
+        .opening_layout_for_final_group(final_group)
+        .map_err(|error| format!("derive quotient-report opening layout: {error}"))?;
+    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
+        &lifted,
+        &opening_layout,
+        spec.policy.claim_ext_degree,
+    )
+    .map_err(|error| format!("derive quotient-report relation geometry: {error}"))?;
+    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(
+        &lifted,
+        spec.policy.decomposition.field_bits(),
+    )
+    .map_err(|error| format!("derive quotient-report decomposition: {error}"))?;
+    let layout = akita_types::WitnessLayout::new(
+        &lifted,
+        &opening_layout,
+        &relation_geometry,
+        lifted.witness_chunk.num_chunks,
+        quotient_plan,
+    )
+    .map_err(|error| format!("derive quotient-report witness layout: {error}"))?;
+    let mut compression_rows = std::collections::BTreeSet::new();
+    for layer in layout.compression_layers() {
+        compression_rows.extend(
+            layer
+                .f_quotient_rows()
+                .into_iter()
+                .flatten()
+                .map(|(_, row)| *row),
+        );
+        if let Some(row) = layer.h_quotient_row() {
+            compression_rows.insert(row);
+        }
+    }
+    let mut ordinary = 0usize;
+    let mut compression = 0usize;
+    for (index, row) in layout.r_rows().iter().enumerate() {
+        let target = if compression_rows.contains(&index) {
+            &mut compression
+        } else {
+            &mut ordinary
+        };
+        *target = target
+            .checked_add(row.range().len())
+            .ok_or_else(|| "catalog quotient-removal coefficient count overflow".to_string())?;
+    }
+    Ok((ordinary, compression))
+}
+
 fn opening_policy_signature(
     opening_method: akita_types::OpeningMethod,
     source_encoding: akita_types::CommittedSourceEncoding,
@@ -99,6 +163,8 @@ pub(super) fn catalog_policy_signature(
             }),
     );
     for (level, params, input_witness_len, output_witness_len) in nonterminal {
+        let (ordinary_quotient_coefficients_removed, compression_quotient_coefficients_removed) =
+            removed_quotient_coefficients(spec, params, input_witness_len)?;
         let eor = if matches!(
             params.opening_method(),
             akita_types::OpeningMethod::EvaluationTrace
@@ -127,7 +193,7 @@ pub(super) fn catalog_policy_signature(
         }
         write!(
             signature,
-            "L{level}[chunks={}@{},rel={},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
+            "L{level}[chunks={}@{},rel={},qrm={ordinary_quotient_coefficients_removed},cqrm={compression_quotient_coefficients_removed},eor={eor},in={input_witness_len},out={output_witness_len};witness={}",
             params.witness_chunk.num_chunks,
             params.witness_chunk.num_activated_levels,
             relation_mode_signature(params.ring_relation_mode),

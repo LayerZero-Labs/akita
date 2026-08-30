@@ -553,10 +553,11 @@ pub fn find_schedule(
         current_witness_len: root_input_witness_len,
         current_lb: 0,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
-        relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
+        topology: super::schedule_params::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
+        },
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
@@ -617,10 +618,12 @@ pub fn find_schedule(
             metrics.proof_bytes(),
             metrics.setup_field_elements,
             metrics.first_direct_setup_capacity.field_elements(),
-            folds.iter().map(|fold| fold.params.role_dims()).collect(),
             folds
                 .iter()
-                .map(|fold| fold.params.ring_relation_mode)
+                .map(|fold| crate::diagnostics::SelectedFoldDiagnostics {
+                    dimensions: fold.params.role_dims(),
+                    relation_mode: fold.params.ring_relation_mode,
+                })
                 .collect(),
         );
     }
