@@ -7,8 +7,8 @@ use akita_algebra::{
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
 

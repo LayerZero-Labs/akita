@@ -5,8 +5,8 @@ use crate::ntt::ifma52::{
     forward, ifma52_enabled, inverse, pointwise_dot_accumulate, Ifma52Prime, Ifma52Twiddles,
 };
 use crate::{
-    CanonicalField, CenteredMontLut, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    FieldCore,
+    CanonicalEncoding, CenteredMontLut, CrtCapacity, CrtNttParamSet, CyclotomicCrtNtt,
+    CyclotomicRing, Field,
 };
 use akita_error::AkitaError;
 
@@ -99,7 +99,7 @@ impl<const K: usize, const D: usize> Ifma52Params<K, D> {
     }
 
     #[inline]
-    fn reconstruct<F: FieldCore + CanonicalField>(
+    fn reconstruct<F: Field + CanonicalEncoding>(
         &self,
         canonical: &[[u64; D]; K],
         tail_canonical: Option<&[i16; D]>,
@@ -163,7 +163,7 @@ pub struct Ifma52NttMatrix<const K: usize, const D: usize> {
 
 impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
     /// Prepare a flat row-major coefficient matrix in negacyclic NTT form.
-    pub fn prepare<F: FieldCore + CanonicalField>(
+    pub fn prepare<F: Field + CanonicalEncoding>(
         rings: &[CyclotomicRing<F, D>],
         params: &Ifma52Params<K, D>,
     ) -> Self {
@@ -219,7 +219,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
 
     /// Multiply by one exact signed-i16 vector.
     #[inline]
-    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+    pub fn mat_vec_i16<F: Field + CanonicalEncoding>(
         &self,
         num_rows: usize,
         rhs: &[[i16; D]],
@@ -240,7 +240,7 @@ impl<const K: usize, const D: usize> Ifma52NttMatrix<K, D> {
 
     /// Multiply by one exact signed-i16 vector with an i16 CRT tail.
     #[inline]
-    pub fn mat_vec_i16_with_tail<F: FieldCore + CanonicalField>(
+    pub fn mat_vec_i16_with_tail<F: Field + CanonicalEncoding>(
         &self,
         tail_matrix: &[CyclotomicCrtNtt<i16, 1, D>],
         num_rows: usize,
@@ -368,7 +368,7 @@ mod tests {
     use super::*;
     use crate::ntt::ifma52::IFMA52_PRIMES;
     use crate::ntt::tables::I16_TAIL_PRIME;
-    use akita_field::{FromPrimitiveInt, Prime128OffsetA7F7, Prime64Offset59};
+    use jolt_field::{One, Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 
     fn assert_limb_major_i16_matvec<const D: usize>() {
         type F = Prime64Offset59;

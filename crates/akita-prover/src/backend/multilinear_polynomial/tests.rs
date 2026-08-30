@@ -6,13 +6,13 @@ use crate::compute::{
     RootOpeningSource, RootPolyShape,
 };
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
-use akita_field::{CanonicalField, Prime24Offset3};
 use akita_types::SetupMatrixCapacity;
+use jolt_field::{CanonicalEncoding, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
     let num_vars = 5;
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     DensePoly::from_field_evals(num_vars, &evals).unwrap()
 }
@@ -118,7 +118,7 @@ fn multilinear_mixed_sparse_batch_fold_returns_fallback_per_poly() {
     let onehot = sample_onehot::<D>();
     let num_vars = RootPolyShape::<F, D>::num_vars(&onehot);
     let evals = (0..(1usize << num_vars))
-        .map(|idx| Prime24Offset3::from_canonical_u128_reduced(17 * idx as u128 + 9))
+        .map(|idx| Prime24Offset3::from_u128_reduced(17 * idx as u128 + 9))
         .collect::<Vec<_>>();
     let dense = DensePoly::from_field_evals(num_vars, &evals).unwrap();
     let wrapped = [

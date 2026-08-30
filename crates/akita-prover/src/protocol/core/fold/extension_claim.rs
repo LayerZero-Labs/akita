@@ -3,8 +3,8 @@ use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, Prepa
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AdditiveGroup;
+use jolt_field::AdditiveGroup;
+use jolt_field::Unreduced;
 
 pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
     Logical(&'a [G]),
@@ -24,19 +24,20 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Ring
+        + Field
+        + Unreduced
+        + Field
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,

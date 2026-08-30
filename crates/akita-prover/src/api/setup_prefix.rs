@@ -9,12 +9,12 @@ use crate::compute::{
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_types::{
     dispatch_for_field, AkitaCommitmentHint, AkitaExpandedSetup, CompressionChainPlan,
     GroupCommitPhaseParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
     SetupPrefixSlotId,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Commit one actual power-of-two flat prefix of the shared setup matrix.
 ///
@@ -36,7 +36,7 @@ pub fn commit_setup_prefix<F, const D: usize, B>(
     natural_len: usize,
 ) -> Result<SetupPrefixSlot<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
+    F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F> + for<'a> RootCommitKernel<DenseView<'a, F, D>, F, D>,
 {
     if natural_len == 0 || natural_len > n_prefix {
@@ -187,7 +187,7 @@ fn extract_setup_prefix_ring_elems<F, const D: usize>(
     full_prefix_ring_slots: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
 {
     let fields = expanded.shared_matrix().as_field_slice();
     let full_prefix_field_len = full_prefix_ring_slots.checked_mul(D).ok_or_else(|| {
@@ -215,12 +215,12 @@ mod tests {
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
         InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
         SisModulusProfileId, SisTableKey,
     };
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
         let mut params = CommittedGroupParams::params_only(

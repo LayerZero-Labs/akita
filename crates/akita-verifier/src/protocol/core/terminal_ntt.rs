@@ -2,17 +2,19 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 use crate::prepared_cache::{
     terminal_ntt_cache_requirement, TERMINAL_I16_ABS_BOUND, TERMINAL_I16_LOG_BASIS,
 };
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
-pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
+pub(super) fn warm_for_schedule<
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
@@ -49,7 +51,7 @@ pub(super) fn centered_rows<F, const D: usize>(
     prepared_prefix_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
 {
     let _span = tracing::info_span!(
         "terminal_ntt_a_product",
@@ -96,12 +98,13 @@ mod tests {
     use akita_algebra::ntt::ifma52::ifma52_enabled;
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
-    use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
     use akita_types::{
         prepare_ntt_cache, select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey,
         AkitaSetupDescriptor, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
         ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
+    use jolt_field::Ring;
+    use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
     use std::sync::Arc;
 
     const D: usize = 64;
@@ -111,7 +114,7 @@ mod tests {
         rhs: &[[i16; D]],
     ) -> Result<CyclotomicRing<F, D>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     {
         if lhs.len() != rhs.len() {
             return Err(AkitaError::InvalidProof);

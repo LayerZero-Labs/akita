@@ -15,10 +15,6 @@ use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
@@ -47,6 +43,7 @@ use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 mod fold;
 mod root_fold;
@@ -74,7 +71,7 @@ fn prepare_terminal_witness_replay<F, T>(
     terminal_response_len: usize,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
 {
     if terminal_response.num_elems() != terminal_response_len {

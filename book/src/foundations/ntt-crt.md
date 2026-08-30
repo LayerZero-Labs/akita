@@ -21,7 +21,7 @@ with smaller field types used by tests and auxiliary paths. The CRT NTT primes
 are separate primes. They are chosen for the roots of unity required by the
 active ring degree.
 
-**Code:** `crates/akita-field/src/prime/` and
+**Code:** Jolt's `jolt-field` Solinas backend and
 `crates/akita-algebra/src/ntt/tables.rs`.
 
 ## Deferred reduction and balanced digits
@@ -178,7 +178,7 @@ an iterative mixed radix Cooley Tukey FFT over a smooth subgroup. The
 implementation includes radix 2, 3, 5, and 7 kernels and evaluates on a coset
 when the requested domain requires it.
 
-**Code:** `crates/akita-field/src/fft.rs`.
+**Code:** `crates/akita-algebra/src/fft.rs`.
 
 ## Further reading
 

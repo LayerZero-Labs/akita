@@ -14,15 +14,15 @@ use crate::protocol::ring_relation_witness::{
 use crate::validation::validate_i8_setup_log_basis;
 use crate::DecomposeFoldWitness;
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
-use akita_field::parallel::*;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
     CommitmentRingDims, CompressionWitnessSpan, DigitBlocks, PackedNegativeBinary, RingRole,
     RingVec, WitnessLayout, WitnessUnitLayout,
 };
+use jolt_field::solinas::parallel::*;
 
-pub(crate) struct PreparedRingSwitchGroup<F: FieldCore> {
+pub(crate) struct PreparedRingSwitchGroup<F: Field> {
     pub(crate) params: akita_types::GroupOpenPhaseParams,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) e_hat: DigitBlocks,
@@ -183,7 +183,7 @@ fn trace_witness_source_moments(
 }
 
 /// Emit one physical `[Z | E | T]` ownership unit directly into packed storage.
-fn emit_witness_unit<F: CanonicalField>(
+fn emit_witness_unit<F: Field + CanonicalEncoding>(
     out: &mut PackedSignedDigitWriter,
     unit: &WitnessUnitLayout,
     group: &PreparedRingSwitchGroup<F>,
@@ -254,7 +254,7 @@ fn emit_witness_unit<F: CanonicalField>(
 fn emit_unit_z_segment<const D: usize>(
     out: &mut PackedSignedDigitWriter,
     unit: &WitnessUnitLayout,
-    group: &PreparedRingSwitchGroup<impl CanonicalField>,
+    group: &PreparedRingSwitchGroup<impl Field + CanonicalEncoding>,
     num_digits_fold: usize,
     expected_chunks: usize,
 ) -> Result<(), AkitaError> {
@@ -310,12 +310,7 @@ pub fn ring_switch_build_w<F, B>(
     lp: &CommittedGroupParams,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + AkitaSerialize,
+    F: Field + CanonicalEncoding + Ring + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
@@ -603,7 +598,7 @@ fn decompose_z_folded_planes<const D: usize>(
     Ok(all_planes)
 }
 
-fn emit_witness_tail<F: CanonicalField>(
+fn emit_witness_tail<F: Field + CanonicalEncoding>(
     out: &mut PackedSignedDigitWriter,
     layout: &WitnessLayout,
     r: &RelationQuotientOutput<F>,
@@ -614,7 +609,10 @@ fn emit_witness_tail<F: CanonicalField>(
     if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
         return Err(AkitaError::InvalidProof);
     }
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     let mut events = layout
         .r_rows()

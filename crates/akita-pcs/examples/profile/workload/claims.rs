@@ -1,10 +1,10 @@
 use akita_config::CommitmentConfig;
-use akita_field::{FieldCore, Zero};
 use akita_prover::SelectedProverOpeningData;
 use akita_types::{
     AkitaCommitmentHint, CommittedGroup, GroupBatchStatement, OpeningClaims,
     OpeningScheduleSelection, PolynomialGroupClaims,
 };
+use jolt_field::{Field, Zero};
 
 pub(super) fn prover_claims<'a, Cfg, P>(
     selection: OpeningScheduleSelection,
@@ -39,7 +39,7 @@ where
     selected
 }
 
-pub(super) fn verifier_claims<'a, E: FieldCore, F: FieldCore>(
+pub(super) fn verifier_claims<'a, E: Field, F: Field>(
     selection: OpeningScheduleSelection,
     point: &[E],
     openings: &[E],

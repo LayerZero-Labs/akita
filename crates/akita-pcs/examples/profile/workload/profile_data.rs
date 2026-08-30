@@ -1,4 +1,3 @@
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootProvePoly};
 use akita_prover::CpuBackend;
 use akita_prover::{OneHotIndex, OneHotPoly};
@@ -6,6 +5,7 @@ use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     BasisMode, CommittedGroupParams,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -13,7 +13,7 @@ const ONEHOT_K: usize = 256;
 
 pub(super) fn make_profile_onehot_poly<FF>(num_vars: usize, seed: u64) -> OneHotPoly<FF, u8>
 where
-    FF: CanonicalField + FromPrimitiveInt,
+    FF: CanonicalEncoding + Field,
 {
     let total_field = 1usize << num_vars;
     let onehot_k = onehot_k_for_num_vars(num_vars);
@@ -38,13 +38,13 @@ pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
 
 pub(super) fn random_claim_point<FF, E>(nv: usize, rng: &mut StdRng) -> Vec<E>
 where
-    FF: CanonicalField,
+    FF: CanonicalEncoding + Field,
     E: ExtField<FF>,
 {
     (0..nv)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FF::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -53,10 +53,10 @@ where
 
 pub(super) fn degree_one_claim_point_to_base<FF, E>(point: &[E]) -> Option<Vec<FF>>
 where
-    FF: FieldCore,
+    FF: Field,
     E: ExtField<FF>,
 {
-    (E::EXT_DEGREE == 1).then(|| {
+    (E::DEGREE == 1).then(|| {
         point
             .iter()
             .map(|coord| coord.to_base_vec()[0])
@@ -66,7 +66,7 @@ where
 
 pub(super) fn onehot_lagrange_opening<FF, E, I>(poly: &OneHotPoly<FF, I>, point: &[E]) -> E
 where
-    FF: FieldCore,
+    FF: Field,
     E: ExtField<FF>,
     I: OneHotIndex,
 {
@@ -123,7 +123,7 @@ pub(super) fn opening_from_poly<'a, FF, const D: usize, P>(
     basis: BasisMode,
 ) -> FF
 where
-    FF: CanonicalField,
+    FF: CanonicalEncoding + Field,
     P: RootProvePoly<FF, D>,
     CpuBackend: OpeningFoldKernel<P::OpeningView<'a>, FF, D>,
 {

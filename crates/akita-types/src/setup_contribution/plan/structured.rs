@@ -4,7 +4,7 @@ use akita_algebra::{
     ring::scalar_powers_with_stride,
 };
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms through its canonical
     /// relation-column tensors.
     pub fn evaluate_structured_group<F>(
@@ -15,8 +15,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         alpha: E,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let group = self
             .groups
@@ -465,8 +465,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
 fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
     crate::gadget_row_scalars::<F>(depth, log_basis)
         .into_iter()

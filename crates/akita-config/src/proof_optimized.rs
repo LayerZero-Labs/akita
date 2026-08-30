@@ -5,13 +5,13 @@
 
 use super::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
     CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
     SetupMatrixCapacity,
 };
+use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -328,7 +328,7 @@ where
 /// Offloaded producer edges are covered by verifier-visible setup-prefix
 /// commitments and do not require their natural source prefixes here.
 pub fn ensure_verifier_schedule_fits_setup(
-    setup: &AkitaExpandedSetup<impl akita_field::FieldCore>,
+    setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError> {

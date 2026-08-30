@@ -2,8 +2,8 @@ use crate::compute::requirements::RoutedNttRequirement;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Process-local identity of one physical backend cache owner.
@@ -23,7 +23,7 @@ impl NttCacheOwnerId {
 /// only the exact transform prefixes they need.
 pub trait ComputeBackendSetup<F>: Send + Sync
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Backend-prepared setup (ring dimension is a runtime cache key, not a type param).
     type PreparedSetup: Send + Sync;
@@ -129,7 +129,7 @@ where
 }
 
 /// Paired negacyclic and cyclic products for one compression input.
-pub struct CompressionRowsProducts<F: FieldCore, const D: usize> {
+pub struct CompressionRowsProducts<F: Field, const D: usize> {
     /// Negacyclic image committed by this map or passed to the next map.
     pub negacyclic: Vec<CyclotomicRing<F, D>>,
     /// Cyclic product used to construct the map's quotient witness.
@@ -139,7 +139,7 @@ pub struct CompressionRowsProducts<F: FieldCore, const D: usize> {
 /// Exact-prefix compression matrix operations.
 pub trait CompressionComputeBackend<F>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Current byte footprint of backend-owned compression caches, when exposed.
     ///
@@ -163,7 +163,7 @@ where
 pub trait DigitRowsComputeBackend<F>:
     ComputeBackendSetup<F> + CompressionComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Negacyclic digit mat-vec rows for an equal-width input batch.
     fn digit_rows<const D: usize>(
@@ -178,7 +178,7 @@ where
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.
 pub trait CyclicRowsComputeBackend<F>: DigitRowsComputeBackend<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Cyclic single-input digit mat-vec rows.
     fn cyclic_digit_rows<const D: usize>(

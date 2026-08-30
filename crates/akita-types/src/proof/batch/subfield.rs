@@ -3,21 +3,21 @@
 use crate::{embed_subfield, FpExtEncoding, SubfieldParams};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{ExtField, FieldCore};
+use jolt_field::{ExtField, Field};
 
 /// A validated pair of compact ring-subfield multiplier vectors.
 ///
 /// Construction checks the extension/ring embedding once. Private storage then
 /// keeps the coordinate lengths, extension degree, and ring dimension in sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubfieldMultiplierOpeningPoint<F: FieldCore> {
+pub struct SubfieldMultiplierOpeningPoint<F: Field> {
     position_coordinates: Vec<F>,
     live_block_coordinates: Vec<F>,
     extension_degree: usize,
     ring_dim: usize,
 }
 
-impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
+impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
     pub(super) fn new<E, const D: usize>(
         position_weights: &[E],
         live_block_weights: &[E],
@@ -26,19 +26,19 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
     where
         E: FpExtEncoding<F>,
     {
-        validate_subfield_shape::<D>(E::EXT_DEGREE, error.clone())?;
+        validate_subfield_shape::<D>(E::DEGREE, error.clone())?;
         Ok(Self {
             position_coordinates: collect_subfield_coordinates(
                 position_weights,
-                E::EXT_DEGREE,
+                E::DEGREE,
                 error.clone(),
             )?,
             live_block_coordinates: collect_subfield_coordinates(
                 live_block_weights,
-                E::EXT_DEGREE,
+                E::DEGREE,
                 error,
             )?,
-            extension_degree: E::EXT_DEGREE,
+            extension_degree: E::DEGREE,
             ring_dim: D,
         })
     }
@@ -118,7 +118,7 @@ impl<F: FieldCore> SubfieldMultiplierOpeningPoint<F> {
     where
         E: ExtField<F>,
     {
-        if E::EXT_DEGREE != self.extension_degree {
+        if E::DEGREE != self.extension_degree {
             return Err(AkitaError::InvalidProof);
         }
         Ok(E::from_base_slice(self.fold_coordinates(idx)?))
@@ -221,7 +221,7 @@ fn coordinate_chunk<F>(coordinates: &[F], degree: usize, idx: usize) -> Result<&
     coordinates.get(start..end).ok_or(AkitaError::InvalidProof)
 }
 
-fn subfield_constant<F: FieldCore>(coordinates: &[F]) -> Option<F> {
+fn subfield_constant<F: Field>(coordinates: &[F]) -> Option<F> {
     let (&constant, rest) = coordinates.split_first()?;
     rest.iter()
         .all(|coordinate| coordinate.is_zero())
@@ -252,7 +252,7 @@ fn collect_subfield_coordinates<F, E>(
     error: AkitaError,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: FpExtEncoding<F>,
 {
     let coordinate_len = values
@@ -273,7 +273,7 @@ where
     Ok(coordinates)
 }
 
-fn materialize_subfield_rings<F: FieldCore, const D: usize>(
+fn materialize_subfield_rings<F: Field, const D: usize>(
     coordinates: &[F],
     extension_degree: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
@@ -304,11 +304,11 @@ fn eval_subfield_at_pows<F, E>(
     alpha_pows: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let extension_degree = coordinates.len();
-    if extension_degree != E::EXT_DEGREE || alpha_pows.len() != ring_dim {
+    if extension_degree != E::DEGREE || alpha_pows.len() != ring_dim {
         return Err(AkitaError::InvalidProof);
     }
     let (&constant, nonconstant) = coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
@@ -333,7 +333,7 @@ where
     Ok(value)
 }
 
-fn add_subfield_product<F: FieldCore, const D: usize>(
+fn add_subfield_product<F: Field, const D: usize>(
     coordinates: &[F],
     extension_degree: usize,
     rhs: &CyclotomicRing<F, D>,
@@ -356,7 +356,7 @@ fn add_subfield_product<F: FieldCore, const D: usize>(
     Ok(())
 }
 
-fn add_shifted_subfield_monomial<F: FieldCore, const D: usize>(
+fn add_shifted_subfield_monomial<F: Field, const D: usize>(
     coordinates: &[F],
     extension_degree: usize,
     shift: usize,
@@ -393,7 +393,7 @@ fn add_shifted_subfield_monomial<F: FieldCore, const D: usize>(
     Ok(())
 }
 
-fn add_subfield_product_high_half<F: FieldCore, const D: usize>(
+fn add_subfield_product_high_half<F: Field, const D: usize>(
     coordinates: &[F],
     extension_degree: usize,
     rhs: &CyclotomicRing<F, D>,

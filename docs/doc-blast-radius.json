@@ -122,7 +122,7 @@
     {
       "id": "field-algebra",
       "description": "Field traits, packed SIMD, extension towers",
-      "code": ["crates/akita-field/**", "crates/akita-algebra/**"],
+      "code": ["crates/akita-algebra/**", "crates/akita-serialization/src/field_impls.rs"],
       "consider_updating": [
         "book/src/foundations/rings-and-fields.md",
         "book/src/foundations/ntt-crt.md",

@@ -4,11 +4,11 @@ use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_types::{
     AkitaCommitmentHint, CoefficientPackingFoldProduct, CommitmentRingDims, DigitBlocks,
     OpeningFamily, RingRole, RingVec,
 };
+use jolt_field::Field;
 
 /// Method-typed folded opening retained for quotient construction.
 pub(crate) type GroupFoldedOpening<F> = OpeningFamily<RingVec<F>, CoefficientPackingFoldProduct<F>>;
@@ -23,7 +23,7 @@ pub(crate) struct CenteredFoldChunk {
 impl CenteredFoldChunk {
     /// Retain one chunk's centered coefficients and the extrema computed by
     /// its canonical fold-witness constructor.
-    pub(crate) fn from_witness<F: FieldCore>(witness: &DecomposeFoldWitness<F>) -> Self {
+    pub(crate) fn from_witness<F: Field>(witness: &DecomposeFoldWitness<F>) -> Self {
         let (min, max) = witness.centered_signed_extrema();
         Self {
             coefficients: witness.centered_coeffs_flat().to_vec(),
@@ -91,7 +91,7 @@ impl FoldChunkCoefficients {
 
     pub(crate) fn all_extrema_within(
         &self,
-        global: &DecomposeFoldWitness<impl FieldCore>,
+        global: &DecomposeFoldWitness<impl Field>,
         mut accepts: impl FnMut(i32, i32) -> bool,
     ) -> bool {
         match &self.storage {
@@ -178,7 +178,7 @@ impl FoldChunkCoefficients {
 }
 
 /// Per-group secret witness for the ring relation at one fold level.
-pub struct RingRelationGroupWitness<F: FieldCore> {
+pub struct RingRelationGroupWitness<F: Field> {
     pub z_folded_rings: DecomposeFoldWitness<F>,
     pub(crate) z_folded_coefficients: FoldChunkCoefficients,
     pub e_hat: DigitBlocks,
@@ -187,7 +187,7 @@ pub struct RingRelationGroupWitness<F: FieldCore> {
     role_dims: CommitmentRingDims,
 }
 
-impl<F: FieldCore> RingRelationGroupWitness<F> {
+impl<F: Field> RingRelationGroupWitness<F> {
     /// Construct one group witness from D-free carriers.
     pub(crate) fn from_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
@@ -299,7 +299,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 }
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
-pub struct RingRelationWitness<F: FieldCore> {
+pub struct RingRelationWitness<F: Field> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
     /// Level-owned D-role quotient rows retained after transcript-time `v` construction.
@@ -307,7 +307,7 @@ pub struct RingRelationWitness<F: FieldCore> {
     pub(crate) compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
-impl<F: FieldCore> RingRelationWitness<F> {
+impl<F: Field> RingRelationWitness<F> {
     /// Construct from already-grouped witnesses.
     pub(crate) fn from_groups(
         fold_grind_nonce: u32,
@@ -336,7 +336,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
     /// Public terminal payload of the shared opening-compression chain.
     pub(crate) fn opening_payload(&self) -> Result<RingVec<F>, AkitaError>
     where
-        F: akita_field::CanonicalField,
+        F: jolt_field::CanonicalEncoding,
     {
         let source = self
             .compression

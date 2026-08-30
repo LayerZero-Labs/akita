@@ -1,7 +1,7 @@
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
-use akita_field::parallel::*;
+use jolt_field::solinas::parallel::*;
 
 pub(super) fn validate_packing_challenge_weights(
     challenges: &Challenges,

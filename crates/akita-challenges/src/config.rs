@@ -338,14 +338,14 @@ impl SparseChallengeConfig {
 #[cfg(test)]
 mod entropy_tests {
     use super::*;
-    use akita_field::{
+    use jolt_field::{
         pseudo_mersenne_modulus, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
-        PseudoMersenneField,
+        PseudoMersenne,
     };
 
-    fn assert_ls18_short_difference_bound<F: PseudoMersenneField>(split_count: u32) {
-        let modulus = pseudo_mersenne_modulus(F::MODULUS_BITS, F::MODULUS_OFFSET)
-            .expect("production modulus");
+    fn assert_ls18_short_difference_bound<F: PseudoMersenne>(split_count: u32) {
+        let modulus =
+            pseudo_mersenne_modulus(F::MODULUS_BITS, F::OFFSET).expect("production modulus");
         let split_count = u128::from(split_count);
         for &carrier_dimension in PRODUCTION_FOLD_CHALLENGE_RING_DIMS {
             assert!(carrier_dimension.is_power_of_two());

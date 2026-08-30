@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub(crate) fn evaluate_direct_by_rows<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
@@ -11,7 +11,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         d_a: usize,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let d_d = alpha_pows_d.len();

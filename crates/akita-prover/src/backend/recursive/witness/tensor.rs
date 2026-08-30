@@ -3,17 +3,17 @@
 use super::SuffixWitnessView;
 use akita_algebra::SplitEqEvals;
 use akita_error::AkitaError;
-#[cfg(feature = "parallel")]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_types::{tensor_column_partials_split_fold, tensor_opening_split, TensorColumnSource};
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::marker::PhantomData;
 
 use crate::backend::packed_digits::PackedSignedDigitView;
 
 impl<F, const D: usize> SuffixWitnessView<'_, F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(crate) fn tensor_packed_extension_evals<E>(&self) -> Result<Vec<E>, AkitaError>
     where
@@ -60,7 +60,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<E>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         let (split_bits, width) = tensor_opening_split::<F, E>()?;
         let num_vars = self.num_vars();
@@ -86,7 +86,7 @@ where
         logical_point: &[E],
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
-        E: akita_field::MulBaseUnreduced<F>,
+        E: jolt_field::MulBaseUnreduced<F>,
     {
         polys
             .iter()
@@ -96,7 +96,7 @@ where
 }
 
 #[doc(hidden)]
-pub struct SuffixTensorRow<'a, F: FieldCore> {
+pub struct SuffixTensorRow<'a, F: Field> {
     digits: PackedSignedDigitView<'a>,
     start: usize,
     width: usize,
@@ -106,7 +106,7 @@ pub struct SuffixTensorRow<'a, F: FieldCore> {
 
 impl<F> Iterator for SuffixTensorRow<'_, F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type Item = F;
 
@@ -129,11 +129,11 @@ where
     }
 }
 
-impl<F> ExactSizeIterator for SuffixTensorRow<'_, F> where F: FieldCore + CanonicalField {}
+impl<F> ExactSizeIterator for SuffixTensorRow<'_, F> where F: Field + CanonicalEncoding {}
 
 impl<F, const D: usize> TensorColumnSource<F> for SuffixWitnessView<'_, F, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type Row<'a>
         = SuffixTensorRow<'a, F>
@@ -156,12 +156,12 @@ where
 mod tests {
     use super::*;
     use crate::backend::RecursiveWitnessFlat;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::{Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn suffix_tensor_inputs_match_padded_base_table_reference() {
         const D: usize = 16;
-        type E = akita_field::FpExt4<F>;
+        type E = jolt_field::FpExt4<F>;
 
         let digits = (0..3 * D)
             .map(|index| (index % 7) as i8 - 3)

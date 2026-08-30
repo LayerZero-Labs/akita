@@ -8,7 +8,7 @@ use crate::field_modulus;
 use crate::sis::compression::{min_compression_secure_rank, COMPRESSION_SIS_COEFF_LINF_BOUND};
 use crate::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
 use akita_error::{checked, AkitaError};
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 mod chain;
 
@@ -393,7 +393,7 @@ pub struct PackedNegativeBinary {
 
 impl PackedNegativeBinary {
     /// Pack one complete map input in canonical bit-major order.
-    pub fn from_coefficients<F: FieldCore + CanonicalField>(
+    pub fn from_coefficients<F: Field + CanonicalEncoding>(
         map: CompressionMapPlan,
         coefficients: &[F],
     ) -> Result<Self, AkitaError> {
@@ -403,17 +403,19 @@ impl PackedNegativeBinary {
                 actual: coefficients.len(),
             });
         }
-        if !map.modulus_profile().matches_modulus(field_modulus::<F>()) {
+        let modulus = field_modulus::<F>()?;
+        if !map.modulus_profile().matches_modulus(modulus) {
             return Err(AkitaError::InvalidSetup(
                 "compression map profile does not match the field modulus".into(),
             ));
         }
-        let field_bits = usize::try_from(F::modulus_bits())
+        let field_bits = usize::try_from(F::MODULUS_BITS)
             .map_err(|_| AkitaError::InvalidSetup("field bit length overflow".into()))?;
         let mut bytes = vec![0u8; map.packed_digit_bytes()];
-        let modulus = field_modulus::<F>();
         for (coefficient_index, coefficient) in coefficients.iter().enumerate() {
-            let canonical = coefficient.to_canonical_u128();
+            let canonical = coefficient.to_u128_checked().ok_or_else(|| {
+                AkitaError::InvalidInput("compression coefficient does not fit in u128".into())
+            })?;
             let magnitude = if canonical == 0 {
                 0
             } else {
@@ -486,17 +488,17 @@ impl PackedNegativeBinary {
     }
 
     /// Canonically recompose the packed digits into the map input image.
-    pub fn recompose<F: FieldCore + CanonicalField>(&self) -> Result<Vec<F>, AkitaError> {
+    pub fn recompose<F: Field + CanonicalEncoding>(&self) -> Result<Vec<F>, AkitaError> {
         if !self
             .map
             .modulus_profile()
-            .matches_modulus(field_modulus::<F>())
+            .matches_modulus(field_modulus::<F>()?)
         {
             return Err(AkitaError::InvalidSetup(
                 "compression map profile does not match the field modulus".into(),
             ));
         }
-        let field_bits = usize::try_from(F::modulus_bits())
+        let field_bits = usize::try_from(F::MODULUS_BITS)
             .map_err(|_| AkitaError::InvalidSetup("field bit length overflow".into()))?;
         let mut output = vec![F::zero(); self.map.input_coefficients()];
         let output_len = output.len();
@@ -574,10 +576,13 @@ pub struct CompressionTerminalPayload<F> {
     coefficients: Vec<F>,
 }
 
-impl<F: FieldCore + CanonicalField> CompressionTerminalPayload<F> {
+impl<F: Field + CanonicalEncoding> CompressionTerminalPayload<F> {
     /// Bind one flat payload to its already validated chain plan.
     pub fn new(plan: CompressionChainPlan, coefficients: Vec<F>) -> Result<Self, AkitaError> {
-        if !plan.modulus_profile().matches_modulus(field_modulus::<F>()) {
+        if !plan
+            .modulus_profile()
+            .matches_modulus(field_modulus::<F>()?)
+        {
             return Err(AkitaError::InvalidSetup(
                 "compression terminal plan does not match the field modulus".into(),
             ));
@@ -613,10 +618,10 @@ impl<F: FieldCore + CanonicalField> CompressionTerminalPayload<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring, Zero};
 
-    fn round_trip<F: FieldCore + CanonicalField>(profile: SisModulusProfileId) {
-        let field_bytes = usize::try_from(F::modulus_bits()).unwrap().div_ceil(8);
+    fn round_trip<F: Field + CanonicalEncoding>(profile: SisModulusProfileId) {
+        let field_bytes = usize::try_from(F::MODULUS_BITS).unwrap().div_ceil(8);
         let plan = CompressionChainPlan::for_complete_source(profile, 1024 / field_bytes).unwrap();
         let values = (0..plan.source_coefficients())
             .map(|index| {

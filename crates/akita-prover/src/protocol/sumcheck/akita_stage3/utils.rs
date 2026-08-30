@@ -1,8 +1,8 @@
-use akita_field::parallel::*;
-use akita_field::FieldCore;
+use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 
 #[cfg(test)]
-pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
+pub(super) fn product_claim<E: Field>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
     let right_len = right_factor.len();
     cfg_fold_reduce!(
         0..left_factor.len(),
@@ -20,7 +20,7 @@ pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_
 }
 
 #[cfg(test)]
-pub(super) fn accumulate_right_round<E: FieldCore>(
+pub(super) fn accumulate_right_round<E: Field>(
     table: &[E],
     left_factor: &[E],
     right_factor: &[E],
@@ -50,7 +50,7 @@ pub(super) fn accumulate_right_round<E: FieldCore>(
     )
 }
 
-pub(super) fn accumulate_left_round<E: FieldCore>(
+pub(super) fn accumulate_left_round<E: Field>(
     table: &[E],
     left_factor: &[E],
     right_weight: E,
@@ -75,11 +75,11 @@ pub(super) fn accumulate_left_round<E: FieldCore>(
     )
 }
 
-pub(super) fn fold_pair<E: FieldCore>(left: E, right: E, challenge: E) -> E {
+pub(super) fn fold_pair<E: Field>(left: E, right: E, challenge: E) -> E {
     left + challenge * (right - left)
 }
 
-pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, challenge: E) {
+pub(super) fn fold_factor_in_place<E: Field>(factor: &mut Vec<E>, challenge: E) {
     let half = factor.len() / 2;
     *factor = cfg_into_iter!(0..half)
         .map(|idx| fold_pair(factor[2 * idx], factor[2 * idx + 1], challenge))
@@ -87,7 +87,7 @@ pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, challenge:
 }
 
 #[cfg(test)]
-pub(super) fn fold_right_round<E: FieldCore>(
+pub(super) fn fold_right_round<E: Field>(
     table: &mut Vec<E>,
     right_factor: &mut Vec<E>,
     challenge: E,
@@ -113,7 +113,7 @@ pub(super) fn fold_right_round<E: FieldCore>(
 }
 
 #[cfg(test)]
-pub(super) fn fold_left_round<E: FieldCore>(
+pub(super) fn fold_left_round<E: Field>(
     table: &mut Vec<E>,
     left_factor: &mut Vec<E>,
     challenge: E,
@@ -126,7 +126,7 @@ pub(super) fn fold_left_round<E: FieldCore>(
     *table = folded_table;
 }
 
-pub(super) fn fold_dense_left_round<E: FieldCore>(table: &mut Vec<E>, challenge: E) {
+pub(super) fn fold_dense_left_round<E: Field>(table: &mut Vec<E>, challenge: E) {
     let half = table.len() / 2;
     *table = cfg_into_iter!(0..half)
         .map(|idx| fold_pair(table[2 * idx], table[2 * idx + 1], challenge))

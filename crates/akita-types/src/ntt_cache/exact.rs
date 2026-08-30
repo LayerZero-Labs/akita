@@ -8,7 +8,7 @@ pub(super) fn ifma52_cache_enabled_for_ring_dimension(ring_dimension: usize) -> 
     (64..=512).contains(&ring_dimension) && ifma52_enabled()
 }
 
-fn ifma52_tail_requirement<F: CanonicalField, const K: usize, const D: usize>(
+fn ifma52_tail_requirement<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     moduli: [u64; K],
     width: usize,
     rhs_abs_bound: u64,
@@ -65,7 +65,7 @@ impl<const D: usize> ExactCachePlan<D> {
     }
 }
 
-pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
+pub(super) fn exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
     selected: ProtocolCrtNttParams<D>,
     width: usize,
     rhs_abs_bound: u64,
@@ -146,7 +146,7 @@ pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
 }
 
 /// Return whether an exact signed-coefficient request requires the i16 tail.
-pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
+pub fn ntt_cache_requires_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     width: usize,
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
@@ -161,7 +161,7 @@ pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
     )
 }
 
-pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
     plan: ExactCachePlan<D>,
@@ -240,7 +240,7 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
     Ok(PreparedNttCache(prepared))
 }
 
-fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+fn prepare_ifma52_exact<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
     mut params: Ifma52Params<K, D>,
@@ -259,7 +259,7 @@ fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: 
     Ok((Ifma52NttMatrix::prepare(matrix.as_slice(), &params), tail))
 }
 
-fn prepare_ifma52_i16_tail<F: FieldCore + CanonicalField, const D: usize>(
+fn prepare_ifma52_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
 ) -> Result<PreparedIfma52I16Tail<D>, AkitaError> {
@@ -284,7 +284,7 @@ mod tests {
     use super::*;
     use crate::FlatMatrix;
     use akita_algebra::CyclotomicRing;
-    use akita_field::Prime32Offset99;
+    use jolt_field::Prime32Offset99;
 
     #[test]
     fn ifma_rebuild_retains_a_joined_tail_prefix() {

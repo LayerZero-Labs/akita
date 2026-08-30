@@ -5,7 +5,7 @@ use crate::{
 };
 use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_error::AkitaError;
-use akita_field::FieldCore;
+use jolt_field::Field;
 use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]
@@ -270,12 +270,12 @@ impl SetupContributionGroupInputs {
 /// prevents setup planning from consuming a window prepared for different
 /// challenges.
 #[derive(Clone)]
-pub struct PreparedRelationAddress<E: FieldCore> {
+pub struct PreparedRelationAddress<E: Field> {
     pub(crate) point: Arc<[E]>,
     pub(crate) equality_window: Arc<OffsetEqWindow<E>>,
 }
 
-impl<E: FieldCore> PreparedRelationAddress<E> {
+impl<E: Field> PreparedRelationAddress<E> {
     /// Prepare the reusable equality state for one relation-address point.
     ///
     /// # Errors
@@ -301,7 +301,7 @@ impl<E: FieldCore> PreparedRelationAddress<E> {
     }
 }
 
-pub struct SetupContributionPlan<E: FieldCore> {
+pub struct SetupContributionPlan<E: Field> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
@@ -315,7 +315,7 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) direct_scan_alpha: Option<E>,
 }
 
-pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
+pub(crate) struct ProjectedEqPairTensor<E: Field> {
     pub(crate) ratio: usize,
     pub(crate) families: Vec<EqPairTensorFamily<E>>,
     pub(crate) state: ProjectedEqPairTensorState,
@@ -327,7 +327,7 @@ pub(crate) enum ProjectedEqPairTensorState {
     RelationFactored,
 }
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     /// Equality window shared by every direct contribution over this opening point.
     #[must_use]
     pub fn eq_window(&self) -> &OffsetEqWindow<E> {
@@ -372,7 +372,7 @@ pub(crate) struct PhysicalBWeightSegment<E> {
 }
 
 /// One canonical owner for the physical B matrix and its logical sliced image.
-pub(crate) struct PhysicalBSetupPlan<E: FieldCore> {
+pub(crate) struct PhysicalBSetupPlan<E: Field> {
     pub(super) geometry: CommitmentSliceGeometry,
     pub(super) physical_rows: usize,
     pub(super) logical_row_weights: Arc<[E]>,
@@ -381,7 +381,7 @@ pub(crate) struct PhysicalBSetupPlan<E: FieldCore> {
     pub(super) setup_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
-impl<E: FieldCore> PhysicalBSetupPlan<E> {
+impl<E: Field> PhysicalBSetupPlan<E> {
     pub(crate) fn new(
         geometry: CommitmentSliceGeometry,
         physical_rows: usize,
@@ -445,7 +445,7 @@ impl<E: FieldCore> PhysicalBSetupPlan<E> {
 #[cfg(test)]
 type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
-pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
+pub(crate) struct SetupContributionGroupPlan<E: Field> {
     pub(crate) group_id: usize,
     pub(crate) opening_method: crate::OpeningMethod,
     pub(crate) role_dims: CommitmentRingDims,
@@ -489,7 +489,7 @@ pub(crate) struct SetupUnitRange {
     pub(crate) num_live_blocks: usize,
 }
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
+impl<E: Field> SetupContributionGroupPlan<E> {
     pub(crate) fn column_eq_slices(&self) -> Option<(&[E], &[E], &[E])> {
         self.direct_scan_weights
             .as_ref()

@@ -1,12 +1,12 @@
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredUniPoly, UniPoly};
 #[cfg(test)]
 use akita_types::DigitRangePlan;
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PrefixPoint<E: FieldCore> {
+pub(crate) enum PrefixPoint<E: Field> {
     Finite(E),
     Infinity,
 }
@@ -463,9 +463,9 @@ pub(crate) static STAGE2_B8_RELATION_WEIGHT_COMPRESSED_TABLE: [[i64;
     4096] = build_stage2_b8_relation_weight_compressed_table();
 
 #[inline]
-pub(crate) fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+pub(crate) fn accum_lookup_vector_signed<E: Field + Unreduced, const N: usize>(
+    pos: &mut [E::SmallProduct; N],
+    neg: &mut [E::SmallProduct; N],
     coeff: E,
     values: &[i64; N],
 ) {
@@ -480,12 +480,12 @@ pub(crate) fn accum_lookup_vector_signed<E: FieldCore + HasUnreducedOps, const N
 
 #[inline]
 pub(crate) fn accum_lookup_vector_signed_selected<
-    E: FieldCore + HasUnreducedOps,
+    E: Field + Unreduced,
     const N: usize,
     const M: usize,
 >(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+    pos: &mut [E::SmallProduct; N],
+    neg: &mut [E::SmallProduct; N],
     coeff: E,
     values: &[i64; M],
     selected_indices: &[usize; N],
@@ -501,9 +501,9 @@ pub(crate) fn accum_lookup_vector_signed_selected<
 }
 
 #[inline]
-pub(crate) fn accum_pointwise_signed<E: FieldCore + HasUnreducedOps, const N: usize>(
-    pos: &mut [E::MulU64Accum; N],
-    neg: &mut [E::MulU64Accum; N],
+pub(crate) fn accum_pointwise_signed<E: Field + Unreduced, const N: usize>(
+    pos: &mut [E::SmallProduct; N],
+    neg: &mut [E::SmallProduct; N],
     coeffs: &[E; N],
     weights: &[i64; N],
 ) {
@@ -551,12 +551,12 @@ pub(crate) fn stage2_b8_w_digit(w: i8) -> usize {
 }
 
 #[inline]
-pub(crate) fn linear_eq_eval<E: FieldCore>(tau: E, x: E) -> E {
+pub(crate) fn linear_eq_eval<E: Field>(tau: E, x: E) -> E {
     tau * x + (E::one() - tau) * (E::one() - x)
 }
 
 #[inline]
-pub(crate) fn stage2_relation_m_point_values_compressed<E: FieldCore>(
+pub(crate) fn stage2_relation_m_point_values_compressed<E: Field>(
     m_quad: [E; 4],
 ) -> [E; STAGE2_COMPRESSED_POINT_COUNT] {
     let m00 = m_quad[0];
@@ -575,7 +575,7 @@ pub(crate) fn stage2_relation_m_point_values_compressed<E: FieldCore>(
     ]
 }
 
-pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn interpolate_eq_factored_q_poly<E: Field + Ring>(
     evals: &[E],
     degree: usize,
 ) -> EqFactoredUniPoly<E> {
@@ -586,14 +586,13 @@ pub(crate) fn interpolate_eq_factored_q_poly<E: FieldCore + FromPrimitiveInt>(
 
 /// Proposed reduced stage-2 domain `{1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_reduced_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 2]
-{
+pub(crate) fn stage2_reduced_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 2] {
     [PrefixPoint::Finite(E::one()), PrefixPoint::Infinity]
 }
 
 /// Safe full stage-2 fallback domain `{0, 1, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 3] {
+pub(crate) fn stage2_full_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 3] {
     [
         PrefixPoint::Finite(E::zero()),
         PrefixPoint::Finite(E::one()),
@@ -604,7 +603,7 @@ pub(crate) fn stage2_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [P
 /// Return the bilinear coefficients for a quad ordered as `[t00, t10, t01, t11]`.
 #[inline]
 #[cfg(test)]
-pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
+pub(crate) fn bilinear_coeffs_from_quad<E: Field>(quad: [E; 4]) -> [E; 4] {
     let [t00, t10, t01, t11] = quad;
     [t00, t10 - t00, t01 - t00, t11 - t10 - t01 + t00]
 }
@@ -613,7 +612,7 @@ pub(crate) fn bilinear_coeffs_from_quad<E: FieldCore>(quad: [E; 4]) -> [E; 4] {
 /// points `(x, y)`.
 #[inline]
 #[cfg(test)]
-pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
+pub(crate) fn bilinear_eval<E: Field>(quad: [E; 4], x: E, y: E) -> E {
     let [a, b, c, d] = bilinear_coeffs_from_quad(quad);
     a + x * (b + y * d) + y * c
 }
@@ -622,7 +621,7 @@ pub(crate) fn bilinear_eval<E: FieldCore>(quad: [E; 4], x: E, y: E) -> E {
 /// coefficient in that coordinate".
 #[inline]
 #[cfg(test)]
-pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
+pub(crate) fn bilinear_eval_on_prefix_points<E: Field>(
     quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -640,7 +639,7 @@ pub(crate) fn bilinear_eval_on_prefix_points<E: FieldCore>(
 /// `{1, -1, 2, Infinity}^2` proposal.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn stage1_local_norm_eval<E: Field + Ring>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -660,7 +659,7 @@ pub(crate) fn stage1_local_norm_eval<E: FieldCore + FromPrimitiveInt>(
 /// evaluating `s` at `Infinity` and then applying the range check.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn stage1_local_norm_raw_eval<E: Field + Ring>(
     s_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -691,7 +690,7 @@ pub(crate) fn stage1_local_norm_raw_eval<E: FieldCore + FromPrimitiveInt>(
 /// `w (w + 1)`.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
+pub(crate) fn stage2_local_norm_candidate_eval<E: Field>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -707,7 +706,7 @@ pub(crate) fn stage2_local_norm_candidate_eval<E: FieldCore>(
 /// `w(X, Y) * (w(X, Y) + 1)`, so the linear `+w` term drops out.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
+pub(crate) fn stage2_local_norm_raw_eval<E: Field>(
     w_quad: [E; 4],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -723,7 +722,7 @@ pub(crate) fn stage2_local_norm_raw_eval<E: FieldCore>(
 /// local bilinear factor quad, and one fixed scalar factor.
 #[inline]
 #[cfg(test)]
-pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
+pub(crate) fn stage2_local_relation_eval<E: Field>(
     w_quad: [E; 4],
     local_factor_quad: [E; 4],
     fixed_factor: E,
@@ -738,7 +737,7 @@ pub(crate) fn stage2_local_relation_eval<E: FieldCore>(
 /// Evaluate a quadratic from its values at `{0, 1, Infinity}`.
 #[inline]
 #[cfg(test)]
-pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
+pub(crate) fn eval_quadratic_from_01_inf<E: Field>(
     at_zero: E,
     at_one: E,
     at_inf: E,
@@ -754,42 +753,38 @@ pub(crate) fn eval_quadratic_from_01_inf<E: FieldCore>(
 }
 
 #[inline]
-pub(crate) fn quadratic_coeffs_from_01_inf<E: FieldCore>(
-    at_zero: E,
-    at_one: E,
-    at_inf: E,
-) -> [E; 3] {
+pub(crate) fn quadratic_coeffs_from_01_inf<E: Field>(at_zero: E, at_one: E, at_inf: E) -> [E; 3] {
     [at_zero, at_one - at_zero - at_inf, at_inf]
 }
 
 #[inline]
-pub(crate) fn eval_quadratic_from_coeffs<E: FieldCore>(coeffs: [E; 3], x: E) -> E {
+pub(crate) fn eval_quadratic_from_coeffs<E: Field>(coeffs: [E; 3], x: E) -> E {
     coeffs[0] + x * (coeffs[1] + x * coeffs[2])
 }
 
 #[inline]
-pub(crate) fn linear_eq_coeffs<E: FieldCore>(tau: E) -> [E; 2] {
+pub(crate) fn linear_eq_coeffs<E: Field>(tau: E) -> [E; 2] {
     [E::one() - tau, tau + tau - E::one()]
 }
 
 #[inline]
-pub(crate) fn scale_quadratic_coeffs<E: FieldCore>(coeffs: [E; 3], scale: E) -> [E; 3] {
+pub(crate) fn scale_quadratic_coeffs<E: Field>(coeffs: [E; 3], scale: E) -> [E; 3] {
     [scale * coeffs[0], scale * coeffs[1], scale * coeffs[2]]
 }
 
 #[inline]
-pub(crate) fn add_quadratic_coeffs<E: FieldCore>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
+pub(crate) fn add_quadratic_coeffs<E: Field>(lhs: [E; 3], rhs: [E; 3]) -> [E; 3] {
     [lhs[0] + rhs[0], lhs[1] + rhs[1], lhs[2] + rhs[2]]
 }
 
 #[inline]
 #[cfg(test)]
-pub(crate) fn coeff_array_to_poly<E: FieldCore, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
+pub(crate) fn coeff_array_to_poly<E: Field, const N: usize>(coeffs: [E; N]) -> UniPoly<E> {
     UniPoly::from_coeffs(coeffs.to_vec())
 }
 
 #[inline]
-pub(crate) fn mul_linear_by_quadratic_coeffs<E: FieldCore>(tau: E, quad: [E; 3]) -> [E; 4] {
+pub(crate) fn mul_linear_by_quadratic_coeffs<E: Field>(tau: E, quad: [E; 3]) -> [E; 4] {
     let [l0, l1] = linear_eq_coeffs(tau);
     [
         l0 * quad[0],

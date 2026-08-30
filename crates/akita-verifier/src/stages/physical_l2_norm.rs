@@ -2,7 +2,6 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt};
 use akita_transcript::labels::{
@@ -14,8 +13,9 @@ use akita_types::{
     reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan, SisModulusProfileId,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
-pub(crate) struct PhysicalL2VerifierReplay<E: FieldCore> {
+pub(crate) struct PhysicalL2VerifierReplay<E: Field> {
     pub(crate) point: Vec<E>,
     pub(crate) virtual_evaluations: Vec<E>,
 }
@@ -27,7 +27,7 @@ pub(crate) struct PhysicalL2RangeClaim<'a, E> {
     pub(crate) image_evaluation: E,
 }
 
-struct PhysicalL2NormVerifier<'a, E: FieldCore> {
+struct PhysicalL2NormVerifier<'a, E: Field> {
     plan: &'a PhysicalResponsePlan,
     proof: &'a PhysicalL2NormProof<E>,
     range_equality_point: &'a [E],
@@ -38,9 +38,7 @@ struct PhysicalL2NormVerifier<'a, E: FieldCore> {
     norm_merge: E,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
-    for PhysicalL2NormVerifier<'_, E>
-{
+impl<E: Field + Ring> SumcheckInstanceVerifier<E> for PhysicalL2NormVerifier<'_, E> {
     fn num_rounds(&self) -> usize {
         self.plan.domain().num_vars()
     }
@@ -120,7 +118,7 @@ impl<E: FieldCore + FromPrimitiveInt> SumcheckInstanceVerifier<E>
 
 fn centered_lift<F, E>(value: E, profile: SisModulusProfileId) -> Result<i128, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
     let coordinates = value.ext_coords();
@@ -136,7 +134,7 @@ where
             "centered limb lifting is only defined for small fields".into(),
         ));
     }
-    let canonical = first.to_canonical_u128();
+    let canonical = first.to_u128_checked().ok_or(AkitaError::InvalidProof)?;
     if canonical <= modulus / 2 {
         i128::try_from(canonical).map_err(|_| AkitaError::InvalidProof)
     } else {
@@ -154,15 +152,14 @@ fn validate_integer_claim<F, E>(
     cap: u128,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F>,
 {
     let modulus = profile.modulus();
     let modulus_minus_one = modulus
         .checked_sub(1)
         .ok_or_else(|| AkitaError::InvalidSetup("L2 modulus profile has an empty field".into()))?;
-    if F::from_canonical_u128_checked(modulus_minus_one).is_none()
-        || F::from_canonical_u128_checked(modulus).is_some()
+    if F::from_u128_checked(modulus_minus_one).is_none() || F::from_u128_checked(modulus).is_some()
     {
         return Err(AkitaError::InvalidSetup(
             "L2 modulus profile disagrees with the proof base field".into(),
@@ -225,8 +222,8 @@ pub(crate) fn verify_physical_l2_norm<F, E, T>(
     transcript: &mut T,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
@@ -282,7 +279,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime32Offset99;
+    use jolt_field::Prime32Offset99;
 
     #[test]
     fn centered_lift_accepts_both_boundary_representatives() {
@@ -290,8 +287,8 @@ mod tests {
         let profile = SisModulusProfileId::Q32Offset99;
         let modulus = profile.modulus();
         let half = modulus / 2;
-        let positive = F::from_canonical_u128_checked(half).expect("positive boundary");
-        let negative = F::from_canonical_u128_checked(half + 1).expect("negative boundary");
+        let positive = F::from_u128_checked(half).expect("positive boundary");
+        let negative = F::from_u128_checked(half + 1).expect("negative boundary");
 
         assert_eq!(
             centered_lift::<F, F>(positive, profile).unwrap(),

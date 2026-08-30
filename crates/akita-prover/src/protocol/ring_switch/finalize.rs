@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -29,8 +29,8 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
     prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
 ) -> Result<RingSwitchFinalization<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     let default_gamma;
@@ -120,7 +120,7 @@ where
     }
 
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::EXT_DEGREE)?;
+        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::DEGREE)?;
     let relation_plan = akita_types::RelationRangeImagePlan::new(
         relation_geometry,
         geometry,

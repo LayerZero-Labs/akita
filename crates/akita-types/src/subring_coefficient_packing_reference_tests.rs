@@ -1,12 +1,14 @@
 use super::*;
 use akita_challenges::{SparseChallenge, PRODUCTION_FOLD_CHALLENGE_RING_DIMS};
-use akita_field::{Ext2, FpExt4, MulBase, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use jolt_field::{
+    Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Zero,
+};
 
-fn field_value<T: FromPrimitiveInt>(seed: usize) -> T {
+fn field_value<T: Ring>(seed: usize) -> T {
     T::from_u64(((seed * 17 + 11) % 97 + 1) as u64)
 }
 
-fn signed_scale<T: FieldCore + FromPrimitiveInt>(value: T, coefficient: i8) -> T {
+fn signed_scale<T: Field + Ring>(value: T, coefficient: i8) -> T {
     value * T::from_i64(i64::from(coefficient))
 }
 
@@ -17,7 +19,7 @@ fn boundary_challenge(s: usize) -> SparseChallenge {
     }
 }
 
-fn independent_subring_product<T: FieldCore + FromPrimitiveInt>(
+fn independent_subring_product<T: Field + Ring>(
     s: usize,
     challenge: &SparseChallenge,
     rhs: &[T],
@@ -37,7 +39,7 @@ fn independent_subring_product<T: FieldCore + FromPrimitiveInt>(
     output
 }
 
-fn independent_ambient_product<T: FieldCore + FromPrimitiveInt>(
+fn independent_ambient_product<T: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenge: &SparseChallenge,
     source: &[T],
@@ -62,12 +64,11 @@ fn independent_ambient_product<T: FieldCore + FromPrimitiveInt>(
 
 fn assert_s_linearity<F, E>(s: usize, h: usize)
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: ExtField<F>,
 {
-    let geometry =
-        SubringCoefficientPackingGeometry::try_new(E::EXT_DEGREE, E::EXT_DEGREE * h * s, s)
-            .expect("geometry");
+    let geometry = SubringCoefficientPackingGeometry::try_new(E::DEGREE, E::DEGREE * h * s, s)
+        .expect("geometry");
     let source = (0..geometry.a_ring_dimension())
         .map(field_value::<F>)
         .collect::<Vec<_>>();
@@ -82,7 +83,7 @@ where
         ambient_product,
         independent_ambient_product(geometry, &challenge, &source),
         "coefficientwise A product for k={} h={h} s={s}",
-        E::EXT_DEGREE
+        E::DEGREE
     );
     let mapped_ambient =
         coefficient_packing_map::<F, E>(geometry, &ambient_product, &packing_weights)
@@ -95,7 +96,7 @@ where
         mapped_ambient,
         subring_product,
         "k={} h={h} s={s}",
-        E::EXT_DEGREE
+        E::DEGREE
     );
 
     let embedded = embed_subring_challenge_in_a_ring::<F>(geometry, &challenge).expect("embedding");
@@ -135,12 +136,12 @@ fn direct_partial_oracle<F, E>(
     packing_weights: &[E],
 ) -> Vec<F>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let s = geometry.challenge_subring_dimension();
     let num_blocks = num_live_positions.div_ceil(num_positions_per_block);
-    let mut output = vec![F::zero(); num_blocks * E::EXT_DEGREE * s];
+    let mut output = vec![F::zero(); num_blocks * E::DEGREE * s];
     let mut source_position = 0usize;
     for block in 0..num_blocks {
         let num_positions = (num_live_positions - source_position).min(num_positions_per_block);
@@ -171,13 +172,12 @@ where
 
 fn assert_partial_and_scalar_factorization<F, E>(h: usize)
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: ExtField<F>,
 {
     let s = 64;
-    let geometry =
-        SubringCoefficientPackingGeometry::try_new(E::EXT_DEGREE, E::EXT_DEGREE * h * s, s)
-            .expect("geometry");
+    let geometry = SubringCoefficientPackingGeometry::try_new(E::DEGREE, E::DEGREE * h * s, s)
+        .expect("geometry");
     let num_live_positions = 6usize;
     let num_positions_per_block = 4usize;
     let num_blocks = num_live_positions.div_ceil(num_positions_per_block);
@@ -260,7 +260,7 @@ where
             source_position += num_positions;
         }
     }
-    assert_eq!(got, expected, "k={} h={h}", E::EXT_DEGREE);
+    assert_eq!(got, expected, "k={} h={h}", E::DEGREE);
 }
 
 #[test]
@@ -363,12 +363,12 @@ fn single_partial_block_preserves_the_full_position_domain() {
 
 fn assert_fold_product_and_divisibility<F, E>()
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: ExtField<F>,
 {
     let s = 64;
-    let geometry = SubringCoefficientPackingGeometry::try_new(E::EXT_DEGREE, E::EXT_DEGREE * s, s)
-        .expect("geometry");
+    let geometry =
+        SubringCoefficientPackingGeometry::try_new(E::DEGREE, E::DEGREE * s, s).expect("geometry");
     let challenges = vec![
         boundary_challenge(s),
         SparseChallenge {
@@ -383,7 +383,7 @@ where
         fold_coefficient_packing_partials(geometry, &challenges, &partials).expect("fold product");
 
     let mut packed_quotient = vec![E::zero(); s];
-    for extension_coordinate in 0..E::EXT_DEGREE {
+    for extension_coordinate in 0..E::DEGREE {
         let mut ordinary = vec![F::zero(); 2 * s - 1];
         for (term, challenge) in challenges.iter().enumerate() {
             let partial_offset =
@@ -411,7 +411,7 @@ where
     }
 
     for (subring_index, packed_coefficient) in packed_quotient.iter_mut().enumerate() {
-        let coordinates = (0..E::EXT_DEGREE)
+        let coordinates = (0..E::DEGREE)
             .map(|extension_coordinate| {
                 product.quotient_high_half_base_field_coordinates()
                     [extension_coordinate * s + subring_index]
@@ -424,8 +424,8 @@ where
         .iter()
         .rev()
         .fold(E::zero(), |acc, &coefficient| acc * alpha + coefficient);
-    let basis_combined_eval = (0..E::EXT_DEGREE).fold(E::zero(), |sum, coordinate| {
-        let mut basis_coordinates = vec![F::zero(); E::EXT_DEGREE];
+    let basis_combined_eval = (0..E::DEGREE).fold(E::zero(), |sum, coordinate| {
+        let mut basis_coordinates = vec![F::zero(); E::DEGREE];
         basis_coordinates[coordinate] = F::one();
         let basis = E::from_base_slice(&basis_coordinates);
         let plane_eval = product.quotient_high_half_base_field_coordinates()

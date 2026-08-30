@@ -7,13 +7,13 @@ use super::*;
 /// Boolean domain and a single round challenge sequence. Each group folds its
 /// transparent factor once per challenge, regardless of its member count.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionProver<E: FieldCore> {
+pub struct ExtensionOpeningReductionProver<E: Field> {
     groups: Vec<ExtensionOpeningReductionGroup<E>>,
     input_claim: E,
     num_rounds: usize,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
+impl<E: Field> ExtensionOpeningReductionProver<E> {
     /// Construct a prover from groups sharing one Boolean domain.
     ///
     /// The caller supplies the claimed input sum. This avoids recomputing it
@@ -115,9 +115,7 @@ impl<E: FieldCore> ExtensionOpeningReductionProver<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for ExtensionOpeningReductionProver<E>
-{
+impl<E: Field + Unreduced + Fold> SumcheckInstanceProver<E> for ExtensionOpeningReductionProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }

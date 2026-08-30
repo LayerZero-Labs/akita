@@ -5,13 +5,13 @@ pub use evaluate::eval_boolean_pair_tensor_families;
 pub use materialize::materialize_eq_tensor_left;
 
 use super::MAX_COMPACT_STRIDE_TERMS;
-use crate::FieldCore;
+use crate::Field;
 use akita_error::{checked, AkitaError};
 use std::sync::Arc;
 
 /// Weights carried by one affine tensor axis.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EqPairTensorWeights<F: FieldCore> {
+pub enum EqPairTensorWeights<F: Field> {
     /// Every coordinate has coefficient one.
     Unit,
     /// Coordinate weights in increasing axis order.
@@ -27,7 +27,7 @@ pub enum EqPairTensorWeights<F: FieldCore> {
 /// equality addresses. A zero stride is permitted on either side because
 /// setup row and fold axes act on only one equality domain.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqPairTensorAxis<F: FieldCore> {
+pub struct EqPairTensorAxis<F: Field> {
     /// Number of coordinates on the axis.
     pub len: usize,
     /// Address increment per coordinate in the left equality domain.
@@ -38,7 +38,7 @@ pub struct EqPairTensorAxis<F: FieldCore> {
     pub weights: EqPairTensorWeights<F>,
 }
 
-impl<F: FieldCore> EqPairTensorAxis<F> {
+impl<F: Field> EqPairTensorAxis<F> {
     /// Construct an axis whose coordinate coefficients are all one.
     #[must_use]
     pub const fn unit(len: usize, left_stride: usize, right_stride: usize) -> Self {
@@ -139,7 +139,7 @@ impl<F: FieldCore> EqPairTensorAxis<F> {
 /// turns the uniform ring-dimension case into the same long affine streams as
 /// the former specialized evaluator.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqPairTensorFamily<F: FieldCore> {
+pub struct EqPairTensorFamily<F: Field> {
     /// Base address in the left equality domain.
     pub left_offset: usize,
     /// Base address in the right equality domain.
@@ -150,7 +150,7 @@ pub struct EqPairTensorFamily<F: FieldCore> {
     pub axes: Vec<EqPairTensorAxis<F>>,
 }
 
-impl<F: FieldCore> EqPairTensorFamily<F> {
+impl<F: Field> EqPairTensorFamily<F> {
     /// Validate and normalize a tensor family.
     ///
     /// # Errors

@@ -25,7 +25,7 @@ fn assume_initialized_fold_output<E>(output: Vec<MaybeUninit<E>>) -> Vec<E> {
     unsafe { Vec::from_raw_parts(ptr, len, capacity) }
 }
 
-pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
+pub(crate) fn accumulate_dense_round<E: Field + Unreduced>(
     witness_evals: &[E],
     factor_evals: &[E],
     coeff: E,
@@ -40,11 +40,11 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
         return (E::zero(), E::zero());
     }
 
-    // Sum the wide products in `E::ProductAccum` only when the field has proven
+    // Sum the wide products in `E::Product` only when the field has proven
     // that delayed reduction is exact for these batch sizes; otherwise reduce
     // each product immediately so the coefficients stay byte-identical to
-    // per-term `Mul` (the `DELAYED_PRODUCT_SUM_IS_EXACT` contract).
-    let (constant, quadratic) = if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    // per-term `Mul` (the `SUM_IS_EXACT` contract).
+    let (constant, quadratic) = if E::SUM_IS_EXACT {
         accumulate_dense_round_with::<E, DelayedDeg2<E>>(witness_evals, factor_evals)
     } else {
         accumulate_dense_round_with::<E, DirectDeg2<E>>(witness_evals, factor_evals)
@@ -54,7 +54,7 @@ pub(crate) fn accumulate_dense_round<E: FieldCore + HasUnreducedOps>(
 
 fn accumulate_dense_round_with<E, A>(witness_evals: &[E], factor_evals: &[E]) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps,
+    E: Field + Unreduced,
     A: Deg2RoundAccum<E>,
 {
     let half = witness_evals.len() / 2;
@@ -96,7 +96,7 @@ where
 /// next round. Later witnesses reuse the folded factor through
 /// [`fused_fold_witness_and_accumulate`].
 pub(in crate::protocol::extension_opening_reduction) fn fused_fold_group_head_and_accumulate<
-    E: HasUnreducedOps + HasOptimizedFold,
+    E: Unreduced + Fold,
 >(
     witness_evals: &mut Vec<E>,
     factor_evals: &mut Vec<E>,
@@ -111,7 +111,7 @@ pub(in crate::protocol::extension_opening_reduction) fn fused_fold_group_head_an
     debug_assert!(witness_evals.len().is_power_of_two());
     debug_assert!(witness_evals.len() >= 4);
 
-    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    if E::SUM_IS_EXACT {
         fused_fold_group_head_and_accumulate_with::<E, DelayedDeg2<E>>(
             witness_evals,
             factor_evals,
@@ -132,12 +132,12 @@ fn fused_fold_group_head_and_accumulate_with<E, A>(
     r_round: E,
 ) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    E: Field + Unreduced + Fold,
     A: Deg2RoundAccum<E>,
 {
     let half = witness_evals.len() / 2;
     let quarter = half / 2;
-    let ctx = E::precompute_fold(r_round);
+    let ctx = E::precompute(r_round);
 
     #[cfg(feature = "parallel")]
     {
@@ -195,7 +195,7 @@ where
 /// Fold one witness by one variable and pre-compute the next round's
 /// `(constant, quadratic)` accumulation against an already-folded group factor.
 pub(in crate::protocol::extension_opening_reduction) fn fused_fold_witness_and_accumulate<
-    E: HasUnreducedOps + HasOptimizedFold,
+    E: Unreduced + Fold,
 >(
     witness_evals: &mut Vec<E>,
     folded_factor: &[E],
@@ -211,10 +211,10 @@ pub(in crate::protocol::extension_opening_reduction) fn fused_fold_witness_and_a
     debug_assert!(witness_evals.len() >= 4);
 
     // The witness fold itself (`E::fold_one`) is always exact; only the product
-    // accumulation respects `DELAYED_PRODUCT_SUM_IS_EXACT`, matching
+    // accumulation respects `SUM_IS_EXACT`, matching
     // `accumulate_dense_round`. The factor is folded once by the owning group
     // before this function is called for each member witness.
-    if E::DELAYED_PRODUCT_SUM_IS_EXACT {
+    if E::SUM_IS_EXACT {
         fused_fold_witness_and_accumulate_with::<E, DelayedDeg2<E>>(
             witness_evals,
             folded_factor,
@@ -235,12 +235,12 @@ fn fused_fold_witness_and_accumulate_with<E, A>(
     r_round: E,
 ) -> (E, E)
 where
-    E: FieldCore + HasUnreducedOps + HasOptimizedFold,
+    E: Field + Unreduced + Fold,
     A: Deg2RoundAccum<E>,
 {
     let half = witness_evals.len() / 2;
     let quarter = half / 2;
-    let ctx = E::precompute_fold(r_round);
+    let ctx = E::precompute(r_round);
 
     #[cfg(feature = "parallel")]
     {

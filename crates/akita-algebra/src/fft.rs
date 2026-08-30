@@ -1,13 +1,14 @@
-//! Mixed-radix FFT over prime fields with smooth-order multiplicative subgroups.
+//! Mixed-radix FFT over prime fields with smooth-order multiplicative
+//! subgroups, ported from the pre-rebuild `jolt-field` crate (removed there
+//! in the jolt-field rebuild) together with the [`SmoothFftField`] trait.
+
 //!
 //! # Setting
 //!
-//! The protocol primes [`crate::Prime128Offset2355`]
-//! and [`crate::Prime128OffsetA7F7`] are pseudo-Mersenne, so
+//! The protocol prime [`jolt_field::Prime128OffsetA7F7`] is pseudo-Mersenne, so
 //! `p − 1` is not a power of two; each is instead chosen so it carries
 //! a large **smooth factor** — a product of small primes:
 //!
-//! - `p = 2^128 − 2355`: smooth order `14_700 = 2² · 3 · 5² · 7²`
 //! - `p = 2^128 − 2^32 + 22_537`: smooth order `17_496 = 2³ · 3⁷`
 //!
 //! FFT domain sizes are divisors of that smooth order; there is no
@@ -46,7 +47,7 @@
 //!   use Karatsuba on the conjugate-pair-symmetrized inputs, with
 //!   the constants precomputed in `StageData::winograd`).
 //! - **Smooth-subgroup-derived roots**
-//!   ([`primitive_nth_root`](crate::fft::primitive_nth_root)):
+//!   ([`primitive_nth_root`]):
 //!   `ω_n` is one exponentiation of the field's compile-time
 //!   `SmoothFftField::SMOOTH_OMEGA` literal — no runtime base scan.
 //!
@@ -56,14 +57,36 @@
 //! known evaluations (one inverse FFT) then evaluates it on
 //! `blowup − 1` cosets of the base subgroup. Each coset evaluation is
 //! a coset FFT — pre-twist `c_i ← c_i · s^i` then run a plain forward
-//! FFT — see [`SmoothDomain::coset_forward`](crate::fft::SmoothDomain::coset_forward)
-//! and [`SmoothDomain::rs_extend_batch`](crate::fft::SmoothDomain::rs_extend_batch).
+//! FFT — see [`SmoothDomain::coset_forward`]
+//! and [`SmoothDomain::rs_extend_batch`].
 
-use crate::{FieldCore, FromPrimitiveInt, Invertible, SmoothFftField};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
+
+/// Field with a precomputed primitive root of a supported smooth subgroup.
+///
+/// Ported from the pre-rebuild `jolt-field`: the rebuilt crate dropped the
+/// smooth-FFT surface, so the trait and its per-prime literals live here.
+pub trait SmoothFftField: Field + CanonicalEncoding + PseudoMersenne {
+    /// Order of the supported smooth multiplicative subgroup.
+    const SMOOTH_SUBGROUP_ORDER: usize;
+
+    /// Canonical representation of its primitive root.
+    const SMOOTH_OMEGA: u128;
+}
+
+impl SmoothFftField for Prime128OffsetA7F7 {
+    const SMOOTH_SUBGROUP_ORDER: usize = 17_496;
+    /// `g ^ ((p − 1) / 17_496)` where `g` is the smallest primitive root
+    /// found by `find_primitive_nth_root` (note: `g = 2` is a quadratic
+    /// residue mod `p` and therefore *not* a primitive root, so the
+    /// scanner falls through to the next candidate). Verified by
+    /// `prime_a7f7_tests::smooth_omega_matches_search` below.
+    const SMOOTH_OMEGA: u128 = 0x4e9f_650b_7003_d201_9945_e1da_c47c_8b18;
+}
 
 /// Compute `base^exp` by repeated squaring.
 #[inline]
-pub fn field_pow<F: FieldCore>(base: F, mut exp: u64) -> F {
+pub fn field_pow<F: Field>(base: F, mut exp: u64) -> F {
     let mut result = F::one();
     let mut b = base;
     while exp > 0 {
@@ -78,7 +101,7 @@ pub fn field_pow<F: FieldCore>(base: F, mut exp: u64) -> F {
 
 /// Compute `base^exp` for u128 exponents. Test-only scanner helper.
 #[cfg(test)]
-pub(crate) fn field_pow_u128<F: FieldCore>(base: F, mut exp: u128) -> F {
+pub(crate) fn field_pow_u128<F: Field>(base: F, mut exp: u128) -> F {
     let mut result = F::one();
     let mut b = base;
     while exp > 0 {
@@ -198,11 +221,7 @@ struct StageData<F> {
 ///
 /// Called twice per domain — once with `omega = ω_n` for the forward
 /// transform and once with `omega = ω_n^{−1}` for the inverse.
-fn precompute_stages<F: FieldCore + FromPrimitiveInt + Invertible>(
-    omega: F,
-    n: usize,
-    factors: &[usize],
-) -> Vec<StageData<F>> {
+fn precompute_stages<F: Field>(omega: F, n: usize, factors: &[usize]) -> Vec<StageData<F>> {
     let mut stages = Vec::with_capacity(factors.len());
     let mut block = 1usize;
 
@@ -242,10 +261,7 @@ fn precompute_stages<F: FieldCore + FromPrimitiveInt + Invertible>(
 /// Precompute the Winograd constants consumed by the radix-5 / 7
 /// kernels. Returns an empty vector for other radices. See the
 /// doc-comment on `StageData::winograd` for the exact layout.
-fn winograd_consts_for_radix<F: FieldCore + FromPrimitiveInt + Invertible>(
-    r: usize,
-    omega_r_pow: &[F; 8],
-) -> Vec<F> {
+fn winograd_consts_for_radix<F: Field>(r: usize, omega_r_pow: &[F; 8]) -> Vec<F> {
     match r {
         5 => {
             let w1 = omega_r_pow[1];
@@ -312,7 +328,7 @@ struct FftWorkspace<F> {
     buf_b: Vec<F>,
 }
 
-impl<F: FieldCore> FftWorkspace<F> {
+impl<F: Field> FftWorkspace<F> {
     fn new(n: usize) -> Self {
         Self {
             n,
@@ -416,7 +432,7 @@ impl<F: FieldCore> FftWorkspace<F> {
                             }
                             _ => {
                                 let mut tw_k = tw;
-                                for xi in x[1..r].iter_mut() {
+                                for xi in &mut x[1..r] {
                                     *xi *= tw_k;
                                     tw_k *= tw;
                                 }
@@ -565,7 +581,7 @@ pub struct SmoothDomain<F> {
     inv_stages: Vec<StageData<F>>,
 }
 
-impl<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug> SmoothDomain<F> {
+impl<F: Field + std::fmt::Debug> SmoothDomain<F> {
     /// Build a domain of size `n` from a primitive `n`-th root of
     /// unity. Precomputes the digit-reversal permutation and per-stage
     /// tables for both forward and inverse transforms.
@@ -640,7 +656,7 @@ impl<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug> SmoothDomai
             buf[i] = c * tw;
             tw *= shift;
         }
-        for v in buf[coeffs.len()..].iter_mut() {
+        for v in &mut buf[coeffs.len()..] {
             *v = F::zero();
         }
         ws.execute_from_b(&self.fwd_stages, &self.digit_rev)
@@ -708,8 +724,8 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
     );
     // Checked construction so a literal `≥ p` panics rather than
     // being silently reduced.
-    let omega = F::from_canonical_u128_checked(F::SMOOTH_OMEGA)
-        .expect("SMOOTH_OMEGA must be < p (canonical form)");
+    let omega =
+        F::from_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p (canonical form)");
     field_pow(omega, (F::SMOOTH_SUBGROUP_ORDER / n) as u64)
 }
 
@@ -729,10 +745,7 @@ pub fn primitive_nth_root<F: SmoothFftField>(n: usize) -> F {
 /// If `n` does not divide `p − 1`, or if no base in `{2, 3, …, 47}`
 /// yields a primitive `n`-th root.
 #[cfg(test)]
-pub(crate) fn find_primitive_nth_root<F: FieldCore + FromPrimitiveInt>(
-    p_minus_1: u128,
-    n: usize,
-) -> F {
+pub(crate) fn find_primitive_nth_root<F: Field>(p_minus_1: u128, n: usize) -> F {
     assert_eq!(
         p_minus_1 % (n as u128),
         0,
@@ -761,7 +774,7 @@ fn distinct_prime_factors(n: usize) -> Vec<usize> {
 
 /// Test whether `omega` has exact multiplicative order `n`, given a slice
 /// containing every distinct prime factor of `n`.
-fn is_primitive_nth_root<F: FieldCore>(omega: F, n: usize, distinct_factors: &[usize]) -> bool {
+fn is_primitive_nth_root<F: Field>(omega: F, n: usize, distinct_factors: &[usize]) -> bool {
     if field_pow(omega, n as u64) != F::one() {
         return false;
     }
@@ -771,7 +784,7 @@ fn is_primitive_nth_root<F: FieldCore>(omega: F, n: usize, distinct_factors: &[u
 }
 
 /// Debug-only check that `omega` is a primitive `n`-th root of unity.
-fn debug_assert_primitive_nth_root<F: FieldCore>(omega: F, n: usize) {
+fn debug_assert_primitive_nth_root<F: Field>(omega: F, n: usize) {
     if !cfg!(debug_assertions) {
         return;
     }
@@ -783,7 +796,7 @@ fn debug_assert_primitive_nth_root<F: FieldCore>(omega: F, n: usize) {
 }
 
 /// Free-function wrapper around [`SmoothDomain::rs_extend_batch`].
-pub fn rs_extend_fft<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::Debug>(
+pub fn rs_extend_fft<F: Field + std::fmt::Debug>(
     evals: &[F],
     domain_k: &SmoothDomain<F>,
     omega_n: F,
@@ -796,11 +809,8 @@ pub fn rs_extend_fft<F: FieldCore + FromPrimitiveInt + Invertible + std::fmt::De
 mod test_support {
     //! Prime-agnostic helpers shared by per-prime FFT parity tests.
     //!
-    //! The two protocol primes (`Prime128Offset2355`, `Prime128OffsetA7F7`)
-    //! have different smooth-subgroup factorizations, but the parity
-    //! properties under test (FFT vs naive DFT, forward/inverse roundtrip,
-    //! RS-extend consistency) are identical. Factor them out here so the
-    //! per-prime modules carry only the size lattice that actually differs.
+    //! The parity properties under test are FFT vs naive DFT,
+    //! forward/inverse roundtrip, and RS-extend consistency.
     //!
     //! All omegas come from [`super::primitive_nth_root`] (i.e. the
     //! field's `SmoothFftField::SMOOTH_OMEGA`); the scanner
@@ -808,14 +818,13 @@ mod test_support {
     //! `smooth_omega_matches_search` per-prime tests as a drift guard
     //! on the hardcoded literal.
     use super::*;
-    use crate::FromPrimitiveInt;
     use std::fmt::Debug;
     use std::ops::{AddAssign, MulAssign};
 
     pub(super) use super::find_primitive_nth_root;
 
     /// O(n^2) naive DFT, used as oracle for the iterative FFT under test.
-    fn naive_dft<F: FieldCore>(input: &[F], omega: F) -> Vec<F> {
+    fn naive_dft<F: Field>(input: &[F], omega: F) -> Vec<F> {
         let n = input.len();
         let mut out = vec![F::zero(); n];
         for (k, ok) in out.iter_mut().enumerate() {
@@ -832,7 +841,7 @@ mod test_support {
     /// per-prime modules can share a single union of "interesting" sizes.
     pub(super) fn assert_fft_matches_naive_dft<F>(sizes: &[usize])
     where
-        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug,
+        F: SmoothFftField + Debug,
     {
         for &n in sizes {
             if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
@@ -854,7 +863,7 @@ mod test_support {
     /// `forward(inverse(x)) == x` over a smooth domain of order `n`.
     pub(super) fn assert_forward_inverse_roundtrip<F>(n: usize)
     where
-        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug,
+        F: SmoothFftField + Debug,
     {
         let omega = primitive_nth_root::<F>(n);
         let domain = SmoothDomain::new(omega, n);
@@ -868,7 +877,7 @@ mod test_support {
     /// polynomial on each of the `blowup - 1` extension cosets.
     pub(super) fn assert_rs_extend_consistency<F>(k: usize, blowup: usize)
     where
-        F: SmoothFftField + FromPrimitiveInt + Invertible + Debug + AddAssign + MulAssign,
+        F: SmoothFftField + Debug + AddAssign + MulAssign,
     {
         let n = k * blowup;
         let omega_n = primitive_nth_root::<F>(n);
@@ -900,84 +909,6 @@ mod test_support {
 }
 
 #[cfg(test)]
-mod prime_2355_tests {
-    //! `Prime128Offset2355` (`p = 2^128 - 2355`) has smooth multiplicative
-    //! subgroup of order `14_700 = 2^2 * 3 * 5^2 * 7^2`, drawing sizes from
-    //! the `{2, 3, 5, 7}` lattice.
-    use super::test_support::*;
-    use super::*;
-    use crate::Prime128Offset2355;
-    use crate::{CanonicalField, PseudoMersenneField};
-
-    type F = Prime128Offset2355;
-
-    /// Drift guard: re-derive the primitive `SMOOTH_SUBGROUP_ORDER`-th
-    /// root of unity from a base scan and assert it equals the literal
-    /// declared in [`crate::prime::fp128`]. Also validates the
-    /// trait's structural invariant `SMOOTH_SUBGROUP_ORDER | (p − 1)`.
-    #[test]
-    fn smooth_omega_matches_search() {
-        let p_minus_1 = u128::MAX - F::MODULUS_OFFSET;
-        assert_eq!(
-            p_minus_1 % (F::SMOOTH_SUBGROUP_ORDER as u128),
-            0,
-            "SMOOTH_SUBGROUP_ORDER must divide p − 1",
-        );
-        let derived = find_primitive_nth_root::<F>(p_minus_1, F::SMOOTH_SUBGROUP_ORDER);
-        let declared =
-            F::from_canonical_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
-        assert_eq!(
-            derived, declared,
-            "SMOOTH_OMEGA literal has drifted from the scanner's primitive root"
-        );
-    }
-
-    #[test]
-    fn primitive_nth_root_has_correct_order_for_every_divisor() {
-        // Every `n | SMOOTH_SUBGROUP_ORDER` should yield a primitive
-        // n-th root via the trait derivation.
-        for &n in &[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 30, 35, 42, 49, 50, 60, 70, 75, 84,
-            98, 100, 105, 140, 147, 150, 175, 196, 210, 245, 294, 300, 350, 420, 490, 525, 588,
-            700, 735, 980, 1050, 1225, 1470, 2100, 2450, 2940, 3675, 4900, 7350, 14700,
-        ] {
-            if F::SMOOTH_SUBGROUP_ORDER % n != 0 {
-                continue;
-            }
-            let omega = primitive_nth_root::<F>(n);
-            let factors = distinct_prime_factors(n);
-            assert!(
-                is_primitive_nth_root(omega, n, &factors),
-                "primitive_nth_root failed primitivity check for n={n}"
-            );
-        }
-    }
-
-    #[test]
-    fn small_fft_matches_naive_dft() {
-        assert_fft_matches_naive_dft::<F>(&[
-            2, 3, 4, 5, 6, 7, 10, 12, 14, 15, 20, 21, 25, 28, 42, 49, 50,
-        ]);
-    }
-
-    #[test]
-    fn forward_inverse_roundtrip_300() {
-        assert_forward_inverse_roundtrip::<F>(300);
-    }
-
-    #[test]
-    fn forward_inverse_roundtrip_1470() {
-        assert_forward_inverse_roundtrip::<F>(1470);
-    }
-
-    #[test]
-    fn rs_extend_consistency() {
-        // k = 300 = 2^2 * 3 * 5^2, blowup = 7, so n = 2_100 | 14_700.
-        assert_rs_extend_consistency::<F>(300, 7);
-    }
-}
-
-#[cfg(test)]
 mod prime_a7f7_tests {
     //! `Prime128OffsetA7F7` (`p = 2^128 - 2^32 + 22537`) has smooth
     //! multiplicative subgroup of order `2^3 * 3^7 = 17_496`, with a pure
@@ -985,8 +916,6 @@ mod prime_a7f7_tests {
     //! the `{2, 3}` lattice instead of `{2, 3, 5, 7}`.
     use super::test_support::*;
     use super::*;
-    use crate::Prime128OffsetA7F7;
-    use crate::{CanonicalField, PseudoMersenneField};
 
     type F = Prime128OffsetA7F7;
 
@@ -1006,8 +935,8 @@ mod prime_a7f7_tests {
         // Limbs from `gpu_bench/primeB_roots.hpp` OMEGA_2187, packed
         // little-endian into a u128.
         const GPU_OMEGA_2187: u128 = 0x44E6_6EEC_31E7_36A6_A030_9253_219B_CCCD;
-        let omega = F::from_canonical_u128_checked(GPU_OMEGA_2187)
-            .expect("GPU OMEGA_2187 must lie in [0, p_B)");
+        let omega =
+            F::from_u128_checked(GPU_OMEGA_2187).expect("GPU OMEGA_2187 must lie in [0, p_B)");
         let factors = distinct_prime_factors(2187);
         assert!(
             is_primitive_nth_root(omega, 2187, &factors),
@@ -1017,8 +946,7 @@ mod prime_a7f7_tests {
         // The GPU also bakes OMEGA_3 = OMEGA_2187^729 (a primitive cube
         // root). Cross-check that limb table too.
         const GPU_OMEGA_3: u128 = 0x66F1_B0EE_0E4A_40F7_0F69_0C7F_0F66_39DD;
-        let omega3 =
-            F::from_canonical_u128_checked(GPU_OMEGA_3).expect("GPU OMEGA_3 must lie in [0, p_B)");
+        let omega3 = F::from_u128_checked(GPU_OMEGA_3).expect("GPU OMEGA_3 must lie in [0, p_B)");
         assert_eq!(field_pow(omega, 729), omega3, "OMEGA_3 != OMEGA_2187^729");
         assert!(
             is_primitive_nth_root(omega3, 3, &distinct_prime_factors(3)),
@@ -1026,18 +954,17 @@ mod prime_a7f7_tests {
         );
     }
 
-    /// Drift guard: see `prime_2355_tests::smooth_omega_matches_search`.
+    /// Drift guard for the production A7F7 smooth-subgroup constants.
     #[test]
     fn smooth_omega_matches_search() {
-        let p_minus_1 = u128::MAX - F::MODULUS_OFFSET;
+        let p_minus_1 = u128::MAX - F::OFFSET;
         assert_eq!(
             p_minus_1 % (F::SMOOTH_SUBGROUP_ORDER as u128),
             0,
             "SMOOTH_SUBGROUP_ORDER must divide p − 1",
         );
         let derived = find_primitive_nth_root::<F>(p_minus_1, F::SMOOTH_SUBGROUP_ORDER);
-        let declared =
-            F::from_canonical_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
+        let declared = F::from_u128_checked(F::SMOOTH_OMEGA).expect("SMOOTH_OMEGA must be < p");
         assert_eq!(
             derived, declared,
             "SMOOTH_OMEGA literal has drifted from the scanner's primitive root"

@@ -7,33 +7,31 @@ use akita_algebra::{
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
 };
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, MulBaseUnreduced,
-};
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
     CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
     NegativeBinarySupport, OpeningFamily,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
-pub(crate) struct EvaluationTraceStage2<E: FieldCore> {
+pub(crate) struct EvaluationTraceStage2<E: Field> {
     pub(crate) trace: PreparedEvaluationTrace<E>,
     pub(crate) row_weight: E,
     pub(crate) opening_claim: E,
 }
 
-pub(crate) struct PackingStage2<'a, E: FieldCore> {
+pub(crate) struct PackingStage2<'a, E: Field> {
     groups: &'a [CoefficientPackingVerifierGroupSemantics<E>],
     opening_claim: E,
 }
 
-pub(crate) struct Stage2OpeningSemantics<'a, E: FieldCore>(
+pub(crate) struct Stage2OpeningSemantics<'a, E: Field>(
     OpeningFamily<EvaluationTraceStage2<E>, PackingStage2<'a, E>>,
 );
 
-impl<'a, E: FieldCore> PackingStage2<'a, E> {
+impl<'a, E: Field> PackingStage2<'a, E> {
     pub(crate) fn new(
         batch: &'a CoefficientPackingVerifierBatchSemantics<E>,
         scalar_openings: &[(usize, E)],
@@ -93,7 +91,7 @@ impl<'a, E: FieldCore> PackingStage2<'a, E> {
     }
 }
 
-impl<'a, E: FieldCore> Stage2OpeningSemantics<'a, E> {
+impl<'a, E: Field> Stage2OpeningSemantics<'a, E> {
     pub(crate) fn evaluation_trace(
         trace: PreparedEvaluationTrace<E>,
         row_weight: E,
@@ -124,7 +122,7 @@ impl<'a, E: FieldCore> Stage2OpeningSemantics<'a, E> {
 }
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
-pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
+pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     batching_coeff: E,
     range_image_evaluation: E,
     witness_eval: E,
@@ -146,8 +144,8 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
 
 impl<'a, F, E> AkitaStage2Verifier<'a, F, E>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     /// Construct a verifier from the shared stage-2 context and the witness
     /// oracle selected by the current proof level.
@@ -208,8 +206,8 @@ where
 
 impl<'a, F, E> SumcheckInstanceVerifier<E> for AkitaStage2Verifier<'a, F, E>
 where
-    F: FieldCore + CanonicalField + HalvingField,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -308,7 +306,6 @@ mod tests {
     use super::*;
     use crate::protocol::ring_switch::{FlatRelationContext, RelationMatrixEvaluator};
     use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
-    use akita_field::{Ext2, Prime64Offset59};
     use akita_types::{
         prepare_coefficient_packing_batch_semantics,
         prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels,
@@ -319,6 +316,8 @@ mod tests {
         RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance, RingVec,
         SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
     };
+    use jolt_field::Zero;
+    use jolt_field::{Ext2, Prime64Offset59};
     use std::sync::Arc;
 
     type F = Prime64Offset59;
@@ -475,7 +474,7 @@ mod tests {
                 level_params: params.clone(),
                 opening_batch: opening_batch.clone(),
                 witness_layout: Arc::new(witness_layout),
-                extension_degree: <E as ExtField<F>>::EXT_DEGREE,
+                extension_degree: <E as ExtField<F>>::DEGREE,
             }),
             setup_plan_cache: Default::default(),
         };

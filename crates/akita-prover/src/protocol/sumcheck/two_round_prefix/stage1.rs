@@ -1,15 +1,14 @@
 use super::common::*;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::parallel::*;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 #[cfg(test)]
 use akita_sumcheck::UniPoly;
 use akita_sumcheck::{reduce_signed_accum, EqFactoredUniPoly};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Unreduced, Zero};
 
 /// Candidate stage-1 domain `{1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 4] {
+pub(crate) fn stage1_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 4] {
     [
         PrefixPoint::Finite(E::one()),
         PrefixPoint::Finite(E::zero() - E::one()),
@@ -20,7 +19,7 @@ pub(crate) fn stage1_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [Prefix
 
 /// Safe full stage-1 fallback domain `{0, 1, -1, 2, Infinity}`.
 #[cfg(test)]
-pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [PrefixPoint<E>; 5] {
+pub(crate) fn stage1_full_prefix_points<E: Field + Ring>() -> [PrefixPoint<E>; 5] {
     [
         PrefixPoint::Finite(E::zero()),
         PrefixPoint::Finite(E::one()),
@@ -35,7 +34,7 @@ pub(crate) fn stage1_full_prefix_points<E: FieldCore + FromPrimitiveInt>() -> [P
 /// This is built and consumed inside the prover to reconstruct ordinary
 /// eq-factored sumcheck round messages; it is not serialized in the Akita proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage1BivariateSkipProof<E: FieldCore> {
+pub(crate) struct Stage1BivariateSkipProof<E: Field> {
     pub evals_except_boolean_core: Vec<E>,
 }
 
@@ -50,9 +49,7 @@ pub(crate) fn stage1_is_boolean_corner(x_idx: usize, y_idx: usize) -> bool {
 }
 
 #[inline]
-pub(crate) fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromPrimitiveInt>(
-    values: [E; 5],
-) -> [E; 5] {
+pub(crate) fn stage1_quartic_coeffs_from_prefix_values<E: Field + Ring>(values: [E; 5]) -> [E; 5] {
     let [at_0, at_1, at_neg_1, at_2, at_inf] = values;
     let two_inv = E::from_u64(2)
         .inverse()
@@ -75,16 +72,13 @@ pub(crate) fn stage1_quartic_coeffs_from_prefix_values<E: FieldCore + FromPrimit
 }
 
 #[inline]
-pub(crate) fn stage1_eval_quartic_from_prefix_values<E: FieldCore + FromPrimitiveInt>(
-    values: [E; 5],
-    x: E,
-) -> E {
+pub(crate) fn stage1_eval_quartic_from_prefix_values<E: Field + Ring>(values: [E; 5], x: E) -> E {
     let [a0, a1, a2, a3, a4] = stage1_quartic_coeffs_from_prefix_values(values);
     a0 + x * (a1 + x * (a2 + x * (a3 + x * a4)))
 }
 
 #[inline]
-pub(crate) fn eval_stage1_biquartic_from_full_grid<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn eval_stage1_biquartic_from_full_grid<E: Field + Ring>(
     full_grid: [E; 25],
     x: E,
     y: E,
@@ -119,9 +113,7 @@ pub(crate) fn can_use_stage1_two_round_prefix(ring_bits: usize, b: usize) -> boo
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_m_compact"
 )]
 #[cfg(test)]
-pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
->(
+pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<E: Field + Ring + Unreduced>(
     w_compact: &[i8],
     tau0: &[E],
     b: usize,
@@ -155,7 +147,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
     name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact_range_image"
 )]
 pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
+    E: Field + Ring + Unreduced,
     S: crate::protocol::sumcheck::digit_range::direct_range_leaf::CompactRangeImageSource + ?Sized,
 >(
     s_compact: &S,
@@ -187,8 +179,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 0..live_x_cols,
                 || {
                     (
-                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::SmallProduct::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
+                        [E::SmallProduct::zero(); STAGE1_B4_PREFIX_EVAL_COUNT],
                     )
                 },
                 |(mut pos, mut neg), x_col| {
@@ -244,8 +236,8 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
                 }
             );
 
-            let mut pos = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
-            let mut neg = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut pos = [E::SmallProduct::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut neg = [E::SmallProduct::zero(); STAGE1_PREFIX_EVAL_COUNT];
             for (lookup_idx, class_weight) in class_weights.into_iter().enumerate() {
                 if !class_weight.is_zero() {
                     accum_lookup_vector_signed(
@@ -269,10 +261,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
 }
 
 #[cfg(test)]
-pub(crate) fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
-    quad: [E; 4],
-    b: usize,
-) -> Vec<E> {
+pub(crate) fn stage1_storage_vector_from_quad<E: Field + Ring>(quad: [E; 4], b: usize) -> Vec<E> {
     let points = stage1_full_prefix_points::<E>();
     let mut out = Vec::with_capacity(STAGE1_PREFIX_EVAL_COUNT);
     for x_idx in 0..5 {
@@ -294,26 +283,26 @@ pub(crate) fn stage1_storage_vector_from_quad<E: FieldCore + FromPrimitiveInt>(
 /// State needed to reconstruct the first two ordinary stage-1 round messages
 /// from the internal bivariate-skip payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage1B4BivariateSkipState<E: FieldCore> {
+pub(crate) struct Stage1B4BivariateSkipState<E: Field> {
     x_row_coeffs: [[E; 3]; 3],
     tau0: E,
     tau1: E,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage1B8BivariateSkipState<E: FieldCore> {
+pub(crate) struct Stage1B8BivariateSkipState<E: Field> {
     pub(crate) full_grid: [E; 25],
     pub(crate) tau0: E,
     pub(crate) tau1: E,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Stage1BivariateSkipState<E: FieldCore> {
+pub(crate) enum Stage1BivariateSkipState<E: Field> {
     B4(Stage1B4BivariateSkipState<E>),
     B8(Stage1B8BivariateSkipState<E>),
 }
 
-impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
+impl<E: Field + Ring> Stage1BivariateSkipState<E> {
     pub(crate) fn new(proof: &Stage1BivariateSkipProof<E>, tau0: &[E], b: usize) -> Option<Self> {
         if tau0.len() < 2 {
             return None;
@@ -401,7 +390,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
+impl<E: Field + Ring> Stage1B4BivariateSkipState<E> {
     #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let q_x = add_quadratic_coeffs(
@@ -437,7 +426,7 @@ impl<E: FieldCore + FromPrimitiveInt> Stage1B4BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> Stage1B8BivariateSkipState<E> {
+impl<E: Field + Ring> Stage1B8BivariateSkipState<E> {
     #[cfg(test)]
     fn reconstruct_round0_poly(&self) -> UniPoly<E> {
         let l1_at_0 = E::one() - self.tau1;

@@ -3,7 +3,6 @@
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::{CanonicalField, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_prover::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, DecomposeParams,
 };
@@ -11,6 +10,7 @@ use akita_prover::compute::{CpuBackend, DecomposeFoldPlan, OpeningFoldKernel};
 use akita_prover::RecursiveWitnessFlat;
 use akita_types::sis::compute_num_digits_field_width;
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 const FIELD_COEFFICIENTS: usize = 1 << 22;
 const POSITIONS_PER_BLOCK: usize = 512;
@@ -34,7 +34,7 @@ fn challenge<const D: usize>(block: usize) -> SparseChallenge {
     SparseChallenge { positions, coeffs }
 }
 
-fn dense_rings<F: CanonicalField, const D: usize>() -> Vec<CyclotomicRing<F, D>> {
+fn dense_rings<F: Field + CanonicalEncoding, const D: usize>() -> Vec<CyclotomicRing<F, D>> {
     let num_rings = FIELD_COEFFICIENTS / D;
     (0..num_rings)
         .map(|ring| {
@@ -44,13 +44,13 @@ fn dense_rings<F: CanonicalField, const D: usize>() -> Vec<CyclotomicRing<F, D>>
                     .wrapping_mul(0x9e37_79b9_7f4a_7c15_6a09_e667_f3bc_c909)
                     .rotate_left(37)
                     ^ index.wrapping_mul(0xbf58_476d_1ce4_e5b9_94d0_49bb_1331_11eb);
-                F::from_canonical_u128_reduced(mixed)
+                F::from_u128_reduced(mixed)
             }))
         })
         .collect()
 }
 
-fn dense_case<F: CanonicalField, const D: usize>(
+fn dense_case<F: Field + CanonicalEncoding, const D: usize>(
     c: &mut Criterion,
     field_label: &str,
     field_bits: u32,
@@ -60,7 +60,10 @@ fn dense_case<F: CanonicalField, const D: usize>(
     let blocks = rings.len().div_ceil(POSITIONS_PER_BLOCK);
     let challenges = (0..blocks).map(challenge::<D>).collect::<Vec<_>>();
     let num_digits = compute_num_digits_field_width(field_bits, log_basis);
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let threshold = decompose_centering_threshold(num_digits, log_basis, q);
     let params = DecomposeParams {
         threshold,

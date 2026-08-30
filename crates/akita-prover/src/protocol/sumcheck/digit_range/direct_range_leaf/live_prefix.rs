@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[tracing::instrument(
         skip_all,
         name = "LowBasisRangeCheckProver::fuse_materialized_prefix_x_and_compute_round"
@@ -32,7 +32,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
             let row = &range_image[y * old_live_x_cols..(y + 1) * old_live_x_cols];
             let j_base = y * next_current_x_half;
-            let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
+            let mut outer_accum = vec![E::Product::zero(); num_coeffs_q];
             let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
             let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
@@ -40,8 +40,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             while block_start < live_pairs {
                 let block_end = (block_start + block_size).min(live_pairs);
                 let equality_suffix_index = (j_base + block_start) >> first_bits;
-                let mut block_accumulator =
-                    [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let mut block_accumulator = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let complete_quartets = (block_end - block_start) / 4;
 
                 for quartet in 0..complete_quartets {
@@ -115,15 +114,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
                 let equality_suffix = e_second[equality_suffix_index];
                 for coefficient_index in 0..num_coeffs_q {
-                    let reduced = E::reduce_product_accum(block_accumulator[coefficient_index]);
-                    outer_accum[coefficient_index] += equality_suffix.mul_to_product_accum(reduced);
+                    let reduced = E::reduce_product(block_accumulator[coefficient_index]);
+                    outer_accum[coefficient_index] += equality_suffix.mul_unreduced(reduced);
                 }
                 block_start = block_end;
             }
 
             outer_accum
         };
-        let merge_accumulators = |mut left: Vec<E::ProductAccum>, right: Vec<E::ProductAccum>| {
+        let merge_accumulators = |mut left: Vec<E::Product>, right: Vec<E::Product>| {
             for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
                 *left_coefficient += right_coefficient;
             }
@@ -135,7 +134,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             .enumerate()
             .map(process_row)
             .reduce(
-                || vec![E::ProductAccum::zero(); num_coeffs_q],
+                || vec![E::Product::zero(); num_coeffs_q],
                 merge_accumulators,
             );
 
@@ -143,14 +142,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let accumulated = cfg_chunks_mut!(out, next_live_x_cols)
             .enumerate()
             .map(process_row)
-            .fold(
-                vec![E::ProductAccum::zero(); num_coeffs_q],
-                merge_accumulators,
-            );
-        let q_coeffs = accumulated
-            .into_iter()
-            .map(E::reduce_product_accum)
-            .collect();
+            .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
+        let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
         let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)
@@ -183,7 +176,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             0..(1usize << (self.num_vars - self.col_bits)),
-            || vec![E::ProductAccum::zero(); num_coeffs_q],
+            || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, y| {
                 let row_start = y * self.live_x_cols;
                 let j_base = y * current_x_half;
@@ -192,8 +185,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 while blk < live_pairs {
                     let blk_end = (blk + block_size).min(live_pairs);
                     let j_high = (j_base + blk) >> first_bits;
-                    let mut inner_pos = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-                    let mut inner_neg = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    let mut inner_pos = [E::SmallProduct::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                    let mut inner_neg = [E::SmallProduct::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
                     for pair_x in blk..blk_end {
                         let j_low = (j_base + pair_x) & (num_first - 1);
@@ -221,7 +214,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     let e_out = e_second[j_high];
                     for k in 0..num_coeffs_q {
                         let inner_reduced = reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
-                        outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                        outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                     }
                     blk = blk_end;
                 }
@@ -235,7 +228,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             }
         )
         .into_iter()
-        .map(E::reduce_product_accum)
+        .map(E::reduce_product)
         .collect();
 
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
@@ -264,7 +257,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let num_coeffs_q = full_num_coeffs_q;
         let q_coeffs = cfg_fold_reduce!(
             tiles.work_items(),
-            || vec![E::ProductAccum::zero(); num_coeffs_q],
+            || vec![E::Product::zero(); num_coeffs_q],
             |mut outer_accum, work_item| {
                 debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
                 let tile = tiles.decode(work_item);
@@ -277,7 +270,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
                 let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let j_high = (j_base + blk) >> first_bits;
-                let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let blk_len = blk_end - blk;
                 let full_chunks = blk_len / 4;
 
@@ -344,8 +337,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
-                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    let inner_reduced = E::reduce_product(inner_accum[k]);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
 
                 outer_accum
@@ -358,7 +351,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             }
         );
 
-        let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product_accum).collect();
+        let q_coeffs: Vec<E> = q_coeffs.into_iter().map(E::reduce_product).collect();
         EqFactoredUniPoly::from_q_coeffs(q_coeffs)
     }
 

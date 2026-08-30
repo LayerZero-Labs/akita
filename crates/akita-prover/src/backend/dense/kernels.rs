@@ -1,7 +1,7 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::coefficient_packing::partials_from_position_source;
+use crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -10,12 +10,12 @@ use crate::compute::{
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn commit_inner_group(
         &self,
@@ -43,7 +43,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
         &self,
@@ -100,7 +100,7 @@ where
 
 impl<F, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
         &self,
@@ -115,7 +115,7 @@ where
 impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
 {
     fn coefficient_packing_partials_batch(
@@ -138,7 +138,7 @@ where
                         actual: rings.len(),
                     });
                 }
-                let coordinates = partials_from_position_source::<F, E, _, D>(
+                let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
                     plan,
                     RootPolyMeta::<F>::num_vars(*poly),
                     |position| {

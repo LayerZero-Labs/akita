@@ -2,7 +2,6 @@
 
 use super::{FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{
@@ -10,8 +9,9 @@ use akita_types::{
     OpeningClaims, OpeningClaimsLayout, PreparedSubringCoefficientPackingPoint,
     SubringCoefficientPackingGeometry,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
-fn prepare_group<E: FieldCore>(
+fn prepare_group<E: Field>(
     point: &[E],
     basis: BasisMode,
     source_num_vars: usize,
@@ -42,7 +42,7 @@ fn prepare_group<E: FieldCore>(
     )
 }
 
-fn prepare_prefix_points<F: FieldCore, E: ExtField<F>, C>(
+fn prepare_prefix_points<F: Field, E: ExtField<F>, C>(
     claims: &OpeningClaims<'_, E, C>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -62,7 +62,7 @@ fn prepare_prefix_points<F: FieldCore, E: ExtField<F>, C>(
                 basis,
                 layout.num_vars(),
                 &group_params,
-                E::EXT_DEGREE,
+                E::DEGREE,
             )?,
         ));
     }
@@ -78,8 +78,8 @@ pub(in crate::protocol::core) fn verify_coefficient_packing_root_prefix<F, E>(
     root_lp: &CommittedGroupParams,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
 {
     let prepared_points =
         prepare_prefix_points::<F, E, _>(claims, openings, opening_batch, basis, root_lp)?;
@@ -101,8 +101,8 @@ pub(in crate::protocol::core) fn verify_coefficient_packing_suffix_prefix<F, E, 
     transcript: &mut T,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
     T: Transcript<F>,
 {
     let prepared_points =

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use akita_field::{pseudo_mersenne_modulus, PrimeOffsetSpec, PRIME_OFFSET_SPECS};
+use jolt_field::{pseudo_mersenne_modulus, PrimeOffsetSpec, PRIME_OFFSET_SPECS};
 
 // Strong probable-prime test using multiple fixed bases.
 // This is not a formal primality certificate, but is sufficient as a

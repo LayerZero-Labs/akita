@@ -14,12 +14,12 @@ use crate::kernels::linear::{
 use crate::validation::signed_digit_kernel_for_setup;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     balanced_signed_digit_abs_bound, dense_i8_commit_prefers_exact_ifma52, field_modulus,
     NttCacheKey, NttTransformDomain, SignedDigitKernel,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
 impl CpuBackend {
@@ -30,7 +30,7 @@ impl CpuBackend {
         input: DenseCommitInput<'_, F, D>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         match input {
             DenseCommitInput::CachedDigits {
@@ -145,7 +145,7 @@ impl CpuBackend {
         log_basis_inner: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let row_width = num_positions_per_block
             .checked_mul(num_digits_inner)
@@ -263,14 +263,14 @@ impl CpuBackend {
     }
 }
 
-fn dense_i8_exact_ifma52_preferred<F: CanonicalField, const D: usize>(
+fn dense_i8_exact_ifma52_preferred<F: Field + CanonicalEncoding, const D: usize>(
     row_width: usize,
     log_basis: u32,
 ) -> Result<bool, AkitaError> {
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
     Ok(dense_i8_commit_prefers_exact_ifma52(
-        field_modulus::<F>(),
+        field_modulus::<F>()?,
         D,
         row_width,
         rhs_abs_bound,

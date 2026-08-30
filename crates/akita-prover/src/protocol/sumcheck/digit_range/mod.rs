@@ -27,8 +27,6 @@ pub use direct_range_leaf::LowBasisRangeCheckProver;
 
 use crate::backend::packed_digits::PackedSignedDigits;
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::EqFactoredSumcheckInstanceProverExt;
 use akita_transcript::labels;
@@ -40,13 +38,15 @@ use akita_types::{
 use class_indexed_product::ClassIndexedProductSubcheckProver;
 use class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use compact_digit_source::CompactDigitSource;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 type DigitRangeProveOutput<E> = (AkitaStage1Proof<E>, Vec<E>);
 
 const MAX_TREE_STAGE_Q_DEGREE: usize = 4;
 const MAX_QUARTET_TABLE_CLASS_COUNT: usize = 8;
 
-struct ProductSubcheckInput<'a, E: FieldCore> {
+struct ProductSubcheckInput<'a, E: Field> {
     source: CompactDigitSource,
     plan: DigitRangePlan,
     leaf_polynomials: &'a [Vec<E>],
@@ -61,8 +61,8 @@ fn prove_class_indexed_product_subcheck<F, E, T, const LANES: usize>(
     transcript: &mut T,
 ) -> Result<(AkitaStage1StageProof<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
     T: Transcript<F>,
 {
     let mut stage = ClassIndexedProductSubcheckProver::<E, LANES>::new(
@@ -87,7 +87,7 @@ where
     ))
 }
 
-struct ProductPrefix<E: FieldCore> {
+struct ProductPrefix<E: Field> {
     digit_source: CompactDigitSource,
     plan: DigitRangePlan,
     leaf_coeffs: Vec<Vec<E>>,
@@ -104,8 +104,8 @@ fn prove_product_prefix<F, E, T>(
     transcript: &mut T,
 ) -> Result<ProductPrefix<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
     T: Transcript<F>,
 {
     let leaf_coeffs = plan.leaf_coeffs::<E>();
@@ -163,7 +163,7 @@ where
     })
 }
 
-fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
+fn compose_small_poly_with_affine<E: Field>(coeffs: &[E], offset: E, slope: E) -> [E; 5] {
     debug_assert!(coeffs.len() <= MAX_TREE_STAGE_Q_DEGREE + 1);
     let [constant, linear, quadratic, cubic, quartic] = match coeffs {
         [] => return [E::zero(); 5],
@@ -206,7 +206,7 @@ fn compose_small_poly_with_affine<E: FieldCore>(coeffs: &[E], offset: E, slope: 
 }
 
 /// Stage-1 range-check prover, including the root/leaf tree choreography.
-pub struct DigitRangeProver<E: FieldCore> {
+pub struct DigitRangeProver<E: Field> {
     digit_source: CompactDigitSource,
     equality_point: Vec<E>,
     plan: DigitRangePlan,
@@ -215,7 +215,7 @@ pub struct DigitRangeProver<E: FieldCore> {
     low_variable_count: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
+impl<E: Field + Ring> DigitRangeProver<E> {
     /// Build the prover from the shared compact digit witness and checked layout.
     ///
     /// # Errors
@@ -268,9 +268,7 @@ impl<E: FieldCore + FromPrimitiveInt> DigitRangeProver<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + AkitaSerialize>
-    DigitRangeProver<E>
-{
+impl<E: Field + Ring + Unreduced + Fold + AkitaSerialize> DigitRangeProver<E> {
     /// Produce the full stage-1 tree proof and return the final `stage1_point`.
     /// An optional physical-response plan adds the scheduled norm identity to
     /// the existing final range leaf.
@@ -285,7 +283,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold + Akit
         physical_plan: Option<&PhysicalResponsePlan>,
     ) -> Result<DigitRangeProveOutput<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
         E: ExtField<F>,
         T: Transcript<F>,
     {

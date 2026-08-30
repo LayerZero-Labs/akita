@@ -1,13 +1,25 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::{One, Prime128Offset275, Prime128OffsetA7F7, Ring, Zero};
 use rand::SeedableRng;
 
-type F = Prime128Offset275;
+type F = Prime128OffsetA7F7;
+
+fn decode_golden_hex(encoded: &str) -> Vec<u8> {
+    encoded
+        .trim()
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            u8::from_str_radix(std::str::from_utf8(pair).expect("fixture is ASCII"), 16)
+                .expect("fixture is hexadecimal")
+        })
+        .collect()
+}
 
 fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
@@ -390,6 +402,13 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     batched
         .serialize_uncompressed(&mut batched_bytes)
         .expect("serialize batched proof");
+    assert_eq!(
+        batched_bytes,
+        decode_golden_hex(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/jolt-field-cutover/proof.hex"
+        )))
+    );
     let shape = batched.shape();
     let mut oversized_shape = shape.clone();
     oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
@@ -452,7 +471,7 @@ fn typed_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: CanonicalField,
+    F: CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_serde(label, &TypedRingSliceSerializer(ring_elems));
@@ -468,7 +487,7 @@ fn flat_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: AkitaSerialize + CanonicalField,
+    F: AkitaSerialize + CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let rv = RingVec::from_ring_elems(ring_elems);

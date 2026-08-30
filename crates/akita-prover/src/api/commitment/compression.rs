@@ -3,11 +3,11 @@
 use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{CompressionChainPlan, CompressionChainWitness, RingVec, SisModulusProfileId};
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Dimension-erased output of one complete commitment compression chain.
-pub(super) struct CommitmentCompressionOutput<F: FieldCore> {
+pub(super) struct CommitmentCompressionOutput<F: Field> {
     pub(super) payload: RingVec<F>,
     pub(super) witness: CompressionChainWitness,
     pub(super) quotients: Vec<RingVec<F>>,
@@ -20,7 +20,7 @@ pub(super) fn compute_commitment_compression<F, B>(
     source: RingVec<F>,
 ) -> Result<CommitmentCompressionOutput<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
     let plan = CompressionChainPlan::for_complete_source(modulus_profile, source.coeff_len())?;

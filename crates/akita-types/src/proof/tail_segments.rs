@@ -4,10 +4,10 @@ use std::io::Write;
 
 use akita_error::AkitaError;
 
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
@@ -57,14 +57,14 @@ pub struct TerminalResponseShape {
 
 /// Clear terminal response carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalResponse<F: FieldCore> {
+pub struct TerminalResponse<F: Field> {
     pub layout: TailSegmentLayout,
     pub z_payloads: Vec<Vec<u8>>,
     pub e_fields: RingVec<F>,
     pub t_fields: RingVec<F>,
 }
 
-pub struct TerminalResponseGroupParts<'a, F: FieldCore> {
+pub struct TerminalResponseGroupParts<'a, F: Field> {
     pub params: crate::GroupOpenPhaseParams,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
@@ -417,7 +417,7 @@ impl AkitaDeserialize for TerminalResponseShape {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for TerminalResponse<F> {
+impl<F: Field + Valid> Valid for TerminalResponse<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.layout.check()?;
         if self.z_payloads.len() != self.layout.groups.len() {
@@ -446,7 +446,7 @@ impl<F: FieldCore + Valid> Valid for TerminalResponse<F> {
     }
 }
 
-impl<F: FieldCore> TerminalResponse<F> {
+impl<F: Field> TerminalResponse<F> {
     /// Shape descriptor for this terminal witness.
     pub fn shape(&self) -> TerminalResponseShape {
         TerminalResponseShape {
@@ -474,7 +474,7 @@ impl TerminalResponseShape {
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for TerminalResponse<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for TerminalResponse<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -498,14 +498,12 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for Terminal
             self.layout
                 .e_field_elems()
                 .saturating_add(self.layout.t_field_elems())
-                .saturating_mul(field_bytes(F::modulus_bits())),
+                .saturating_mul(field_bytes(F::MODULUS_BITS)),
         )
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for TerminalResponse<F>
-{
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for TerminalResponse<F> {
     type Context = TerminalResponseShape;
 
     fn deserialize_with_mode<R: std::io::Read>(
@@ -555,7 +553,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> TerminalResponse<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> TerminalResponse<F> {
     /// Canonical segment bytes in wire order (`z ‖ e ‖ t`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -600,7 +598,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> TerminalResponse<F> {
     }
 }
 
-fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
+fn append_field_coeffs<F: Field + AkitaSerialize, W: Write>(
     writer: &mut W,
     coeffs: &[F],
     compress: Compress,
@@ -615,7 +613,7 @@ fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
     Ok(())
 }
 
-fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
+fn append_field_coeffs_vec<F: Field + AkitaSerialize>(
     out: &mut Vec<u8>,
     coeffs: &[F],
 ) -> Result<(), AkitaError> {
@@ -638,7 +636,7 @@ fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
 pub fn raw_field_segment_bytes<F>(fields: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
@@ -899,7 +897,7 @@ pub fn build_terminal_response_from_groups<F>(
     scheduled_shape: &TerminalResponseShape,
 ) -> Result<TerminalResponse<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     if ring_d == 0 || lp.d_a() != ring_d {
         return Err(AkitaError::InvalidInput(
@@ -1007,7 +1005,7 @@ pub fn build_terminal_response<F>(
     z_folded_centered_flat: &[i32],
 ) -> Result<TerminalResponse<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let group = scheduled_shape
         .layout
@@ -1063,7 +1061,7 @@ where
 /// # Errors
 ///
 /// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
-pub fn validate_terminal_response_z_payload<F: FieldCore>(
+pub fn validate_terminal_response_z_payload<F: Field>(
     witness: &TerminalResponse<F>,
 ) -> Result<(), AkitaError> {
     let group = witness

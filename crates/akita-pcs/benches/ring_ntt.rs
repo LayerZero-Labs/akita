@@ -9,9 +9,9 @@ use akita_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, mat_vec_i16_with_tail, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams, MontCoeff, NttKernelPlan,
 };
-use akita_field::{CanonicalField, Fp64, Prime128OffsetA7F7, Prime32Offset99};
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use jolt_field::{CanonicalEncoding, Fp64, One, Prime128OffsetA7F7, Prime32Offset99, Ring};
 
 type F = Fp64<{ Q32_MODULUS }>;
 type R = CyclotomicRing<F, 64>;
@@ -155,7 +155,7 @@ fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
 
 fn bench_fp32_decomposition_dimension<const D: usize, const LOG_BASIS: u32>(c: &mut Criterion) {
     let coefficients: [Prime32Offset99; D] = std::array::from_fn(|i| {
-        Prime32Offset99::from_canonical_u128_reduced(
+        Prime32Offset99::from_u128_reduced(
             (i as u128 * 0x9e37_79b9 + 0x7f4a_7c15) % ((1u128 << 32) - 99),
         )
     });

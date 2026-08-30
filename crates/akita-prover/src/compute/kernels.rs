@@ -6,11 +6,11 @@ use crate::compute::operation_plans::{
 use crate::compute::plans::RingSwitchRelationRows;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Outcome of a batched decompose-fold kernel invocation.
 #[derive(Debug)]
-pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
+pub enum BatchDecomposeFoldOutcome<F: Field, const D: usize> {
     /// Fused batched witness produced by the kernel.
     Fused(DecomposeFoldWitness<F>),
     /// No fused path; caller should decompose-fold each polynomial and aggregate.
@@ -27,7 +27,7 @@ pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
 /// Akita views reduce to the standard `*_commit_rows` helpers above.
 pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Inner commitments for a same-shape group of sources.
     ///
@@ -45,7 +45,7 @@ where
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
 pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused D rows in both domains, B cyclic rows, and A-side quotient rows.
     fn relation_rows(
@@ -53,9 +53,7 @@ where
         prepared: &Self::PreparedSetup,
         source: S,
         plan: RingSwitchRelationPlan,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField;
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>;
 }
 
 /// Opening fold / decompose-fold kernel over a borrowed opening view `S`.
@@ -64,7 +62,7 @@ where
 /// state; setup-dependent work stays explicitly tied to the backend context.
 pub trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused fold + evaluation in one pass over the source.
     fn evaluate_and_fold(
@@ -86,7 +84,7 @@ where
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
 pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused batched decompose-fold at one opening point.
     fn decompose_fold_batch(
@@ -101,7 +99,7 @@ where
 /// extension-field point of type `E`.
 pub trait TensorProjectionKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials at one logical point.
@@ -125,7 +123,7 @@ where
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
 pub trait TensorProjectionBatchKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials for a same-point batch.
@@ -143,7 +141,7 @@ where
 pub trait SubringCoefficientPackingBatchKernel<S, F, E, const D: usize>:
     ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Return one canonical base-field partial buffer per claim.

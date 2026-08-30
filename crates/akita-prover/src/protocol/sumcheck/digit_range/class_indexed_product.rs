@@ -11,19 +11,19 @@ use super::round_accumulation::accumulate_equality_weighted_round;
 use super::{MAX_QUARTET_TABLE_CLASS_COUNT, MAX_TREE_STAGE_Q_DEGREE};
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{FieldCore, FromPrimitiveInt};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly};
 use akita_types::DigitRangePlan;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
-struct CompactProductState<E: FieldCore, const LANES: usize> {
+struct CompactProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
     nodes: ProductNodeTable<E, LANES>,
     pair_coefficients: OrderedProductPairCoefficients<E>,
 }
 
-struct FirstChallengeFoldedProductState<E: FieldCore, const LANES: usize> {
+struct FirstChallengeFoldedProductState<E: Field, const LANES: usize> {
     source: CompactDigitSource,
     folded_pairs: FoldedProductPairTable<E, LANES>,
     cached_second_round_coefficients: [E; MAX_TREE_STAGE_Q_DEGREE + 1],
@@ -35,7 +35,7 @@ type ProductTableState<E, const LANES: usize> = ClassIndexedTableState<
     [E; LANES],
 >;
 
-fn accumulate_round<E: FieldCore + HasUnreducedOps, const LANES: usize>(
+fn accumulate_round<E: Field + Unreduced, const LANES: usize>(
     equality_prefix_weights: &[E],
     equality_suffix_weights: &[E],
     explicit_pair_count: usize,
@@ -58,7 +58,7 @@ fn accumulate_round<E: FieldCore + HasUnreducedOps, const LANES: usize>(
 }
 
 /// One eq-factored product substage that keeps compact classes through its first two rounds.
-pub(super) struct ClassIndexedProductSubcheckProver<E: FieldCore, const LANES: usize> {
+pub(super) struct ClassIndexedProductSubcheckProver<E: Field, const LANES: usize> {
     product_table: ProductTableState<E, LANES>,
     parent_weights: Vec<E>,
     split_eq: GruenSplitEq<E>,
@@ -68,9 +68,7 @@ pub(super) struct ClassIndexedProductSubcheckProver<E: FieldCore, const LANES: u
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt, const LANES: usize>
-    ClassIndexedProductSubcheckProver<E, LANES>
-{
+impl<E: Field + Ring, const LANES: usize> ClassIndexedProductSubcheckProver<E, LANES> {
     pub(super) fn new(
         source: CompactDigitSource,
         plan: DigitRangePlan,
@@ -138,8 +136,8 @@ impl<E: FieldCore + FromPrimitiveInt, const LANES: usize>
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const LANES: usize>
-    EqFactoredSumcheckInstanceProver<E> for ClassIndexedProductSubcheckProver<E, LANES>
+impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckInstanceProver<E>
+    for ClassIndexedProductSubcheckProver<E, LANES>
 {
     fn num_rounds(&self) -> usize {
         self.num_rounds
@@ -320,7 +318,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const
                         kernel_strategy = "factorized-pair-rescan",
                     )
                     .entered();
-                    let fold_context = E::precompute_fold(challenge);
+                    let fold_context = E::precompute(challenge);
                     let explicit = cfg_into_iter!(0..source.quartet_count())
                         .map(|quartet_index| {
                             let (left_pair, right_pair) =
@@ -397,7 +395,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps, const
                 lane_count = LANES,
             )
             .entered();
-            let fold_context = E::precompute_fold(challenge);
+            let fold_context = E::precompute(challenge);
             table
                 .fold_in_place(|left, right| {
                     std::array::from_fn(|lane| E::fold_one(&fold_context, left[lane], right[lane]))

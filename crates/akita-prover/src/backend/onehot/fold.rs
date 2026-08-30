@@ -7,7 +7,7 @@ pub(super) fn fold_onehot_block<F, I, const D: usize>(
     scalars: &[F],
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     let mut coeffs_acc = [F::zero(); D];
@@ -31,7 +31,7 @@ pub(super) fn fold_onehot_block_ring<F, const D: usize>(
     num_positions_per_block: usize,
 ) -> CyclotomicRing<F, D>
 where
-    F: FieldCore,
+    F: Field,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();
 
@@ -52,7 +52,7 @@ pub(super) fn fold_onehot_block_subfield<F, I, const D: usize>(
     multipliers: &SubfieldMultiplierOpeningPoint<F>,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     let mut acc = CyclotomicRing::<F, D>::zero();

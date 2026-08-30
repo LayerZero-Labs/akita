@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
-use akita_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::{Field, Ring};
 
 use crate::{
     CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
@@ -233,7 +233,7 @@ impl PhysicalResponsePlan {
 
     /// Canonical paired-equality geometry that batches all virtual response
     /// evaluations into the existing Stage-2 witness relation.
-    pub fn virtualization_families<E: FieldCore + FromPrimitiveInt>(
+    pub fn virtualization_families<E: Field + Ring>(
         &self,
         batching: &[E],
     ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {

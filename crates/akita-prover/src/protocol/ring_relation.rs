@@ -13,9 +13,6 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
@@ -25,6 +22,9 @@ use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{
     CommittedGroupParams, OpeningFamily, RingRelationGroupOpening, RingRelationInstance,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 
 use super::coefficient_packing::{
     concatenate_group_d_inputs, fold_coefficient_packing_group,
@@ -46,23 +46,23 @@ pub(crate) use compression_witness::{
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
-struct EvaluationTraceOpeningMaterial<F: FieldCore> {
+struct EvaluationTraceOpeningMaterial<F: Field> {
     e_folded: RingVec<F>,
     ring_multiplier_point: RingMultiplierOpeningPoint<F>,
 }
 
-struct CoefficientPackingOpeningMaterial<F: FieldCore> {
+struct CoefficientPackingOpeningMaterial<F: Field> {
     partials_by_claim: Vec<crate::compute::SubringCoefficientPackingPartials<F>>,
 }
 
-struct GroupOpeningMaterial<F: FieldCore> {
+struct GroupOpeningMaterial<F: Field> {
     e_hat: DigitBlocks,
     kind: OpeningFamily<EvaluationTraceOpeningMaterial<F>, CoefficientPackingOpeningMaterial<F>>,
 }
 
 /// Method-typed Stage 2 authority retained from the exact source preparation
 /// that also produced this group's relation witness.
-pub(crate) struct PreparedRelationGroup<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedRelationGroup<F: Field, E: Field> {
     kind: OpeningFamily<
         akita_types::PreparedOpeningPoint<F, E>,
         akita_types::PreparedSubringCoefficientPackingPoint<E>,
@@ -70,13 +70,13 @@ pub(crate) struct PreparedRelationGroup<F: FieldCore, E: FieldCore> {
     scalar_openings: Vec<E>,
 }
 
-pub(crate) struct PreparedRingRelation<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedRingRelation<F: Field, E: Field> {
     pub(crate) instance: RingRelationInstance<F>,
     pub(crate) witness: RingRelationWitness<F>,
     pub(crate) groups: Vec<PreparedRelationGroup<F, E>>,
 }
 
-impl<F: FieldCore, E: FieldCore> PreparedRelationGroup<F, E> {
+impl<F: Field, E: Field> PreparedRelationGroup<F, E> {
     pub(crate) const fn kind(
         &self,
     ) -> &OpeningFamily<
@@ -119,23 +119,20 @@ pub(crate) fn validate_prepared_relation_groups<F, E>(
     relation: &RingRelationInstance<F>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: akita_types::FpExtEncoding<F>,
 {
     if groups.len() != opening_batch.num_groups()
         || relation.opening_batch() != opening_batch
         || relation.group_openings().len() != groups.len()
-        || relation.extension_degree() != E::EXT_DEGREE
+        || relation.extension_degree() != E::DEGREE
     {
         return Err(AkitaError::InvalidSetup(
             "prepared Stage 2 groups disagree with the relation batch".into(),
         ));
     }
-    let geometry = akita_types::RelationWitnessGeometry::for_level(
-        level_params,
-        opening_batch,
-        E::EXT_DEGREE,
-    )?;
+    let geometry =
+        akita_types::RelationWitnessGeometry::for_level(level_params, opening_batch, E::DEGREE)?;
     for (group_index, group) in groups.iter().enumerate() {
         let layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params_geometry(opening_batch, group_index)?;
@@ -176,19 +173,25 @@ where
     Ok(())
 }
 
-impl<F: FieldCore> GroupOpeningMaterial<F> {
+impl<F: Field> GroupOpeningMaterial<F> {
     fn e_hat(&self) -> &DigitBlocks {
         &self.e_hat
     }
 }
 
-fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
+fn decompose_e_hat<
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    const D: usize,
+>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
     role_subcolumns: usize,
     depth_open: usize,
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError> {
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let decompose_params = BalancedDecomposePow2Params::new(depth_open, log_basis, q);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     if role_subcolumns == 0 || !total_rows.is_multiple_of(role_subcolumns) {
@@ -214,7 +217,7 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     Ok(e_hat)
 }
 
-pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
+pub(super) fn aggregate_decompose_fold_witnesses<F: Field, const D: usize>(
     witnesses: Vec<DecomposeFoldWitness<F>>,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError> {
     let mut witnesses = witnesses.into_iter();
@@ -271,7 +274,7 @@ pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     log_basis_inner: u32,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     P: RootOpeningSource<F, D>,
     B: crate::compute::ComputeBackendSetup<F>
         + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
@@ -321,7 +324,7 @@ where
     }
 }
 
-struct RelationDRows<F: FieldCore, const D: usize> {
+struct RelationDRows<F: Field, const D: usize> {
     reduced: Vec<CyclotomicRing<F, D>>,
     quotients: Vec<CyclotomicRing<F, D>>,
 }
@@ -338,7 +341,7 @@ fn compute_relation_d_rows<F, RB, const D: usize>(
     e_hat: &DigitBlocks,
 ) -> Result<RelationDRows<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     RB: RingSwitchProveBackend<F, D>,
 {
     let backend = ring_switch_ctx.backend();
@@ -460,12 +463,18 @@ impl RingRelationProver {
         bind_claims_after_payload: BindClaims,
     ) -> Result<(PreparedRingRelation<F, PointF>, BoundClaims), AkitaError>
     where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
-        <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+        F: Field
+            + CanonicalEncoding
+            + akita_serialization::AkitaSerialize
+            + Ring
+            + Field
+            + Unreduced
+            + 'static,
+        <F as Unreduced>::Wide: From<F>,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
         PointF: akita_types::FpExtEncoding<F>
-            + akita_field::ExtField<F>
+            + jolt_field::ExtField<F>
             + akita_serialization::AkitaSerialize,
         P: crate::protocol::core::RootProverGroupOpening<F, PointF, OB>,
         OB: DigitRowsComputeBackend<F>,
@@ -490,11 +499,8 @@ impl RingRelationProver {
         for group_index in 0..num_groups {
             hints.push(block_claims.group_hint(group_index)?.clone());
         }
-        let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
-            &lp,
-            &opening_batch,
-            PointF::EXT_DEGREE,
-        )?;
+        let relation_geometry =
+            akita_types::RelationWitnessGeometry::for_level(&lp, &opening_batch, PointF::DEGREE)?;
         let relation_rhs_layout = relation_geometry.rhs_layout();
         // Compressed commitments contain terminal F payloads, whose complete
         // B images are recovered from the retained first-map digits. Raw
@@ -948,7 +954,7 @@ impl RingRelationProver {
 
         let instance = RingRelationInstance::new(
             relation_group_openings,
-            PointF::EXT_DEGREE,
+            PointF::DEGREE,
             opening_batch.clone(),
             gamma,
             row_coefficient_rings,

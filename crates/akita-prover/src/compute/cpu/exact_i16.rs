@@ -2,14 +2,14 @@ use super::CpuPreparedSetup;
 use crate::backend::packed_digits::PackedSignedDigitView;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
 #[tracing::instrument(skip_all, name = "dense_commit_rows_exact_i16")]
-pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
     row_width: usize,
@@ -48,7 +48,7 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
 }
 
 #[tracing::instrument(skip_all, name = "dense_commit_cached_digit_rows_exact_i16")]
-pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, const D: usize>(
+pub(super) fn dense_commit_cached_digit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
     row_width: usize,
@@ -85,10 +85,7 @@ pub(super) fn dense_commit_cached_digit_rows<F: FieldCore + CanonicalField, cons
     )
 }
 
-pub(super) fn recursive_packed_witness_commit_rows<
-    F: FieldCore + CanonicalField,
-    const D: usize,
->(
+pub(super) fn recursive_packed_witness_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     digits: PackedSignedDigitView<'_>,
     n_rows: usize,

@@ -4,13 +4,13 @@ use super::{FlatRelationContext, RelationMatrixEvaluator, RelationMatrixGroupEva
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, AkitaSetupDescriptor,
     CommitmentRingDims, CommittedGroupParams, FlatMatrix, InnerCommitMatrixParams,
     OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     RelationAddressGeometry, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
 };
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7};
 use std::sync::Arc;
 
 /// Inputs for one exact production relation-evaluator benchmark cell.
@@ -196,5 +196,5 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
 }
 
 fn scalar(value: u128) -> Prime128OffsetA7F7 {
-    Prime128OffsetA7F7::from_canonical_u128(value)
+    Prime128OffsetA7F7::from_u128_checked(value).expect("benchmark scalar must be canonical")
 }

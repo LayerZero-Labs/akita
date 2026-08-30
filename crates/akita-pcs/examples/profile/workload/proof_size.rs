@@ -1,8 +1,8 @@
 use crate::report::observed_stage3_setup_product_bytes;
 use akita_config::CommitmentConfig;
-use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_types::{AkitaBatchedProof, FoldSchedule, PolynomialGroupLayout, SetupContributionMode};
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
     schedule: &FoldSchedule,
@@ -44,8 +44,8 @@ pub(super) fn planned_payload_bytes<Cfg: CommitmentConfig>(
 
 pub(super) fn assert_observed_proof_size<FF, E>(label: &str, proof: &AkitaBatchedProof<FF, E>)
 where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let mut encoded = Vec::with_capacity(proof.size());
     proof
@@ -90,8 +90,8 @@ fn terminal_response_z_planner_slack<FF, E>(
     schedule: &FoldSchedule,
 ) -> usize
 where
-    FF: FieldCore,
-    E: FieldCore,
+    FF: Field,
+    E: Field,
 {
     schedule
         .terminal
@@ -163,8 +163,8 @@ pub(super) fn report_proof_size_against_planner<FF, E>(
     mode: SetupContributionMode,
     schedule: &FoldSchedule,
 ) where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
+    FF: Field + CanonicalEncoding + AkitaSerialize,
+    E: Field + AkitaSerialize,
 {
     let z_slack = terminal_response_z_planner_slack(proof, schedule);
     match mode {

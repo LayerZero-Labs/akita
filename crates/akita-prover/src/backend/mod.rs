@@ -14,6 +14,7 @@ mod recursive;
 mod ring_switch;
 pub(crate) mod sparse_ring;
 
+pub use coefficient_packing::coefficient_packing_partials_from_position_source;
 pub use dense::{DenseBatchView, DensePoly, DenseView};
 pub use field_reduction::tensor_pack_recursive_witness;
 pub use multilinear_polynomial::{

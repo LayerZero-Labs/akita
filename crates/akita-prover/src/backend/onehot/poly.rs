@@ -14,7 +14,7 @@ use super::*;
 /// Generic over `I`: the index type accepted and stored per chunk. Use `u8`
 /// when `onehot_k <= 256` to reduce index storage footprint.
 #[derive(Debug, Clone)]
-pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
+pub struct OneHotPoly<F: Field, I: OneHotIndex = usize> {
     pub(crate) num_vars: usize,
     pub(crate) onehot_k: usize,
     /// Per-chunk hot-position indices. `None` denotes an all-zero chunk.
@@ -22,7 +22,7 @@ pub struct OneHotPoly<F: FieldCore, I: OneHotIndex = usize> {
     pub(crate) _marker: PhantomData<F>,
 }
 
-impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     /// Build a one-hot polynomial from chunk size and hot-position indices.
     ///
     /// `indices[c]` is the hot position in chunk `c` (`None` for all-zero chunks).

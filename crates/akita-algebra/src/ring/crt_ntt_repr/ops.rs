@@ -9,7 +9,7 @@ use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
-use crate::{CanonicalField, CyclotomicRing, FieldCore};
+use crate::{CanonicalEncoding, CyclotomicRing, Field};
 use akita_error::AkitaError;
 
 use super::convert::CenteredI16NttConverter;
@@ -29,7 +29,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// `num_cols` and the accepted signed-input class. Shape relationships are
     /// checked before indexing so verifier callers reject malformed prepared
     /// state rather than panicking.
-    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+    pub fn mat_vec_i16<F: Field + CanonicalEncoding>(
         matrix: &[Self],
         num_rows: usize,
         num_cols: usize,

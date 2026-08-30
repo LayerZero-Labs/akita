@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn mat_vec_mul_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -15,7 +15,7 @@ pub(super) fn mat_vec_mul_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -29,7 +29,7 @@ pub(super) fn mat_vec_mul_dense_digits_i8_with_params<
 }
 
 pub(super) fn mat_vec_mul_digits_i8_with_params_impl<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -242,7 +242,7 @@ impl<W: PrimeWidth, const K: usize> PackedI8Lift<W, K> {
 }
 
 fn mat_vec_mul_packed_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     Decode,
     const K: usize,
@@ -380,7 +380,7 @@ where
 /// shared digit LUT and matrix stay outside that decode boundary, preserving
 /// the block-parallel kernel without retaining the full byte witness.
 pub(super) fn mat_vec_mul_packed_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     Decode,
     const K: usize,
@@ -424,7 +424,7 @@ where
 /// can push coefficients past the balanced range `[-2^(log_basis-1),
 /// 2^(log_basis-1))`. Degree-one fields keep the faster balanced-digit kernel.
 pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -498,7 +498,7 @@ pub(super) fn mat_vec_mul_raw_digits_i8_with_params<
 /// Raw signed-i8 counterpart of
 /// [`mat_vec_mul_packed_digits_i8_with_params`].
 pub(super) fn mat_vec_mul_packed_raw_i8_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     Decode,
     const K: usize,

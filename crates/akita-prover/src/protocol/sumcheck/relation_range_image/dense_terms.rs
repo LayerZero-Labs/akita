@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::compute_round_compact_dense_terms"
@@ -24,9 +24,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 2], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::zero(); 2];
+                    let mut inner_virt = [E::SmallProduct::zero(); 2];
                     let base = j_high * num_first;
                     let mut witness_digits = compact_witness
                         .slice(2 * base..2 * (base + num_first))
@@ -110,9 +110,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         } else {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
                 0..num_second,
-                || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
+                || ([E::zero(); 3], [E::SmallProduct::zero(); 6]),
                 |(mut virt, mut rel), j_high| {
-                    let mut inner_virt = [E::MulU64Accum::zero(); 4];
+                    let mut inner_virt = [E::SmallProduct::zero(); 4];
                     let base = j_high * num_first;
                     let mut witness_digits = compact_witness
                         .slice(2 * base..2 * (base + num_first))

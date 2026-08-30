@@ -400,7 +400,7 @@ recursive suffix witness. The planner prices that combined opening shape.
 The dependency direction is:
 
 ```text
-akita-config -> akita-schedules -> akita-types / akita-challenges / akita-field
+akita-config -> akita-schedules -> akita-types / akita-challenges / jolt-field
 akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```

@@ -1,7 +1,6 @@
 use super::*;
 
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
-use akita_field::{Ext2, Prime64Offset59};
 use akita_types::{
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
@@ -13,6 +12,7 @@ use akita_types::{
     RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance,
     RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
 };
+use jolt_field::{Ext2, One, Prime64Offset59, Ring, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;

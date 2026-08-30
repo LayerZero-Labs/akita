@@ -5,7 +5,7 @@
 //! - Low-level NTT and CRT+NTT arithmetic scaffolding (`ntt`)
 //! - Cyclotomic ring and backend arithmetic structure
 //!
-//! Concrete fields and field packing live in `akita-field`. Sparse
+//! Concrete fields and field packing live in `jolt-field`. Sparse
 //! Fiat–Shamir challenge representations and samplers live in
 //! `akita-challenges`.
 
@@ -13,6 +13,7 @@
 #![warn(unreachable_pub)]
 
 pub mod eq_poly;
+pub mod fft;
 pub mod module;
 pub mod ntt;
 pub mod offset_eq;
@@ -22,15 +23,12 @@ pub mod split_eq;
 pub mod uni_poly;
 
 // Flat re-exports for convenience.
-pub use akita_field::{
-    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
-    cfg_try_fold_reduce,
-};
-pub use akita_field::{
-    AdditiveGroup, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt, HalvingField,
-    Invertible, One, PseudoMersenneField, RandomSampling, RingCore, SmoothFftField, Zero,
-};
 pub use eq_poly::{EqPolynomial, SplitEqEvals};
+pub use fft::SmoothFftField;
+pub use jolt_field::{
+    cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+};
+pub use jolt_field::{AdditiveGroup, CanonicalEncoding, Field, One, PseudoMersenne, Ring, Zero};
 pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{
@@ -44,3 +42,48 @@ pub use ring::{
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};
+
+/// Fallible parallel fold-reduce over a range.
+///
+/// The identity argument is a zero-argument factory, matching Rayon's
+/// `try_fold` and `try_reduce` contracts. The sequential path calls the same
+/// factory once to obtain its initial accumulator.
+#[macro_export]
+macro_rules! cfg_try_fold_reduce {
+    ($range:expr, $identity_factory:expr, $fold_op:expr, $reduce_op:expr) => {{
+        let identity_factory = $identity_factory;
+        #[cfg(feature = "parallel")]
+        let result = $range
+            .into_par_iter()
+            .try_fold(&identity_factory, $fold_op)
+            .try_reduce(&identity_factory, $reduce_op);
+        #[cfg(not(feature = "parallel"))]
+        let result = $range.into_iter().try_fold(identity_factory(), $fold_op);
+        result
+    }};
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "parallel")]
+    use rayon::prelude::*;
+
+    #[test]
+    fn try_fold_reduce_uses_identity_factory() {
+        let sum = crate::cfg_try_fold_reduce!(
+            0usize..100,
+            usize::default,
+            |acc, value| acc.checked_add(value),
+            |lhs, rhs| lhs.checked_add(rhs)
+        );
+        assert_eq!(sum, Some((0usize..100).sum()));
+
+        let empty = crate::cfg_try_fold_reduce!(
+            0usize..0,
+            usize::default,
+            |acc, value| acc.checked_add(value),
+            |lhs, rhs| lhs.checked_add(rhs)
+        );
+        assert_eq!(empty, Some(0));
+    }
+}

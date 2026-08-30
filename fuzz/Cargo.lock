@@ -7,8 +7,8 @@ name = "akita-algebra"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "akita-field",
  "akita-serialization",
+ "jolt-field",
  "rand_core 0.6.4",
  "tracing",
 ]
@@ -18,8 +18,8 @@ name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
  "akita-error",
- "akita-field",
  "akita-transcript",
+ "jolt-field",
  "sha3 0.10.9",
  "smallvec",
  "tracing",
@@ -33,24 +33,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "akita-field"
-version = "0.1.0"
-dependencies = [
- "akita-error",
- "akita-serialization",
- "num-traits",
- "rand_core 0.6.4",
- "serde",
-]
-
-[[package]]
 name = "akita-fuzz"
 version = "0.0.0"
 dependencies = [
- "akita-field",
  "akita-serialization",
  "akita-transcript",
  "akita-types",
+ "jolt-field",
  "libfuzzer-sys",
 ]
 
@@ -58,6 +47,7 @@ dependencies = [
 name = "akita-serialization"
 version = "0.1.0"
 dependencies = [
+ "jolt-field",
  "thiserror",
 ]
 
@@ -67,9 +57,9 @@ version = "0.1.0"
 dependencies = [
  "akita-algebra",
  "akita-error",
- "akita-field",
  "akita-serialization",
  "akita-transcript",
+ "jolt-field",
  "tracing",
 ]
 
@@ -77,9 +67,9 @@ dependencies = [
 name = "akita-transcript"
 version = "0.1.0"
 dependencies = [
- "akita-field",
  "akita-serialization",
  "blake2 0.10.6",
+ "jolt-field",
  "spongefish",
 ]
 
@@ -90,11 +80,11 @@ dependencies = [
  "akita-algebra",
  "akita-challenges",
  "akita-error",
- "akita-field",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",
  "blake2 0.10.6",
+ "jolt-field",
  "num-traits",
  "rand_core 0.6.4",
  "sha3 0.10.9",
@@ -319,6 +309,18 @@ checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt?rev=72dc6451628d8b1dd794147a1f1cc40be0d77963#72dc6451628d8b1dd794147a1f1cc40be0d77963"
+dependencies = [
+ "cc",
+ "num-traits",
+ "rand_core 0.6.4",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

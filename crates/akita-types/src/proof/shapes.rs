@@ -317,14 +317,14 @@ pub fn canonical_proof_shape(
     })
 }
 
-pub(super) fn sumcheck_shape<F: FieldCore>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
+pub(super) fn sumcheck_shape<F: Field>(sc: &SumcheckProof<F>) -> SumcheckProofShape {
     sc.round_polys
         .iter()
         .map(|p| p.coeffs_except_linear_term.len())
         .collect()
 }
 
-fn eq_factored_sumcheck_shape<F: FieldCore>(
+fn eq_factored_sumcheck_shape<F: Field>(
     sc: &EqFactoredSumcheckProof<F>,
 ) -> EqFactoredSumcheckProofShape {
     let degree = sc
@@ -334,7 +334,7 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
     (sc.round_polys.len(), degree)
 }
 
-pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
+pub(super) fn level_proof_shape<F: Field, E: Field>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     opening_payload: &RingVec<F>,
     stage1: &AkitaStage1Proof<E>,

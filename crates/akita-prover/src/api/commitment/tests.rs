@@ -4,7 +4,6 @@ use crate::compute::{CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBacke
 use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::{AkitaProverSetup, CpuBackend, DensePoly};
 use akita_challenges::SparseChallengeConfig;
-use akita_field::Fp64;
 use akita_types::sis::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -14,6 +13,7 @@ use akita_types::{
     OpenCommitMatrixParams, OpeningMethod, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
     SetupMatrixCapacity, SisModulusProfileId,
 };
+use jolt_field::Fp64;
 
 type F = Fp64<4294967197>;
 const D: usize = 64;

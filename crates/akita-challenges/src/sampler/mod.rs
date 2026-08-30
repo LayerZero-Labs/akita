@@ -16,11 +16,11 @@ pub(crate) use signed_sparse::SignedSparseScratch;
 pub(crate) use xof::XofCursor;
 
 use akita_error::AkitaError;
-#[cfg(feature = "parallel")]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};
 use akita_transcript::Transcript;
+#[cfg(feature = "parallel")]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::{Arc, LazyLock};
 
 use crate::{OperatorNormRejection, SparseChallenge, SparseChallengeConfig};
@@ -183,7 +183,7 @@ pub fn sample_sparse_challenges<F, T>(
     grind_nonce: u32,
 ) -> Result<Vec<SparseChallenge>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     if ring_d > MAX_STACK_RING_DIM {

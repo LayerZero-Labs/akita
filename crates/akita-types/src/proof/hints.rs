@@ -9,14 +9,14 @@ use crate::{
 /// One entry belongs to each polynomial in claim order. Every entry stores
 /// `[source block][A row][A coefficient]` in the shared A ring dimension.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaCommitmentHint<F: FieldCore> {
+pub struct AkitaCommitmentHint<F: Field> {
     inner_rows: Vec<RingVec<F>>,
     ring_dim: usize,
     outer_compression_stages: Vec<Vec<u8>>,
     outer_compression_quotients: Vec<RingVec<F>>,
 }
 
-impl<F: FieldCore> AkitaCommitmentHint<F> {
+impl<F: Field> AkitaCommitmentHint<F> {
     /// Construct a hint from semantic A-ring rows in polynomial order.
     ///
     /// # Errors
@@ -226,7 +226,7 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
+impl<F: Field + Valid> Valid for AkitaCommitmentHint<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.validate_shape()?;
         self.inner_rows.check()?;
@@ -234,7 +234,7 @@ impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -322,7 +322,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
 
 impl<F> AkitaDeserialize for AkitaCommitmentHint<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -488,7 +488,7 @@ where
 mod tests {
     use super::*;
     use crate::sis::SisModulusProfileId;
-    use akita_field::Fp32;
+    use jolt_field::{Fp32, Ring, Zero};
 
     type F = Fp32<251>;
 

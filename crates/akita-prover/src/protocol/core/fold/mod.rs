@@ -12,15 +12,14 @@ use crate::protocol::sumcheck::relation_range_image::{
 use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RecursiveWitnessFlat;
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, OffsetEqWindow};
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
+use jolt_field::AdditiveGroup;
 
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, InnerCommitSecurityRoute, OpeningClaimsLayout,
     OpeningFamily, PhysicalResponsePlan, RelationRangeImagePlan,
 };
 
-pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: FieldCore> {
+pub(in crate::protocol::core) struct PhysicalL2ProverReplay<E: Field> {
     plan: PhysicalResponsePlan,
     point: Vec<E>,
     virtual_evaluations: Vec<E>,
@@ -78,7 +77,7 @@ pub(super) const fn extension_opening_reduction_enabled(
         && geometry_requires_reduction
 }
 
-pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,
     pub(in crate::protocol::core) opening_payload: RingVec<F>,
@@ -98,7 +97,7 @@ pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
     validate_non_eor: V,
 ) -> Result<Vec<Vec<E>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
     P: RootProverGroupMeta<F>,
     V: FnOnce() -> Result<(), AkitaError>,
@@ -117,8 +116,8 @@ where
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
 pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: Field,
     C: ComputeBackendSetup<F>,
     O: ComputeBackendSetup<F>,
     TS: ComputeBackendSetup<F>,
@@ -142,19 +141,20 @@ pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Ring
+        + Field
+        + Unreduced
+        + Field
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -400,19 +400,19 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     prepared_fold: PreparedFold<F, E>,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
+    F: Field
+        + CanonicalEncoding
+        + Field
+        + Unreduced
+        + Field
+        + Field
+        + PseudoMersenne
         + AkitaSerialize,
     E: ExtField<F>
         + FpExtEncoding<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -610,7 +610,7 @@ where
             // `eq(tau1, EvaluationTrace_row_index)`.
             let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
             let evaluation_trace_weight = relation_row_weight(evaluation_trace_row, &rs.tau1)?;
-            ensure_trace_stage2_supported(E::EXT_DEGREE)?;
+            ensure_trace_stage2_supported(E::DEGREE)?;
             let evaluation_trace_points = prepared_fold
                 .relation_groups
                 .iter()

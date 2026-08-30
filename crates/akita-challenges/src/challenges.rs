@@ -3,8 +3,8 @@
 use crate::SparseChallenge;
 use akita_error::AkitaError;
 #[cfg(feature = "parallel")]
-use akita_field::parallel::*;
-use akita_field::{FieldCore, FromPrimitiveInt, MulBase};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{ExtField, Field, Ring};
 
 #[cfg(feature = "parallel")]
 // Tuned with `benches/sparse_challenge.rs::bench_sparse_evaluation` on an
@@ -98,8 +98,8 @@ impl Challenges {
     /// Returns an error if the index is out of range or the challenge is invalid.
     pub fn eval_at_pows<F, E>(&self, index: usize, alpha_pows: &[E]) -> Result<E, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         self.challenges
             .get(index)
@@ -119,8 +119,8 @@ impl Challenges {
     /// Returns an error if the powers or any challenge are invalid.
     pub fn evals_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + MulBase<F>,
+        F: Field + Ring,
+        E: Field + ExtField<F>,
     {
         let evaluate = |challenge: &SparseChallenge| challenge.eval_at_pows::<F, E>(alpha_pows);
         #[cfg(feature = "parallel")]
@@ -296,7 +296,7 @@ impl Challenges {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     type F = Prime128Offset275;
 

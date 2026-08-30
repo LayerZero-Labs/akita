@@ -1,11 +1,11 @@
 #![allow(missing_docs)]
 
-use akita_field::Prime128OffsetA7F7;
 use akita_types::CommitmentRingDims;
 use akita_verifier::{
     relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use jolt_field::Prime128OffsetA7F7;
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;

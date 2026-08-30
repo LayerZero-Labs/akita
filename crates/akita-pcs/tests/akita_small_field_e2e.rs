@@ -51,7 +51,6 @@ mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::CommitmentConfig;
-use akita_field::LiftBase;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -61,6 +60,7 @@ use akita_types::{
     OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 use common::*;
+use jolt_field::{ExtField, One, Ring, Zero};
 use small_field_drivers::*;
 
 // ============================================================================

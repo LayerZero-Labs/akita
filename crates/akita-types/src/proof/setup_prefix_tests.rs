@@ -5,6 +5,7 @@ use crate::{
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+use jolt_field::Zero;
 use std::collections::{BTreeSet, HashSet};
 
 #[test]
@@ -376,7 +377,7 @@ fn precommitted_group(
     }
 }
 
-fn verifier_slot_for_id<F: FieldCore>(id: SetupPrefixSlotId) -> SetupPrefixVerifierSlot<F> {
+fn verifier_slot_for_id<F: Field>(id: SetupPrefixSlotId) -> SetupPrefixVerifierSlot<F> {
     let payload_coefficients = setup_prefix_compression_plan(&id.commitment_profile)
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
@@ -476,7 +477,7 @@ fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
 
 #[test]
 fn setup_prefix_coverage_eval_len_uses_exact_registry_match() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let mut level_params = prefix_eligible_level_params();
     retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
@@ -583,7 +584,7 @@ fn setup_prefix_coverage_eval_len_rejects_unplanned_level_params() {
 
 #[test]
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let natural_len = 64;
     let mut level_params = sample_level_params();
@@ -660,7 +661,7 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
 
 #[test]
 fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use akita_field::Prime32Offset99 as F;
+    use jolt_field::Prime32Offset99 as F;
 
     let natural_len = 64;
     let mut level_params = sample_level_params();

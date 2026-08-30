@@ -1,9 +1,9 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 use std::time::Instant;
 
-use akita_field::packed::PackedField;
-use akita_field::{FieldCore, Invertible, RandomSampling, RingCore};
 use criterion::{black_box, Criterion, Throughput};
+use jolt_field::Packed;
+use jolt_field::{Field, Ring};
 use rand::{rngs::StdRng, SeedableRng};
 
 use super::data::duration_per_logical_op;
@@ -16,15 +16,8 @@ pub(crate) fn bench_arithmetic_case<F, PF>(
     seed: u64,
     params: ArithmeticBenchParams,
 ) where
-    F: FieldCore
-        + RandomSampling
-        + RingCore
-        + Invertible
-        + AddAssign
-        + SubAssign
-        + MulAssign
-        + 'static,
-    PF: PackedField<Scalar = F> + Copy + 'static,
+    F: Field + Ring + AddAssign + SubAssign + MulAssign + 'static,
+    PF: Packed<Scalar = F> + Copy + 'static,
 {
     let mut rng = StdRng::seed_from_u64(seed);
     let scalar_latency_inputs: Vec<F> = (0..params.latency_iters)
@@ -506,7 +499,7 @@ fn bench_scalar_latency<F>(
     step: impl Fn(F, F) -> F,
     init: F,
 ) where
-    F: FieldCore,
+    F: Field,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(
@@ -535,7 +528,7 @@ fn bench_scalar_unary_latency<F>(
     inputs: &[F],
     step: impl Fn(F) -> F,
 ) where
-    F: FieldCore,
+    F: Field,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(
@@ -564,8 +557,8 @@ fn bench_packed_latency<F, PF>(
     step: impl Fn(PF, PF) -> PF,
     init: PF,
 ) where
-    F: FieldCore,
-    PF: PackedField<Scalar = F> + Copy,
+    F: Field,
+    PF: Packed<Scalar = F> + Copy,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(
@@ -594,8 +587,8 @@ fn bench_packed_unary_latency<F, PF>(
     inputs: &[PF],
     step: impl Fn(PF) -> PF,
 ) where
-    F: FieldCore,
-    PF: PackedField<Scalar = F> + Copy,
+    F: Field,
+    PF: Packed<Scalar = F> + Copy,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(
@@ -624,7 +617,7 @@ fn bench_scalar_throughput<F>(
     step: impl Fn(F, F) -> F,
     init: impl Fn(F, F) -> F,
 ) where
-    F: FieldCore,
+    F: Field,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(
@@ -662,8 +655,8 @@ fn bench_packed_throughput<F, PF>(
     step: impl Fn(PF, PF) -> PF,
     init: impl Fn(PF, PF) -> PF,
 ) where
-    F: FieldCore,
-    PF: PackedField<Scalar = F> + Copy,
+    F: Field,
+    PF: Packed<Scalar = F> + Copy,
 {
     group.throughput(Throughput::Elements(1));
     group.bench_function(

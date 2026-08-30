@@ -4,9 +4,6 @@ use super::digit_range::class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use super::digit_range::exact_prefix::ExactPrefixTable;
 use akita_algebra::UniPoly;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceProverExt,
@@ -20,12 +17,15 @@ use akita_types::{
     reconstruct_l2_sq_from_gram, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 const RANGE_Q_MAX_DEGREE: usize = 4;
 const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;
 const NORM_MAX_DEGREE: usize = 3;
 
-enum PhysicalNormTerm<E: FieldCore> {
+enum PhysicalNormTerm<E: Field> {
     Direct {
         response: ExactPrefixTable<E>,
     },
@@ -36,7 +36,7 @@ enum PhysicalNormTerm<E: FieldCore> {
     },
 }
 
-impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
+impl<E: Field + Fold> PhysicalNormTerm<E> {
     #[inline(always)]
     fn affine_pair(table: &ExactPrefixTable<E>, pair_index: usize) -> (E, E) {
         let left = table.value_or_default(2 * pair_index);
@@ -102,7 +102,7 @@ impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
     }
 
     fn bind(&mut self, challenge: E) -> Result<(), AkitaError> {
-        let context = E::precompute_fold(challenge);
+        let context = E::precompute(challenge);
         let fold = |left, right| E::fold_one(&context, left, right);
         match self {
             Self::Direct { response } => response.fold_in_place(fold),
@@ -159,7 +159,7 @@ impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
     }
 }
 
-struct FusedRangeNormProver<E: FieldCore> {
+struct FusedRangeNormProver<E: Field> {
     range: ClassIndexedRangeLeafProver<E>,
     norm: PhysicalNormTerm<E>,
     norm_merge: E,
@@ -167,9 +167,7 @@ struct FusedRangeNormProver<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps> SumcheckInstanceProver<E>
-    for FusedRangeNormProver<E>
-{
+impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRangeNormProver<E> {
     fn num_rounds(&self) -> usize {
         EqFactoredSumcheckInstanceProver::num_rounds(&self.range)
     }
@@ -214,7 +212,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps> Sumch
     }
 }
 
-fn exact_claims<E: FieldCore + FromPrimitiveInt>(
+fn exact_claims<E: Field + Ring>(
     plan: &PhysicalResponsePlan,
     integers: &[Vec<i128>],
 ) -> Result<(u128, Vec<E>), AkitaError> {
@@ -268,7 +266,7 @@ fn exact_claims<E: FieldCore + FromPrimitiveInt>(
     }
 }
 
-fn prepare_norm_term<E: FieldCore + FromPrimitiveInt>(
+fn prepare_norm_term<E: Field + Ring>(
     plan: &PhysicalResponsePlan,
     integers: Vec<Vec<i128>>,
     subclaim_weights: &[E],
@@ -333,8 +331,8 @@ pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm<F, E, T>(
     transcript: &mut T,
 ) -> Result<(PhysicalL2NormProof<E>, Vec<E>, E), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
     T: Transcript<F>,
 {
     if EqFactoredSumcheckInstanceProver::num_rounds(&range) != plan.domain().num_vars() {

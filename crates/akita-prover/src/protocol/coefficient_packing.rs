@@ -6,15 +6,15 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::Challenges;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     fold_coefficient_packing_partials, CoefficientPackingFoldProduct, CommittedGroupParams,
     DigitBlocks, OpeningClaimsLayout, OpeningMethod, RelationWitnessGeometry,
     SubringCoefficientPackingGeometry,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Fold one group's canonical partials with its single sampled subring challenge batch.
-pub(super) fn fold_coefficient_packing_group<F: FieldCore + akita_field::FromPrimitiveInt>(
+pub(super) fn fold_coefficient_packing_group<F: Field + jolt_field::Ring>(
     geometry: SubringCoefficientPackingGeometry,
     partials_by_claim: &[SubringCoefficientPackingPartials<F>],
     challenges: &Challenges,
@@ -93,7 +93,7 @@ pub(super) fn concatenate_group_d_inputs(
 /// coordinate planes are split into consecutive D-ring subcolumns and then
 /// gadget digit planes.
 pub(super) fn materialize_coefficient_packing_d_input<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     const D_D: usize,
 >(
     level_params: &CommittedGroupParams,
@@ -179,7 +179,10 @@ pub(super) fn materialize_coefficient_packing_d_input<
             AkitaError::InvalidInput("coefficient-packing digit plane count overflow".into())
         })?;
     let mut digits = DigitBlocks::zeroed(vec![planes_per_block; semantic_blocks], D_D)?;
-    let q = (-F::one()).to_canonical_u128() + 1;
+    let q = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis_open, q);
     let typed_planes = digits.typed_planes_mut::<D_D>()?;
 
@@ -232,11 +235,11 @@ pub(super) fn materialize_coefficient_packing_d_input<
 mod tests {
     use super::*;
     use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         gadget_row_scalars, CommittedGroupParams, OpenCommitMatrixParams, OpeningClaimsLayout,
         PolynomialGroupLayout, SisModulusProfileId,
     };
+    use jolt_field::{Prime128OffsetA7F7, Ring, Zero};
 
     type F = Prime128OffsetA7F7;
 

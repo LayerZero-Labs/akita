@@ -23,20 +23,20 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
-    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
-    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
-    PolynomialGroupLayout, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
+    sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
+    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingVec, SisModulusProfileId,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof, TerminalResponse,
+    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
 mod descriptor;
@@ -288,6 +288,39 @@ fn append_recursive_fold(schedule: &mut FoldSchedule) {
         .output_witness_len;
     schedule.terminal.input_witness_len = step.output_witness_len;
     schedule.recursive_folds.push(step);
+}
+
+#[test]
+fn base_field_proof_shape_rejects_mixed_opening_families() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    let precommitted_group = PolynomialGroupLayout::singleton(8);
+    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
+    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 64,
+    };
+    precommitted.opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("production challenge family");
+    schedule
+        .root
+        .params
+        .insert_precommitted_group(precommitted)
+        .expect("mixed-family precommit");
+    let layout = OpeningClaimsLayout::from_groups(vec![
+        precommitted_group,
+        schedule.root.params.final_group().profile.group,
+    ])
+    .expect("grouped opening layout");
+
+    let error = canonical_proof_shape(&schedule, &layout, 1)
+        .expect_err("base-field proof shape must reject mixed opening families");
+    assert!(
+        matches!(
+            &error,
+            AkitaError::InvalidSetup(message)
+                if message.contains("cannot mix opening-method families")
+        ),
+        "unexpected mixed-family error: {error:?}"
+    );
 }
 
 #[test]
@@ -652,7 +685,7 @@ fn terminal_response_fixture(
     lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let shape = TerminalResponseShape::from_groups(
         lp,
         field_bits,
@@ -681,7 +714,7 @@ fn terminal_response_fixture(
     (witness, shape)
 }
 
-fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
             .map(|_| CompressedUniPoly {
@@ -691,7 +724,7 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
+fn dummy_eq_factored_sumcheck<F: Field>(
     rounds: usize,
     degree: usize,
 ) -> EqFactoredSumcheckProof<F> {
@@ -707,7 +740,7 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
     }
 }
 
-fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: DigitRangePlan::new(b)
             .expect("test range basis")
@@ -723,7 +756,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
     }
 }
 
-fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     lp: &CommittedGroupParams,
     next_lp: &CommittedGroupParams,
     output_witness_len: usize,

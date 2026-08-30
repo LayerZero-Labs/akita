@@ -138,7 +138,7 @@ pub fn prepared_verifier_ntt_cache_metadata(
 }
 
 /// Build the scalar Q128 exact-negacyclic artifact consumed by a RISC V verifier.
-pub fn build_riscv64_scalar_q128_cache_artifact<F: FieldCore + CanonicalField, const D: usize>(
+pub fn build_riscv64_scalar_q128_cache_artifact<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     width: usize,
     rhs_abs_bound: u64,
@@ -257,7 +257,7 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     Ok(bytes)
 }
 
-pub(crate) fn decode_riscv64_scalar_q128_cache<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &[u8],
     expected_binding: PreparedVerifierNttCacheBinding,
 ) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
@@ -338,7 +338,7 @@ pub(crate) fn decode_riscv64_scalar_q128_cache<F: FieldCore + CanonicalField, co
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_field::Prime128Offset275 as F;
+    use jolt_field::{Prime128Offset275 as F, Ring};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     const D: usize = 64;

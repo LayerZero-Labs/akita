@@ -1,7 +1,7 @@
 use akita_algebra::offset_eq::{eval_affine_digit_intervals, AffineWeight};
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ use super::layout::TraceWeightLayout;
 
 /// One scalar-block trace term for a contiguous range of logical trace blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
+pub struct TraceFieldBlockOpening<F: Field, const D: usize> {
     pub block_offset: usize,
     pub live_block_weights: Vec<F>,
     pub inner_opening_ring: CyclotomicRing<F, D>,
@@ -20,14 +20,14 @@ pub struct TraceFieldBlockOpening<F: FieldCore, const D: usize> {
 
 /// One ring-valued trace term for a contiguous range of logical trace blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraceRingBlockOpening<F: FieldCore, const D: usize> {
+pub struct TraceRingBlockOpening<F: Field, const D: usize> {
     pub block_offset: usize,
     pub block_rings: Vec<CyclotomicRing<F, D>>,
     pub packed_inner_point: CyclotomicRing<F, D>,
 }
 
 /// Opening weights consumed by [`eval_trace_weight_at_point`].
-pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
+pub enum TraceOpeningAtPoint<'a, F: Field, E: Field, const D: usize> {
     /// `K = 1`: scalar block weights with one packed inner opening per term.
     Field {
         terms: &'a [TraceFieldBlockOpening<F, D>],
@@ -41,7 +41,7 @@ pub enum TraceOpeningAtPoint<'a, F: FieldCore, E: FieldCore, const D: usize> {
 
 fn lift_gadget_row<F, E>(gadget_scalars: &[F]) -> Vec<E>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     gadget_scalars.iter().copied().map(E::lift_base).collect()
@@ -62,7 +62,7 @@ fn validate_eval_point(
 }
 
 #[inline]
-fn eq_weight_at_index<E: FieldCore>(point: &[E], index: usize) -> E {
+fn eq_weight_at_index<E: Field>(point: &[E], index: usize) -> E {
     let mut weight = E::one();
     for (bit, &coord) in point.iter().enumerate() {
         if ((index >> bit) & 1) == 1 {
@@ -86,8 +86,8 @@ pub fn eval_trace_weight_at_point<F, E, const D: usize, const K: usize>(
     opening: TraceOpeningAtPoint<'_, F, E, D>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + Field,
 {
     match opening {
         TraceOpeningAtPoint::Field { terms } => {
@@ -117,8 +117,8 @@ fn eval_at_point_k1<F, E, const D: usize>(
     terms: &[TraceFieldBlockOpening<F, D>],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FromPrimitiveInt + FieldCore,
+    F: Field + CanonicalEncoding + Ring,
+    E: ExtField<F> + Ring + Field,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -169,8 +169,8 @@ fn eval_at_point_k_extension<F, E, const D: usize>(
     terms: &[TraceRingBlockOpening<F, D>],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + Field,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -275,7 +275,7 @@ where
 /// per term, where `H · Q` is the block-index domain size. It performs one `Tr_H` per
 /// claim and never materializes or enumerates the Cartesian block domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
+pub struct TraceTerm<F: Field, E: Field, const D: usize> {
     pub block_offset: usize,
     pub b_open: Vec<E>,
     pub basis: BasisMode,
@@ -294,8 +294,8 @@ pub struct TraceTerm<F: FieldCore, E: FieldCore, const D: usize> {
 /// elements in `R_q` (but costs `O(K²)` instead of `O(D²)`).
 fn ring_subfield_struct_consts<F, E>(k: usize) -> Vec<Vec<Vec<F>>>
 where
-    F: FieldCore,
-    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
+    F: Field,
+    E: FpExtEncoding<F> + ExtField<F> + Field,
 {
     let mut gamma = vec![vec![vec![F::zero(); k]; k]; k];
     let mut unit = vec![F::zero(); k];
@@ -321,8 +321,8 @@ where
 /// `E ⊗_F E` using the structure constants `gamma`.
 fn cstar_mul<F, E>(u: &[E], w: &[E], gamma: &[Vec<Vec<F>>]) -> Vec<E>
 where
-    F: FieldCore,
-    E: ExtField<F> + FieldCore,
+    F: Field,
+    E: ExtField<F> + Field,
 {
     let k = u.len();
     let mut out = vec![E::zero(); k];
@@ -347,15 +347,15 @@ where
 }
 
 #[derive(Clone)]
-struct TraceAffineWeight<F: FieldCore, E: FieldCore> {
+struct TraceAffineWeight<F: Field, E: Field> {
     coordinates: Vec<E>,
     gamma: Arc<Vec<Vec<Vec<F>>>>,
 }
 
 impl<F, E> AffineWeight<E> for TraceAffineWeight<F, E>
 where
-    F: FieldCore,
-    E: ExtField<F> + FieldCore,
+    F: Field,
+    E: ExtField<F> + Field,
 {
     fn zero_like(&self) -> Self {
         Self {
@@ -396,8 +396,8 @@ where
 /// and `w_t(1)` for opening coordinate `b` under `basis`.
 fn block_weight_coords<F, E>(b: E, basis: BasisMode, k: usize) -> (Vec<E>, Vec<E>)
 where
-    F: FieldCore,
-    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
+    F: Field,
+    E: FpExtEncoding<F> + ExtField<F> + Field,
 {
     let (w0, w1) = match basis {
         BasisMode::Lagrange => (E::one() - b, b),
@@ -420,8 +420,8 @@ fn block_weight_at_index_coords<F, E>(
     gamma: &[Vec<Vec<F>>],
 ) -> Vec<E>
 where
-    F: FieldCore,
-    E: FpExtEncoding<F> + ExtField<F> + FieldCore,
+    F: Field,
+    E: FpExtEncoding<F> + ExtField<F> + Field,
 {
     let mut acc = vec![E::zero(); k];
     acc[0] = E::one();
@@ -450,8 +450,8 @@ pub fn eval_trace_terms_closed<F, E, const D: usize>(
     terms: &[TraceTerm<F, E, D>],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + FieldCore,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + Field,
 {
     if terms.is_empty() {
         return Err(AkitaError::InvalidInput(
@@ -460,7 +460,7 @@ where
     }
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
 
-    let k = E::EXT_DEGREE;
+    let k = E::DEGREE;
     let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
     let ring_eq = lagrange_weights(ring_point)?;

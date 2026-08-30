@@ -2,8 +2,8 @@
 
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::{checked, AkitaError};
-use akita_field::parallel::*;
-use akita_field::{FieldCore, MulBase};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{ExtField, Field};
 
 use crate::WitnessLayout;
 
@@ -34,7 +34,7 @@ pub(crate) struct RoleLaneSpec<'a, E> {
     pub role_lane_alpha: &'a [E],
 }
 
-impl<E: FieldCore> RoleLaneSpec<'_, E> {
+impl<E: Field> RoleLaneSpec<'_, E> {
     /// Uniform roles: no lane expansion, so the fast fill-interval path applies.
     fn is_uniform(&self) -> bool {
         self.a_ratio == 1
@@ -46,7 +46,7 @@ impl<E: FieldCore> RoleLaneSpec<'_, E> {
 /// `Σ_{l<role_lanes} eq(first_lane + l) ·
 /// role_lane_alpha[l]`.
 #[inline]
-fn canonical_lane_weight<E: FieldCore>(
+fn canonical_lane_weight<E: Field>(
     eq_window: &OffsetEqWindow<E>,
     opening_source_len: usize,
     first_lane: usize,
@@ -70,7 +70,7 @@ fn canonical_lane_weight<E: FieldCore>(
 /// Canonical D-role column weights in `(claim, block, subcolumn, opening_digit)`
 /// order (subcolumn present only for genuinely per-role commitments).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn setup_e_col_weights<E: FieldCore>(
+pub(crate) fn setup_e_col_weights<E: Field>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
@@ -195,7 +195,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
 /// Canonical B-role column weights in `(claim, block, A_row, subcolumn,
 /// opening_digit)` order.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn setup_t_col_weights<E: FieldCore>(
+pub(crate) fn setup_t_col_weights<E: Field>(
     layout: &WitnessLayout,
     opening_source_len: usize,
     group_id: usize,
@@ -344,8 +344,8 @@ pub(crate) fn setup_z_col_weights<F, E>(
     z_weights: &mut [E],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
-    E: MulBase<F>,
+    F: Field,
+    E: ExtField<F>,
 {
     let units = layout.units_for_group(group_id)?;
     if fold_gadget.len() < depth_fold {

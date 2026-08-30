@@ -1,9 +1,9 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
 use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
-use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
+use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};
 
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
@@ -18,7 +18,7 @@ fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     ));
     assert!(!super::fold::extension_opening_reduction_enabled(
         packing,
-        <E as ExtField<F>>::EXT_DEGREE > 1,
+        <E as ExtField<F>>::DEGREE > 1,
     ));
     assert!(super::fold::extension_opening_reduction_enabled(
         akita_types::OpeningMethod::EvaluationTrace,
@@ -62,7 +62,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     assert_eq!(
         proved.reduction.proof.partials.len(),
-        <E as ExtField<F>>::EXT_DEGREE
+        <E as ExtField<F>>::DEGREE
     );
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
 }
@@ -113,7 +113,7 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
     assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 
-fn direct_eq_at_boolean<E: FieldCore>(point: &[E], index: usize) -> E {
+fn direct_eq_at_boolean<E: Field>(point: &[E], index: usize) -> E {
     point
         .iter()
         .enumerate()
@@ -128,7 +128,7 @@ fn direct_eq_at_boolean<E: FieldCore>(point: &[E], index: usize) -> E {
 
 fn direct_lifted_mle<B, E>(base_evals: &[B], point: &[E]) -> E
 where
-    B: FieldCore,
+    B: Field,
     E: ExtField<B>,
 {
     base_evals
@@ -141,10 +141,10 @@ where
 
 fn direct_tensor_tables<B, E>(base_evals: &[B], point: &[E], eta: E) -> (Vec<E>, Vec<E>)
 where
-    B: FieldCore,
+    B: Field,
     E: ExtField<B>,
 {
-    assert_eq!(E::EXT_DEGREE, 2);
+    assert_eq!(E::DEGREE, 2);
     assert_eq!(base_evals.len(), 1usize << point.len());
     let tail_point = &point[1..];
     let tail_len = 1usize << tail_point.len();
@@ -163,10 +163,10 @@ where
 
 fn direct_column_partials<B, E>(base_evals: &[B], point: &[E]) -> Vec<E>
 where
-    B: FieldCore,
+    B: Field,
     E: ExtField<B>,
 {
-    assert_eq!(E::EXT_DEGREE, 2);
+    assert_eq!(E::DEGREE, 2);
     assert_eq!(base_evals.len(), 1usize << point.len());
     let tail_point = &point[1..];
     let tail_len = 1usize << tail_point.len();
@@ -182,7 +182,6 @@ where
 
 #[test]
 fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
-    use akita_field::{Ext2, Prime128OffsetA7F7};
     use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
     use akita_types::{
         sample_akita_setup_seed, AkitaCommitmentHint, AkitaSetupDescriptor, CommittedGroupParams,
@@ -190,6 +189,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
         SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SisModulusProfileId,
         EXTENSION_OPENING_REDUCTION_DEGREE,
     };
+    use jolt_field::{Ext2, Prime128OffsetA7F7};
 
     type Base = Prime128OffsetA7F7;
     type Extension = Ext2<Base>;

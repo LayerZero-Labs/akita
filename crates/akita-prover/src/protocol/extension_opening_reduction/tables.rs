@@ -2,7 +2,7 @@ use super::*;
 
 /// Dense EOR group with one transparent factor shared by all witness members.
 #[derive(Debug, Clone)]
-pub struct ExtensionOpeningReductionGroup<E: FieldCore> {
+pub struct ExtensionOpeningReductionGroup<E: Field> {
     pub(in crate::protocol::extension_opening_reduction) terms:
         Vec<ExtensionOpeningReductionTerm<E>>,
     pub(in crate::protocol::extension_opening_reduction) factor: Vec<E>,
@@ -11,7 +11,7 @@ pub struct ExtensionOpeningReductionGroup<E: FieldCore> {
     extra_factor_eval: E,
 }
 
-impl<E: FieldCore> ExtensionOpeningReductionGroup<E> {
+impl<E: Field> ExtensionOpeningReductionGroup<E> {
     /// Construct a group whose members share one transparent factor table.
     ///
     /// # Errors
@@ -101,7 +101,7 @@ impl<E: FieldCore> ExtensionOpeningReductionGroup<E> {
     }
 }
 
-impl<E: FieldCore + HasUnreducedOps + HasOptimizedFold> ExtensionOpeningReductionGroup<E> {
+impl<E: Field + Unreduced + Fold> ExtensionOpeningReductionGroup<E> {
     pub(in crate::protocol::extension_opening_reduction) fn accumulate_into(
         &mut self,
         constant: &mut E,

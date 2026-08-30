@@ -6,12 +6,12 @@ use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::CommitInnerWitness;
 use akita_algebra::ring::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     dispatch_for_field, CommitmentRingDims, CommitmentSliceGeometry, DigitBlocks,
     GroupCommitPhaseParams, RingVec,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
@@ -20,7 +20,7 @@ pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     n_a: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     inner.ensure_ring_dim::<D>()?;
 
@@ -64,7 +64,7 @@ pub(super) fn compute_inner_commitment<F, P, B, const D_A: usize>(
     plan: CommitInnerPlan,
 ) -> Result<Vec<CommitInnerWitness<F>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RootCommitSource<F, D_A>,
     B: ComputeBackendSetup<F> + for<'a> RootCommitKernel<P::CommitView<'a>, F, D_A>,
 {
@@ -85,7 +85,7 @@ pub(super) fn compute_outer_commitment<F, B, const D_A: usize, const D_B: usize>
     slice_geometry: &CommitmentSliceGeometry,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F>,
 {
     let n_a = profile.inner.matrix.output_rank();
@@ -128,7 +128,7 @@ pub(super) fn compute_inner_outer_commitment<F, P, B>(
     profile: GroupCommitPhaseParams,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     P: RuntimeCommitSource<F>,
     B: RuntimeCommitBackendFor<F, P>,
 {
@@ -178,7 +178,7 @@ pub(crate) fn commit_outer_slices<'a, F, B, const D_B: usize>(
     log_basis: u32,
 ) -> Result<Vec<CyclotomicRing<F, D_B>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F>,
 {
     let polynomial_planes = validate_outer_slice_digits::<D_B>(polynomial_digits, geometry)?;
@@ -314,7 +314,7 @@ pub(crate) fn outer_slice_inputs<const D_B: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp64;
+    use jolt_field::Fp64;
 
     type F = Fp64<4294967197>;
     const D: usize = 64;

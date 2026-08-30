@@ -16,7 +16,7 @@ struct CenteredRhsBounds {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FusedQuotientRows<F: FieldCore, const D: usize> {
+pub(crate) struct FusedQuotientRows<F: Field, const D: usize> {
     pub(crate) b_cyclic: Vec<CyclotomicRing<F, D>>,
     pub(crate) a_quotients: Vec<CyclotomicRing<F, D>>,
 }
@@ -70,7 +70,7 @@ impl FusedQuotientPlan {
     }
 }
 
-enum FusedMatrixSource<'a, F: FieldCore, W: PrimeWidth, const K: usize, const D: usize> {
+enum FusedMatrixSource<'a, F: Field, W: PrimeWidth, const K: usize, const D: usize> {
     Cached {
         negacyclic: &'a [CyclotomicCrtNtt<W, K, D>],
         cyclic: &'a [CyclotomicCrtNtt<W, K, D>],
@@ -80,7 +80,7 @@ enum FusedMatrixSource<'a, F: FieldCore, W: PrimeWidth, const K: usize, const D:
 
 impl<'a, F, W, const K: usize, const D: usize> FusedMatrixSource<'a, F, W, K, D>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     fn validate(&self, plan: FusedQuotientPlan) -> Result<(), AkitaError> {
@@ -169,7 +169,7 @@ fn fused_quotient_digit_bound(log_basis_outer: u32) -> Result<u64, AkitaError> {
 
 #[allow(clippy::too_many_arguments)]
 fn plan_fused_quotients<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -228,7 +228,7 @@ fn plan_fused_quotients<
 /// counts and packed widths. A column tile reuses cached entries when their
 /// active prefixes overlap.
 fn fused_split_eq_quotients_with_params<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -270,7 +270,7 @@ fn fused_split_eq_quotients_with_params<
 }
 
 fn fused_split_eq_quotients_one_shot<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -389,7 +389,7 @@ fn fused_split_eq_quotients_one_shot<
 /// field-ring multiplication, matching the cached route's acceptance set.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const D: usize,
 >(
     source: &[CyclotomicRing<F, D>],
@@ -430,7 +430,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
 }
 
 fn accumulate_cyclic_i8_rows<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -501,12 +501,14 @@ fn centered_rows_abs_bound<const D: usize>(rows: &[[i32; D]], len: usize) -> u64
         .unwrap_or(0)
 }
 
-fn centered_i32_ring<F: CanonicalField, const D: usize>(coeffs: &[i32; D]) -> CyclotomicRing<F, D> {
+fn centered_i32_ring<F: Field + CanonicalEncoding, const D: usize>(
+    coeffs: &[i32; D],
+) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(from_fn(|k| F::from_i64(coeffs[k] as i64)))
 }
 
 fn accumulate_centered_quotient_rows<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -589,7 +591,7 @@ fn accumulate_centered_quotient_rows<
 }
 
 fn accumulate_centered_quotient_rows_field<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -620,7 +622,7 @@ fn accumulate_centered_quotient_rows_field<
 
 #[allow(clippy::too_many_arguments)]
 fn centered_quotient_rows_with_i16_tail_params<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const K: usize,
     const D: usize,
 >(
@@ -754,10 +756,7 @@ fn centered_quotient_rows_with_i16_tail_params<
 }
 
 /// Centered A-quotient rows using the protocol CRT prefix plus its 14-bit tail.
-pub(crate) fn centered_quotient_rows_with_i16_tail<
-    F: FieldCore + CanonicalField + HalvingField,
-    const D: usize,
->(
+pub(crate) fn centered_quotient_rows_with_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     negacyclic_slot: &PreparedNttCache<D>,
     cyclic_slot: &PreparedNttCache<D>,
     tail_slot: &PreparedNttCache<D>,
@@ -816,10 +815,7 @@ pub(crate) fn centered_quotient_rows_with_i16_tail<
 /// its own packed row width.
 #[tracing::instrument(skip_all, name = "fused_split_eq_quotients")]
 #[cfg(test)]
-pub(crate) fn fused_split_eq_quotients<
-    F: FieldCore + CanonicalField + HalvingField,
-    const D: usize,
->(
+pub(crate) fn fused_split_eq_quotients<F: Field + CanonicalEncoding, const D: usize>(
     slot: &PreparedNttCache<D>,
     n_b: usize,
     n_a: usize,
@@ -841,7 +837,7 @@ pub(crate) fn fused_split_eq_quotients<
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fused_split_eq_quotients_prover_bounds<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const D: usize,
 >(
     negacyclic_slot: &PreparedNttCache<D>,
@@ -867,10 +863,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fused_split_eq_quotients_with_digit_bound<
-    F: FieldCore + CanonicalField + HalvingField,
-    const D: usize,
->(
+fn fused_split_eq_quotients_with_digit_bound<F: Field + CanonicalEncoding, const D: usize>(
     negacyclic_slot: &PreparedNttCache<D>,
     cyclic_slot: &PreparedNttCache<D>,
     n_b: usize,

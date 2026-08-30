@@ -2,11 +2,11 @@
 
 use super::{CompressionComputeBackend, OperationCtx};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
     CompressionTerminalPayload, PackedNegativeBinary, RingVec,
 };
+use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -73,7 +73,7 @@ struct WorkItem<Id, F> {
     quotients: Vec<RingVec<F>>,
 }
 
-fn quotient_from_products<F: FieldCore + HalvingField, const D: usize>(
+fn quotient_from_products<F: Field, const D: usize>(
     cyclic: &[akita_algebra::CyclotomicRing<F, D>],
     negacyclic: &[akita_algebra::CyclotomicRing<F, D>],
 ) -> Result<RingVec<F>, AkitaError> {
@@ -116,7 +116,7 @@ fn execute_chunk<F, B, Id, const D: usize>(
     map_index: usize,
 ) -> Result<CompressionBatchReport, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
     if item_indices.is_empty() || item_indices.len() > MAX_COMPRESSION_RHS_BATCH {
@@ -248,7 +248,7 @@ fn execute_stage<F, B, Id>(
     map_index: usize,
 ) -> Result<Vec<CompressionBatchReport>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
     let mut groups = BTreeMap::<(usize, usize, usize), Vec<usize>>::new();
@@ -287,7 +287,7 @@ pub(crate) fn execute_compression_chains<F, B, Id>(
     AkitaError,
 >
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     B: CompressionComputeBackend<F>,
 {
     let started = Instant::now();
@@ -297,7 +297,7 @@ where
         if !input
             .plan
             .modulus_profile()
-            .matches_modulus(field_modulus::<F>())
+            .matches_modulus(field_modulus::<F>()?)
         {
             return Err(AkitaError::InvalidSetup(
                 "compression plan profile does not match the execution field".into(),
@@ -414,8 +414,8 @@ mod tests {
     use super::*;
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
-    use akita_field::Prime128OffsetA7F7;
     use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
+    use jolt_field::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
 

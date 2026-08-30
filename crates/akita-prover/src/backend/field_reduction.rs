@@ -1,18 +1,18 @@
 use super::RecursiveWitnessFlat;
 use akita_error::AkitaError;
-use akita_field::{ExtField, FieldCore};
 use akita_types::pack_tensor_base_lift_i8_digits;
+use jolt_field::{ExtField, Field};
 
 fn tensor_extension_split<F, E>(context: &'static str) -> Result<(usize, usize), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    let split_bits = E::EXT_DEGREE.trailing_zeros() as usize;
+    let split_bits = E::DEGREE.trailing_zeros() as usize;
     let width = 1usize
         .checked_shl(split_bits as u32)
         .ok_or_else(|| AkitaError::InvalidInput("tensor extension width overflow".to_string()))?;
-    if width != E::EXT_DEGREE || !E::EXT_DEGREE.is_power_of_two() {
+    if width != E::DEGREE || !E::DEGREE.is_power_of_two() {
         return Err(AkitaError::InvalidInput(format!(
             "tensor extension {context} requires power-of-two extension degree"
         )));
@@ -26,11 +26,11 @@ pub fn tensor_pack_recursive_witness<F, E, const D: usize>(
     logical_w: &RecursiveWitnessFlat,
 ) -> Result<RecursiveWitnessFlat, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
-    let packed = pack_tensor_base_lift_i8_digits::<D>(logical_w.digits(), E::EXT_DEGREE, width)?;
+    let packed = pack_tensor_base_lift_i8_digits::<D>(logical_w.digits(), E::DEGREE, width)?;
     RecursiveWitnessFlat::from_tensor_packed_i8_digits(packed, logical_w.live_coeff_len())?
         .align_for_commitment_ring_dim(D)
 }
@@ -38,7 +38,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{FpExt4, Prime32Offset99};
+    use jolt_field::{FpExt4, Prime32Offset99};
 
     #[test]
     fn recursive_tensor_pack_rejects_non_divisible_digit_count() {
@@ -62,7 +62,7 @@ mod tests {
         type F = Prime32Offset99;
         type E = FpExt4<F>;
         const D: usize = 128;
-        let logical_len = D + <E as ExtField<F>>::EXT_DEGREE;
+        let logical_len = D + <E as ExtField<F>>::DEGREE;
         let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; logical_len]);
 
         let packed = tensor_pack_recursive_witness::<F, E, D>(&witness).unwrap();

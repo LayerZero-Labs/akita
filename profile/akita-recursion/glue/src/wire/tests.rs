@@ -8,6 +8,7 @@ use akita_types::{
     SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+use jolt_field::Zero;
 
 type TestCfg = fp128::OneHot;
 type TestF = fp128::Field;
@@ -279,7 +280,7 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     let mut noncanonical = canonical_proof_shape(
         row.schedule(),
         &row.profiles().opening_layout().expect("catalog layout"),
-        <ExtE as ExtField<ExtF>>::EXT_DEGREE,
+        <ExtE as ExtField<ExtF>>::DEGREE,
     )
     .expect("canonical extension shape");
     noncanonical

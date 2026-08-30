@@ -17,11 +17,11 @@ use crate::compute::{
 /// dispatch dimension: the underlying polynomial stores flat logical data,
 /// and the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     pub(super) poly: &'a OneHotPoly<F, I>,
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
+impl<'a, F: Field, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
     /// Per-chunk hot positions. `None` denotes an all-zero chunk.
     pub fn indices(&self) -> &'a [Option<I>] {
         &self.poly.indices
@@ -42,18 +42,18 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
 ///
 /// `D` is the kernel dispatch dimension, as in [`OneHotView`].
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotBatchView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
+impl<'a, F: Field, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
     /// Validated semantic views in source order.
     pub fn views(&self) -> impl ExactSizeIterator<Item = OneHotView<'a, F, D, I>> + '_ {
         self.polys.iter().map(|&poly| OneHotView { poly })
     }
 }
 
-impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     fn source_view<const D: usize>(&self) -> Result<OneHotView<'_, F, D, I>, AkitaError> {
         self.validate_ring_dimension(D)?;
         Ok(OneHotView { poly: self })
@@ -62,7 +62,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
 
 impl<F, I> RootPolyMeta<F> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_vars(&self) -> usize {
@@ -76,7 +76,7 @@ where
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
@@ -94,7 +94,7 @@ where
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type CommitView<'a>
@@ -114,7 +114,7 @@ where
         _centering_threshold: u128,
     ) -> Result<(u128, u128), AkitaError>
     where
-        F: akita_field::CanonicalField,
+        F: jolt_field::CanonicalEncoding,
     {
         Ok((0, 1))
     }
@@ -122,7 +122,7 @@ where
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type OpeningView<'a>
@@ -149,7 +149,7 @@ where
 
 impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
 {
     fn commit_inner_group(
@@ -183,7 +183,7 @@ where
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -235,7 +235,7 @@ where
 
 impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -266,7 +266,7 @@ where
 impl<F, E, const D: usize, I>
     SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
 {
@@ -282,7 +282,7 @@ where
         }
         let point = plan.point;
         let geometry = point.geometry();
-        if E::EXT_DEGREE != geometry.extension_degree() {
+        if E::DEGREE != geometry.extension_degree() {
             return Err(AkitaError::InvalidSetup(
                 "coefficient-packing field extension degree mismatch".into(),
             ));
@@ -421,7 +421,7 @@ where
 
 impl<F, I: OneHotIndex> OneHotPoly<F, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,

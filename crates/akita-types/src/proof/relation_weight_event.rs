@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use akita_error::AkitaError;
 
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,14 +15,14 @@ pub enum RelationWeightContribution {
 
 /// One aligned consecutive-alpha contribution to the flat relation weight table.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationWeightEvent<E: FieldCore> {
+pub struct RelationWeightEvent<E: Field> {
     physical_coefficients: Range<usize>,
     alpha_exponent_start: usize,
     scalar: E,
     contribution: RelationWeightContribution,
 }
 
-impl<E: FieldCore> RelationWeightEvent<E> {
+impl<E: Field> RelationWeightEvent<E> {
     /// Construct one nonempty power-of-two event interval.
     pub fn new(
         physical_coefficients: Range<usize>,

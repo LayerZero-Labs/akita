@@ -1,10 +1,10 @@
 //! Logging transcript wrapper and test-time smell checks.
 
 use crate::{labels, Transcript};
-use akita_field::{CanonicalBytes, CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 
@@ -238,7 +238,7 @@ impl<T> LoggingTranscript<T> {
 
 impl<F, T> Transcript<F> for LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     T: Transcript<F>,
 {
     fn new(domain_label: &[u8]) -> Self {
@@ -368,7 +368,7 @@ where
 mod tests {
     use super::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
     use crate::{append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript};
-    use akita_field::{Fp32, Fp64, FpExt2, NegOneNr};
+    use jolt_field::{Fp32, Fp64, FpExt2, NegOneNr};
 
     type F = Fp64<4294967197>;
     type Base = Fp32<251>;

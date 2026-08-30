@@ -6,13 +6,12 @@ use crate::compute::{
     RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
     SuffixTensorProveBackend,
 };
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 use akita_types::AkitaCommitmentHint;
+use jolt_field::AdditiveGroup;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
-pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
+pub struct SuffixProverState<F: Field, E: Field> {
     /// Current committed suffix witness representation.
     pub w: RecursiveWitnessFlat,
     /// Logical suffix witness when it differs from the committed representation.
@@ -31,7 +30,7 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub setup_prefix_opening: Option<(Vec<E>, E)>,
 }
 
-impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
+impl<F: Field, E: Field> SuffixProverState<F, E> {
     /// Logical witness represented by the carried opening claim.
     #[inline]
     pub fn logical_w(&self) -> &RecursiveWitnessFlat {
@@ -69,21 +68,22 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Field
+        + Unreduced
+        + Field
+        + Field
+        + PseudoMersenne
+        + Ring
         + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize
         + MulBaseUnreduced<Cfg::Field>,
     T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
@@ -217,19 +217,19 @@ fn prove_terminal_suffix<F, E, T, C, O, TS, R>(
     scheduled: &TerminalFoldParams,
 ) -> Result<TerminalLevelProof<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + Field
+        + Ring
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -290,7 +290,7 @@ where
     let opening_batch = OpeningClaimsLayout::new(sumcheck_challenges.len(), 1)?;
     let polys = [&logical_source];
     let logical_group = PreparedProverGroup::from_refs(&polys)?;
-    let needs_reduction = E::EXT_DEGREE > 1;
+    let needs_reduction = E::DEGREE > 1;
     let (protocol_point, reduction) = if needs_reduction {
         let eor_inputs = vec![ExtensionOpeningGroupInput {
             group: &logical_group,
@@ -418,21 +418,22 @@ pub(in crate::protocol::core) fn prepare_suffix<F, E, T, C, O, TS, R>(
     level_params: &CommittedGroupParams,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Field
+        + Unreduced
+        + Field
+        + Field
+        + PseudoMersenne
+        + Ring
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
-        + FrobeniusExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<F>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize
         + MulBaseUnreduced<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -515,7 +516,7 @@ where
     let opening_batch = block_claims.opening_layout()?;
     let opening_method = super::fold::uniform_opening_method(level_params, &opening_batch)?;
     let needs_extension_reduction =
-        super::fold::extension_opening_reduction_enabled(opening_method, E::EXT_DEGREE > 1);
+        super::fold::extension_opening_reduction_enabled(opening_method, E::DEGREE > 1);
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
@@ -525,7 +526,7 @@ where
         .iter()
         .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
         .collect::<Result<Vec<_>, _>>()?;
-    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    if const { <E as ExtField<F>>::DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
             block_claims,
@@ -555,8 +556,8 @@ where
 mod tests {
     use super::*;
     use crate::protocol::core::fold_kernels::prepare_evaluation_trace_claim;
-    use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
+    use jolt_field::{Fp32, One, Zero};
 
     type TestF = Fp32<251>;
 

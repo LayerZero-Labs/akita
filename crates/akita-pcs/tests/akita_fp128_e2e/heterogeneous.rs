@@ -1,7 +1,8 @@
 use super::*;
 
 #[cfg(feature = "schedules-fp128-dense-bounded")]
-use akita_field::FromPrimitiveInt;
+use jolt_field::Zero;
+use jolt_field::{One, Ring};
 
 // ============================================================================
 // GROUP E — Heterogeneous configurations (fp128)

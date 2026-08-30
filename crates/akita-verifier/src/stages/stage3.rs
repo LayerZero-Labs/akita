@@ -8,9 +8,6 @@ use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::eval_ring_at_pows_fast;
 use akita_algebra::ring::evaluate_power_sequence_mle;
 use akita_error::AkitaError;
-#[cfg(test)]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{
     ABSORB_SETUP_PREFIX_SLOT, ABSORB_SUMCHECK_CLAIM, CHALLENGE_SUMCHECK_ROUND,
@@ -22,6 +19,9 @@ use akita_types::{
     dispatch_for_field, setup_prefix_coverage_eval_len, AkitaVerifierSetup, CommittedGroupParams,
     PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
+#[cfg(test)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
@@ -30,14 +30,14 @@ use akita_types::{
 /// evaluation plan and sumcheck round count from the ring-switch row
 /// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
-pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
+pub(crate) struct SetupSumcheckVerifier<E: Field> {
     setup_contribution_plan: SetupContributionPlan<E>,
     alpha: E,
     ring_bits: usize,
     rounds: usize,
 }
 
-impl<E: FieldCore> SetupSumcheckVerifier<E> {
+impl<E: Field> SetupSumcheckVerifier<E> {
     /// Prepare the setup-product sumcheck verifier for the setup contribution
     /// at `x_challenges`.
     ///
@@ -51,7 +51,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
@@ -86,8 +86,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         transcript: &mut T,
     ) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let ring_d = self
@@ -132,8 +132,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         transcript: &mut T,
     ) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F> + Ring + AkitaSerialize + jolt_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
@@ -174,7 +174,7 @@ fn setup_eval_len<F, T>(
     transcript: &mut T,
 ) -> Result<usize, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     let selected_slot_id = next_fold_level_params.setup_prefix().ok_or_else(|| {
@@ -201,7 +201,7 @@ where
 }
 
 #[cfg(test)]
-fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
+fn ring_eq_table<E: Field, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, AkitaError> {
     if rho_y.len() != D.trailing_zeros() as usize {
         return Err(AkitaError::InvalidProof);
     }
@@ -224,8 +224,8 @@ fn setup_mle_at_eq_tables<F, E, const D: usize>(
     eq_y: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
-    E: ExtField<F> + akita_field::MulBaseUnreduced<F>,
+    F: Field,
+    E: ExtField<F> + jolt_field::MulBaseUnreduced<F>,
 {
     if source_rows > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
@@ -287,7 +287,6 @@ where
 mod tests {
     use super::*;
     use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
-    use akita_field::Prime128OffsetA7F7;
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, scheduled_setup_prefix,
@@ -295,6 +294,8 @@ mod tests {
         CommittedGroupParams, CompressionChainPlan, PolynomialGroupLayout, RingVec,
         SetupPrefixPublicCommitment, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
     };
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Zero;
     use std::sync::Arc;
 
     type F = Prime128OffsetA7F7;

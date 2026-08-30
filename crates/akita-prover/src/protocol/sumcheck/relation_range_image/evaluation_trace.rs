@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use akita_error::AkitaError;
 
-use akita_field::FieldCore;
-use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
     CoefficientPackingStage2Source, CoefficientPackingStage2Terms, EvaluationTraceInputs,
     FpExtEncoding,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One contiguous physical opening-digit run for a claim inside one witness chunk.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -26,7 +25,7 @@ struct EvaluationTraceSegment {
 
 /// One opening claim's rank-one evaluation-trace factors and physical support.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct EvaluationTraceTerm<E: FieldCore> {
+struct EvaluationTraceTerm<E: Field> {
     coefficient: E,
     block_opening_point: Arc<[E]>,
     basis: BasisMode,
@@ -41,7 +40,7 @@ struct EvaluationTraceTerm<E: FieldCore> {
 
 /// Complete nonempty evaluation-trace weight function over one flat witness domain.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct EvaluationTraceWeights<E: FieldCore> {
+pub(crate) struct EvaluationTraceWeights<E: Field> {
     terms: Vec<EvaluationTraceTerm<E>>,
     physical_field_len: usize,
     #[cfg(test)]
@@ -53,8 +52,8 @@ pub(crate) fn build_evaluation_trace_weights<F, E>(
     inputs: EvaluationTraceInputs<'_, F, E>,
 ) -> Result<EvaluationTraceWeights<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(&inputs)?;
     let mut terms = Vec::with_capacity(inputs.claim_coefficients.len());
@@ -127,7 +126,7 @@ where
 }
 
 /// One opening block/digit contribution over contiguous common-coordinate lanes.
-struct PreparedOpeningSupport<E: FieldCore> {
+struct PreparedOpeningSupport<E: Field> {
     first_lane: usize,
     source_lane_start: usize,
     lane_count: usize,
@@ -136,14 +135,14 @@ struct PreparedOpeningSupport<E: FieldCore> {
 }
 
 #[derive(Clone)]
-struct PreparedLaneTerm<E: FieldCore> {
+struct PreparedLaneTerm<E: Field> {
     factor: E,
     source_index: usize,
     lane: usize,
 }
 
 #[derive(Clone)]
-struct PreparedPackingSegment<E: FieldCore> {
+struct PreparedPackingSegment<E: Field> {
     factor: E,
     source_index: usize,
     target_lane_start: usize,
@@ -151,13 +150,13 @@ struct PreparedPackingSegment<E: FieldCore> {
     lane_count: usize,
 }
 
-struct PreparedPackingLaneMap<E: FieldCore> {
+struct PreparedPackingLaneMap<E: Field> {
     segments: Vec<PreparedPackingSegment<E>>,
     lane_to_segment: Vec<Option<usize>>,
     overlapping_segments: BTreeMap<usize, Vec<usize>>,
 }
 
-impl<E: FieldCore> PreparedPackingLaneMap<E> {
+impl<E: Field> PreparedPackingLaneMap<E> {
     fn add_segment(&mut self, lane: usize, segment: usize) -> Result<(), AkitaError> {
         let slot = self
             .lane_to_segment
@@ -185,13 +184,13 @@ impl<E: FieldCore> PreparedPackingLaneMap<E> {
     }
 }
 
-enum PreparedLaneWeights<E: FieldCore> {
+enum PreparedLaneWeights<E: Field> {
     Sparse(Vec<Vec<PreparedLaneTerm<E>>>),
     Packing(PreparedPackingLaneMap<E>),
     Dense(Vec<E>),
 }
 
-struct PreparedTraceSource<E: FieldCore> {
+struct PreparedTraceSource<E: Field> {
     values: Vec<E>,
     lane_count: usize,
 }
@@ -208,7 +207,7 @@ pub(crate) struct StructuredLinearSegment {
 /// One factored linear term supported on selected witness coefficient ranges.
 #[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StructuredLinearTerm<E: FieldCore> {
+pub(crate) struct StructuredLinearTerm<E: Field> {
     pub(crate) factor: E,
     pub(crate) source_index: usize,
     pub(crate) segment_range: Range<usize>,
@@ -217,7 +216,7 @@ pub(crate) struct StructuredLinearTerm<E: FieldCore> {
 /// Method-neutral structured linear weights over one flat witness domain.
 #[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StructuredLinearWeights<E: FieldCore> {
+pub(crate) struct StructuredLinearWeights<E: Field> {
     pub(crate) sources: Vec<Arc<[E]>>,
     pub(crate) segments: Vec<StructuredLinearSegment>,
     pub(crate) terms: Vec<StructuredLinearTerm<E>>,
@@ -229,14 +228,14 @@ pub(crate) struct StructuredLinearWeights<E: FieldCore> {
 /// Scalar factors are compiled once. Source-coordinate vectors stay factored while
 /// coefficient coordinates are folded; lane challenges then merge the prepared support
 /// directly. No full coefficient-domain weight table is materialized.
-pub(crate) struct PreparedProverLinearTerms<E: FieldCore> {
+pub(crate) struct PreparedProverLinearTerms<E: Field> {
     lane_weights: PreparedLaneWeights<E>,
     sources: Vec<PreparedTraceSource<E>>,
     live_lane_count: usize,
     coeff_count: usize,
 }
 
-impl<E: FieldCore> PreparedProverLinearTerms<E> {
+impl<E: Field> PreparedProverLinearTerms<E> {
     #[cfg(test)]
     pub(crate) fn source_count(&self) -> usize {
         self.sources.len()

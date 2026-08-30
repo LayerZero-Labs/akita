@@ -13,11 +13,8 @@ use akita_algebra::{
 };
 use akita_error::AkitaError;
 #[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{
-    cfg_iter, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355, Prime128OffsetA7F7,
-    PseudoMersenneField,
-};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{cfg_iter, CanonicalEncoding, Field, Prime128OffsetA7F7, PseudoMersenne};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -188,7 +185,7 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 ///
 /// This is the ordinary protocol selector. Compression-only ring degrees must use
 /// [`select_compression_crt_ntt_params`] instead of widening this gate.
-pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
+pub fn select_crt_ntt_params<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let tier = protocol_dispatch_tier::<F>();
     if !ntt_ring_degree_supported_for_field::<F>(D) {
@@ -204,7 +201,7 @@ pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 /// Select CRT+NTT params for the compressed-commitment diagnostic ladder.
 ///
 /// Ordinary protocol callers must keep using [`select_crt_ntt_params`].
-pub fn select_compression_crt_ntt_params<F: CanonicalField, const D: usize>(
+pub fn select_compression_crt_ntt_params<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let tier = protocol_dispatch_tier::<F>();
     if !compression_ring_dim_supported_for_tier(tier, D) {
@@ -215,15 +212,10 @@ pub fn select_compression_crt_ntt_params<F: CanonicalField, const D: usize>(
     select_crt_ntt_params_for_modulus::<F, D>()
 }
 
-fn select_crt_ntt_params_for_modulus<F: CanonicalField, const D: usize>(
+fn select_crt_ntt_params_for_modulus<F: Field + CanonicalEncoding, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    let modulus = field_modulus::<F>();
-    let split_only_q128_modulus =
-        u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let ntt_q128_modulus =
-        u128::MAX - (<Prime128Offset2355 as PseudoMersenneField>::MODULUS_OFFSET - 1);
-    let a7f7_q128_modulus =
-        u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let modulus = field_modulus::<F>()?;
+    let a7f7_q128_modulus = u128::MAX - (<Prime128OffsetA7F7 as PseudoMersenne>::OFFSET - 1);
 
     if modulus <= Q32_MODULUS as u128 {
         if D >= 64 {
@@ -237,11 +229,7 @@ fn select_crt_ntt_params_for_modulus<F: CanonicalField, const D: usize>(
         }
         return Ok(ProtocolCrtNttParams::Q64(CrtNttParamSet::new(Q64_PRIMES)));
     }
-    if modulus == Q128_MODULUS
-        || modulus == split_only_q128_modulus
-        || modulus == ntt_q128_modulus
-        || modulus == a7f7_q128_modulus
-    {
+    if modulus == Q128_MODULUS || modulus == a7f7_q128_modulus {
         if D >= 64 {
             validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         }
@@ -260,7 +248,7 @@ fn required_profile_for_params<F, W, const K: usize, const D: usize>(
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
 {
     let capacity = params.crt_capacity();
@@ -350,7 +338,10 @@ pub fn dense_i8_commit_prefers_exact_ifma52(
 
 /// Field-typed form of [`centered_quotient_requires_i16_tail`] used by the
 /// runtime kernel dispatch.
-pub fn centered_quotient_requires_i16_tail_for_field<F: CanonicalField, const D: usize>(
+pub fn centered_quotient_requires_i16_tail_for_field<
+    F: Field + CanonicalEncoding,
+    const D: usize,
+>(
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
     match select_crt_ntt_params::<F, D>()? {
@@ -695,7 +686,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
 
     /// Compute a shape-checked exact signed-i16 matrix product.
     #[inline]
-    fn mat_vec_i16<F: FieldCore + CanonicalField>(
+    fn mat_vec_i16<F: Field + CanonicalEncoding>(
         &self,
         log_basis: u32,
         num_rows: usize,
@@ -903,7 +894,7 @@ impl<const D: usize> PreparedNttCache<D> {
 
     /// Compute a shape-checked exact signed-i16 matrix product.
     #[inline]
-    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+    pub fn mat_vec_i16<F: Field + CanonicalEncoding>(
         &self,
         log_basis: u32,
         num_rows: usize,
@@ -924,7 +915,7 @@ fn mat_vec_i16_from_cache<F, const K: usize, const D: usize>(
     rhs: &[[i16; D]],
 ) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     if !exact {
         return Err(AkitaError::InvalidSetup(
@@ -992,7 +983,7 @@ fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
 
 /// Prepare exactly the NTT representations requested by `mode`.
 #[tracing::instrument(skip_all, name = "prepare_ntt_cache", fields(ring_d = D, rings = matrix.as_slice().len(), ?mode))]
-pub fn prepare_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+pub fn prepare_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
@@ -1008,7 +999,7 @@ pub fn prepare_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     name = "prepare_compression_ntt_cache",
     fields(ring_d = D, rings = matrix.as_slice().len())
 )]
-pub fn prepare_compression_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
     prepare_ntt_cache_with_tail_prefix(
@@ -1019,7 +1010,7 @@ pub fn prepare_compression_ntt_cache<F: FieldCore + CanonicalField, const D: usi
     )
 }
 
-fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: usize>(
+fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
     tail_prefix_len: Option<usize>,
@@ -1118,7 +1109,7 @@ fn convert_flat_pair<F, W, const K: usize, const D: usize>(
     Vec<CyclotomicCrtNtt<W, K, D>>,
 )
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: akita_algebra::PrimeWidth,
 {
     cfg_iter!(mat.as_slice())
@@ -1222,7 +1213,7 @@ impl VerifierNttCache {
     }
 
     /// Build, erase, and atomically install an entry when needed.
-    pub(crate) fn prepare<F: FieldCore + CanonicalField, const D: usize>(
+    pub(crate) fn prepare<F: Field + CanonicalEncoding, const D: usize>(
         &self,
         expanded: &AkitaExpandedSetup<F>,
         matrix: NttCacheKey,
