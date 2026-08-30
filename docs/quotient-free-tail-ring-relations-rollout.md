@@ -8,6 +8,23 @@ It may record slice order, review routing, and exact dependency heads. Those
 details guide the active PR but do not define protocol acceptance or security
 semantics.
 
+## Current audit status
+
+The implementation branch was audited at `8d5f021448f807f23e8a2acfc4991713f5c88423`
+on 2026-08-30. Slices 0 through 8 are present in PR #445: the mode is bound,
+layouts omit both ordinary and compression quotients, shared residue algebra
+drives the prover and verifier, production proofs exercise eligible reduced
+suffixes, and the exact planner emits reduced generated rows. Slice 9 is only
+partially complete. The generated catalogs and durable Book explanations are
+present, but the checked baseline/head evidence bundle, cross-mode replay,
+small-field end-to-end case, reversed traversal test, verifier phase benchmark,
+and full malformed-input property matrix remain open in the normative
+implementation companion.
+
+This distinction is intentional: the protocol feature is implemented, while
+the record remains `active` until its stated validation and evidence gates are
+closed.
+
 ## Execution plan
 
 ### Slice 0: restack and correct the active specification
@@ -122,13 +139,13 @@ acceptance. They MUST preserve the shared algebra oracle and verifier equation.
 
 ## Pull-request landscape and stacking plan
 
-This section records the Akita branches refreshed on 2026-08-29. SHAs are
+This section records the Akita branches refreshed through 2026-08-30. SHAs are
 included so the recommendation does not silently apply to later rewrites.
 
 ### Transcript grinding PR 448
 
 PR [#448](https://github.com/LayerZero-Labs/akita/pull/448), head
-`303ddbca548c788e5ec7fbd74b5a679bd269d8cd`, is open. It
+`e8ad4e5031e47dcc04d65b68f191f8de3db62e2c`, is open. It
 changes transcript query sites around `alpha`, `tau0`, and `tau1`; proof-level
 nonce serialization; planner cost composition; suffix-DP state and frontiers;
 schedule estimates; generated catalogs; and both ring-switch implementations.
@@ -138,14 +155,14 @@ code, transcript, and proof-cost dependency. The implementation branch is now
 explicitly stacked in the intended merge order:
 
 ```text
-#448 transcript grinding @ 303ddbca5
-  -> #444 q128 SIS widening @ b5326abf8
-    -> #445 quotient-free relations
+#448 transcript grinding @ e8ad4e503
+  -> #444 q128 SIS widening @ e473df62b
+    -> #445 quotient-free relations @ 8d5f02144 (audited pre-doc head)
 ```
 
-The #445 spec replay commit has `b5326abf8d7311b13c9f1146d0a515e549c64e9a`
-as its sole parent. Later slices MUST preserve this order or restack on the
-corresponding newer exact heads after refreshing all three PRs.
+The #445 branch contains the selected #444 and #448 heads in that first-parent
+stack order. Future restacks MUST preserve the order or update this record to
+the corresponding newer exact heads after refreshing all three PRs.
 
 ### Suffix EOR and packed prover stack
 
@@ -211,15 +228,15 @@ refactor on the packed recursive witness branch. It may change where the
 smaller reduced-evaluation witness is committed, but not how its relation is verified.
 Treat it as a prover integration surface, not a protocol dependency.
 
-### Recommended stack shape
+### Current stack shape
 
 ```text
 codex/quotient-free-tail-relations
-  |-- #448 transcript grinding exact head
-  |-- #444 q128 SIS widening exact head
-  |-- specification and shared protocol/type slices
-  |-- implement verifier, prover, and exact planner cutover on that base
-  `-- generate catalogs, evidence, Book updates, and the review-ready PR
+  |-- #448 transcript grinding @ e8ad4e503
+  |-- #444 q128 SIS widening @ e473df62b
+  |-- protocol/type, algebra, verifier, and prover slices
+  |-- exact planner cutover and generated catalogs
+  `-- Book harmonization and remaining Slice-9 evidence
 ```
 
 Keep the implementation as reviewable commits on this PR. Do not stack the
@@ -247,7 +264,7 @@ Expected durable destinations are:
 
 When the implementation and Book updates land, mark this spec `implemented`.
 Archive it after the durable content is fully folded, following
-[`specs/PRUNING.md`](PRUNING.md).
+[`specs/PRUNING.md`](../specs/PRUNING.md).
 
 ## Reviewer map
 

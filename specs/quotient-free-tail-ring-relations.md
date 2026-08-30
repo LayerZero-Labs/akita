@@ -44,6 +44,16 @@ pub enum RingRelationMode {
 opening, or Fiat–Shamir challenge. It changes the public relation weights and
 deletes relation-quotient digits from the committed witness.
 
+Implementation audit (2026-08-30): the protocol, layout, prover, verifier, and
+planner paths described here are implemented in PR #445. The specification
+remains `active`, rather than `implemented`, because the companion acceptance
+contract still has explicit validation and evidence work open. In particular,
+the repository still needs a full cross-mode proof-replay negative, a
+relation-mode traversal-order regression, small-field reduced/EOR end-to-end
+coverage, reduced-mode phase benchmarks, malformed-input property coverage,
+and a checked proof-size/planner evidence bundle. These are completion gates;
+they are not additional protocol modes.
+
 The production feature is a one-way tail cutover, not a freely selectable bit
 at every level:
 
@@ -401,7 +411,7 @@ costs `O(d)` field operations and `O(d)` output storage, or `O(1)` state when
 streamed once.
 
 The production algebra module MUST implement this recurrence. The quadratic
-quadratic formula MUST remain available under tests as an independent oracle.
+formula MUST remain available under tests as an independent oracle.
 
 ### Where the private quotient went
 
@@ -548,9 +558,12 @@ weights. The implementation MAY stream or cache these kernels, but auxiliary
 storage MUST remain bounded by the largest active native window and it MUST NOT
 materialize a witness-sized functional table.
 
-The verifier MUST extend the existing fused `SetupContributionPlan` scan. It
-MUST NOT add independent A, B, and D scans or materialize one residue kernel
-per setup lane.
+The verifier MUST extend the existing fused `SetupContributionPlan` scan for
+the ordinary A, B, and D setup tensor. It MUST NOT add independent A, B, and D
+scans or materialize one residue kernel per setup lane. Compression F/H maps
+remain owned by the canonical compression-relation program: they use the same
+reduced coefficient-functional semantics, but are not falsely described as
+columns of the ordinary A/B/D setup tensor.
 
 ### Structured non-setup terms
 

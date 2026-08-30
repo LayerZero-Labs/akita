@@ -15,6 +15,12 @@ decision, algebra, feature matrix, eligibility state machine, and compatibility
 boundary; this companion owns the cross-crate architecture and executable
 acceptance contract.
 
+Acceptance status was audited against PR #445 on 2026-08-30. Checked boxes
+below have a concrete implementation and regression test or generated artifact.
+Unchecked boxes remain required before this record can move from `active` to
+`implemented`; an unchecked evidence item does not mean the underlying protocol
+path is absent.
+
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
 **OPTIONAL** in this document are to be interpreted as described in BCP 14
@@ -565,103 +571,116 @@ feature is accepted.
 
 #### Algebra and soundness
 
-- [ ] The linear residue recurrence matches literal negacyclic reduction for
+- [x] The linear residue recurrence matches literal negacyclic reduction for
       random powers-of-two dimensions, public multipliers, witnesses, and
       `alpha` values.
-- [ ] The terminal `H` recurrence matches an independently materialized
+- [x] The terminal `H` recurrence matches an independently materialized
       residue-kernel MLE at random coefficient points.
-- [ ] The direct setup scan matches a dense public-matrix oracle for A, B, D,
-      mixed dimensions, chunks, and compressed F/H rows.
-- [ ] Quotient-lift and reduced-evaluation modes produce the same scalar relation
+- [x] The fused direct setup scan matches independent dense public-matrix
+      oracles for A, B, and D across mixed dimensions, groups, chunks, and the
+      configured extension field. The separately owned compression program
+      matches an independent dense F/H oracle.
+- [x] Quotient-lift and reduced-evaluation modes produce the same scalar relation
       claim on identical valid witnesses.
-- [ ] A nonzero reduced residual is rejected in reduced-evaluation mode without a quotient
+- [x] A nonzero reduced residual is rejected in reduced-evaluation mode without a quotient
       witness.
-- [ ] Tests cover `alpha^d + 1 == 0` in a field where such a test point is
+- [x] Tests cover `alpha^d + 1 == 0` in a field where such a test point is
       constructible, or explain why the test field lacks one. No division is
       used.
 
 #### Eligibility and schedule binding
 
-- [ ] Reduced evaluation is rejected at root L0.
-- [ ] Reduced evaluation is rejected at recursive L1.
-- [ ] Reduced evaluation is accepted at L2 or later when the complete suffix has
+- [x] Reduced evaluation is rejected at root L0.
+- [x] Reduced evaluation is rejected at recursive L1.
+- [x] Reduced evaluation is accepted at L2 or later when the complete suffix has
       no setup prefix and uses evaluation trace.
-- [ ] A reduced-evaluation fold with an incoming setup prefix is rejected.
-- [ ] A schedule that returns from reduced evaluation to quotient lifting is
+- [x] A reduced-evaluation fold with an incoming setup prefix is rejected.
+- [x] A schedule that returns from reduced evaluation to quotient lifting is
       rejected.
-- [ ] A schedule that adds an offloaded setup edge after the cutover is
+- [x] A schedule that adds an offloaded setup edge after the cutover is
       rejected.
-- [ ] A reduced-evaluation coefficient-packing fold is rejected.
-- [ ] Changing only the relation mode changes the effective schedule digest
+- [x] A reduced-evaluation coefficient-packing fold is rejected.
+- [x] Changing only the relation mode changes the effective schedule digest
       and transcript preamble.
 - [ ] Prover and verifier reject a proof replayed under the other mode’s
-      schedule.
+      schedule. Descriptor-binding and mode-mismatch unit tests exist, but the
+      repository still needs one full prove/verify cross-schedule replay test.
 
 #### Witness and proof shape
 
-- [ ] A raw reduced-evaluation layout contains exactly Z/E/T and no R range.
-- [ ] A compressed reduced-evaluation layout contains Z/E/T and F/H digits, but no
+- [x] A raw reduced-evaluation layout contains exactly Z/E/T and no R range.
+- [x] A compressed reduced-evaluation layout contains Z/E/T and F/H digits, but no
       ordinary or compression R range.
-- [ ] Stage 1 domain, Stage 2 domain, outgoing commitment length, response
+- [x] Stage 1 domain, Stage 2 domain, outgoing commitment length, response
       model, and proof estimate all equal values derived from the same
       mode-aware `WitnessLayout`.
-- [ ] Reduced-evaluation mode never calls quotient construction or quotient digit
+- [x] Reduced-evaluation mode never calls quotient construction or quotient digit
       decomposition; an operation counter or focused mock test proves this.
-- [ ] Reduced-evaluation mode adds no serialized proof field or sumcheck round.
+- [x] Reduced-evaluation mode adds no serialized proof field or sumcheck round.
 
 #### Feature combinations
 
-- [ ] Raw/Linf/evaluation-trace reduced-evaluation suffix.
-- [ ] Compressed/Linf/evaluation-trace reduced-evaluation suffix with F/H relations.
-- [ ] Raw/L2/evaluation-trace reduced-evaluation suffix.
-- [ ] Compressed/L2/evaluation-trace reduced-evaluation suffix.
-- [ ] Small-field evaluation trace with EOR.
-- [ ] Mixed A/B/D dimensions.
-- [ ] A multi-chunk eligible fold, if any production or focused fixture reaches
+- [x] Raw/Linf/evaluation-trace reduced-evaluation suffix.
+- [x] Compressed/Linf/evaluation-trace reduced-evaluation suffix with F/H relations.
+- [x] Raw/L2/evaluation-trace reduced-evaluation suffix.
+- [x] Compressed/L2/evaluation-trace reduced-evaluation suffix.
+- [ ] Small-field evaluation trace with EOR. Extension-field functional and
+      setup oracles pass, and q32/q64 generated rows select reduced suffixes,
+      but the current production end-to-end reduced proof test is fp128.
+- [x] Mixed A/B/D dimensions.
+- [x] A multi-chunk eligible fold, if any production or focused fixture reaches
       level 2 with more than one chunk; otherwise a constructed type-level
       fixture covers it.
-- [ ] Each forbidden matrix cell has a negative schedule-validation test.
+- [x] Each forbidden matrix cell has a negative schedule-validation test.
 
 #### Planner
 
-- [ ] The planner may choose no cutover, an L2 cutover, or a later cutover from
+- [x] The planner may choose no cutover, an L2 cutover, or a later cutover from
       the same exact search engine.
-- [ ] Every complete candidate contains at most one quotient-to-reduced-evaluation
+- [x] Every complete candidate contains at most one quotient-to-reduced-evaluation
       transition.
-- [ ] A small exhaustive oracle enumerates all `m + 1` monotone cutovers and
+- [x] A small exhaustive oracle enumerates all `m + 1` monotone cutovers and
       matches the suffix DP’s selected complete descriptor.
 - [ ] Reversing relation-mode traversal order does not change the selected
-      descriptor.
-- [ ] Reduced-evaluation suffix states cannot invoke setup-prefix candidate search.
-- [ ] Existing suffix-cache quotas remain unchanged.
-- [ ] Generated row replay recomputes the exact reduced-evaluation witness lengths and
+      descriptor. The independent unpruned oracle agrees with production, but
+      there is no explicit reversed-domain-order regression yet.
+- [x] Reduced-evaluation suffix states cannot invoke setup-prefix candidate search.
+- [x] Existing suffix-cache quotas remain unchanged.
+- [x] Generated row replay recomputes the exact reduced-evaluation witness lengths and
       proof estimate.
-- [ ] Catalog identity and policy reports include relation mode and cutover.
+- [x] Catalog identity and policy reports include relation mode and cutover.
 
 #### Verifier performance and safety
 
-- [ ] The reduced-evaluation verifier allocates `O(d)` coefficient-functional state, not
+- [x] The reduced-evaluation verifier allocates `O(d)` coefficient-functional state, not
       `O(W)` witness-sized state.
-- [ ] The reduced-evaluation verifier uses the existing fused setup traversal and scans
+- [x] The reduced-evaluation verifier uses the existing fused setup traversal and scans
       each active setup coefficient once.
 - [ ] Benchmarks separately report preparation, setup scan, Stage 2, and total
-      verifier time for quotient-lift and reduced-evaluation modes on selected tail folds.
+      verifier time for quotient-lift and reduced-evaluation modes on selected
+      tail folds. The existing relation-evaluator Criterion fixture constructs
+      quotient-lift cases only and does not expose these phase splits.
 - [ ] Fuzz or property tests reject malformed mode, dimension, row, point, and
-      setup combinations without panic or unbounded allocation.
+      setup combinations without panic or unbounded allocation. Focused
+      negative tests exist, but the requested property/fuzz matrix is not yet
+      present.
 
 #### Generated proof-size evidence
 
-- [ ] Regenerate every affected schedule table with
+- [x] Regenerate every affected schedule table with
       `scripts/generate-schedule-tables.sh`.
 - [ ] Produce checked baseline/head evidence for dense fp32, fp64, and fp128
-      generated families.
+      generated families. Ad hoc comparisons were completed during development,
+      but no head-pinned checked evidence artifact is committed.
 - [ ] For every changed row, report cutover, per-level witness length,
       quotient coefficients removed, payload mode, security route, setup-prefix
       presence, setup-direct bytes, Stage-3 bytes, and total proof bytes.
 - [ ] Serialize representative proofs and confirm the measured byte delta
       agrees with the generated proof estimate.
 - [ ] Report planner wall time, peak resident memory, and search counters for
-      the same dense families.
+      the same dense families. Local fp128 timing and memory measurements exist,
+      but they do not cover all three requested dense families or the complete
+      counter schema.
 
 ### Testing strategy
 
