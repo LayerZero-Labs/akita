@@ -74,7 +74,9 @@ fn reduced_instance(
     )
     .expect("fold challenges");
     let multiplier = RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-        position_weights: vec![ReducedF::zero(); group_params.num_positions_per_block()],
+        position_weights: (0..group_params.num_positions_per_block())
+            .map(|position| ReducedF::from_u64(position as u64 + 2))
+            .collect(),
         live_block_weights: vec![ReducedF::zero(); blocks],
     });
     let geometry = akita_types::RelationWitnessGeometry::for_level(params, &opening_batch, 1)

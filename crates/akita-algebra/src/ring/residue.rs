@@ -26,6 +26,86 @@ where
     residue_recurrence(coefficients.iter().copied().map(E::lift_base), alpha)
 }
 
+/// Evaluate every reduced shift of a sparse public multiplier at `alpha`.
+///
+/// This is the sparse-input counterpart of [`residue_kernel`]. It preserves
+/// the same signed-wrap recurrence while storing only the supplied nonzero
+/// `(position, coefficient)` pairs, avoiding a dimension-sized temporary input
+/// vector. The returned kernel remains dense because every reduced shift is
+/// consumed by the relation-weight compiler.
+///
+/// # Errors
+///
+/// Returns an error unless `dimension` is a nonzero power of two and every
+/// supplied position is unique, in range, and paired with a nonzero weight.
+pub fn sparse_residue_kernel<E>(
+    dimension: usize,
+    terms: impl IntoIterator<Item = (usize, E)>,
+    alpha: E,
+) -> Result<Vec<E>, AkitaError>
+where
+    E: FieldCore,
+{
+    if dimension == 0 || !dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidInput(
+            "residue-kernel dimension must be a nonzero power of two".into(),
+        ));
+    }
+    let mut terms = terms.into_iter().collect::<Vec<_>>();
+    terms.sort_unstable_by_key(|(position, _)| *position);
+    for (index, &(position, weight)) in terms.iter().enumerate() {
+        if position >= dimension {
+            return Err(AkitaError::InvalidInput(
+                "sparse residue-kernel position is out of range".into(),
+            ));
+        }
+        if weight.is_zero() {
+            return Err(AkitaError::InvalidInput(
+                "sparse residue-kernel weights must be nonzero".into(),
+            ));
+        }
+        if index != 0 && terms[index - 1].0 == position {
+            return Err(AkitaError::InvalidInput(
+                "sparse residue-kernel positions must be unique".into(),
+            ));
+        }
+    }
+
+    let mut alpha_power = E::one();
+    let mut current = E::zero();
+    let mut term_index = 0usize;
+    for position in 0..dimension {
+        if terms
+            .get(term_index)
+            .is_some_and(|(term_position, _)| *term_position == position)
+        {
+            current += terms[term_index].1 * alpha_power;
+            term_index += 1;
+        }
+        alpha_power *= alpha;
+    }
+    let modulus_evaluation = alpha_power + E::one();
+
+    let mut kernel = Vec::new();
+    kernel
+        .try_reserve_exact(dimension)
+        .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+    kernel.push(current);
+    let mut reverse_term_index = terms.len();
+    for wrap_position in (1..dimension).rev() {
+        let wrap_weight =
+            if reverse_term_index != 0 && terms[reverse_term_index - 1].0 == wrap_position {
+                reverse_term_index -= 1;
+                terms[reverse_term_index].1
+            } else {
+                E::zero()
+            };
+        current = alpha * current - modulus_evaluation * wrap_weight;
+        kernel.push(current);
+    }
+    Ok(kernel)
+}
+
 /// Prepare terminal weights for one exact physical equality window.
 ///
 /// `equality_weights[j]` must be the checked value `eq(point, start + j)` for
@@ -244,5 +324,31 @@ mod tests {
             assert!(residue_kernel::<F, F>(coefficients, F::from_u64(7)).is_err());
             assert!(terminal_residue_kernel(coefficients, F::from_u64(7)).is_err());
         }
+    }
+
+    #[test]
+    fn sparse_recurrence_matches_dense_recurrence() {
+        type F = Prime128OffsetA7F7;
+        let alpha = F::from_u64(7);
+        let mut dense = vec![F::zero(); 64];
+        let terms = [(0, F::from_u64(3)), (17, -F::one()), (63, F::from_u64(2))];
+        for &(position, coefficient) in &terms {
+            dense[position] = coefficient;
+        }
+
+        assert_eq!(
+            sparse_residue_kernel(64, terms, alpha).unwrap(),
+            residue_kernel::<F, F>(&dense, alpha).unwrap()
+        );
+    }
+
+    #[test]
+    fn sparse_recurrence_rejects_malformed_terms() {
+        type F = Prime128OffsetA7F7;
+        let alpha = F::from_u64(7);
+        assert!(sparse_residue_kernel(3, [], alpha).is_err());
+        assert!(sparse_residue_kernel(4, [(4, F::one())], alpha).is_err());
+        assert!(sparse_residue_kernel(4, [(1, F::one()), (1, -F::one())], alpha).is_err());
+        assert!(sparse_residue_kernel(4, [(1, F::zero())], alpha).is_err());
     }
 }

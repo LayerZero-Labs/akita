@@ -942,15 +942,19 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     .unwrap();
     let exact_fields =
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
-    policy.setup_field_budget = Some(exact_fields - 1);
+    let setup_field_budget = exact_fields - 1;
+    policy.setup_field_budget = Some(setup_field_budget);
 
-    let error = find_schedule(
+    let budgeted = find_schedule(
         onehot_group(16, 1),
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         &domain,
         OneHot::ring_challenge_config,
     )
-    .unwrap_err();
-    assert!(error.to_string().contains("no mixed-D schedule"));
+    .expect("the setup budget should select the smaller physical setup");
+    let budgeted_fields =
+        akita_types::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
+    assert!(budgeted_fields <= setup_field_budget);
+    assert!(budgeted_fields < exact_fields);
 }

@@ -3,20 +3,28 @@ use akita_algebra::ring::terminal_residue_kernel;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::FromPrimitiveInt;
 
-fn evaluate_sparse_functional<E: FieldCore + FromPrimitiveInt>(
-    challenge: &SparseChallenge,
-    functional: &[E],
-) -> Result<E, AkitaError> {
-    challenge.validate_dyn(functional.len())?;
-    challenge.positions.iter().zip(&challenge.coeffs).try_fold(
-        E::zero(),
-        |sum, (&position, &coefficient)| {
-            let weight = *functional
-                .get(position as usize)
-                .ok_or(AkitaError::InvalidProof)?;
-            Ok(sum + weight * E::from_i64(i64::from(coefficient)))
-        },
-    )
+struct ValidatedSparseChallenge<'a> {
+    challenge: &'a SparseChallenge,
+}
+
+impl<'a> ValidatedSparseChallenge<'a> {
+    fn new(challenge: &'a SparseChallenge, dimension: usize) -> Result<Self, AkitaError> {
+        challenge.validate_dyn(dimension)?;
+        Ok(Self { challenge })
+    }
+
+    fn evaluate<E: FieldCore + FromPrimitiveInt>(&self, functional: &[E]) -> Result<E, AkitaError> {
+        self.challenge
+            .positions
+            .iter()
+            .zip(&self.challenge.coeffs)
+            .try_fold(E::zero(), |sum, (&position, &coefficient)| {
+                let weight = *functional
+                    .get(position as usize)
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok(sum + weight * E::from_i64(i64::from(coefficient)))
+            })
+    }
 }
 
 fn embedded_terminal_functionals<E: FieldCore>(
@@ -142,16 +150,17 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
             return Err(AkitaError::InvalidProof);
         }
 
+        let mut commitment_multipliers = vec![E::zero(); commitment_functionals.len()];
         let mut et = E::zero();
         for (block_claim, challenge) in challenges.as_slice().iter().enumerate() {
-            challenge.validate_dyn(d_a)?;
+            let challenge = ValidatedSparseChallenge::new(challenge, d_a)?;
             let e_start = block_claim
                 .checked_mul(e_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             let e_weights = checked_slice(&weights.e, e_start, e_stride, "reduced structured E")?;
             let mut e = E::zero();
             for (subcolumn, functional) in opening_functionals.iter().enumerate() {
-                let multiplier = evaluate_sparse_functional(challenge, functional)?;
+                let multiplier = challenge.evaluate(functional)?;
                 let digit_start = subcolumn
                     .checked_mul(group.depth_open)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -172,10 +181,12 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
                 .checked_mul(t_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             let t_weights = checked_slice(&weights.t, t_start, t_stride, "reduced structured T")?;
-            let commitment_multipliers = commitment_functionals
-                .iter()
-                .map(|functional| evaluate_sparse_functional(challenge, functional))
-                .collect::<Result<Vec<_>, _>>()?;
+            for (multiplier, functional) in commitment_multipliers
+                .iter_mut()
+                .zip(&commitment_functionals)
+            {
+                *multiplier = challenge.evaluate(functional)?;
+            }
             let mut t = E::zero();
             for (row, &row_weight) in t_weights
                 .chunks_exact(t_row_stride)
@@ -240,7 +251,10 @@ mod tests {
         let alpha = F::from_u64(2);
 
         let functional = embedded_terminal_functionals(&native_equality, 4, 1, alpha).unwrap();
-        let reduced = evaluate_sparse_functional(&challenge, &functional[0]).unwrap();
+        let reduced = ValidatedSparseChallenge::new(&challenge, functional[0].len())
+            .unwrap()
+            .evaluate(&functional[0])
+            .unwrap();
 
         // In F[X]/(X^4 + 1), X^3 * X = -1. Evaluating the two
         // polynomials independently first would incorrectly produce 16.

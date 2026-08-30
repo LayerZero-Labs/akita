@@ -21,6 +21,7 @@
 mod kernels;
 mod physical_b;
 mod prepare;
+mod reduced_role;
 mod scan;
 mod segments;
 mod setup_index_weight;

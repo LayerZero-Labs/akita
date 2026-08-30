@@ -19,4 +19,4 @@ pub use eval::{
     eval_ring_at_pows_fast, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
 };
 pub use ifma52::{Ifma52NttMatrix, Ifma52Params};
-pub use residue::{residue_kernel, terminal_residue_kernel};
+pub use residue::{residue_kernel, sparse_residue_kernel, terminal_residue_kernel};

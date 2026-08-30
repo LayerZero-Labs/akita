@@ -93,15 +93,27 @@ impl<E: Field> SetupContributionPlan<E> {
                     .ok_or(AkitaError::InvalidProof)?
                     .min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+                let mut segment_cursors = self
+                    .groups
+                    .iter()
+                    .map(|group| group.segments.partition_point(|segment| segment.hi <= lo))
+                    .collect::<Vec<_>>();
                 let mut term = E::zero();
                 for (offset, ring) in setup.iter().enumerate() {
                     let base_idx = lo.checked_add(offset).ok_or(AkitaError::InvalidProof)?;
                     let mut coefficient_weights = [E::zero(); BASE_D];
-                    for (group, direct) in self.groups.iter().zip(weights) {
-                        let segment_index = group
+                    let mut active = false;
+                    for ((group, direct), cursor) in
+                        self.groups.iter().zip(weights).zip(&mut segment_cursors)
+                    {
+                        while group
                             .segments
-                            .partition_point(|segment| segment.hi <= base_idx);
-                        let Some(segment) = group.segments.get(segment_index) else {
+                            .get(*cursor)
+                            .is_some_and(|segment| segment.hi <= base_idx)
+                        {
+                            *cursor += 1;
+                        }
+                        let Some(segment) = group.segments.get(*cursor) else {
                             continue;
                         };
                         if base_idx < segment.lo || base_idx >= segment.hi {
@@ -119,8 +131,9 @@ impl<E: Field> SetupContributionPlan<E> {
                             },
                             &mut coefficient_weights,
                         )?;
+                        active = true;
                     }
-                    if coefficient_weights.iter().any(|weight| !weight.is_zero()) {
+                    if active {
                         term += eval_ring_at_pows_fast(ring, &coefficient_weights);
                     }
                 }

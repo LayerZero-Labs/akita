@@ -7,7 +7,7 @@
 //! stream.
 
 use super::*;
-use akita_algebra::ring::residue_kernel;
+use akita_algebra::ring::{residue_kernel, sparse_residue_kernel};
 use akita_challenges::Challenges;
 use akita_field::{ExtField, MulBaseUnreduced};
 use akita_types::{dispatch_for_field, RingMultiplierOpeningPoint};
@@ -26,14 +26,23 @@ where
         .as_slice()
         .get(index)
         .ok_or(AkitaError::InvalidProof)?;
-    challenge.validate_dyn(dimension)?;
-    let mut coefficients = vec![F::zero(); dimension];
-    for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
-        *coefficients
-            .get_mut(position as usize)
-            .ok_or(AkitaError::InvalidProof)? = F::from_i64(i64::from(coefficient));
+    if challenge.positions.len() != challenge.coeffs.len() {
+        return Err(AkitaError::InvalidProof);
     }
-    residue_kernel::<F, E>(&coefficients, alpha)
+    sparse_residue_kernel(
+        dimension,
+        challenge
+            .positions
+            .iter()
+            .zip(&challenge.coeffs)
+            .map(|(&position, &coefficient)| {
+                (
+                    position as usize,
+                    E::lift_base(F::from_i64(i64::from(coefficient))),
+                )
+            }),
+        alpha,
+    )
 }
 
 fn position_multiplier_kernels<F, E>(
@@ -51,13 +60,20 @@ where
             if base.position_weights.len() != position_count {
                 return Err(AkitaError::InvalidProof);
             }
+            let mut unit_coefficients = vec![F::zero(); dimension];
+            *unit_coefficients
+                .first_mut()
+                .ok_or(AkitaError::InvalidProof)? = F::one();
+            let unit_kernel = residue_kernel::<F, E>(&unit_coefficients, alpha)?;
             base.position_weights
                 .iter()
                 .copied()
                 .map(|scalar| {
-                    let mut coefficients = vec![F::zero(); dimension];
-                    coefficients[0] = scalar;
-                    residue_kernel::<F, E>(&coefficients, alpha)
+                    Ok(unit_kernel
+                        .iter()
+                        .copied()
+                        .map(|coefficient| coefficient.mul_base(scalar))
+                        .collect())
                 })
                 .collect()
         }

@@ -140,7 +140,7 @@ CASE_METADATA: dict[str, CaseMetadata] = {
     "onehot_fp128": CaseMetadata(
         "fp128", "onehot", ONEHOT_WORKLOAD_LABEL, "mixed D256 to D64"
     ),
-    "dense_fp128": CaseMetadata("fp128", "dense", "dense", "mixed D512 to D64"),
+    "dense_fp128": CaseMetadata("fp128", "dense", "dense", "adaptive D1024 to D64"),
     "onehot_fp128_multi_group": CaseMetadata(
         "fp128", "onehot", "multi-group one-hot", "multi-group", "multi_group"
     ),

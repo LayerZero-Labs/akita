@@ -3,18 +3,12 @@ use super::*;
 fn intern_reduced_functional<E: Field>(
     cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
     dimension: usize,
-    candidate: ReducedRoleCoefficientState<E>,
+    prepare: impl FnOnce() -> Result<ReducedRoleCoefficientState<E>, AkitaError>,
 ) -> Result<ReducedRoleCoefficientState<E>, AkitaError> {
     if let Some((_, prepared)) = cache.iter().find(|(cached, _)| *cached == dimension) {
-        if prepared.functional.as_ref() != candidate.functional.as_ref()
-            || prepared.equality.as_ref() != candidate.equality.as_ref()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "equal native dimensions produced different reduced coefficient state".into(),
-            ));
-        }
         return Ok(prepared.clone());
     }
+    let candidate = prepare()?;
     cache.push((dimension, candidate.clone()));
     Ok(candidate)
 }
@@ -417,14 +411,33 @@ impl<E: Field> SetupContributionPlan<E> {
         coefficient_point: &[E],
         cache: &mut Vec<(usize, ReducedRoleCoefficientState<E>)>,
     ) -> Result<ReducedDirectScanWeights<E>, AkitaError> {
+        let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_a(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
+        let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_b(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
+        let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), || {
+            self.prepare_reduced_role_coefficient_state(
+                group.role_dims.d_d(),
+                alpha,
+                coefficient_point,
+            )
+        })?;
         let evaluate_e = || {
             self.materialize_reduced_role_tensor_weights(
                 group.d_relation_ratio,
                 group.role_dims.d_d(),
                 &group.d_tensors,
                 group.d_col_range.len(),
-                alpha,
-                coefficient_point,
             )
         };
         let evaluate_t = || {
@@ -433,8 +446,6 @@ impl<E: Field> SetupContributionPlan<E> {
                 group.role_dims.d_b(),
                 &group.physical_b.relation_tensors,
                 group.physical_b.logical_input_width(),
-                alpha,
-                coefficient_point,
             )
         };
         let evaluate_z = || {
@@ -443,11 +454,9 @@ impl<E: Field> SetupContributionPlan<E> {
                 group.role_dims.d_a(),
                 &group.a_tensors,
                 group.z_cols,
-                alpha,
-                coefficient_point,
             )
         };
-        let ((e, d_role), (t, b_role), (z, a_role)) = materialize_three_roles(
+        let (e, t, z) = materialize_three_roles(
             group.d_col_range.len(),
             group.physical_b.logical_input_width(),
             group.z_cols,
@@ -455,9 +464,6 @@ impl<E: Field> SetupContributionPlan<E> {
             evaluate_t,
             evaluate_z,
         )?;
-        let a_role = intern_reduced_functional(cache, group.role_dims.d_a(), a_role)?;
-        let b_role = intern_reduced_functional(cache, group.role_dims.d_b(), b_role)?;
-        let d_role = intern_reduced_functional(cache, group.role_dims.d_d(), d_role)?;
         Ok(ReducedDirectScanWeights {
             weights: DirectScanWeights { e, t, z },
             roles: [a_role, b_role, d_role],

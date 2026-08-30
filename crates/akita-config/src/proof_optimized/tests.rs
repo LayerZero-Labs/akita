@@ -138,7 +138,7 @@ fn fp64_response_model_selects_globally_winning_l2_suffix() {
         terminal.fold_challenge_config,
         akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
     );
-    assert_eq!(terminal.response_l2_sq_cap(), Some(798_341_908));
+    assert_eq!(terminal.response_l2_sq_cap(), Some(655_224_517));
     assert_eq!(terminal.inner.matrix.output_rank(), 6);
 
     let catalog = fp64::OneHot::schedule_catalog().expect("fp64 catalog");

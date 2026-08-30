@@ -175,12 +175,10 @@ impl<E: Field + Ring + Unreduced + Fold> RelationRangeImageProver<E> {
                     &fold_lut,
                 ))
             }
-            WitnessState::FoldedSuffix(folded_witness) => {
-                let next = cfg_into_iter!(0..folded_witness.len().div_ceil(2))
-                    .map(|pair| fold_folded_lane_pair(&folded_witness, 2 * pair, r))
-                    .collect();
+            WitnessState::FoldedSuffix(mut folded_witness) => {
+                fold_evals_in_place(&mut folded_witness, r);
                 self.fold_linear_terms_for_current_round(r);
-                WitnessState::FoldedSuffix(next)
+                WitnessState::FoldedSuffix(folded_witness)
             }
         };
         if let RelationRoundState::ReducedDense { weights } = &mut self.relation_state {
