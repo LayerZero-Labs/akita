@@ -1,5 +1,8 @@
 use super::*;
-use crate::{CommitmentPayloadMode, RingRelationMode, SisModulusProfileId, COMPRESSION_MAP_COUNT};
+use crate::{
+    CommitmentPayloadMode, PolynomialGroupLayout, RingRelationMode, SisModulusProfileId,
+    COMPRESSION_MAP_COUNT,
+};
 
 #[test]
 fn default_is_single_chunk() {
