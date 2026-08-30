@@ -227,19 +227,6 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes(),
     );
-    assert_eq!(
-        std::iter::once(selected.schedule.root.output_witness_len)
-            .chain(
-                selected
-                    .schedule
-                    .recursive_folds
-                    .iter()
-                    .map(|fold| fold.output_witness_len),
-            )
-            .collect::<Vec<_>>(),
-        vec![173_888, 163_648, 130_048, 96_256],
-        "the complete objective must minimize the root output witness before the canonical tie-break",
-    );
     let root = &selected.schedule.root.params;
     assert!(matches!(
         root.opening_method(),

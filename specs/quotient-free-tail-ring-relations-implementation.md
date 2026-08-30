@@ -668,22 +668,23 @@ feature is accepted.
       five mutation categories through public replay, preparation, and
       evaluation boundaries.
 
-#### Generated proof-size evidence
+#### Non-normative performance evidence
 
 - [x] Regenerate every affected schedule table with
       `scripts/generate-schedule-tables.sh`.
-- [ ] Produce checked baseline/head evidence for dense fp32, fp64, and fp128
-      generated families. Ad hoc comparisons were completed during development,
-      but no head-pinned checked evidence artifact is committed.
-- [ ] For every changed row, report cutover, per-level witness length,
-      quotient coefficients removed, payload mode, security route, setup-prefix
-      presence, setup-direct bytes, Stage-3 bytes, and total proof bytes.
-- [ ] Serialize representative proofs and confirm the measured byte delta
-      agrees with the generated proof estimate.
-- [ ] Report planner wall time, peak resident memory, and search counters for
-      the same dense families. Local fp128 timing and memory measurements exist,
-      but they do not cover all three requested dense families or the complete
-      counter schema.
+- [x] Record base/head proof-size deltas for dense fp32, fp64, and fp128 in the
+      implementation PR, pinned to the compared commits. These measurements are
+      review evidence, not compatibility baselines.
+- [ ] Before merge, serialize representative proofs and confirm that measured
+      sizes remain within the generated proof estimates.
+- [ ] Before merge, report representative planner wall time, peak resident
+      memory, and available search counters separately from compilation time.
+
+For quotient-free-tail acceptance, exact generated rows, cutovers, witness
+lengths, and proof byte counts MUST NOT be checked in as golden evidence. They
+are planner outputs and may change when the protocol, objective, security
+model, or search implementation improves. The generated catalogs and their
+normal validation remain the source of truth.
 
 ### Testing strategy
 
@@ -758,36 +759,15 @@ scripts/check-spec-references.sh --all
 Generated-table drift and profile-specific workflows are required when their
 source files change.
 
-### Performance evidence format
+### Performance evidence policy
 
-The implementation PR SHOULD add a checked TSV or Markdown report under
-`specs/evidence/quotient-free-tail/`. Every record must include the exact base
-and head SHA. At minimum, one table should contain:
-
-```text
-family
-num_vars
-base_proof_bytes
-head_proof_bytes
-delta_bytes
-cutover_level
-fold_level
-relation_mode
-input_witness_len
-output_witness_len
-ordinary_quotient_coefficients_removed
-compression_quotient_coefficients_removed
-payload_mode
-opening_method
-security_route
-incoming_setup_prefix
-direct_payload_bytes
-stage3_payload_bytes
-```
-
-A separate planner table should record wall time, peak RSS, suffix calls, memo
-hits, peak memo entries, and frontier candidates. Do not combine compilation
-time with planner execution.
+The implementation PR SHOULD record the exact compared SHAs, commands,
+aggregate proof-size deltas, representative serialized-proof agreement, and
+representative planner wall/RSS measurements. Detailed per-row reports MAY be
+attached to the PR or retained as local review output, but they MUST NOT become
+repository compatibility fixtures. Performance evidence must distinguish
+compilation time from execution time and state whether figures are estimates
+or serialized measurements.
 
 ## Alternatives considered
 

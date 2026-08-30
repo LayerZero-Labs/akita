@@ -10,16 +10,15 @@ semantics.
 
 ## Current audit status
 
-The implementation branch was audited at `8d5f021448f807f23e8a2acfc4991713f5c88423`
-on 2026-08-30. Slices 0 through 8 are present in PR #445: the mode is bound,
+As of 2026-08-30, slices 0 through 8 are present in PR #445: the mode is bound,
 layouts omit both ordinary and compression quotients, shared residue algebra
 drives the prover and verifier, production proofs exercise eligible reduced
-suffixes, and the exact planner emits reduced generated rows. Slice 9 is only
-partially complete. The generated catalogs and durable Book explanations are
-present, but the checked baseline/head evidence bundle, cross-mode replay,
-small-field end-to-end case, reversed traversal test, verifier phase benchmark,
-and full malformed-input property matrix remain open in the normative
-implementation companion.
+suffixes, and the exact planner emits reduced generated rows. Cross-mode
+replay, small-field reduced EOR, reversed traversal, verifier phase timing, and
+the bounded malformed-input matrix are complete. The generated catalogs and
+durable Book explanations are present. Aggregate base/head proof-size evidence
+belongs in the PR rather than a checked snapshot; representative serialized
+proof agreement and planner telemetry remain before merge.
 
 This distinction is intentional: the protocol feature is implemented, while
 the record remains `active` until its stated validation and evidence gates are
@@ -131,8 +130,9 @@ unchanged, and generated replay matches planner estimates.
   counters.
 - Update the Book after behavior and evidence are stable.
 
-Exit condition: checked evidence supports the proof-size, verifier architecture,
-zero-quotient-work, and bounded-search claims.
+Exit condition: PR-attached evidence supports the proof-size, verifier
+architecture, zero-quotient-work, and bounded-search claims without turning
+exact planner outputs into repository compatibility fixtures.
 
 Optional prover optimizations follow profiling and are not required for initial
 acceptance. They MUST preserve the shared algebra oracle and verifier equation.

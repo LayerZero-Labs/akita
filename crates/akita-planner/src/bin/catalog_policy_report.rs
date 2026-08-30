@@ -34,9 +34,13 @@ fn removed_quotient_coefficients(
     if !params.ring_relation_mode.is_reduced_evaluation() {
         return Ok((0, 0));
     }
-    let breakdown = akita_types::QuotientCoefficientBreakdown::for_reduced_input_witness(
+    let final_group = akita_types::PolynomialGroupLayout::singleton(
+        akita_types::padded_boolean_opening_vars(input_witness_len)
+            .map_err(|error| format!("derive quotient-report group: {error}"))?,
+    );
+    let breakdown = akita_types::QuotientCoefficientBreakdown::for_reduced_counterfactual(
         params,
-        input_witness_len,
+        final_group,
         spec.policy.claim_ext_degree,
         spec.policy.decomposition.field_bits(),
     )
