@@ -111,18 +111,23 @@ fn inner_bound_supported(
         .is_some_and(|bounds| bounds.binary_search(&coeff_linf_bound).is_ok())
 }
 
-const CACHED_INNER_RING_DIMENSIONS: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
-static Q32_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; 6] = [const { OnceLock::new() }; 6];
-static Q64_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; 6] = [const { OnceLock::new() }; 6];
-static Q128_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; 6] = [const { OnceLock::new() }; 6];
+const INNER_RING_DIMENSION_COUNT: usize =
+    akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len();
+static Q32_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+static Q64_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+static Q128_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
 
 fn cached_inner_coeff_linf_bounds(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> Option<&'static [u128]> {
-    let index = CACHED_INNER_RING_DIMENSIONS
+    let ring_dimension_usize = usize::try_from(ring_dimension).ok()?;
+    let index = akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
         .iter()
-        .position(|&dimension| dimension == ring_dimension)?;
+        .position(|&dimension| dimension == ring_dimension_usize)?;
     let cache = match modulus_profile {
         SisModulusProfileId::Q32Offset99 => &Q32_INNER_COEFF_LINF_BOUNDS[index],
         SisModulusProfileId::Q64Offset59 => &Q64_INNER_COEFF_LINF_BOUNDS[index],
