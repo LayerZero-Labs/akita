@@ -61,7 +61,56 @@ pub(crate) enum RelationSearchDomain {
     QuotientAndReduced,
 }
 
+/// Candidate traversal only; it must not affect the exact selected schedule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RelationTraversalOrder {
+    #[default]
+    Canonical,
+    #[cfg(test)]
+    Reversed,
+}
+
+/// Test-only restriction on the legal relation-mode search domain.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TestRelationModeFilter {
+    #[default]
+    All,
+    QuotientOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum RelationModeFilter {
+    #[default]
+    All,
+    #[cfg(feature = "test-support")]
+    QuotientOnly,
+}
+
+#[cfg(feature = "test-support")]
+impl From<TestRelationModeFilter> for RelationModeFilter {
+    fn from(value: TestRelationModeFilter) -> Self {
+        match value {
+            TestRelationModeFilter::All => Self::All,
+            TestRelationModeFilter::QuotientOnly => Self::QuotientOnly,
+        }
+    }
+}
+
 impl RelationSearchDomain {
+    pub(crate) fn filtered(self, filter: RelationModeFilter) -> Result<Self, AkitaError> {
+        match (self, filter) {
+            (domain, RelationModeFilter::All) => Ok(domain),
+            #[cfg(feature = "test-support")]
+            (Self::QuotientOnly | Self::QuotientAndReduced, RelationModeFilter::QuotientOnly) => {
+                Ok(Self::QuotientOnly)
+            }
+            #[cfg(feature = "test-support")]
+            (Self::ReducedOnly, RelationModeFilter::QuotientOnly) => Err(AkitaError::InvalidSetup(
+                "quotient-only search reached a reduced-only suffix".into(),
+            )),
+        }
+    }
     #[must_use]
     pub(crate) const fn transitions(self) -> &'static [RelationTransition] {
         match self {
@@ -69,6 +118,21 @@ impl RelationSearchDomain {
             Self::ReducedOnly => RelationTransition::REDUCED_ONLY,
             Self::QuotientAndReduced => RelationTransition::QUOTIENT_OR_REDUCED,
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn transitions_in(
+        self,
+        _order: RelationTraversalOrder,
+    ) -> &'static [RelationTransition] {
+        #[cfg(test)]
+        if matches!(
+            (self, _order),
+            (Self::QuotientAndReduced, RelationTraversalOrder::Reversed)
+        ) {
+            return RelationTransition::REDUCED_OR_QUOTIENT;
+        }
+        self.transitions()
     }
 
     #[must_use]
@@ -136,6 +200,8 @@ impl RelationTransition {
     };
     const QUOTIENT_ONLY: &[Self] = &[Self::QUOTIENT];
     const QUOTIENT_OR_REDUCED: &[Self] = &[Self::QUOTIENT, Self::REDUCED];
+    #[cfg(test)]
+    const REDUCED_OR_QUOTIENT: &[Self] = &[Self::REDUCED, Self::QUOTIENT];
     const REDUCED_ONLY: &[Self] = &[Self::REDUCED];
 
     #[must_use]

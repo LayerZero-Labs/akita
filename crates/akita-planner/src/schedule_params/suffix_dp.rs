@@ -18,9 +18,9 @@ use super::{
     dimension_candidates, level_setup_field_elements, suffix_opening_layout,
     terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
     CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
-    RecursiveFoldWork, RelationCandidateTopology, RelationSearchDomain, RelationTransition,
-    RingRelationPhase, ScheduleCandidate, SetupPrefixCapacity, SetupPrefixSearchCache,
-    SplitBoundPolicy,
+    RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter, RelationSearchDomain,
+    RelationTransition, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
+    SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 

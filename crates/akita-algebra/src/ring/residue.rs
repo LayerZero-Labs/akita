@@ -166,16 +166,13 @@ mod tests {
     use crate::offset_eq::OffsetEqWindow;
     use crate::ring::{eval_ring_at_pows, scalar_powers, CyclotomicRing};
     use jolt_field::{
-        Ext2, ExtField, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+        Ext2, ExtField, FpExt4, One, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Ring,
+        Zero,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    fn quadratic_kernel<F, E>(coefficients: &[F], alpha: E) -> Vec<E>
-    where
-        F: Field,
-        E: Field + ExtField<F>,
-    {
+    fn quadratic_kernel<E: Field>(coefficients: &[E], alpha: E) -> Vec<E> {
         let dimension = coefficients.len();
         let powers = scalar_powers(alpha, dimension);
         (0..dimension)
@@ -185,7 +182,7 @@ mod tests {
                     .enumerate()
                     .fold(E::zero(), |sum, (coefficient, &value)| {
                         let exponent = coefficient + shift;
-                        let term = E::lift_base(value) * powers[exponent % dimension];
+                        let term = value * powers[exponent % dimension];
                         if exponent < dimension {
                             sum + term
                         } else {
@@ -207,10 +204,16 @@ mod tests {
         let alpha = E::random(&mut rng);
         let powers = scalar_powers(alpha, D);
         let kernel = residue_kernel(multiplier.coefficients(), alpha).expect("residue kernel");
+        let lifted_coefficients = multiplier
+            .coefficients()
+            .iter()
+            .copied()
+            .map(E::lift_base)
+            .collect::<Vec<_>>();
 
         assert_eq!(
             kernel,
-            quadratic_kernel(multiplier.coefficients(), alpha),
+            quadratic_kernel(&lifted_coefficients, alpha),
             "linear and quadratic kernels differ at dimension {D}"
         );
         let product_evaluation = eval_ring_at_pows(&(multiplier * witness), &powers);
@@ -302,7 +305,7 @@ mod tests {
     #[test]
     fn modulus_roots_do_not_require_division() {
         type F = Prime128OffsetA7F7;
-        let alpha = jolt_field::fft::primitive_nth_root::<F>(4);
+        let alpha = crate::fft::primitive_nth_root::<F>(4);
         let coefficients = [F::from_u64(37), F::from_u64(13)];
         let weights = [F::from_u64(41), F::from_u64(19)];
 

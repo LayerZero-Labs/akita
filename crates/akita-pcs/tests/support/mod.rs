@@ -22,6 +22,9 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+mod cross_mode;
+pub(crate) use cross_mode::{CrossModeConfig, QuotientMode, ReducedMode};
+
 #[derive(Clone)]
 struct SyntheticResolvedRow {
     config: TypeId,

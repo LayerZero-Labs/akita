@@ -35,6 +35,7 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) log_basis_open: u32,
     pub(crate) fold_level: usize,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
+    pub(crate) relation_traversal_order: RelationTraversalOrder,
 }
 
 enum RecursiveSetupPrefix<'a> {
@@ -292,7 +293,8 @@ impl RecursiveCandidateContext<'_, '_> {
             else {
                 continue;
             };
-            for transition in relation_domain.transitions() {
+            for transition in relation_domain.transitions_in(self.request.relation_traversal_order)
+            {
                 let params = CommittedGroupParams::try_new(
                     // A recursive candidate consumes no frozen groups, so its own
                     // new group is the whole list.
@@ -424,7 +426,9 @@ impl RecursiveCandidateContext<'_, '_> {
                         relation_transition: base_candidate.relation_transition,
                     });
                 }
-                for transition in relation_domain.transitions() {
+                for transition in
+                    relation_domain.transitions_in(self.request.relation_traversal_order)
+                {
                     let mode_slices = slice_candidates
                         .iter()
                         .filter(|candidate| candidate.relation_transition == *transition)

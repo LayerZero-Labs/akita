@@ -256,6 +256,8 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) root_honest_fold_policy: Option<akita_types::sis::HonestFoldPolicySpec>,
     pub(crate) precommitted_honest_fold_policies: &'a [akita_types::sis::HonestFoldPolicySpec],
     pub(crate) level_zero_is_root: bool,
+    pub(crate) relation_traversal_order: RelationTraversalOrder,
+    pub(crate) relation_mode_filter: RelationModeFilter,
 }
 
 #[derive(Clone, Copy)]

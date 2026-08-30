@@ -223,7 +223,7 @@ mod tests {
     use super::*;
     use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
     use akita_transcript::AkitaTranscript;
-    use jolt_field::Fp64;
+    use jolt_field::{Fp64, Ring};
     use sha3::digest::{ExtendableOutput, Update, XofReader};
     use sha3::Shake256;
 

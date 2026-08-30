@@ -317,7 +317,7 @@ pub fn trim_trailing_zeros<E: Field>(coeffs: &mut Vec<E>) {
 #[cfg(test)]
 mod fold_tests {
     use super::fold_evals_in_place;
-    use jolt_field::Prime64Offset59;
+    use jolt_field::{Prime64Offset59, Ring, Zero};
 
     #[test]
     fn fold_matches_independent_pair_evaluation() {

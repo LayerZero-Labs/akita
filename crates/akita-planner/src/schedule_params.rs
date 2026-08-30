@@ -51,8 +51,11 @@ pub(crate) use candidate::{
     derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
+#[cfg(feature = "test-support")]
+pub use relation_transition::TestRelationModeFilter;
 pub(crate) use relation_transition::{
-    RelationCandidateTopology, RelationSearchDomain, RelationTransition, RingRelationPhase,
+    RelationCandidateTopology, RelationModeFilter, RelationSearchDomain, RelationTransition,
+    RelationTraversalOrder, RingRelationPhase,
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{

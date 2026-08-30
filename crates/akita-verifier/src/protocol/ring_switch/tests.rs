@@ -2,9 +2,10 @@ use super::*;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
 use akita_types::{
-    AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
-    SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
+    relation_rhs_coeff_len, AkitaSetupDescriptor, CommitmentRingDims, FlatMatrix,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
+    RingOpeningPoint, RingRelationGroupOpening, RingVec, SetupContributionGroupInputs,
+    SetupContributionPlan, SisModulusProfileId,
 };
 use jolt_field::{Fp32, One, Prime128OffsetA7F7, Zero};
 
@@ -25,7 +26,36 @@ struct MixedRelationFixture {
     alpha: MixedF,
 }
 
-fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationFixture {
+struct MixedReplayFixture {
+    lp: CommittedGroupParams,
+    relation: RingRelationInstance<MixedF>,
+    setup: AkitaExpandedSetup<MixedF>,
+    row_coefficients: Vec<MixedF>,
+    tau1: Vec<MixedF>,
+    point: Vec<MixedF>,
+    alpha: MixedF,
+    opening_source_len: usize,
+}
+
+impl MixedReplayFixture {
+    fn prepare_evaluator(&self) -> Result<RelationMatrixEvaluator<MixedF>, AkitaError> {
+        prepare_relation_matrix_evaluator::<MixedF, MixedF>(
+            &RingSwitchReplay {
+                setup: &self.setup,
+                relation: &self.relation,
+                row_coefficients: &self.row_coefficients,
+                lp: &self.lp,
+                opening_source_len: self.opening_source_len,
+                opening_ring_dim: D_PROJECTED,
+            },
+            self.alpha,
+            &self.tau1,
+            None,
+        )
+    }
+}
+
+fn mixed_replay_fixture(mode: akita_types::RingRelationMode) -> MixedReplayFixture {
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D_INNER,
@@ -60,109 +90,119 @@ fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationF
     );
 
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
-    let rows = lp
-        .relation_matrix_row_count(opening_batch.num_groups())
-        .unwrap();
     let relation_geometry =
         akita_types::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &opening_batch)
             .unwrap();
-    let witness_layout = WitnessLayout::new(
-        &lp,
-        &opening_batch,
-        &relation_geometry,
+    let challenges = Challenges::from_sparse(
+        (0..lp.blocks().live_blocks)
+            .map(|index| SparseChallenge {
+                positions: vec![(index % D_INNER) as u32].into(),
+                coeffs: vec![1].into(),
+            })
+            .collect(),
+        lp.blocks().live_blocks,
         1,
-        akita_types::RelationQuotientPlan::for_field_bits(&lp, MixedF::MODULUS_BITS).unwrap(),
     )
     .unwrap();
-    let relation_address_geometry =
-        RelationAddressGeometry::new(lp.role_dims(), D_PROJECTED, witness_layout.live_coeff_len())
-            .unwrap();
-    let eq_tau1: Arc<[MixedF]> = (0..rows.next_power_of_two())
+    let gamma = MixedF::from_u64(31);
+    let mut gamma_ring = vec![MixedF::zero(); D_INNER];
+    gamma_ring[0] = gamma;
+    let relation = RingRelationInstance::new(
+        vec![RingRelationGroupOpening::evaluation_trace(
+            challenges,
+            RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
+                position_weights: (0..lp.blocks().positions_per_block)
+                    .map(|index| MixedF::from_u64(41 + index as u64))
+                    .collect(),
+                live_block_weights: vec![MixedF::zero(); lp.blocks().live_blocks],
+            }),
+        )],
+        1,
+        opening_batch,
+        vec![gamma],
+        RingVec::from_coeffs_with_ring_dim(gamma_ring, D_INNER).unwrap(),
+        RingVec::from_coeffs(vec![
+            MixedF::zero();
+            relation_rhs_coeff_len(relation_geometry.rhs_layout())
+                .unwrap()
+        ]),
+        RingVec::from_coeffs(Vec::new()),
+        lp.role_dims(),
+    )
+    .unwrap();
+    let witness_layout = relation.segment_layout(&lp, None).unwrap();
+    let opening_source_len = witness_layout.live_coeff_len().div_ceil(D_PROJECTED);
+    let placeholder_setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+        AkitaSetupDescriptor {
+            max_num_vars: 0,
+            max_num_batched_polys: 1,
+            num_field_elements: 1,
+            setup_seed: [7; 32].into(),
+        },
+        FlatMatrix::from_flat_data(vec![MixedF::one()]),
+    );
+    let rows = lp
+        .relation_matrix_row_count(relation.opening_batch().num_groups())
+        .unwrap();
+    let tau1 = (0..rows.next_power_of_two().trailing_zeros() as usize)
         .map(|index| MixedF::from_u64(11 + index as u64))
-        .collect::<Vec<_>>()
-        .into();
-    let groups = match mode {
-        RingRelationMode::QuotientLift => {
-            PreparedRelationGroups::QuotientLift(vec![RelationMatrixGroupEvaluator {
-                multipliers: QuotientRelationMultipliers {
-                    c_alphas: (0..lp.blocks().live_blocks)
-                        .map(|index| MixedF::from_u64(31 + index as u64))
-                        .collect(),
-                    opening_a_evals: (0..lp.blocks().positions_per_block)
-                        .map(|index| MixedF::from_u64(41 + index as u64))
-                        .collect(),
-                },
-                group_id: 0,
-                num_claims: 1,
-                depth_fold: lp.num_digits_fold(),
-                a_row_start: 1,
-                b_row_start: 1 + lp.inner().matrix.output_rank(),
-            }])
-        }
-        RingRelationMode::ReducedEvaluation => {
-            let sparse = (0..lp.blocks().live_blocks)
-                .map(|index| SparseChallenge {
-                    positions: vec![(index % D_INNER) as u32].into(),
-                    coeffs: vec![1].into(),
-                })
-                .collect();
-            PreparedRelationGroups::ReducedEvaluation(vec![RelationMatrixGroupEvaluator {
-                multipliers: ReducedRelationMultipliers {
-                    challenges: Challenges::from_sparse(sparse, lp.blocks().live_blocks, 1)
-                        .unwrap(),
-                    opening: akita_types::RingMultiplierOpeningPoint::from_base(
-                        &akita_types::RingOpeningPoint {
-                            position_weights: (0..lp.blocks().positions_per_block)
-                                .map(|index| MixedF::from_u64(41 + index as u64))
-                                .collect(),
-                            live_block_weights: vec![MixedF::zero(); lp.blocks().live_blocks],
-                        },
-                    )
-                    .prepare_functional_multiplier(),
-                },
-                group_id: 0,
-                num_claims: 1,
-                depth_fold: lp.num_digits_fold(),
-                a_row_start: 1,
-                b_row_start: 1 + lp.inner().matrix.output_rank(),
-            }])
-        }
+        .collect::<Vec<_>>();
+    let alpha = MixedF::from_u64(7);
+    let row_coefficients = vec![MixedF::from_u64(31)];
+    let replay = RingSwitchReplay {
+        setup: &placeholder_setup,
+        relation: &relation,
+        row_coefficients: &row_coefficients,
+        lp: &lp,
+        opening_source_len,
+        opening_ring_dim: D_PROJECTED,
     };
-    let evaluator = RelationMatrixEvaluator {
-        relation_address_geometry,
-        groups,
-        log_basis: lp.open().digits.log_basis,
-        eq_tau1,
-        flat_context: Some(FlatRelationContext {
-            level_params: lp,
-            opening_batch,
-            witness_layout: Arc::new(witness_layout),
-            extension_degree: 1,
-        }),
-        setup_plan_cache: Default::default(),
-    };
-    let setup_ring_elements = 1 << 14;
+    let evaluator =
+        prepare_relation_matrix_evaluator::<MixedF, MixedF>(&replay, alpha, &tau1, None).unwrap();
+    let point = (0..evaluator
+        .relation_address_geometry
+        .relation_point_variable_count())
+        .map(|index| MixedF::from_u64(211 + index as u64))
+        .collect::<Vec<_>>();
+    let mut prepared = super::relation_evaluation::PreparedDirectRelation::prepare::<MixedF>(
+        &evaluator, &point, alpha,
+    )
+    .unwrap();
+    prepared.materialize_setup().unwrap();
+    let setup_field_len = prepared.setup_field_len();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupDescriptor {
-            max_num_vars: 16,
+            max_num_vars: 0,
             max_num_batched_polys: 1,
-            num_field_elements: setup_ring_elements,
+            num_field_elements: setup_field_len,
             setup_seed: [7; 32].into(),
         },
         FlatMatrix::from_flat_data(
-            (0..setup_ring_elements * D_INNER)
+            (0..setup_field_len)
                 .map(|index| MixedF::from_u64(101 + index as u64))
                 .collect(),
         ),
     );
-    let point = (0..relation_address_geometry.relation_point_variable_count())
-        .map(|index| MixedF::from_u64(211 + index as u64))
-        .collect();
+    MixedReplayFixture {
+        lp,
+        relation,
+        setup,
+        row_coefficients,
+        tau1,
+        point,
+        alpha,
+        opening_source_len,
+    }
+}
+
+fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationFixture {
+    let fixture = mixed_replay_fixture(mode);
+    let evaluator = fixture.prepare_evaluator().unwrap();
     MixedRelationFixture {
         evaluator,
-        setup,
-        point,
-        alpha: MixedF::from_u64(7),
+        setup: fixture.setup,
+        point: fixture.point,
+        alpha: fixture.alpha,
     }
 }
 
@@ -412,5 +452,69 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         }));
         assert!(outcome.is_ok(), "malformed verifier input must not panic");
         assert!(outcome.unwrap().is_err());
+    }
+}
+
+#[test]
+fn malformed_relation_property_matrix_rejects_without_panicking() {
+    const MODE: u8 = 1 << 0;
+    const DIMENSION: u8 = 1 << 1;
+    const ROW: u8 = 1 << 2;
+    const POINT: u8 = 1 << 3;
+    const SETUP: u8 = 1 << 4;
+
+    for mode in [
+        RingRelationMode::QuotientLift,
+        RingRelationMode::ReducedEvaluation,
+    ] {
+        for mutation_mask in 1..(1 << 5) {
+            let mut fixture = mixed_replay_fixture(mode);
+            if mutation_mask & MODE != 0 {
+                fixture.lp.ring_relation_mode = match mode {
+                    RingRelationMode::QuotientLift => RingRelationMode::ReducedEvaluation,
+                    RingRelationMode::ReducedEvaluation => RingRelationMode::QuotientLift,
+                };
+            }
+            if mutation_mask & DIMENSION != 0 {
+                let outer = fixture.lp.outer().matrix;
+                fixture.lp.own_group_mut().profile.outer.matrix =
+                    OuterCommitMatrixParams::new_unchecked(
+                        outer.security_policy(),
+                        outer.sis_table_key().table_digest,
+                        outer.sis_modulus_profile(),
+                        outer.output_rank(),
+                        outer.input_width(),
+                        outer.coeff_linf_bound(),
+                        D_INNER,
+                    );
+            }
+            if mutation_mask & ROW != 0 {
+                fixture.row_coefficients.pop();
+            }
+            if mutation_mask & POINT != 0 {
+                fixture.point.clear();
+            }
+            if mutation_mask & SETUP != 0 {
+                fixture.setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupDescriptor {
+                        max_num_vars: 0,
+                        max_num_batched_polys: 1,
+                        num_field_elements: 1,
+                        setup_seed: [9; 32].into(),
+                    },
+                    FlatMatrix::from_flat_data(vec![MixedF::one()]),
+                );
+            }
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let evaluator = fixture.prepare_evaluator()?;
+                evaluator
+                    .eval_flat_at_point::<MixedF>(&fixture.point, &fixture.setup, fixture.alpha)
+                    .map(|_| ())
+            }));
+            assert!(
+                matches!(outcome, Ok(Err(_))),
+                "{mode:?} mutation mask {mutation_mask:#07b} must reject without panicking"
+            );
+        }
     }
 }

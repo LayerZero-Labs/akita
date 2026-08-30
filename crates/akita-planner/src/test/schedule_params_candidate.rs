@@ -180,6 +180,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
+            relation_traversal_order: RelationTraversalOrder::Canonical,
         },
         RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
         FoldCandidatePolicy::Best,
@@ -245,6 +246,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_open: 3,
         fold_level: 1,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+        relation_traversal_order: RelationTraversalOrder::Canonical,
     };
     let candidates = derive_fold_candidates(
         request,
@@ -409,6 +411,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
+                relation_traversal_order: RelationTraversalOrder::Canonical,
             };
             let split_bounds = if without_bounds {
                 SplitBoundPolicy::DisabledForOracle

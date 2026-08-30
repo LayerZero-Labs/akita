@@ -96,3 +96,50 @@ fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
         unpruned.schedule.canonical_descriptor_bytes()
     );
 }
+
+#[test]
+fn selected_cutover_is_invariant_under_relation_traversal_order() {
+    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+
+    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
+    let mut policy = policy_for_domain(policy_of::<OneHot>(), &domain);
+    policy.inner_basis_range.1 = policy.inner_basis_range.0;
+    policy.opening_basis_range.1 = policy.opening_basis_range.0;
+    let key = onehot_group(20, 1);
+    let lookup_key = akita_types::AkitaScheduleLookupKey::single(key);
+    let canonical = crate::planner::find_schedule_in_relation_order(
+        &lookup_key,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        &[],
+        &policy,
+        OneHot::ring_challenge_config,
+        RelationTraversalOrder::Canonical,
+        RelationModeFilter::All,
+    )
+    .unwrap();
+    let reversed = crate::planner::find_schedule_in_relation_order(
+        &lookup_key,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        &[],
+        &policy,
+        OneHot::ring_challenge_config,
+        RelationTraversalOrder::Reversed,
+        RelationModeFilter::All,
+    )
+    .unwrap();
+
+    assert!(canonical
+        .schedule
+        .recursive_folds
+        .iter()
+        .any(|fold| fold.params.ring_relation_mode.is_reduced_evaluation()));
+    assert_eq!(
+        canonical.estimate.estimated_proof_payload_bytes().unwrap(),
+        reversed.estimate.estimated_proof_payload_bytes().unwrap()
+    );
+    assert_eq!(
+        canonical.schedule.canonical_descriptor_bytes(),
+        reversed.schedule.canonical_descriptor_bytes(),
+        "relation candidate enumeration order must not affect the exact production DP winner"
+    );
+}

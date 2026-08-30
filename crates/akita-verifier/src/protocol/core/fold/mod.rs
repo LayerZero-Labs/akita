@@ -659,6 +659,13 @@ where
             actual: prepared.w_len,
         });
     }
+    let stage2_span = tracing::info_span!(
+        "stage2_verifier",
+        level = prepared.level,
+        relation_mode = ?prepared.lp.ring_relation_mode,
+        reduced = prepared.lp.ring_relation_mode.is_reduced_evaluation(),
+    )
+    .entered();
     let opening_semantics = if let Some(batch) = &coefficient_packing_batch {
         if prefix
             .prepared_points
@@ -749,6 +756,7 @@ where
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))
     })?;
+    drop(stage2_span);
     let setup_prefix_opening = verify_stage3::<F, E, T>(
         setup,
         transcript,

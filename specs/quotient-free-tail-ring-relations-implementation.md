@@ -602,9 +602,10 @@ feature is accepted.
 - [x] A reduced-evaluation coefficient-packing fold is rejected.
 - [x] Changing only the relation mode changes the effective schedule digest
       and transcript preamble.
-- [ ] Prover and verifier reject a proof replayed under the other mode’s
-      schedule. Descriptor-binding and mode-mismatch unit tests exist, but the
-      repository still needs one full prove/verify cross-schedule replay test.
+- [x] Prover and verifier reject a proof replayed under the other mode’s
+      schedule. The end-to-end cross-mode fixture independently plans valid
+      quotient-only and reduced-suffix rows for the same committed profile,
+      proves both, verifies both honestly, and rejects both replay directions.
 
 #### Witness and proof shape
 
@@ -624,9 +625,9 @@ feature is accepted.
 - [x] Compressed/Linf/evaluation-trace reduced-evaluation suffix with F/H relations.
 - [x] Raw/L2/evaluation-trace reduced-evaluation suffix.
 - [x] Compressed/L2/evaluation-trace reduced-evaluation suffix.
-- [ ] Small-field evaluation trace with EOR. Extension-field functional and
-      setup oracles pass, and q32/q64 generated rows select reduced suffixes,
-      but the current production end-to-end reduced proof test is fp128.
+- [x] Small-field evaluation trace with EOR. The fp32 dense end-to-end driver
+      selects a shipped reduced suffix with EOR, verifies the honest proof, and
+      rejects both an absent EOR proof and a tampered EOR partial.
 - [x] Mixed A/B/D dimensions.
 - [x] A multi-chunk eligible fold, if any production or focused fixture reaches
       level 2 with more than one chunk; otherwise a constructed type-level
@@ -641,9 +642,9 @@ feature is accepted.
       transition.
 - [x] A small exhaustive oracle enumerates all `m + 1` monotone cutovers and
       matches the suffix DP’s selected complete descriptor.
-- [ ] Reversing relation-mode traversal order does not change the selected
-      descriptor. The independent unpruned oracle agrees with production, but
-      there is no explicit reversed-domain-order regression yet.
+- [x] Reversing relation-mode traversal order does not change the selected
+      descriptor. The regression runs the complete planner twice with fresh
+      memo state and compares exact proof bytes and canonical descriptors.
 - [x] Reduced-evaluation suffix states cannot invoke setup-prefix candidate search.
 - [x] Existing suffix-cache quotas remain unchanged.
 - [x] Generated row replay recomputes the exact reduced-evaluation witness lengths and
@@ -656,14 +657,16 @@ feature is accepted.
       `O(W)` witness-sized state.
 - [x] The reduced-evaluation verifier uses the existing fused setup traversal and scans
       each active setup coefficient once.
-- [ ] Benchmarks separately report preparation, setup scan, Stage 2, and total
-      verifier time for quotient-lift and reduced-evaluation modes on selected
-      tail folds. The existing relation-evaluator Criterion fixture constructs
-      quotient-lift cases only and does not expose these phase splits.
-- [ ] Fuzz or property tests reject malformed mode, dimension, row, point, and
-      setup combinations without panic or unbounded allocation. Focused
-      negative tests exist, but the requested property/fuzz matrix is not yet
-      present.
+- [x] Benchmarks separately report coefficient-functional preparation,
+      structured groups, direct setup scan, quotient-tail evaluation, complete
+      Stage 2, and total verifier time. The U/L/M microbench covers both modes;
+      selected valid quotient-only and reduced-suffix nv14 replays additionally
+      report the production phase spans by relation mode and the public total.
+- [x] A bounded deterministic property matrix rejects malformed mode,
+      dimension, row, point, and setup combinations without panic or unbounded
+      allocation. It covers both modes and every nonempty combination of the
+      five mutation categories through public replay, preparation, and
+      evaluation boundaries.
 
 #### Generated proof-size evidence
 
@@ -778,7 +781,7 @@ payload_mode
 opening_method
 security_route
 incoming_setup_prefix
-setup_direct_payload_bytes
+direct_payload_bytes
 stage3_payload_bytes
 ```
 

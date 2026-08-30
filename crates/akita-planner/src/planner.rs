@@ -510,6 +510,49 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::RelationTraversalOrder::Canonical,
+        super::schedule_params::RelationModeFilter::All,
+    )
+}
+
+/// Build a schedule under a test-only relation-mode restriction.
+#[cfg(feature = "test-support")]
+pub fn find_schedule_for_test_relation_mode(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    relation_mode_filter: super::schedule_params::TestRelationModeFilter,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::RelationTraversalOrder::Canonical,
+        relation_mode_filter.into(),
+    )
+}
+
+/// Canonical schedule search with an internal traversal-order seam used to
+/// prove that candidate enumeration does not affect selection.
+pub(crate) fn find_schedule_in_relation_order(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    relation_traversal_order: super::schedule_params::RelationTraversalOrder,
+    relation_mode_filter: super::schedule_params::RelationModeFilter,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     let diagnostics = crate::diagnostics::active();
     let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
@@ -552,6 +595,8 @@ pub fn find_schedule(
         root_honest_fold_policy: Some(final_honest_fold_policy),
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
+        relation_traversal_order,
+        relation_mode_filter,
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
     let initial_state = SuffixState {

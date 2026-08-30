@@ -345,7 +345,8 @@ impl<'a> CandidateDomain<'a> {
                     )?;
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?;
+                        .relation_domain(state.level, work.opening.method())?
+                        .filtered(ctx.relation_mode_filter)?;
                     let relation_transition = relation_domain.only_transition()?;
                     for (params, next_witness_len) in dimension_candidates {
                         if work.purpose.allows_terminal() {
@@ -384,10 +385,12 @@ impl<'a> CandidateDomain<'a> {
                         log_basis_open: open_lb,
                         fold_level: state.level,
                         source_moment: state.source_moment,
+                        relation_traversal_order: ctx.relation_traversal_order,
                     };
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?;
+                        .relation_domain(state.level, work.opening.method())?
+                        .filtered(ctx.relation_mode_filter)?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
                             request,

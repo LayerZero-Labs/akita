@@ -16,6 +16,20 @@ pub struct QuotientCoefficientBreakdown {
 }
 
 impl QuotientCoefficientBreakdown {
+    /// Derive the counterfactual directly from the physical incoming witness
+    /// length used by schedule reporting.
+    pub fn for_reduced_input_witness(
+        params: &CommittedGroupParams,
+        input_witness_len: usize,
+        extension_degree: usize,
+        field_bits: u32,
+    ) -> Result<Self, AkitaError> {
+        let final_group = PolynomialGroupLayout::singleton(crate::padded_boolean_opening_vars(
+            input_witness_len,
+        )?);
+        Self::for_reduced_counterfactual(params, final_group, extension_degree, field_bits)
+    }
+
     /// Derive the canonical quotient-lift counterfactual for reduced level
     /// parameters and classify the quotient coefficients by protocol owner.
     ///
