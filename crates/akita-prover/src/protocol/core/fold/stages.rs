@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) enum Stage2Compression<E: FieldCore> {
+pub(super) enum Stage2Compression<E: Field> {
     Raw,
     QuotientLift {
         weights: akita_types::CompressionRelationWeights<E>,

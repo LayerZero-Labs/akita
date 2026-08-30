@@ -59,7 +59,7 @@ pub struct RingSwitchOutput<E: Field> {
     pub alpha: E,
 }
 
-pub(crate) enum RingSwitchCompression<E: FieldCore> {
+pub(crate) enum RingSwitchCompression<E: Field> {
     Raw,
     QuotientLift {
         weights: CompressionRelationWeights<E>,

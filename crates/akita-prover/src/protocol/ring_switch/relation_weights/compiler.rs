@@ -4,7 +4,7 @@ use akita_types::{
     RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationMode, WitnessLayout,
 };
 
-pub(super) struct RelationWeightCompilation<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct RelationWeightCompilation<'a, F: Field, E: Field> {
     pub(super) plan: RelationWeightCompilationPlan<E>,
     pub(super) setup_sources: Option<RelationWeightSetupSources<'a, F>>,
     pub(super) group_sources: Vec<RelationWeightGroupSources<'a, F>>,
@@ -16,7 +16,7 @@ pub(super) struct RelationWeightCompilation<'a, F: FieldCore, E: FieldCore> {
     pub(super) relation_coefficient_block_len: usize,
 }
 
-pub(super) struct RelationWeightGroupSources<'a, F: FieldCore> {
+pub(super) struct RelationWeightGroupSources<'a, F: Field> {
     pub(super) group_index: usize,
     pub(super) challenges: &'a akita_challenges::Challenges,
     pub(super) opening: OpeningFamily<&'a RingMultiplierOpeningPoint<F>, ()>,
@@ -24,8 +24,8 @@ pub(super) struct RelationWeightGroupSources<'a, F: FieldCore> {
 
 impl<'a, F, E> RelationWeightCompilation<'a, F, E>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + LiftBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -275,7 +275,7 @@ struct RelationWeightCompilationInputs<'a, E> {
     row_weights: &'a [E],
 }
 
-impl<E: FieldCore> RelationWeightCompilationPlan<E> {
+impl<E: Field> RelationWeightCompilationPlan<E> {
     pub(super) fn new<F>(
         lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
@@ -284,8 +284,8 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
         row_weights: &[E],
     ) -> Result<Self, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: LiftBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let relation_geometry = relation_plan.relation_witness_geometry();
         let d_column_ranges = relation_d_column_ranges(lp, opening_batch, relation_geometry)?;
@@ -344,8 +344,8 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
         d_columns: &std::ops::Range<usize>,
     ) -> Result<RelationWeightGroupPlan<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: LiftBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let RelationWeightCompilationInputs {
             lp,
@@ -505,19 +505,19 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
     }
 }
 
-pub(super) struct RelationWeightSetupSources<'a, F: FieldCore> {
+pub(super) struct RelationWeightSetupSources<'a, F: Field> {
     pub(super) d: SetupRows<'a, F>,
     groups: Vec<RelationWeightGroupSetupSources<'a, F>>,
 }
 
-pub(super) struct RelationWeightGroupSetupSources<'a, F: FieldCore> {
+pub(super) struct RelationWeightGroupSetupSources<'a, F: Field> {
     group_index: usize,
     pub(super) a: SetupRows<'a, F>,
     pub(super) b: SetupRows<'a, F>,
 }
 
-impl<'a, F: FieldCore> RelationWeightSetupSources<'a, F> {
-    pub(super) fn new<E: FieldCore>(
+impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
+    pub(super) fn new<E: Field>(
         setup: &'a AkitaExpandedSetup<F>,
         lp: &CommittedGroupParams,
         compilation: &RelationWeightCompilationPlan<E>,
@@ -627,7 +627,7 @@ pub(super) trait ZWeightSink<E> {
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError>;
 }
 
-pub(super) fn compile_group_et_addresses<E: FieldCore>(
+pub(super) fn compile_group_et_addresses<E: Field>(
     plan: &RelationWeightGroupPlan<E>,
     witness_layout: &WitnessLayout,
     sink: &mut impl EtWeightSink<E>,
@@ -720,7 +720,7 @@ pub(super) fn compile_group_et_addresses<E: FieldCore>(
     Ok(())
 }
 
-pub(super) fn compile_group_z_addresses<E: FieldCore>(
+pub(super) fn compile_group_z_addresses<E: Field>(
     plan: &RelationWeightGroupPlan<E>,
     witness_layout: &WitnessLayout,
     sink: &mut impl ZWeightSink<E>,

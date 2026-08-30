@@ -3,7 +3,7 @@
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, terminal_residue_kernel};
 use akita_error::{checked, AkitaError};
-use akita_field::{ExtField, FieldCore, MulBase, MulBaseUnreduced};
+use jolt_field::{ExtField, Field, MulBaseUnreduced};
 use std::{ops::Range, sync::Arc};
 
 /// Checked terminal residue functional for one physical native window.
@@ -12,12 +12,12 @@ use std::{ops::Range, sync::Arc};
 /// `physical_range`. Callers must therefore use them as the complete native
 /// coefficient functional; there is no additional common-alpha factor.
 #[derive(Clone, Debug)]
-pub struct ReducedCoefficientFunctional<E: FieldCore> {
+pub struct ReducedCoefficientFunctional<E: Field> {
     physical_range: Range<usize>,
     weights: Arc<[E]>,
 }
 
-impl<E: FieldCore> ReducedCoefficientFunctional<E> {
+impl<E: Field> ReducedCoefficientFunctional<E> {
     /// Prepare the terminal residue kernel for an exact physical window.
     pub fn prepare(
         equality: &OffsetEqWindow<E>,
@@ -63,7 +63,7 @@ impl<E: FieldCore> ReducedCoefficientFunctional<E> {
     /// Evaluate one public native multiplier against this functional.
     pub fn evaluate_multiplier<F>(&self, coefficients: &[F]) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         if coefficients.len() != self.weights.len() {
@@ -82,8 +82,8 @@ impl<E: FieldCore> ReducedCoefficientFunctional<E> {
         coefficients: &[(usize, F)],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
-        E: ExtField<F> + MulBase<F>,
+        F: Field,
+        E: ExtField<F>,
     {
         let mut previous = None;
         coefficients
@@ -123,7 +123,7 @@ impl<E: FieldCore> ReducedCoefficientFunctional<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use akita_field::{Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7 as F};
+    use jolt_field::{Fp32, FpExt2, NegOneNr, One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     fn quadratic_reduced_evaluation(
         multiplier: &[F],

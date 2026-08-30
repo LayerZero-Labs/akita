@@ -1,7 +1,7 @@
 //! Linear-time coefficient functionals for reduced negacyclic relations.
 
 use akita_error::AkitaError;
-use akita_field::{FieldCore, LiftBase};
+use jolt_field::{ExtField, Field};
 
 /// Evaluate every reduced shift of one public multiplier at `alpha`.
 ///
@@ -20,8 +20,8 @@ use akita_field::{FieldCore, LiftBase};
 /// or if the output allocation cannot be reserved.
 pub fn residue_kernel<F, E>(coefficients: &[F], alpha: E) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore,
-    E: FieldCore + LiftBase<F>,
+    F: Field,
+    E: Field + ExtField<F>,
 {
     residue_recurrence(coefficients.iter().copied().map(E::lift_base), alpha)
 }
@@ -44,7 +44,7 @@ pub fn sparse_residue_kernel<E>(
     alpha: E,
 ) -> Result<Vec<E>, AkitaError>
 where
-    E: FieldCore,
+    E: Field,
 {
     if dimension == 0 || !dimension.is_power_of_two() {
         return Err(AkitaError::InvalidInput(
@@ -123,14 +123,14 @@ where
 /// two, or if the output allocation cannot be reserved.
 pub fn terminal_residue_kernel<E>(equality_weights: &[E], alpha: E) -> Result<Vec<E>, AkitaError>
 where
-    E: FieldCore,
+    E: Field,
 {
     residue_recurrence(equality_weights.iter().copied(), alpha)
 }
 
 fn residue_recurrence<E, I>(weights: I, alpha: E) -> Result<Vec<E>, AkitaError>
 where
-    E: FieldCore,
+    E: Field,
     I: Clone + DoubleEndedIterator<Item = E> + ExactSizeIterator,
 {
     let dimension = weights.len();
@@ -165,16 +165,16 @@ mod tests {
     use super::*;
     use crate::offset_eq::OffsetEqWindow;
     use crate::ring::{eval_ring_at_pows, scalar_powers, CyclotomicRing};
-    use akita_field::{
-        Ext2, FpExt4, MulBase, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, RandomSampling,
+    use jolt_field::{
+        Ext2, ExtField, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
     };
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
     fn quadratic_kernel<F, E>(coefficients: &[F], alpha: E) -> Vec<E>
     where
-        F: FieldCore,
-        E: FieldCore + LiftBase<F>,
+        F: Field,
+        E: Field + ExtField<F>,
     {
         let dimension = coefficients.len();
         let powers = scalar_powers(alpha, dimension);
@@ -198,8 +198,8 @@ mod tests {
 
     fn check_product_identity<F, E, const D: usize>(seed: u64)
     where
-        F: FieldCore + RandomSampling,
-        E: FieldCore + LiftBase<F> + MulBase<F> + RandomSampling,
+        F: Field,
+        E: Field + ExtField<F>,
     {
         let mut rng = StdRng::seed_from_u64(seed);
         let multiplier = CyclotomicRing::<F, D>::random(&mut rng);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn modulus_roots_do_not_require_division() {
         type F = Prime128OffsetA7F7;
-        let alpha = akita_field::fft::primitive_nth_root::<F>(4);
+        let alpha = jolt_field::fft::primitive_nth_root::<F>(4);
         let coefficients = [F::from_u64(37), F::from_u64(13)];
         let weights = [F::from_u64(41), F::from_u64(19)];
 

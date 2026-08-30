@@ -7,12 +7,12 @@ use crate::compute::{
 use crate::DigitRowsComputeBackend;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_types::{DigitBlocks, RingRelationMode};
+use jolt_field::{CanonicalEncoding, Field};
 
 use super::relation_quotient::quotient_from_cyclic_and_reduced;
 
-pub(super) enum RelationDRows<F: FieldCore, const D: usize> {
+pub(super) enum RelationDRows<F: Field, const D: usize> {
     QuotientLift {
         reduced: Vec<CyclotomicRing<F, D>>,
         quotients: Vec<CyclotomicRing<F, D>>,
@@ -35,7 +35,7 @@ pub(super) fn compute_relation_d_rows<F, RB, const D: usize>(
     relation_mode: RingRelationMode,
 ) -> Result<RelationDRows<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     RB: RingSwitchProveBackend<F, D> + DigitRowsComputeBackend<F>,
 {
     let backend = ring_switch_ctx.backend();
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
-    use akita_field::Prime64Offset59;
+    use jolt_field::Prime64Offset59;
 
     #[test]
     fn reduced_d_rows_prepare_only_the_negacyclic_product() {

@@ -52,8 +52,8 @@ pub(super) fn evaluate_quotient_relation_with_deferred_setup<F, E>(
     setup_claim: E,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
 {
     let PreparedRelationGroups::QuotientLift(groups) = &evaluator.groups else {
         return Err(AkitaError::InvalidProof);
@@ -78,8 +78,8 @@ fn prepare_setup_plan<F, E>(
     address: &PreparedRelationAddress<E>,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
     let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
     let plan = {
@@ -102,8 +102,8 @@ fn evaluate_quotient_relation<F, E>(
     setup_delivery: QuotientSetupDelivery<E>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
 {
     let context = evaluator
         .flat_context
@@ -195,8 +195,8 @@ fn evaluate_reduced_relation<F, E>(
     alpha: E,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
 {
     let context = evaluator
         .flat_context

@@ -140,7 +140,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
     _marker: std::marker::PhantomData<F>,
 }
 
-pub(crate) enum Stage2CompressionOracle<'a, E: FieldCore> {
+pub(crate) enum Stage2CompressionOracle<'a, E: Field> {
     Raw,
     QuotientLift {
         weights: &'a CompressionRelationWeights<E>,
@@ -314,7 +314,7 @@ pub(crate) fn evaluate_compression_oracle<F, E>(
     witness_evaluation: E,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     match compression {
@@ -411,7 +411,7 @@ mod tests {
             &opening_batch,
             &relation_geometry,
             1,
-            akita_types::RelationQuotientPlan::for_field_bits(&params, F::modulus_bits())
+            akita_types::RelationQuotientPlan::for_field_bits(&params, F::MODULUS_BITS)
                 .expect("relation quotient plan"),
         )
         .unwrap();

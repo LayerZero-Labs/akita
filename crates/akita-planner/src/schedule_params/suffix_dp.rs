@@ -32,8 +32,10 @@ mod source;
 mod state;
 mod terminal;
 
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
-pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
+pub(super) use candidates::state_allows_terminal_seed;
 use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;

@@ -173,15 +173,14 @@ fn rejects_sub_d64_commitment_matrix_dimensions() {
 
 #[test]
 fn reduced_residue_oracle_tracks_every_admitted_commitment_dimension() {
-    use akita_field::{
-        Ext2, FieldCore, FpExt4, FromPrimitiveInt, LiftBase, Prime128OffsetA7F7, Prime32Offset99,
-        Prime64Offset59,
+    use jolt_field::{
+        Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
     };
 
     fn check<F, E>(dimension: usize)
     where
-        F: FieldCore + FromPrimitiveInt,
-        E: FieldCore + LiftBase<F>,
+        F: Field,
+        E: Field + ExtField<F>,
     {
         let coefficients = (0..dimension)
             .map(|index| F::from_u64((index as u64).wrapping_mul(17).wrapping_add(11)))

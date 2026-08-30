@@ -20,7 +20,7 @@ pub(crate) enum CompressionSourceId {
 }
 
 /// Persistent materialization for one source chain.
-pub(crate) struct CompressionSourceWitness<F: FieldCore> {
+pub(crate) struct CompressionSourceWitness<F: Field> {
     pub(crate) id: CompressionSourceId,
     pub(crate) witness: CompressionChainWitness,
     #[allow(dead_code)] // Read by the atomic compressed-RHS and wire cutover.
@@ -29,7 +29,7 @@ pub(crate) struct CompressionSourceWitness<F: FieldCore> {
 }
 
 /// All source chains in canonical relation order: B groups, then D.
-pub(crate) struct CompressionWitnessMaterialization<F: FieldCore> {
+pub(crate) struct CompressionWitnessMaterialization<F: Field> {
     sources: Vec<CompressionSourceWitness<F>>,
 }
 

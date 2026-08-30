@@ -780,7 +780,7 @@ mod tests {
             &opening_batch,
             &relation_witness_geometry,
             2,
-            akita_types::RelationQuotientPlan::for_field_bits(&level_params, F::modulus_bits())
+            akita_types::RelationQuotientPlan::for_field_bits(&level_params, F::MODULUS_BITS)
                 .expect("relation quotient plan"),
         )
         .expect("two-chunk witness layout");

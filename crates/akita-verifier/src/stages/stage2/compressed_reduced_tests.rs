@@ -4,7 +4,6 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::{Ext2, LiftBase, Prime64Offset59};
 use akita_types::{
     build_reduced_compression_relation_weights, gadget_row_scalars, AkitaSetupDescriptor,
     CommitmentPayloadMode, FlatMatrix, GroupCommitPhaseParams, GroupOpenPhaseParams,
@@ -13,6 +12,7 @@ use akita_types::{
     RelationRowFamily, RelationWitnessGeometry, RingRelationMode, SisModulusProfileId,
     WitnessLayout,
 };
+use jolt_field::{Ext2, ExtField, One, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -85,7 +85,7 @@ fn add_literal_recomposition(
 ) {
     assert_eq!(source_coefficients, source_row_count * source_dimension);
     let alpha_powers = scalar_powers(alpha, source_dimension);
-    for (bit, gadget) in gadget_row_scalars::<F>(F::modulus_bits() as usize, 1)
+    for (bit, gadget) in gadget_row_scalars::<F>(F::MODULUS_BITS as usize, 1)
         .into_iter()
         .enumerate()
     {
@@ -151,7 +151,7 @@ fn literal_reduced_compression_table(
     mutate_successor_row: bool,
 ) -> Vec<E> {
     let relation_geometry =
-        RelationWitnessGeometry::for_level(params, opening_batch, <E as ExtField<F>>::EXT_DEGREE)
+        RelationWitnessGeometry::for_level(params, opening_batch, <E as ExtField<F>>::DEGREE)
             .unwrap();
     let relation_layout = relation_geometry.rhs_layout();
     let families = relation_layout.row_families().unwrap();
@@ -320,7 +320,7 @@ fn compressed_reduced_fixture() -> (
         OpeningClaimsLayout::from_root_groups(&[frozen_layout], PolynomialGroupLayout::new(10, 1))
             .unwrap();
     let relation_geometry =
-        RelationWitnessGeometry::for_level(&params, &opening_batch, <E as ExtField<F>>::EXT_DEGREE)
+        RelationWitnessGeometry::for_level(&params, &opening_batch, <E as ExtField<F>>::DEGREE)
             .unwrap();
     let layout = WitnessLayout::new(
         &params,
@@ -391,7 +391,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         alpha,
         &params,
         &opening_batch,
-        <E as ExtField<F>>::EXT_DEGREE,
+        <E as ExtField<F>>::DEGREE,
         &tau1,
         &layout,
         64,
@@ -478,7 +478,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         alpha,
         &params,
         &opening_batch,
-        <E as ExtField<F>>::EXT_DEGREE,
+        <E as ExtField<F>>::DEGREE,
         &reordered_tau1,
         &layout,
         64,
@@ -526,7 +526,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         alpha,
         &wrong_mode,
         &opening_batch,
-        <E as ExtField<F>>::EXT_DEGREE,
+        <E as ExtField<F>>::DEGREE,
         &tau1,
         &layout,
         64,

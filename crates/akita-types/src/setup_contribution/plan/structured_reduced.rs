@@ -1,7 +1,6 @@
 use super::*;
 use akita_algebra::ring::terminal_residue_kernel;
 use akita_challenges::{Challenges, SparseChallenge};
-use akita_field::FromPrimitiveInt;
 
 struct ValidatedSparseChallenge<'a> {
     challenge: &'a SparseChallenge,
@@ -13,7 +12,7 @@ impl<'a> ValidatedSparseChallenge<'a> {
         Ok(Self { challenge })
     }
 
-    fn evaluate<E: FieldCore + FromPrimitiveInt>(&self, functional: &[E]) -> Result<E, AkitaError> {
+    fn evaluate<E: Field>(&self, functional: &[E]) -> Result<E, AkitaError> {
         self.challenge
             .positions
             .iter()
@@ -27,7 +26,7 @@ impl<'a> ValidatedSparseChallenge<'a> {
     }
 }
 
-fn embedded_terminal_functionals<E: FieldCore>(
+fn embedded_terminal_functionals<E: Field>(
     native_equality: &[E],
     ambient_dimension: usize,
     subcolumns: usize,
@@ -49,7 +48,7 @@ fn embedded_terminal_functionals<E: FieldCore>(
         .collect()
 }
 
-impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     /// Contract one reduced-evaluation group's structured E/T/Z terms with
     /// their genuine public ring multipliers.
     pub fn evaluate_reduced_structured_group<F>(
@@ -59,8 +58,8 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
         opening_multiplier: &crate::PreparedRingMultiplier<E>,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
+        F: Field + CanonicalEncoding,
+        E: ExtField<F>,
     {
         let group_index = self
             .groups
@@ -239,7 +238,7 @@ impl<E: FieldCore + FromPrimitiveInt> SetupContributionPlan<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275 as F;
+    use jolt_field::{One, Prime128Offset275 as F, Ring, Zero};
 
     #[test]
     fn ambient_sparse_multiplier_is_not_scalarized_at_alpha() {

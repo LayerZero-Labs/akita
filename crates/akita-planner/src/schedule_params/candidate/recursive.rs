@@ -2,7 +2,7 @@ use super::*;
 
 mod frontier;
 mod level_search;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 mod oracle;
 mod split;
 mod views;
@@ -12,7 +12,7 @@ use level_search::{
     attach_recursive_setup_prefix, finalize_recursive_level_candidate,
     prepare_recursive_level_search, RecursiveLevelSearch,
 };
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use oracle::{
     derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
@@ -81,7 +81,7 @@ impl<'a> RecursiveFoldWork<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SplitBoundPolicy {
     Enabled,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     DisabledForOracle,
 }
 

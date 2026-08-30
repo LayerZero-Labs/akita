@@ -6,7 +6,7 @@ use akita_types::{
     OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
     SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
-use jolt_field::{Fp32, One, Prime128OffsetA7F7};
+use jolt_field::{Fp32, One, Prime128OffsetA7F7, Zero};
 
 type F = Fp32<251>;
 const D: usize = 64;
@@ -71,7 +71,7 @@ fn mixed_relation_fixture(mode: akita_types::RingRelationMode) -> MixedRelationF
         &opening_batch,
         &relation_geometry,
         1,
-        akita_types::RelationQuotientPlan::for_field_bits(&lp, MixedF::modulus_bits()).unwrap(),
+        akita_types::RelationQuotientPlan::for_field_bits(&lp, MixedF::MODULUS_BITS).unwrap(),
     )
     .unwrap();
     let relation_address_geometry =

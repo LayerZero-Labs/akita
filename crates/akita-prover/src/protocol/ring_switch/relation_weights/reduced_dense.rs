@@ -9,8 +9,8 @@
 use super::*;
 use akita_algebra::ring::{residue_kernel, sparse_residue_kernel};
 use akita_challenges::Challenges;
-use akita_field::{ExtField, MulBaseUnreduced};
 use akita_types::{dispatch_for_field, RingMultiplierOpeningPoint};
+use jolt_field::{ExtField, MulBaseUnreduced};
 
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,
@@ -19,8 +19,8 @@ fn sparse_challenge_kernel<F, E>(
     alpha: E,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + LiftBase<F>,
+    F: Field,
+    E: Field + ExtField<F>,
 {
     let challenge = challenges
         .as_slice()
@@ -52,7 +52,7 @@ fn position_multiplier_kernels<F, E>(
     alpha: E,
 ) -> Result<Vec<Vec<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     match point {
@@ -95,7 +95,7 @@ where
     }
 }
 
-fn add_scaled_kernel<E: FieldCore>(
+fn add_scaled_kernel<E: Field>(
     destination: &mut [E],
     physical_start: usize,
     kernel: &[E],
@@ -126,7 +126,7 @@ struct ReducedEtSink<'a, E> {
     b_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<E: FieldCore> EtWeightSink<E> for ReducedEtSink<'_, E> {
+impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
     fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
         let kernel = self
             .challenge_kernels
@@ -179,7 +179,7 @@ struct ReducedZSink<'a, E> {
     a_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<E: FieldCore> ZWeightSink<E> for ReducedZSink<'_, E> {
+impl<E: Field> ZWeightSink<E> for ReducedZSink<'_, E> {
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
         add_scaled_kernel(
             self.dense,
@@ -213,8 +213,8 @@ pub(in super::super) fn build_reduced_dense_relation_weights<F, E>(
     relation_plan: &RelationRangeImagePlan,
 ) -> Result<crate::protocol::sumcheck::DenseRelationWeights<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
     let compilation = RelationWeightCompilation::new(

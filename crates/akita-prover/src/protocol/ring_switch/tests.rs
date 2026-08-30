@@ -26,7 +26,7 @@ use akita_types::{
     RingRelationGroupOpening, RingRelationInstance, RingRelationMode, RingVec,
     SetupContributionGroupInputs, SetupContributionPlan, SetupMatrixCapacity, SisModulusProfileId,
 };
-use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring};
+use jolt_field::{Prime128OffsetA7F7, Prime64Offset59, Ring, Zero};
 use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;

@@ -607,7 +607,7 @@ impl<F: Field + CanonicalEncoding> RingRelationInstance<F> {
             &self.opening_batch,
             &relation_geometry,
             num_chunks,
-            crate::RelationQuotientPlan::for_field_bits(lp, F::modulus_bits())?,
+            crate::RelationQuotientPlan::for_field_bits(lp, F::MODULUS_BITS)?,
         )?;
         if let Some(capacity) = witness_coeff_len {
             if layout.live_coeff_len() > capacity {

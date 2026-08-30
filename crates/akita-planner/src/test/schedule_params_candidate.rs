@@ -1,3 +1,5 @@
+#[cfg(feature = "catalog-gen")]
+use super::recursive::RecursiveRelationCandidate;
 use super::recursive::{
     recursive_candidate_order_key, recursive_split_lower_bound, recursive_split_search_domain,
     RecursiveSplitLowerBoundInput,

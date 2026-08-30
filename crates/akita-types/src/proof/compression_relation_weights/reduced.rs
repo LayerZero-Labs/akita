@@ -1,9 +1,9 @@
 use super::*;
 use akita_algebra::ring::residue_kernel;
-use akita_field::ExtField;
+use jolt_field::ExtField;
 
 #[derive(Clone, Debug)]
-struct ReducedCompressionMapEvent<E: FieldCore> {
+struct ReducedCompressionMapEvent<E: Field> {
     span: CompressionWitnessSpan,
     row_weight: E,
 }
@@ -16,7 +16,7 @@ struct CompressionMapColumns<'a, F> {
     ring_dimension: usize,
 }
 
-impl<'a, F: FieldCore> CompressionMapColumns<'a, F> {
+impl<'a, F: Field> CompressionMapColumns<'a, F> {
     fn new(
         setup: &'a AkitaExpandedSetup<F>,
         span: &CompressionWitnessSpan,
@@ -83,7 +83,7 @@ impl<'a, F: FieldCore> CompressionMapColumns<'a, F> {
 /// kernels at the verifier's final Stage-2 point. No quotient-row event is
 /// represented by this type.
 #[derive(Clone, Debug)]
-pub struct ReducedCompressionRelationWeights<E: FieldCore> {
+pub struct ReducedCompressionRelationWeights<E: Field> {
     linear: CompressionRelationWeights<E>,
     maps: Vec<ReducedCompressionMapEvent<E>>,
     alpha: E,
@@ -104,7 +104,7 @@ pub fn evaluate_reduced_compression_map<F, E>(
     alpha: E,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     if !physical_field_len.is_power_of_two() {
@@ -134,7 +134,7 @@ where
     })
 }
 
-impl<E: FieldCore> ReducedCompressionRelationWeights<E> {
+impl<E: Field> ReducedCompressionRelationWeights<E> {
     /// Add the complete reduced F/H ring-relation table to one checked padded
     /// Stage-2 destination.
     ///
@@ -149,7 +149,7 @@ impl<E: FieldCore> ReducedCompressionRelationWeights<E> {
         destination: &mut [E],
     ) -> Result<(), AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         if destination.len() != self.linear.physical_field_len {
@@ -187,7 +187,7 @@ impl<E: FieldCore> ReducedCompressionRelationWeights<E> {
         point: &[E],
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore,
+        F: Field,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let mut evaluation = self.linear.evaluate_at_point(point)?;
@@ -225,8 +225,8 @@ pub fn build_reduced_compression_relation_weights<F, E>(
     physical_field_len: usize,
 ) -> Result<ReducedCompressionRelationWeights<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F>,
+    F: Field + CanonicalEncoding,
+    E: FpExtEncoding<F> + ExtField<F>,
 {
     if lp.ring_relation_mode != crate::RingRelationMode::ReducedEvaluation
         || !matches!(
@@ -262,7 +262,7 @@ where
         coefficient_block_len,
         physical_field_len,
     };
-    let field_bits = usize::try_from(F::modulus_bits())
+    let field_bits = usize::try_from(F::MODULUS_BITS)
         .map_err(|_| AkitaError::InvalidSetup("compression field width overflow".into()))?;
     push_initial_recompositions::<F, E>(
         &mut linear,
@@ -329,7 +329,7 @@ mod tests {
     use super::*;
     use crate::{CommitmentPayloadMode, CompressionMapPlan, RingRelationMode};
     use akita_challenges::SparseChallengeConfig;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::{One, Prime128OffsetA7F7 as F, Ring, Zero};
 
     #[test]
     fn reduced_compression_program_covers_every_map_without_quotient_events() {
@@ -395,7 +395,7 @@ mod tests {
             assert_eq!(event.row_weight, row_weights[*row]);
         }
 
-        let field_bits = F::modulus_bits() as usize;
+        let field_bits = F::MODULUS_BITS as usize;
         let relation_layout = relation_geometry.rhs_layout();
         let mut expected_linear_events = 0usize;
         for relation_group_index in 0..relation_layout.groups.len() {

@@ -22,14 +22,14 @@ pub(crate) struct CompressionExecutionInput<Id, F> {
 }
 
 /// Relation-owned data retained from one compression chain.
-pub(crate) enum CompressionRelationOutput<F: FieldCore> {
+pub(crate) enum CompressionRelationOutput<F: Field> {
     /// Quotient-lift mode retains one quotient image per map.
     QuotientLift { quotients: Vec<RingVec<F>> },
     /// Reduced-evaluation mode retains no quotient image.
     ReducedEvaluation,
 }
 
-impl<F: FieldCore> CompressionRelationOutput<F> {
+impl<F: Field> CompressionRelationOutput<F> {
     #[cfg(test)]
     pub(crate) fn quotient_lift(&self) -> Result<&[RingVec<F>], AkitaError> {
         match self {
@@ -51,7 +51,7 @@ impl<F: FieldCore> CompressionRelationOutput<F> {
 }
 
 /// One source's persistent compression result.
-pub(crate) struct CompressionExecutionOutput<Id, F: FieldCore> {
+pub(crate) struct CompressionExecutionOutput<Id, F: Field> {
     pub(crate) id: Id,
     pub(crate) witness: CompressionChainWitness,
     pub(crate) terminal: CompressionTerminalPayload<F>,

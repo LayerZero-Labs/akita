@@ -1,3 +1,4 @@
+#[cfg(feature = "catalog-gen")]
 use super::*;
 
 #[cfg(feature = "catalog-gen")]

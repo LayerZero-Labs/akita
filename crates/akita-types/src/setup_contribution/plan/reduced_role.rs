@@ -4,7 +4,7 @@ use super::setup_index_weight::{factor_aligned_role_tensors, role_tensors_are_al
 use super::*;
 use akita_algebra::offset_eq::{materialize_eq_tensor_left, EqPairTensorFamily, OffsetEqWindow};
 
-impl<E: FieldCore> SetupContributionPlan<E> {
+impl<E: Field> SetupContributionPlan<E> {
     pub(super) fn materialize_reduced_role_tensor_weights(
         &self,
         ratio: usize,

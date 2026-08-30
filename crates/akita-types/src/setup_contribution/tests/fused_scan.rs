@@ -3,9 +3,9 @@ use super::super::test_oracle_weights::{
 };
 use super::*;
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_field::{ExtField, LiftBase, MulBase, MulBaseUnreduced};
+use jolt_field::{ExtField, MulBaseUnreduced, Ring};
 
-fn literal_terminal_functional<E: FieldCore>(point: &[E], dimension: usize, alpha: E) -> Vec<E> {
+fn literal_terminal_functional<E: Field>(point: &[E], dimension: usize, alpha: E) -> Vec<E> {
     assert_eq!(point.len(), dimension.trailing_zeros() as usize);
     let equality = (0..dimension)
         .map(|index| eq_eval_at_index(point, index))
@@ -26,7 +26,7 @@ fn literal_terminal_functional<E: FieldCore>(point: &[E], dimension: usize, alph
         .collect()
 }
 
-fn literal_native_functional<E: FieldCore>(
+fn literal_native_functional<E: Field>(
     plan: &SetupContributionPlan<E>,
     coefficient_point: &[E],
     dimension: usize,
@@ -44,7 +44,7 @@ fn literal_native_functional<E: FieldCore>(
 
 fn literal_ring_dot<E>(ring: &[F], functional: &[E]) -> E
 where
-    E: ExtField<F> + MulBase<F>,
+    E: ExtField<F>,
 {
     assert_eq!(ring.len(), functional.len());
     ring.iter()
@@ -54,7 +54,7 @@ where
         })
 }
 
-fn naive_physical_b_weights<E: FieldCore>(
+fn naive_physical_b_weights<E: Field>(
     group: &SetupContributionGroupPlan<E>,
     logical: &[E],
     row_weights: &[E],
@@ -101,7 +101,7 @@ fn reduced_direct_literal_oracle<E>(
     alpha: E,
 ) -> E
 where
-    E: ExtField<F> + MulBase<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + MulBaseUnreduced<F>,
 {
     let mut evaluation = E::zero();
     let row_families =
@@ -511,7 +511,7 @@ fn reduced_fused_scan_matches_independent_heterogeneous_two_group_oracle() {
 
 #[test]
 fn reduced_fused_scan_matches_independent_oracle_over_extension_field() {
-    type X = akita_field::Ext2<F>;
+    type X = jolt_field::Ext2<F>;
     let role_dims = CommitmentRingDims {
         inner: 128,
         outer: 64,

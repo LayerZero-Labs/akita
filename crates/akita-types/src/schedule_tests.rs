@@ -30,9 +30,8 @@ use crate::{
     AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
     CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
     NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingRelationMode, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;

@@ -2,15 +2,15 @@
 
 use crate::protocol::ring_switch::RelationWeightFactorization;
 use akita_error::AkitaError;
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Complete padded relation weights for a quotient-free Stage-2 instance.
-pub(crate) struct DenseRelationWeights<E: FieldCore> {
+pub(crate) struct DenseRelationWeights<E: Field> {
     evaluations: Vec<E>,
     live_len: usize,
 }
 
-impl<E: FieldCore> DenseRelationWeights<E> {
+impl<E: Field> DenseRelationWeights<E> {
     pub(crate) fn new(evaluations: Vec<E>, live_len: usize) -> Result<Self, AkitaError> {
         if evaluations.is_empty()
             || !evaluations.len().is_power_of_two()
@@ -38,7 +38,7 @@ impl<E: FieldCore> DenseRelationWeights<E> {
 
     pub(crate) fn bind(&mut self, challenge: E)
     where
-        E: akita_field::unreduced::HasOptimizedFold,
+        E: jolt_field::Fold,
     {
         akita_sumcheck::fold_evals_in_place(&mut self.evaluations, challenge);
         self.live_len = self.live_len.div_ceil(2);
@@ -55,7 +55,7 @@ impl<E: FieldCore> DenseRelationWeights<E> {
 }
 
 /// Canonical primary relation-weight state owned and folded by Stage 2.
-pub(crate) enum RelationWeightOracle<E: FieldCore> {
+pub(crate) enum RelationWeightOracle<E: Field> {
     QuotientFactored(RelationWeightFactorization<E>),
     ReducedDense(DenseRelationWeights<E>),
 }

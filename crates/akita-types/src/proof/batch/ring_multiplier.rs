@@ -4,11 +4,11 @@ use super::subfield::{subfield_basis_pairs, SubfieldMultiplierOpeningPoint};
 use crate::RingOpeningPoint;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{ExtField, FieldCore};
+use jolt_field::{ExtField, Field};
 
 /// Ring-level opening point whose outer weights act by ring multiplication.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RingMultiplierOpeningPoint<F: FieldCore> {
+pub enum RingMultiplierOpeningPoint<F: Field> {
     /// Degree-one openings, where multipliers are ordinary base scalars.
     Base(RingOpeningPoint<F>),
     /// Validated ring-subfield coordinates used by extension-valued openings.
@@ -18,7 +18,7 @@ pub enum RingMultiplierOpeningPoint<F: FieldCore> {
 /// Position multipliers prepared for contraction against an arbitrary
 /// terminal ring functional.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PreparedRingMultiplierKind<E: FieldCore> {
+enum PreparedRingMultiplierKind<E: Field> {
     Base(Vec<E>),
     Subfield {
         position_coordinates: Vec<E>,
@@ -28,11 +28,11 @@ enum PreparedRingMultiplierKind<E: FieldCore> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreparedRingMultiplier<E: FieldCore> {
+pub struct PreparedRingMultiplier<E: Field> {
     kind: PreparedRingMultiplierKind<E>,
 }
 
-impl<E: FieldCore> PreparedRingMultiplier<E> {
+impl<E: Field> PreparedRingMultiplier<E> {
     /// Evaluate one position multiplier against a complete terminal
     /// coefficient functional for `F[X]/(X^D + 1)`.
     pub fn evaluate_position_functional(
@@ -84,7 +84,7 @@ impl<E: FieldCore> PreparedRingMultiplier<E> {
     }
 }
 
-impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
+impl<F: Field> RingMultiplierOpeningPoint<F> {
     /// Lift compact multiplier coordinates once for terminal-functional evaluation.
     pub fn prepare_functional_multiplier<E>(&self) -> PreparedRingMultiplier<E>
     where
@@ -267,7 +267,7 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4};
+    use jolt_field::{Fp32, FpExt4, One, Ring, Zero};
 
     type F = Fp32<251>;
     type E = FpExt4<F>;

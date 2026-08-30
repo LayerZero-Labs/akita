@@ -22,7 +22,7 @@ use akita_types::{
     CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
 
 use crate::{InnerBasisSource, PlannerPolicy};
@@ -33,7 +33,7 @@ mod pareto;
 mod relation_transition;
 mod setup_score;
 mod suffix_dp;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
@@ -46,7 +46,7 @@ pub(crate) use candidate::{
     FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
     SetupPrefixSearchCache, SplitBoundPolicy,
 };
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use candidate::{
     derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
 };
@@ -183,7 +183,7 @@ fn suffix_dimension_ceiling(
         .find(|&dimension| dimension <= role_ceiling)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
@@ -220,6 +220,7 @@ impl RingDimensionSearchDomain {
     }
 
     /// Construct the explicit singleton domain used by a uniform policy.
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
         Self::new([CommitmentRingDims::uniform(ring_dimension)])
     }
@@ -235,7 +236,7 @@ impl RingDimensionSearchDomain {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 fn componentwise_dimensions_at_most(
     dimensions: CommitmentRingDims,
     ceiling: CommitmentRingDims,
@@ -366,7 +367,7 @@ impl PackedProofCost {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(crate) const fn nonce_bits(self) -> usize {
         self.nonce_bits
     }

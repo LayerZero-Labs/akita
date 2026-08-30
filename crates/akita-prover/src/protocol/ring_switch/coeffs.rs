@@ -22,6 +22,7 @@ use akita_types::{
     RingVec, WitnessLayout, WitnessUnitLayout,
 };
 use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 
 pub(crate) struct PreparedRingSwitchGroup<F: Field> {
     pub(crate) params: akita_types::GroupOpenPhaseParams,
@@ -76,7 +77,7 @@ enum WitnessTailEvent {
     },
 }
 
-enum PreparedWitnessTail<F: FieldCore> {
+enum PreparedWitnessTail<F: Field> {
     QuotientLift(RelationQuotientOutput<F>),
     ReducedEvaluation,
 }
@@ -729,7 +730,7 @@ fn emit_witness_tail<F: Field + CanonicalEncoding>(
     Ok(())
 }
 
-fn emit_compression_witness_event<F: CanonicalField>(
+fn emit_compression_witness_event<F: Field + CanonicalEncoding>(
     out: &mut PackedSignedDigitWriter,
     layout: &WitnessLayout,
     compression: &CompressionWitnessMaterialization<F>,
@@ -757,7 +758,7 @@ fn emit_compression_witness_event<F: CanonicalField>(
     emit_packed_negative_binary(out, span, packed)
 }
 
-fn emit_reduced_witness_tail<F: CanonicalField>(
+fn emit_reduced_witness_tail<F: Field + CanonicalEncoding>(
     out: &mut PackedSignedDigitWriter,
     layout: &WitnessLayout,
     compression: Option<&CompressionWitnessMaterialization<F>>,

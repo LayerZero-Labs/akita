@@ -20,12 +20,11 @@ use akita_types::{
     RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
 pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
-use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use compiler::{
     compile_group_et_addresses, compile_group_z_addresses, EAddress, EtWeightSink,
     RelationWeightCompilation, TAddress, ZAddress, ZWeightSink,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{contract_setup_columns, SetupColumnValues, SetupRows};
 
 /// Source of setup-matrix relation weights for this evaluation.

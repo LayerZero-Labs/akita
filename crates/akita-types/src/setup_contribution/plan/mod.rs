@@ -63,8 +63,8 @@ fn divide_aligned(
 
 fn extension_gadget<F, E>(depth: usize, log_basis: u32) -> Vec<E>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: Field + ExtField<F>,
 {
     crate::gadget_row_scalars::<F>(depth, log_basis)
         .into_iter()

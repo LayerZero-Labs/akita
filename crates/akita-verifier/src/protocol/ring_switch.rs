@@ -656,8 +656,8 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         setup_claim: E,
     ) -> Result<E, AkitaError>
     where
-        F: FieldCore + CanonicalField,
-        E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+        F: Field + CanonicalEncoding,
+        E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
     {
         relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<F, E>(
             self,

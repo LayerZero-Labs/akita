@@ -24,10 +24,10 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/root_candidates.rs"]
 mod root_candidates;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
 
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
