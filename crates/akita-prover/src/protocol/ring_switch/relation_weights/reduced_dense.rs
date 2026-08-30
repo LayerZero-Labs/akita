@@ -7,13 +7,10 @@
 //! stream.
 
 use super::*;
-use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::residue_kernel;
 use akita_challenges::Challenges;
 use akita_field::{ExtField, MulBaseUnreduced};
-use akita_types::{
-    dispatch_for_field, RelationQuotientLayout, RingMultiplierOpeningPoint, RingRelationMode,
-};
+use akita_types::{dispatch_for_field, RingMultiplierOpeningPoint};
 
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,
@@ -49,38 +46,37 @@ where
     F: FieldCore + CanonicalField,
     E: ExtField<F>,
 {
-    if let Some(base) = point.as_base() {
-        if base.position_weights.len() != position_count {
-            return Err(AkitaError::InvalidProof);
-        }
-        return base
-            .position_weights
-            .iter()
-            .copied()
-            .map(|scalar| {
-                let mut coefficients = vec![F::zero(); dimension];
-                coefficients[0] = scalar;
-                residue_kernel::<F, E>(&coefficients, alpha)
-            })
-            .collect();
-    }
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        F,
-        dimension,
-        |D| {
-            let rings = point
-                .materialize_position_rings::<D>()?
-                .ok_or(AkitaError::InvalidProof)?;
-            if rings.len() != position_count {
+    match point {
+        RingMultiplierOpeningPoint::Base(base) => {
+            if base.position_weights.len() != position_count {
                 return Err(AkitaError::InvalidProof);
             }
-            rings
+            base.position_weights
                 .iter()
-                .map(|ring| residue_kernel::<F, E>(ring.coefficients(), alpha))
+                .copied()
+                .map(|scalar| {
+                    let mut coefficients = vec![F::zero(); dimension];
+                    coefficients[0] = scalar;
+                    residue_kernel::<F, E>(&coefficients, alpha)
+                })
                 .collect()
         }
-    )
+        RingMultiplierOpeningPoint::Subfield(subfield) => dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            dimension,
+            |D| {
+                let rings = subfield.materialize_position_rings::<D>()?;
+                if rings.len() != position_count {
+                    return Err(AkitaError::InvalidProof);
+                }
+                rings
+                    .iter()
+                    .map(|ring| residue_kernel::<F, E>(ring.coefficients(), alpha))
+                    .collect()
+            }
+        ),
+    }
 }
 
 fn add_scaled_kernel<E: FieldCore>(
@@ -120,12 +116,12 @@ impl<E: FieldCore> EtWeightSink<E> for ReducedEtSink<'_, E> {
             .challenge_kernels
             .get(address.challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let kernel_start = address.role_subcolumn * self.plan.group_d_d;
+        let kernel_start = address.role_subcolumn * self.plan.roles.d_d;
         add_scaled_kernel(
             self.dense,
             address.physical_start,
             kernel
-                .get(kernel_start..kernel_start + self.plan.group_d_d)
+                .get(kernel_start..kernel_start + self.plan.roles.d_d)
                 .ok_or(AkitaError::InvalidProof)?,
             address.constraint_scale,
         )?;
@@ -142,12 +138,12 @@ impl<E: FieldCore> EtWeightSink<E> for ReducedEtSink<'_, E> {
             .challenge_kernels
             .get(address.challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let kernel_start = address.role_subcolumn * self.plan.group_d_b;
+        let kernel_start = address.role_subcolumn * self.plan.roles.d_b;
         add_scaled_kernel(
             self.dense,
             address.physical_start,
             kernel
-                .get(kernel_start..kernel_start + self.plan.group_d_b)
+                .get(kernel_start..kernel_start + self.plan.roles.d_b)
                 .ok_or(AkitaError::InvalidProof)?,
             address.constraint_scale,
         )?;
@@ -204,94 +200,51 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
 {
-    if lp.ring_relation_mode != RingRelationMode::ReducedEvaluation {
-        return Err(AkitaError::InvalidSetup(
-            "dense reduced weights require reduced-evaluation mode".into(),
-        ));
-    }
     let opening_batch = instance.opening_batch();
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
-    if (0..opening_batch.num_groups()).any(|group| {
-        !matches!(
-            relation_geometry.group_opening_method(group),
-            Ok(OpeningMethod::EvaluationTrace)
-        )
-    }) {
-        return Err(AkitaError::InvalidSetup(
-            "reduced relation weights require evaluation-trace openings".into(),
-        ));
-    }
-    let witness_layout = instance.segment_layout(lp, None)?;
-    if !matches!(
-        witness_layout.relation_quotient_layout(),
-        RelationQuotientLayout::ReducedEvaluation
-    ) || !witness_layout.r_rows().is_empty()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "reduced relation mode disagrees with its quotient-free witness layout".into(),
-        ));
-    }
-    let physical_field_len = opening_source_len
-        .checked_mul(opening_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
-    let domain = relation_plan.digit_witness_domain();
-    if domain.domain_len() != physical_field_len
-        || domain.live_len() != witness_layout.live_coeff_len()
-        || relation_plan.witness_layout() != &witness_layout
-        || relation_plan.relation_witness_geometry() != &relation_geometry
-    {
-        return Err(AkitaError::InvalidSetup(
-            "reduced relation plan disagrees with the current witness".into(),
-        ));
-    }
-    let row_families = relation_geometry.rhs_layout().row_families()?;
-    let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
-    let compilation = RelationWeightCompilationPlan::new::<F>(
+    let compilation = RelationWeightCompilation::new(
+        Some(setup),
+        instance,
         lp,
-        opening_batch,
+        tau1,
+        opening_source_len,
+        opening_ring_dim,
         relation_plan,
-        &row_families,
-        &row_weights,
     )?;
-    let setup_sources = RelationWeightSetupSources::new(setup, lp, &compilation)?;
-    let mut dense = vec![E::zero(); physical_field_len];
+    let setup_sources = compilation.setup_sources.as_ref().ok_or_else(|| {
+        AkitaError::InvalidSetup("reduced relation requires direct setup rows".into())
+    })?;
+    let mut dense = vec![E::zero(); compilation.physical_field_len];
 
-    for group_plan in &compilation.groups {
+    for group_plan in &compilation.plan.groups {
         let group_index = group_plan.group_index;
         let group_setup = setup_sources.group(group_index)?;
-        let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
-        let group_d_a = group_plan.group_d_a;
-        let group_d_b = group_plan.group_d_b;
-        let group_d_d = group_plan.group_d_d;
-        let k_g = group_plan.num_claims;
-        let challenges = instance.group_ambient_a_challenges(group_index)?;
-        let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
-        let total_blocks = k_g
-            .checked_mul(group_lp.num_live_blocks())
-            .ok_or(AkitaError::InvalidProof)?;
-        if challenges.len() != total_blocks
-            || ring_multiplier_point.position_len() != group_lp.num_positions_per_block()
-            || ring_multiplier_point.fold_len() != group_lp.num_live_blocks()
-        {
-            return Err(AkitaError::InvalidProof);
-        }
+        let group_source = compilation.group_source(group_index)?;
+        let group_d_a = group_plan.roles.d_a;
+        let group_d_b = group_plan.roles.d_b;
+        let group_d_d = group_plan.roles.d_d;
+        let challenges = group_source.challenges;
+        let OpeningFamily::EvaluationTrace(ring_multiplier_point) = group_source.opening else {
+            return Err(AkitaError::InvalidSetup(
+                "reduced relation requires evaluation-trace openings".into(),
+            ));
+        };
+        let total_blocks = group_plan.witness.num_claims * group_plan.witness.num_live_blocks;
         let challenge_kernels = (0..total_blocks)
             .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, group_d_a, alpha))
             .collect::<Result<Vec<_>, _>>()?;
         let d_setup_kernels = contract_setup_columns(
             &setup_sources.d,
-            group_plan.d_setup_range.clone(),
-            &compilation.d_row_weights,
+            group_plan.rows.d_setup_range.clone(),
+            &compilation.plan.d_row_weights,
             1,
             group_d_d,
             |coefficients| residue_kernel::<F, E>(coefficients, alpha),
         )?;
         let b_setup_kernels = contract_setup_columns(
             &group_setup.b,
-            0..group_plan.b_width,
-            &group_plan.b_setup_row_weights,
-            group_plan.slice_count,
+            0..group_plan.witness.b_width,
+            &group_plan.rows.b_setup_row_weights,
+            group_plan.witness.slice_count,
             group_d_b,
             |coefficients| residue_kernel::<F, E>(coefficients, alpha),
         )?;
@@ -304,7 +257,7 @@ where
                 d_setup_kernels: &d_setup_kernels,
                 b_setup_kernels: &b_setup_kernels,
             };
-            compile_group_et_addresses(group_plan, &witness_layout, &mut et_sink)?;
+            compile_group_et_addresses(group_plan, &compilation.witness_layout, &mut et_sink)?;
         }
         drop(challenge_kernels);
         drop(d_setup_kernels);
@@ -312,14 +265,14 @@ where
 
         let opening_kernels = position_multiplier_kernels::<F, E>(
             ring_multiplier_point,
-            group_lp.num_positions_per_block(),
+            group_plan.witness.num_positions,
             group_d_a,
             alpha,
         )?;
         let a_setup_kernels = contract_setup_columns(
             &group_setup.a,
-            0..group_plan.inner_width,
-            &group_plan.a_setup_row_weights,
+            0..group_plan.witness.inner_width,
+            &group_plan.rows.a_setup_row_weights,
             1,
             group_d_a,
             |coefficients| residue_kernel::<F, E>(coefficients, alpha),
@@ -329,7 +282,7 @@ where
             opening_kernels: &opening_kernels,
             a_setup_kernels: &a_setup_kernels,
         };
-        compile_group_z_addresses(group_plan, &witness_layout, &mut z_sink)?;
+        compile_group_z_addresses(group_plan, &compilation.witness_layout, &mut z_sink)?;
     }
 
     if lp.payload_mode.is_compressed() {
@@ -339,11 +292,14 @@ where
             opening_batch,
             instance.extension_degree(),
             tau1,
-            &witness_layout,
+            &compilation.witness_layout,
             opening_ring_dim,
-            physical_field_len,
+            compilation.physical_field_len,
         )?;
         compression.accumulate_dense(setup, &mut dense)?;
     }
-    crate::protocol::sumcheck::DenseRelationWeights::new(dense, domain.live_len())
+    crate::protocol::sumcheck::DenseRelationWeights::new(
+        dense,
+        compilation.witness_layout.live_coeff_len(),
+    )
 }

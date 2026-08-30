@@ -665,7 +665,10 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     );
     let expected_alpha_round2 =
         RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let expected_relation_lane_weights = prover.relation_lane_weights().to_vec();
+    let expected_relation_lane_weights = prover
+        .relation_lane_weights()
+        .expect("quotient test state")
+        .to_vec();
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(83),
@@ -700,9 +703,12 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to enter the folded suffix")
         }
     }
-    assert_eq!(prover.common_alpha_factor(), expected_alpha_round2);
     assert_eq!(
-        prover.relation_lane_weights(),
+        prover.common_alpha_factor().expect("quotient test state"),
+        expected_alpha_round2
+    );
+    assert_eq!(
+        prover.relation_lane_weights().expect("quotient test state"),
         expected_relation_lane_weights
     );
     assert!(!prover.can_use_deferred_compact_prefix());
@@ -760,7 +766,10 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     );
     let expected_alpha_round2 =
         RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
-    let expected_relation_lane_weights = prover.relation_lane_weights().to_vec();
+    let expected_relation_lane_weights = prover
+        .relation_lane_weights()
+        .expect("quotient test state")
+        .to_vec();
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(109),
@@ -795,9 +804,12 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to enter the folded suffix")
         }
     }
-    assert_eq!(prover.common_alpha_factor(), expected_alpha_round2);
     assert_eq!(
-        prover.relation_lane_weights(),
+        prover.common_alpha_factor().expect("quotient test state"),
+        expected_alpha_round2
+    );
+    assert_eq!(
+        prover.relation_lane_weights().expect("quotient test state"),
         expected_relation_lane_weights
     );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
@@ -867,8 +879,14 @@ fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
         WitnessState::FoldedSuffix(folded_witness) => folded_witness.clone(),
         WitnessState::CompactPrefix(_) => panic!("expected later prefix state to be full"),
     };
-    let current_relation_lane_weights = expected.relation_lane_weights().to_vec();
-    let current_coeff_count = expected.common_alpha_factor().len();
+    let current_relation_lane_weights = expected
+        .relation_lane_weights()
+        .expect("quotient test state")
+        .to_vec();
+    let current_coeff_count = expected
+        .common_alpha_factor()
+        .expect("quotient test state")
+        .len();
     let expected_next_folded_witness = RelationRangeImageProver::<F>::fold_folded_partial_lanes(
         &current_w_full,
         expected.live_lane_count,
@@ -889,8 +907,10 @@ fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
     expected.live_lane_count = expected.live_lane_count.div_ceil(2);
     expected.rounds_completed += 1;
     expected.replace_relation_lane_weights(expected_next_relation_lane_weights.clone());
-    let (virt_terms, rel_coeffs) =
-        expected.compute_folded_partial_lane_round_terms(&expected_next_folded_witness);
+    let (virt_terms, rel_coeffs) = expected.compute_folded_partial_lane_round_terms(
+        &expected_next_folded_witness,
+        expected.quotient_weights().expect("quotient test state"),
+    );
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
 
     prover.ingest_challenge(2, r2);
@@ -902,7 +922,7 @@ fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
         WitnessState::CompactPrefix(_) => panic!("expected fused later prefix stage to stay full"),
     }
     assert_eq!(
-        prover.relation_lane_weights(),
+        prover.relation_lane_weights().expect("quotient test state"),
         expected_next_relation_lane_weights
     );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));

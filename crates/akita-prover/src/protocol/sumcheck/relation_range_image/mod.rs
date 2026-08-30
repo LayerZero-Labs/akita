@@ -109,20 +109,22 @@ enum WitnessState<E: Field> {
     FoldedSuffix(Vec<E>),
 }
 
-struct TwoRoundCompactPrefix<E: Field> {
+struct DeferredCompactPrefix<E: Field> {
     skip_state: Stage2BivariateSkipState<E>,
-    first_challenge: Option<E>,
+    phase: DeferredCompactPrefixPhase<E>,
 }
 
-enum QuotientPrefixState<E: FieldCore> {
+enum DeferredCompactPrefixPhase<E: Field> {
+    Round0,
+    Round1 { first_challenge: E },
+}
+
+enum QuotientPrefixState<E: Field> {
     Disabled,
-    Deferred {
-        stage1_point: Vec<E>,
-        round_state: Option<TwoRoundCompactPrefix<E>>,
-    },
+    Deferred(DeferredCompactPrefix<E>),
 }
 
-enum RelationRoundState<E: FieldCore> {
+enum RelationRoundState<E: Field> {
     QuotientFactored {
         weights: RelationWeightFactorization<E>,
         prefix: QuotientPrefixState<E>,
@@ -252,8 +254,6 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
 pub struct RelationRangeImageProver<E: Field> {
     witness_state: WitnessState<E>,
     b: usize,
-    batching_coeff: E,
-    range_image_evaluation: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
@@ -263,7 +263,6 @@ pub struct RelationRangeImageProver<E: Field> {
     live_lane_count: usize,
     lane_bits: usize,
     num_vars: usize,
-    relation_linear_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
     cached_round_poly: Option<UniPoly<E>>,
@@ -295,46 +294,41 @@ pub(crate) use evaluation_trace::{
 pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    #[cfg(test)]
     #[inline]
-    fn common_alpha_factor(&self) -> &[E] {
-        self.quotient_weights().common_alpha_factor()
+    fn common_alpha_factor(&self) -> Option<&[E]> {
+        self.quotient_weights()
+            .map(RelationWeightFactorization::common_alpha_factor)
     }
 
+    #[cfg(test)]
     #[inline]
-    fn relation_lane_weights(&self) -> &[E] {
-        self.quotient_weights().relation_lane_weights()
+    fn relation_lane_weights(&self) -> Option<&[E]> {
+        self.quotient_weights()
+            .map(RelationWeightFactorization::relation_lane_weights)
     }
 
+    #[cfg(test)]
     #[inline]
-    fn quotient_factored_weights_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
-        match &mut self.relation_state {
-            RelationRoundState::QuotientFactored { weights, .. } => weights.components_mut(),
-            RelationRoundState::ReducedDense { .. } => {
-                panic!("quotient-only transition used for reduced relation weights")
-            }
-        }
-    }
-
-    #[inline]
-    fn quotient_weights(&self) -> &RelationWeightFactorization<E> {
+    fn quotient_weights(&self) -> Option<&RelationWeightFactorization<E>> {
         match &self.relation_state {
-            RelationRoundState::QuotientFactored { weights, .. } => weights,
-            RelationRoundState::ReducedDense { .. } => {
-                panic!("quotient-only kernel used for reduced relation weights")
-            }
+            RelationRoundState::QuotientFactored { weights, .. } => Some(weights),
+            RelationRoundState::ReducedDense { .. } => None,
         }
     }
 
     #[cfg(test)]
     fn replace_common_alpha_factor(&mut self, replacement: Vec<E>) {
-        let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
-        *common_alpha_factor = replacement;
+        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
+            *weights.components_mut().0 = replacement;
+        }
     }
 
     #[cfg(test)]
     fn replace_relation_lane_weights(&mut self, replacement: Vec<E>) {
-        let (_, relation_lane_weights) = self.quotient_factored_weights_mut();
-        *relation_lane_weights = replacement;
+        if let RelationRoundState::QuotientFactored { weights, .. } = &mut self.relation_state {
+            *weights.components_mut().1 = replacement;
+        }
     }
 
     // Fused relation (`alpha * m`) + structured-linear addend for one witness

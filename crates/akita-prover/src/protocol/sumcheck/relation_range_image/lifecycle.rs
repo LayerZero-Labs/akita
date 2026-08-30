@@ -130,6 +130,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         actual: dense.evaluations().len(),
                     });
                 }
+                if dense.live_len() != witness_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: witness_len,
+                        actual: dense.live_len(),
+                    });
+                }
             }
         }
         linear_terms.validate_len(witness_len)?;
@@ -181,10 +187,39 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         let relation_state = match relation_weights {
             RelationWeightOracle::QuotientFactored(weights) => {
                 let prefix = if can_use_stage2_two_round_prefix(coefficient_bits, b) {
-                    QuotientPrefixState::Deferred {
-                        stage1_point: stage1_point.to_vec(),
-                        round_state: None,
-                    }
+                    let proof = build_stage2_bivariate_skip_proof_from_m_compact(
+                        w_evals_compact.view(),
+                        weights.common_alpha_factor(),
+                        weights.relation_lane_weights(),
+                        &linear_terms,
+                        stage1_point,
+                        b,
+                        live_lane_count,
+                        lane_bits,
+                        coefficient_bits,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "stage-2 compact prefix is unavailable for the validated geometry"
+                                .into(),
+                        )
+                    })?;
+                    let skip_state = Stage2BivariateSkipState::new(
+                        &proof,
+                        stage1_point,
+                        range_image_evaluation,
+                        relation_linear_claim,
+                        batching_coeff,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "stage-2 compact prefix claim recovery failed".into(),
+                        )
+                    })?;
+                    QuotientPrefixState::Deferred(DeferredCompactPrefix {
+                        skip_state,
+                        phase: DeferredCompactPrefixPhase::Round0,
+                    })
                 } else {
                     QuotientPrefixState::Disabled
                 };
@@ -198,8 +233,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
             b,
-            batching_coeff,
-            range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             relation_state,
@@ -208,7 +241,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             live_lane_count,
             lane_bits,
             num_vars,
-            relation_linear_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
             cached_round_poly: None,
@@ -266,11 +298,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let first_challenge = if self.rounds_completed == 0 {
                     None
                 } else {
-                    Some(
-                        self.deferred_compact_prefix()
-                            .and_then(|prefix| prefix.first_challenge)
-                            .expect("compact round 1 requires the first prefix challenge"),
-                    )
+                    self.deferred_compact_prefix()
+                        .and_then(|prefix| match prefix.phase {
+                            DeferredCompactPrefixPhase::Round0 => None,
+                            DeferredCompactPrefixPhase::Round1 { first_challenge } => {
+                                Some(first_challenge)
+                            }
+                        })
                 };
                 additional.round_polynomial_compact(compact_witness.view(), first_challenge)
             }
@@ -341,7 +375,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         matches!(
             self.relation_state,
             RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Deferred { .. },
+                prefix: QuotientPrefixState::Deferred(_),
                 ..
             }
         )
@@ -410,84 +444,12 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         combined
     }
 
-    pub(super) fn ensure_deferred_compact_prefix(&mut self) -> &mut TwoRoundCompactPrefix<E> {
-        let needs_initialization = matches!(
-            self.relation_state,
-            RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Deferred {
-                    round_state: None,
-                    ..
-                },
-                ..
-            }
-        );
-        if needs_initialization {
-            let stage1_point = match &self.relation_state {
-                RelationRoundState::QuotientFactored {
-                    prefix: QuotientPrefixState::Deferred { stage1_point, .. },
-                    ..
-                } => stage1_point.clone(),
-                _ => panic!("two-round prefix requested outside quotient prefix state"),
-            };
-            let coefficient_bits = self.num_vars - self.lane_bits;
-            let compact_witness = match &self.witness_state {
-                WitnessState::CompactPrefix(compact_witness) => compact_witness.view(),
-                WitnessState::FoldedSuffix(_) => {
-                    panic!("two-round prefix can only build from compact witness")
-                }
-            };
-            let proof = build_stage2_bivariate_skip_proof_from_m_compact(
-                compact_witness,
-                self.common_alpha_factor(),
-                self.relation_lane_weights(),
-                &self.linear_terms,
-                &stage1_point,
-                self.b,
-                self.live_lane_count,
-                self.lane_bits,
-                coefficient_bits,
-            )
-            .expect("two-round prefix should be available");
-            let skip_state = Stage2BivariateSkipState::new(
-                &proof,
-                &stage1_point,
-                self.range_image_evaluation,
-                self.relation_linear_claim,
-                self.batching_coeff,
-            )
-            .expect("valid bivariate-skip state");
-            match &mut self.relation_state {
-                RelationRoundState::QuotientFactored {
-                    prefix: QuotientPrefixState::Deferred { round_state, .. },
-                    ..
-                } => {
-                    *round_state = Some(TwoRoundCompactPrefix {
-                        skip_state,
-                        first_challenge: None,
-                    });
-                }
-                _ => panic!("quotient prefix state changed during initialization"),
-            }
-        }
-        match &mut self.relation_state {
-            RelationRoundState::QuotientFactored {
-                prefix:
-                    QuotientPrefixState::Deferred {
-                        round_state: Some(prefix),
-                        ..
-                    },
-                ..
-            } => prefix,
-            _ => panic!("two-round prefix should be initialized"),
-        }
-    }
-
-    fn deferred_compact_prefix(&self) -> Option<&TwoRoundCompactPrefix<E>> {
+    pub(super) fn deferred_compact_prefix(&self) -> Option<&DeferredCompactPrefix<E>> {
         match &self.relation_state {
             RelationRoundState::QuotientFactored {
-                prefix: QuotientPrefixState::Deferred { round_state, .. },
+                prefix: QuotientPrefixState::Deferred(prefix),
                 ..
-            } => round_state.as_ref(),
+            } => Some(prefix),
             _ => None,
         }
     }

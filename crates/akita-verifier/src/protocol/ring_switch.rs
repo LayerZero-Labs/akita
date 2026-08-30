@@ -10,10 +10,10 @@ use akita_types::{
     build_compression_relation_weights, build_reduced_compression_relation_weights,
     dispatch_for_field, shared_setup_fold_gadget, AkitaExpandedSetup, CommittedGroupParams,
     CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport, OpeningClaimsLayout,
-    PreparedRelationAddress, PreparedRingMultiplier, ReducedCompressionRelationWeights,
-    RelationAddressGeometry, RelationWitnessGeometry, RingMultiplierOpeningPoint,
-    RingRelationGroupOpeningView, RingRelationInstance, RingRelationMode,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    OpeningFamily, PreparedRelationAddress, PreparedRingMultiplier,
+    ReducedCompressionRelationWeights, RelationAddressGeometry, RelationWitnessGeometry,
+    RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationInstance,
+    RingRelationMode, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use std::sync::{Arc, Mutex};
@@ -409,7 +409,7 @@ where
         a_row_start: usize,
         b_row_start: usize,
         challenges: Challenges,
-        opening: Option<RingMultiplierOpeningPoint<F>>,
+        opening: OpeningFamily<RingMultiplierOpeningPoint<F>, ()>,
     }
 
     let group_inputs = order
@@ -443,14 +443,16 @@ where
                 ));
             }
 
-            let ring_multiplier_point = match relation.group_opening_view(group_index)? {
+            let opening = match relation.group_opening_view(group_index)? {
                 RingRelationGroupOpeningView::EvaluationTrace {
                     ring_multiplier_point,
                     ..
-                } => Some(ring_multiplier_point.clone()),
-                RingRelationGroupOpeningView::SubringCoefficientPacking { .. } => None,
+                } => OpeningFamily::EvaluationTrace(ring_multiplier_point.clone()),
+                RingRelationGroupOpeningView::SubringCoefficientPacking { .. } => {
+                    OpeningFamily::SubringCoefficientPacking(())
+                }
             };
-            if let Some(ring_multiplier_point) = ring_multiplier_point.as_ref() {
+            if let OpeningFamily::EvaluationTrace(ring_multiplier_point) = &opening {
                 if ring_multiplier_point.position_len() != num_positions_per_block
                     || ring_multiplier_point.fold_len() != num_live_blocks
                 {
@@ -486,7 +488,7 @@ where
                 a_row_start: a_range.start,
                 b_row_start: b_range.start,
                 challenges: challenges.clone(),
-                opening: ring_multiplier_point,
+                opening,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -508,11 +510,13 @@ where
                                 group.num_claims,
                                 group.num_live_blocks,
                             )?;
-                            let opening_a_evals = match group.opening.as_ref() {
-                                Some(point) => (0..group.num_positions)
+                            let opening_a_evals = match &group.opening {
+                                OpeningFamily::EvaluationTrace(point) => (0..group.num_positions)
                                     .map(|index| point.eval_position_at::<E>(index, &alpha_pows))
                                     .collect::<Result<Vec<_>, _>>()?,
-                                None => vec![E::zero(); group.num_positions],
+                                OpeningFamily::SubringCoefficientPacking(()) => {
+                                    vec![E::zero(); group.num_positions]
+                                }
                             };
                             Ok::<_, AkitaError>(QuotientRelationMultipliers {
                                 c_alphas,
@@ -536,14 +540,16 @@ where
             let groups = group_inputs
                 .into_iter()
                 .map(|group| {
-                    let opening = group
-                        .opening
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
+                    let opening = match group.opening {
+                        OpeningFamily::EvaluationTrace(point) => {
+                            point.prepare_functional_multiplier::<E>()
+                        }
+                        OpeningFamily::SubringCoefficientPacking(()) => {
+                            return Err(AkitaError::InvalidSetup(
                                 "reduced relation requires ring-multiplier openings".into(),
-                            )
-                        })?
-                        .prepare_functional_multiplier::<E>();
+                            ));
+                        }
+                    };
                     Ok(RelationMatrixGroupEvaluator {
                         multipliers: ReducedRelationMultipliers {
                             challenges: group.challenges,
@@ -632,13 +638,28 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         point: &[E],
         setup: &AkitaExpandedSetup<F>,
         alpha: E,
-        setup_claim: Option<E>,
     ) -> Result<E, AkitaError>
     where
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
     {
-        relation_evaluation::evaluate_relation_at_point::<F, E>(
+        relation_evaluation::evaluate_relation_at_point::<F, E>(self, point, setup, alpha)
+    }
+
+    /// Evaluate quotient-lift relation weights using an authenticated deferred
+    /// setup-contribution claim. Reduced evaluation has no deferred setup state.
+    pub fn eval_flat_at_point_with_deferred_setup<F>(
+        &self,
+        point: &[E],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: E,
+        setup_claim: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    {
+        relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<F, E>(
             self,
             point,
             setup,

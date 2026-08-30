@@ -14,8 +14,8 @@ use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_error::AkitaError;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding,
-    PreparedCoefficientFunctional, PreparedRelationAddress, RelationAddressGeometry,
-    RelationQuotientLayout, RelationRowFamily, RelationWitnessGeometry, SetupContributionPlan,
+    PreparedRelationAddress, RelationAddressGeometry, RelationQuotientLayout, RelationRowFamily,
+    RelationWitnessGeometry, SetupContributionPlan,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
@@ -24,37 +24,65 @@ pub(super) fn evaluate_relation_at_point<F, E>(
     point: &[E],
     setup: &AkitaExpandedSetup<F>,
     alpha: E,
-    deferred_setup_claim: Option<E>,
 ) -> Result<E, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     match &evaluator.groups {
-        PreparedRelationGroups::QuotientLift(groups) => {
-            evaluate_quotient_relation(evaluator, groups, point, setup, alpha, deferred_setup_claim)
-        }
+        PreparedRelationGroups::QuotientLift(groups) => evaluate_quotient_relation(
+            evaluator,
+            groups,
+            point,
+            setup,
+            alpha,
+            QuotientSetupDelivery::Direct,
+        ),
         PreparedRelationGroups::ReducedEvaluation(groups) => {
-            if deferred_setup_claim.is_some() {
-                return Err(AkitaError::InvalidProof);
-            }
             evaluate_reduced_relation(evaluator, groups, point, setup, alpha)
         }
     }
 }
 
+pub(super) fn evaluate_quotient_relation_with_deferred_setup<F, E>(
+    evaluator: &RelationMatrixEvaluator<E>,
+    point: &[E],
+    setup: &AkitaExpandedSetup<F>,
+    alpha: E,
+    setup_claim: E,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+{
+    let PreparedRelationGroups::QuotientLift(groups) = &evaluator.groups else {
+        return Err(AkitaError::InvalidProof);
+    };
+    evaluate_quotient_relation(
+        evaluator,
+        groups,
+        point,
+        setup,
+        alpha,
+        QuotientSetupDelivery::Deferred(setup_claim),
+    )
+}
+
+enum QuotientSetupDelivery<E> {
+    Direct,
+    Deferred(E),
+}
+
 fn prepare_setup_plan<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     address: &PreparedRelationAddress<E>,
-    coefficient_functional: PreparedCoefficientFunctional<E>,
-    deferred: bool,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore + MulBase<F>,
 {
     let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
-    let mut plan = {
+    let plan = {
         let _span = tracing::info_span!("relation_setup_plan").entered();
         let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
         evaluator.setup_contribution_plan::<F>(
@@ -62,11 +90,6 @@ where
             (!fold_gadget.is_empty()).then_some(fold_gadget),
         )?
     };
-    if !deferred {
-        let _span =
-            tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
-        plan.materialize_direct_scan(coefficient_functional)?;
-    }
     Ok(plan)
 }
 
@@ -76,7 +99,7 @@ fn evaluate_quotient_relation<F, E>(
     point: &[E],
     setup: &AkitaExpandedSetup<F>,
     alpha: E,
-    deferred_setup_claim: Option<E>,
+    setup_delivery: QuotientSetupDelivery<E>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -121,12 +144,13 @@ where
         evaluator.relation_address_geometry,
         &quotient_row_dims,
     )?;
-    let plan = prepare_setup_plan::<F, E>(
-        evaluator,
-        prepared_point.relation_address(),
-        prepared_point.coefficient_functional(),
-        deferred_setup_claim.is_some(),
-    )?;
+    let plan = prepare_setup_plan::<F, E>(evaluator, prepared_point.relation_address())?;
+    let mut plan = plan;
+    if matches!(setup_delivery, QuotientSetupDelivery::Direct) {
+        let _span =
+            tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
+        plan.materialize_direct_scan(prepared_point.coefficient_functional())?;
+    }
     let mut structured = E::zero();
     let _span = tracing::info_span!("relation_structured_groups").entered();
     for group in groups {
@@ -145,18 +169,19 @@ where
             })?;
     }
     drop(_span);
-    let setup_evaluation = if let Some(claim) = deferred_setup_claim {
-        claim
-    } else {
-        let _span =
-            tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
-        plan.evaluate_direct::<F>(setup)?
+    let setup_evaluation = match setup_delivery {
+        QuotientSetupDelivery::Direct => {
+            let _span =
+                tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
+            plan.evaluate_direct::<F>(setup)?
+        }
+        QuotientSetupDelivery::Deferred(claim) => claim,
     };
     let quotient = evaluate_quotient_tail::<F, E>(evaluator, &prepared_point, &row_families)
         .map_err(|error| {
             AkitaError::InvalidInput(format!("relation quotient failed: {error:?}"))
         })?;
-    if deferred_setup_claim.is_some() {
+    if matches!(setup_delivery, QuotientSetupDelivery::Deferred(_)) {
         evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
     }
     Ok(prepared_point.common_alpha_evaluation() * (structured + setup_evaluation + quotient))
@@ -191,12 +216,12 @@ where
     }
     let prepared_point =
         PreparedReducedRelationPoint::new(point, alpha, evaluator.relation_address_geometry)?;
-    let plan = prepare_setup_plan::<F, E>(
-        evaluator,
-        prepared_point.relation_address(),
-        prepared_point.coefficient_functional(),
-        false,
-    )?;
+    let mut plan = prepare_setup_plan::<F, E>(evaluator, prepared_point.relation_address())?;
+    {
+        let _span =
+            tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
+        plan.materialize_direct_scan(prepared_point.coefficient_functional())?;
+    }
     let mut structured = E::zero();
     let _span = tracing::info_span!("relation_structured_groups").entered();
     for group in groups {

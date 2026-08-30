@@ -32,6 +32,10 @@ impl<E: FieldCore> DenseRelationWeights<E> {
         &self.evaluations
     }
 
+    pub(crate) const fn live_len(&self) -> usize {
+        self.live_len
+    }
+
     pub(crate) fn bind(&mut self, challenge: E)
     where
         E: akita_field::unreduced::HasOptimizedFold,

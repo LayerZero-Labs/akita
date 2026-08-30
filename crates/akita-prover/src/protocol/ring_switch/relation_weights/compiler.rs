@@ -1,5 +1,216 @@
 use super::*;
-use akita_types::{CommitmentSliceGeometry, RelationRangeImageGroupPlan, WitnessLayout};
+use akita_types::{
+    CommitmentSliceGeometry, RelationQuotientLayout, RelationRangeImageGroupPlan,
+    RingMultiplierOpeningPoint, RingRelationGroupOpeningView, RingRelationMode, WitnessLayout,
+};
+
+pub(super) struct RelationWeightCompilation<'a, F: FieldCore, E: FieldCore> {
+    pub(super) plan: RelationWeightCompilationPlan<E>,
+    pub(super) setup_sources: Option<RelationWeightSetupSources<'a, F>>,
+    pub(super) group_sources: Vec<RelationWeightGroupSources<'a, F>>,
+    pub(super) witness_layout: WitnessLayout,
+    pub(super) relation_geometry: RelationWitnessGeometry,
+    pub(super) row_families: Vec<RelationRowFamily>,
+    pub(super) row_weights: Vec<E>,
+    pub(super) physical_field_len: usize,
+    pub(super) relation_coefficient_block_len: usize,
+}
+
+pub(super) struct RelationWeightGroupSources<'a, F: FieldCore> {
+    pub(super) group_index: usize,
+    pub(super) challenges: &'a akita_challenges::Challenges,
+    pub(super) opening: OpeningFamily<&'a RingMultiplierOpeningPoint<F>, ()>,
+}
+
+impl<'a, F, E> RelationWeightCompilation<'a, F, E>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + LiftBase<F>,
+{
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(
+        setup: Option<&'a AkitaExpandedSetup<F>>,
+        instance: &'a RingRelationInstance<F>,
+        lp: &CommittedGroupParams,
+        tau1: &[E],
+        opening_source_len: usize,
+        opening_ring_dim: usize,
+        relation_plan: &RelationRangeImagePlan,
+    ) -> Result<Self, AkitaError> {
+        lp.witness_chunk.validate()?;
+        if instance.role_dims() != lp.role_dims() {
+            return Err(AkitaError::InvalidSetup(
+                "relation instance and level role dimensions disagree".into(),
+            ));
+        }
+        let opening_batch = instance.opening_batch();
+        let relation_geometry =
+            RelationWitnessGeometry::for_level(lp, opening_batch, instance.extension_degree())?;
+        let row_families = relation_geometry.rhs_layout().row_families()?;
+        if row_families.is_empty() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let witness_layout = instance.segment_layout(lp, None)?;
+        match lp.ring_relation_mode {
+            RingRelationMode::QuotientLift => {
+                let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
+                if witness_layout.r_rows().len() != row_families.len()
+                    || witness_layout.quotient_depth() != Some(levels)
+                    || witness_layout
+                        .r_rows()
+                        .iter()
+                        .zip(&row_families)
+                        .any(|(row, family)| row.geometry() != family.geometry())
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "relation quotient layout disagrees with canonical row geometry".into(),
+                    ));
+                }
+            }
+            RingRelationMode::ReducedEvaluation => {
+                if !matches!(
+                    witness_layout.relation_quotient_layout(),
+                    RelationQuotientLayout::ReducedEvaluation
+                ) || !witness_layout.r_rows().is_empty()
+                    || (0..opening_batch.num_groups()).any(|group| {
+                        !matches!(
+                            relation_geometry.group_opening_method(group),
+                            Ok(OpeningMethod::EvaluationTrace)
+                        )
+                    })
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "reduced relation requires a quotient-free evaluation-trace layout".into(),
+                    ));
+                }
+            }
+        }
+        let physical_field_len = opening_source_len
+            .checked_mul(opening_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
+        let domain = relation_plan.digit_witness_domain();
+        if domain.domain_len() != physical_field_len
+            || domain.live_len() != witness_layout.live_coeff_len()
+            || relation_plan.witness_layout() != &witness_layout
+            || relation_plan.relation_witness_geometry() != &relation_geometry
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation plan disagrees with the current ring switch".into(),
+            ));
+        }
+        let relation_coefficient_block_len = relation_plan
+            .relation_address_geometry()
+            .relation_coefficient_block_len();
+        let expected_block_len = RelationAddressGeometry::for_relation(
+            &relation_geometry,
+            opening_ring_dim,
+            witness_layout.live_coeff_len(),
+        )?
+        .relation_coefficient_block_len();
+        if relation_coefficient_block_len != expected_block_len {
+            return Err(AkitaError::InvalidSetup(
+                "relation address geometry disagrees with the current ring switch".into(),
+            ));
+        }
+        let eq_tau1 = SplitEqEvals::new(tau1)?;
+        if eq_tau1.len() < row_families.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: row_families.len(),
+                actual: eq_tau1.len(),
+            });
+        }
+        let row_weights = (0..row_families.len())
+            .map(|row| eq_tau1.eval_at(row))
+            .collect::<Result<Vec<_>, _>>()?;
+        let plan = RelationWeightCompilationPlan::new::<F>(
+            lp,
+            opening_batch,
+            relation_plan,
+            &row_families,
+            &row_weights,
+        )?;
+        let setup_sources = setup
+            .map(|setup| RelationWeightSetupSources::new(setup, lp, &plan))
+            .transpose()?;
+        let group_sources = plan
+            .groups
+            .iter()
+            .map(|group| {
+                let (challenges, opening) = match instance.group_opening_view(group.group_index)? {
+                    RingRelationGroupOpeningView::EvaluationTrace {
+                        challenges,
+                        ring_multiplier_point,
+                    } if matches!(group.opening_method, OpeningMethod::EvaluationTrace) => (
+                        challenges,
+                        OpeningFamily::EvaluationTrace(ring_multiplier_point),
+                    ),
+                    RingRelationGroupOpeningView::SubringCoefficientPacking {
+                        ambient_a_challenges,
+                        ..
+                    } if matches!(
+                        group.opening_method,
+                        OpeningMethod::SubringCoefficientPacking { .. }
+                    ) =>
+                    {
+                        (
+                            ambient_a_challenges,
+                            OpeningFamily::SubringCoefficientPacking(()),
+                        )
+                    }
+                    _ => {
+                        return Err(AkitaError::InvalidSetup(
+                            "relation opening source disagrees with the scheduled method".into(),
+                        ));
+                    }
+                };
+                let expected_challenges = group
+                    .witness
+                    .num_claims
+                    .checked_mul(group.witness.num_live_blocks)
+                    .ok_or(AkitaError::InvalidProof)?;
+                if challenges.len() != expected_challenges {
+                    return Err(AkitaError::InvalidSize {
+                        expected: expected_challenges,
+                        actual: challenges.len(),
+                    });
+                }
+                if let OpeningFamily::EvaluationTrace(point) = opening {
+                    if point.position_len() != group.witness.num_positions
+                        || point.fold_len() != group.witness.num_live_blocks
+                    {
+                        return Err(AkitaError::InvalidProof);
+                    }
+                }
+                Ok(RelationWeightGroupSources {
+                    group_index: group.group_index,
+                    challenges,
+                    opening,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            plan,
+            setup_sources,
+            group_sources,
+            witness_layout,
+            relation_geometry,
+            row_families,
+            row_weights,
+            physical_field_len,
+            relation_coefficient_block_len,
+        })
+    }
+
+    pub(super) fn group_source(
+        &self,
+        group_index: usize,
+    ) -> Result<&RelationWeightGroupSources<'a, F>, AkitaError> {
+        self.group_sources
+            .iter()
+            .find(|group| group.group_index == group_index)
+            .ok_or(AkitaError::InvalidProof)
+    }
+}
 
 pub(super) struct RelationWeightCompilationPlan<E> {
     pub(super) groups: Vec<RelationWeightGroupPlan<E>>,
@@ -10,11 +221,21 @@ pub(super) struct RelationWeightCompilationPlan<E> {
 pub(super) struct RelationWeightGroupPlan<E> {
     pub(super) group_index: usize,
     pub(super) opening_method: OpeningMethod,
-    pub(super) group_d_a: usize,
-    pub(super) group_d_b: usize,
-    pub(super) group_d_d: usize,
-    pub(super) b_ratio: usize,
-    pub(super) d_ratio: usize,
+    pub(super) roles: RelationWeightRoleGeometry,
+    pub(super) witness: RelationWeightWitnessGeometry,
+    pub(super) rows: RelationWeightRowBatches<E>,
+    pub(super) gadgets: RelationWeightGadgets<E>,
+}
+
+pub(super) struct RelationWeightRoleGeometry {
+    pub(super) d_a: usize,
+    pub(super) d_b: usize,
+    pub(super) d_d: usize,
+    pub(super) b_subcolumns: usize,
+    pub(super) d_subcolumns: usize,
+}
+
+pub(super) struct RelationWeightWitnessGeometry {
     pub(super) num_claims: usize,
     pub(super) num_live_blocks: usize,
     pub(super) num_positions: usize,
@@ -27,12 +248,18 @@ pub(super) struct RelationWeightGroupPlan<E> {
     pub(super) physical_n_b: usize,
     pub(super) b_width: usize,
     pub(super) slice_count: usize,
-    pub(super) d_setup_range: std::ops::Range<usize>,
     pub(super) slice_geometry: CommitmentSliceGeometry,
+}
+
+pub(super) struct RelationWeightRowBatches<E> {
+    pub(super) d_setup_range: std::ops::Range<usize>,
     pub(super) consistency_weight: E,
     pub(super) a_row_weights: Vec<E>,
     pub(super) b_setup_row_weights: Vec<(usize, Vec<E>)>,
     pub(super) a_setup_row_weights: Vec<(usize, Vec<E>)>,
+}
+
+pub(super) struct RelationWeightGadgets<E> {
     pub(super) opening_gadget: Vec<E>,
     pub(super) commitment_gadget: Vec<E>,
     pub(super) witness_gadget: Vec<E>,
@@ -239,33 +466,41 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
         Ok(RelationWeightGroupPlan {
             group_index,
             opening_method: relation_geometry.group_opening_method(group_index)?,
-            group_d_a,
-            group_d_b,
-            group_d_d,
-            b_ratio,
-            d_ratio,
-            num_claims,
-            num_live_blocks,
-            num_positions,
-            depth_witness,
-            depth_commit,
-            depth_open,
-            depth_fold,
-            n_a,
-            inner_width: group_lp.a_col_len(),
-            physical_n_b,
-            b_width,
-            slice_count,
-            d_setup_range: d_columns.start..d_setup_end,
-            slice_geometry,
-            consistency_weight,
-            a_row_weights,
-            b_setup_row_weights,
-            a_setup_row_weights,
-            opening_gadget: lift_gadget(depth_open, group_lp.log_basis_open()),
-            commitment_gadget: lift_gadget(depth_commit, group_lp.log_basis_outer()),
-            witness_gadget: lift_gadget(depth_witness, group_lp.log_basis_inner()),
-            fold_gadget: lift_gadget(depth_fold, group_lp.log_basis_open()),
+            roles: RelationWeightRoleGeometry {
+                d_a: group_d_a,
+                d_b: group_d_b,
+                d_d: group_d_d,
+                b_subcolumns: b_ratio,
+                d_subcolumns: d_ratio,
+            },
+            witness: RelationWeightWitnessGeometry {
+                num_claims,
+                num_live_blocks,
+                num_positions,
+                depth_witness,
+                depth_commit,
+                depth_open,
+                depth_fold,
+                n_a,
+                inner_width: group_lp.a_col_len(),
+                physical_n_b,
+                b_width,
+                slice_count,
+                slice_geometry,
+            },
+            rows: RelationWeightRowBatches {
+                d_setup_range: d_columns.start..d_setup_end,
+                consistency_weight,
+                a_row_weights,
+                b_setup_row_weights,
+                a_setup_row_weights,
+            },
+            gadgets: RelationWeightGadgets {
+                opening_gadget: lift_gadget(depth_open, group_lp.log_basis_open()),
+                commitment_gadget: lift_gadget(depth_commit, group_lp.log_basis_outer()),
+                witness_gadget: lift_gadget(depth_witness, group_lp.log_basis_inner()),
+                fold_gadget: lift_gadget(depth_fold, group_lp.log_basis_open()),
+            },
         })
     }
 }
@@ -304,26 +539,26 @@ impl<'a, F: FieldCore> RelationWeightSetupSources<'a, F> {
             .iter()
             .map(|group| {
                 let a_view = setup.shared_matrix().ring_view_dyn(
-                    group.n_a,
-                    group.inner_width,
-                    group.group_d_a,
+                    group.witness.n_a,
+                    group.witness.inner_width,
+                    group.roles.d_a,
                 )?;
                 let a = SetupRows {
-                    rows: (0..group.n_a)
+                    rows: (0..group.witness.n_a)
                         .map(|row| a_view.row_flat(row))
                         .collect::<Result<Vec<_>, _>>()?,
-                    ring_d: group.group_d_a,
+                    ring_d: group.roles.d_a,
                 };
                 let b_view = setup.shared_matrix().ring_view_dyn(
-                    group.physical_n_b,
-                    group.b_width,
-                    group.group_d_b,
+                    group.witness.physical_n_b,
+                    group.witness.b_width,
+                    group.roles.d_b,
                 )?;
                 let b = SetupRows {
-                    rows: (0..group.physical_n_b)
+                    rows: (0..group.witness.physical_n_b)
                         .map(|row| b_view.row_flat(row))
                         .collect::<Result<Vec<_>, _>>()?,
-                    ring_d: group.group_d_b,
+                    ring_d: group.roles.d_b,
                 };
                 Ok(RelationWeightGroupSetupSources {
                     group_index: group.group_index,
@@ -397,31 +632,32 @@ pub(super) fn compile_group_et_addresses<E: FieldCore>(
     witness_layout: &WitnessLayout,
     sink: &mut impl EtWeightSink<E>,
 ) -> Result<(), AkitaError> {
-    for claim in 0..plan.num_claims {
-        for block in 0..plan.num_live_blocks {
+    for claim in 0..plan.witness.num_claims {
+        for block in 0..plan.witness.num_live_blocks {
             let unit = witness_layout.unit_for_block(plan.group_index, block)?;
             let challenge_index = claim
-                .checked_mul(plan.num_live_blocks)
+                .checked_mul(plan.witness.num_live_blocks)
                 .and_then(|base| base.checked_add(block))
                 .ok_or(AkitaError::InvalidProof)?;
-            let (slice_index, slice_block) = plan.slice_geometry.block_coordinates(block)?;
-            for (digit, &gadget) in plan.opening_gadget.iter().enumerate() {
-                for role_subcolumn in 0..plan.d_ratio {
+            let (slice_index, slice_block) =
+                plan.witness.slice_geometry.block_coordinates(block)?;
+            for (digit, &gadget) in plan.gadgets.opening_gadget.iter().enumerate() {
+                for role_subcolumn in 0..plan.roles.d_subcolumns {
                     let physical_start = unit.e_coefficient_index(
-                        plan.group_d_d,
-                        plan.num_claims,
-                        plan.depth_open,
+                        plan.roles.d_d,
+                        plan.witness.num_claims,
+                        plan.witness.depth_open,
                         claim,
                         block,
                         role_subcolumn,
                         digit,
                         0,
                     )?;
-                    let logical_block = claim * plan.num_live_blocks + block;
+                    let logical_block = claim * plan.witness.num_live_blocks + block;
                     let setup_column = logical_block
-                        .checked_mul(plan.d_ratio)
+                        .checked_mul(plan.roles.d_subcolumns)
                         .and_then(|base| base.checked_add(role_subcolumn))
-                        .and_then(|base| base.checked_mul(plan.depth_open))
+                        .and_then(|base| base.checked_mul(plan.witness.depth_open))
                         .and_then(|base| base.checked_add(digit))
                         .ok_or(AkitaError::InvalidProof)?;
                     sink.add_e(EAddress {
@@ -429,36 +665,38 @@ pub(super) fn compile_group_et_addresses<E: FieldCore>(
                         challenge_index,
                         role_subcolumn,
                         setup_column,
-                        constraint_scale: plan.consistency_weight * gadget,
+                        constraint_scale: plan.rows.consistency_weight * gadget,
                     })?;
                 }
             }
-            for a_row in 0..plan.n_a {
-                for (digit, &gadget) in plan.commitment_gadget.iter().enumerate() {
+            for a_row in 0..plan.witness.n_a {
+                for (digit, &gadget) in plan.gadgets.commitment_gadget.iter().enumerate() {
                     let block_claim = plan
+                        .witness
                         .slice_geometry
                         .max_blocks_per_slice()
                         .checked_mul(claim)
                         .and_then(|base| base.checked_add(slice_block))
                         .ok_or(AkitaError::InvalidProof)?;
                     let row_block_claim = plan
+                        .witness
                         .n_a
                         .checked_mul(block_claim)
                         .and_then(|base| base.checked_add(a_row))
                         .ok_or(AkitaError::InvalidProof)?;
-                    for role_subcolumn in 0..plan.b_ratio {
+                    for role_subcolumn in 0..plan.roles.b_subcolumns {
                         let setup_column = row_block_claim
-                            .checked_mul(plan.b_ratio)
+                            .checked_mul(plan.roles.b_subcolumns)
                             .and_then(|base| base.checked_add(role_subcolumn))
-                            .and_then(|base| base.checked_mul(plan.depth_commit))
+                            .and_then(|base| base.checked_mul(plan.witness.depth_commit))
                             .and_then(|base| base.checked_add(digit))
                             .ok_or(AkitaError::InvalidProof)?;
                         let physical_start = unit.t_coefficient_index(
-                            plan.group_d_a,
-                            plan.group_d_b,
-                            plan.num_claims,
-                            plan.n_a,
-                            plan.depth_commit,
+                            plan.roles.d_a,
+                            plan.roles.d_b,
+                            plan.witness.num_claims,
+                            plan.witness.n_a,
+                            plan.witness.depth_commit,
                             claim,
                             block,
                             a_row,
@@ -472,7 +710,7 @@ pub(super) fn compile_group_et_addresses<E: FieldCore>(
                             role_subcolumn,
                             slice_index,
                             setup_column,
-                            constraint_scale: plan.a_row_weights[a_row] * gadget,
+                            constraint_scale: plan.rows.a_row_weights[a_row] * gadget,
                         })?;
                     }
                 }
@@ -488,19 +726,19 @@ pub(super) fn compile_group_z_addresses<E: FieldCore>(
     sink: &mut impl ZWeightSink<E>,
 ) -> Result<(), AkitaError> {
     for unit in witness_layout.units_for_group(plan.group_index)? {
-        for position in 0..plan.num_positions {
-            for (witness_digit, &witness_scale) in plan.witness_gadget.iter().enumerate() {
+        for position in 0..plan.witness.num_positions {
+            for (witness_digit, &witness_scale) in plan.gadgets.witness_gadget.iter().enumerate() {
                 let setup_column = position
-                    .checked_mul(plan.depth_witness)
+                    .checked_mul(plan.witness.depth_witness)
                     .and_then(|base| base.checked_add(witness_digit))
                     .ok_or(AkitaError::InvalidProof)?;
-                for (fold_digit, &fold_scale) in plan.fold_gadget.iter().enumerate() {
+                for (fold_digit, &fold_scale) in plan.gadgets.fold_gadget.iter().enumerate() {
                     sink.add_z(ZAddress {
                         physical_start: unit.z_coefficient_index(
-                            plan.group_d_a,
-                            plan.num_positions,
-                            plan.depth_witness,
-                            plan.depth_fold,
+                            plan.roles.d_a,
+                            plan.witness.num_positions,
+                            plan.witness.depth_witness,
+                            plan.witness.depth_fold,
                             position,
                             witness_digit,
                             fold_digit,
@@ -508,7 +746,9 @@ pub(super) fn compile_group_z_addresses<E: FieldCore>(
                         )?,
                         position,
                         setup_column,
-                        constraint_scale: -(plan.consistency_weight * witness_scale * fold_scale),
+                        constraint_scale: -(plan.rows.consistency_weight
+                            * witness_scale
+                            * fold_scale),
                         setup_scale: -fold_scale,
                     })?;
                 }

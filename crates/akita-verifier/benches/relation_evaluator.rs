@@ -44,7 +44,6 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
-                                None,
                             )
                             .expect("relation evaluation"),
                     )
@@ -59,11 +58,11 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                     black_box(
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F>(
+                            .eval_flat_at_point_with_deferred_setup::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
-                                Some(black_box(F::one())),
+                                black_box(F::one()),
                             )
                             .expect("deferred relation evaluation"),
                     )
@@ -75,23 +74,30 @@ fn bench_relation_evaluator(c: &mut Criterion) {
     let multi_chunk =
         relation_evaluator_benchmark_case_with_chunks(CommitmentRingDims::uniform(D), D, 8)
             .expect("valid multi-chunk relation benchmark case");
-    for (mode, deferred_setup_claim) in [("direct", None), ("deferred", Some(F::one()))] {
+    for deferred in [false, true] {
+        let mode = if deferred { "deferred" } else { "direct" };
         group.bench_with_input(
             BenchmarkId::new("U-8chunks", mode),
             &multi_chunk,
             |b, benchmark_case| {
                 b.iter(|| {
-                    black_box(
+                    let result = if deferred {
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F>(
+                            .eval_flat_at_point_with_deferred_setup::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
-                                black_box(deferred_setup_claim),
+                                black_box(F::one()),
                             )
-                            .expect("multi-chunk relation evaluation"),
-                    )
+                    } else {
+                        benchmark_case.evaluator.eval_flat_at_point::<F>(
+                            black_box(&benchmark_case.point),
+                            black_box(&benchmark_case.setup),
+                            black_box(benchmark_case.alpha),
+                        )
+                    };
+                    black_box(result.expect("multi-chunk relation evaluation"))
                 });
             },
         );

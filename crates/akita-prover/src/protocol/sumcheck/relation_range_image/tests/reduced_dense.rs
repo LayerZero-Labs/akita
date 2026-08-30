@@ -81,3 +81,38 @@ fn reduced_dense_oracle_matches_factored_stage2_across_all_rounds() {
     assert_eq!(dense.expected_final_claim().unwrap(), claim);
     assert_eq!(factored.expected_final_claim().unwrap(), claim);
 }
+
+#[test]
+fn reduced_dense_oracle_rejects_a_live_domain_that_disagrees_with_the_witness() {
+    let lane_bits = 2;
+    let coefficient_bits = 2;
+    let live_lane_count = 3;
+    let coeff_count = 1usize << coefficient_bits;
+    let domain_len = (1usize << lane_bits) * coeff_count;
+    let witness_len = live_lane_count * coeff_count;
+    let stage1_point = vec![F::from_u64(3); lane_bits + coefficient_bits];
+    let result = RelationRangeImageProver::new(
+        F::one(),
+        packed(&vec![0; witness_len]),
+        &stage1_point,
+        F::zero(),
+        4,
+        RelationWeightOracle::ReducedDense(
+            DenseRelationWeights::new(vec![F::zero(); domain_len], witness_len - 1).unwrap(),
+        ),
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
+        F::zero(),
+        PreparedProverLinearTerms::zero(live_lane_count, coeff_count),
+        F::zero(),
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(AkitaError::InvalidSize {
+            expected,
+            actual
+        }) if expected == witness_len && actual == witness_len - 1
+    ));
+}

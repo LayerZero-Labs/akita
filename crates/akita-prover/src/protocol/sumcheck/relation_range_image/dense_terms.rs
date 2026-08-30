@@ -145,14 +145,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_round_compact_dense_terms(
         &self,
         compact_witness: PackedSignedDigitView<'_>,
+        weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         let folding_coefficient_round = self.in_coefficient_round();
         let current_lane_width = self.current_lane_width();
         let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
         let current_coefficient_width = self.current_coefficient_width();
         let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
-        let common_alpha_factor = self.common_alpha_factor();
-        let relation_lane_weights = self.relation_lane_weights();
+        let common_alpha_factor = weights.common_alpha_factor();
+        let relation_lane_weights = weights.relation_lane_weights();
         let relation_pair = |left: usize| {
             let right = left + 1;
             if folding_coefficient_round {
@@ -302,14 +303,15 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn compute_folded_dense_round_terms(
         &self,
         folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
     ) -> (NormRoundTerms<E>, [E; 3]) {
         let folding_coefficient_round = self.in_coefficient_round();
         let current_lane_width = self.current_lane_width();
         let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
         let current_coefficient_width = self.current_coefficient_width();
         let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
-        let common_alpha_factor = self.common_alpha_factor();
-        let relation_lane_weights = self.relation_lane_weights();
+        let common_alpha_factor = weights.common_alpha_factor();
+        let relation_lane_weights = weights.relation_lane_weights();
         let relation_pair = |left: usize| {
             let right = left + 1;
             if folding_coefficient_round {
@@ -352,7 +354,11 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         &self,
         compact_witness: PackedSignedDigitView<'_>,
     ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_dense_terms(compact_witness);
+        let weights = self
+            .quotient_weights()
+            .expect("factored dense test helper requires quotient weights");
+        let (virt_q_coeffs, rel_coeffs) =
+            self.compute_round_compact_dense_terms(compact_witness, weights);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 }

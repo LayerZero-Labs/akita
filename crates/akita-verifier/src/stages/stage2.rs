@@ -241,12 +241,16 @@ where
 
         let evaluate_relation_weight = || {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
-            self.relation_matrix_evaluator.eval_flat_at_point::<F>(
-                challenges,
-                self.setup,
-                self.alpha,
-                self.setup_claim,
-            )
+            match self.setup_claim {
+                Some(claim) => self
+                    .relation_matrix_evaluator
+                    .eval_flat_at_point_with_deferred_setup::<F>(
+                        challenges, self.setup, self.alpha, claim,
+                    ),
+                None => self
+                    .relation_matrix_evaluator
+                    .eval_flat_at_point::<F>(challenges, self.setup, self.alpha),
+            }
         };
         let (relation_weight, coefficient_packing_weight) = match &self.opening_semantics.0 {
             OpeningFamily::EvaluationTrace(_) => (evaluate_relation_weight()?, E::zero()),

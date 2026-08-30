@@ -272,27 +272,21 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let setup_claim = direct_plan.evaluate_direct::<MixedF>(&setup).unwrap();
 
     let direct = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator, &point, &setup, alpha, None,
+        &evaluator, &point, &setup, alpha,
     )
     .unwrap();
-    let deferred = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator,
-        &point,
-        &setup,
-        alpha,
-        Some(setup_claim),
-    )
+    let deferred = super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
+        MixedF,
+        MixedF,
+    >(&evaluator, &point, &setup, alpha, setup_claim)
     .unwrap();
     assert_eq!(deferred, direct);
 
     let claim_delta = MixedF::from_u64(17);
-    let changed = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator,
-        &point,
-        &setup,
-        alpha,
-        Some(setup_claim + claim_delta),
-    )
+    let changed = super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
+        MixedF,
+        MixedF,
+    >(&evaluator, &point, &setup, alpha, setup_claim + claim_delta)
     .unwrap();
     let coefficient_point =
         &point[..relation_address_geometry.relation_coefficient_variable_count()];
@@ -363,7 +357,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
         .unwrap();
     let expected = structured + plan.evaluate_direct::<MixedF>(&setup).unwrap();
     let got = super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-        &evaluator, &point, &setup, alpha, None,
+        &evaluator, &point, &setup, alpha,
     )
     .unwrap();
     assert_eq!(got, expected);
@@ -376,12 +370,15 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
     assert_ne!(common_alpha, MixedF::one());
     assert_ne!(got, common_alpha * expected);
     assert!(
-        super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
+        super::relation_evaluation::evaluate_quotient_relation_with_deferred_setup::<
+            MixedF,
+            MixedF,
+        >(
             &evaluator,
             &point,
             &setup,
             alpha,
-            Some(MixedF::one()),
+            MixedF::one(),
         )
         .is_err()
     );
@@ -403,7 +400,6 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
             &point,
             &setup,
             alpha,
-            None,
         )
         .is_err()
     );
@@ -411,7 +407,7 @@ fn reduced_relation_dispatch_is_complete_and_rejects_deferred_or_mismatched_stat
     for malformed in [&point[..point.len() - 1], &[MixedF::one(); 128][..]] {
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             super::relation_evaluation::evaluate_relation_at_point::<MixedF, MixedF>(
-                &evaluator, malformed, &setup, alpha, None,
+                &evaluator, malformed, &setup, alpha,
             )
         }));
         assert!(outcome.is_ok(), "malformed verifier input must not panic");
