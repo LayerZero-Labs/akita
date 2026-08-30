@@ -1,17 +1,5 @@
 use super::*;
 
-pub(super) fn packing_opening_domain(
-    level: usize,
-    extension_degree: usize,
-    dimensions: CommitmentRingDims,
-) -> Result<Vec<crate::schedule_params::PlannerOpeningCandidate>, AkitaError> {
-    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
-        level,
-        extension_degree,
-        dimensions,
-    )
-}
-
 pub(super) fn terminal(
     ctx: &UnprunedCtx<'_>,
     state: UnprunedState,

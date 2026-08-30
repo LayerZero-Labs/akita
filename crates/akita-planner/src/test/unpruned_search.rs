@@ -11,7 +11,7 @@ mod score;
 #[path = "unpruned_search/suffix.rs"]
 mod suffix;
 
-use candidate::{packing_opening_domain, prepend_fold, prepend_root, terminal};
+use candidate::{prepend_fold, prepend_root, terminal};
 use frontier::retain as retain_frontier_candidate;
 pub(super) use relation::OracleRelationPlan;
 use relation::OracleRelationState;
@@ -179,7 +179,11 @@ pub(super) fn find_schedule(
                     continue;
                 }
                 let root_openings =
-                    packing_opening_domain(0, policy.claim_ext_degree, root_dimensions)?;
+                    crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                        0,
+                        policy.claim_ext_degree,
+                        root_dimensions,
+                    )?;
                 for root_opening in root_openings {
                     for (root_params, output_witness_len) in
                         crate::planner::root_level_candidates_for_basis(

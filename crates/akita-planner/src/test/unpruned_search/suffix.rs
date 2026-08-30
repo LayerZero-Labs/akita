@@ -195,10 +195,14 @@ pub(super) fn visit_suffixes(
                 &mut frontier,
             )?;
             let fold_work = if state.level <= 1 {
-                packing_opening_domain(state.level, ctx.policy.claim_ext_degree, dimensions)?
-                    .into_iter()
-                    .map(|opening| (opening, 0))
-                    .collect::<Vec<_>>()
+                crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
+                    state.level,
+                    ctx.policy.claim_ext_degree,
+                    dimensions,
+                )?
+                .into_iter()
+                .map(|opening| (opening, 0))
+                .collect::<Vec<_>>()
             } else {
                 trace_work.into_iter().collect()
             };
