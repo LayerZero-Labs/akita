@@ -2,8 +2,8 @@
 
 use crate::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField};
 use akita_types::{FoldSchedule, GrindingPlan, OpeningClaimsLayout};
+use jolt_field::{CanonicalEncoding, ExtField};
 
 /// Derive the only accepted grinding plan for one effective schedule and call.
 pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
@@ -11,10 +11,10 @@ pub fn derive_transcript_grinding_plan<Cfg: CommitmentConfig>(
     root_layout: &OpeningClaimsLayout,
 ) -> Result<GrindingPlan, AkitaError>
 where
-    Cfg::Field: CanonicalField,
+    Cfg::Field: CanonicalEncoding,
     Cfg::ExtField: ExtField<Cfg::Field>,
 {
-    let extension_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE;
+    let extension_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != extension_degree {
         return Err(AkitaError::InvalidSetup(
             "grinding plan extension degree does not match the field tower".into(),
@@ -23,7 +23,7 @@ where
     akita_types::derive_transcript_grinding_plan_from_public_shape(
         schedule,
         root_layout,
-        <Cfg::Field as CanonicalField>::modulus_bits(),
+        <Cfg::Field as CanonicalEncoding>::MODULUS_BITS,
         extension_degree,
     )
 }
@@ -33,9 +33,9 @@ mod tests {
     #[cfg(any(feature = "all-schedules", feature = "schedules-default"))]
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_field::PseudoMersenneField;
     #[cfg(any(feature = "all-schedules", feature = "schedules-default"))]
     use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
+    use jolt_field::PseudoMersenne;
 
     #[cfg(feature = "schedules-default")]
     #[test]
@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn exact_field_orders_report_the_pseudo_mersenne_deficit_without_repricing() {
-        fn exact_order<F: PseudoMersenneField>(extension_degree: usize) -> (u32, u128, usize) {
-            (F::MODULUS_BITS, F::MODULUS_OFFSET, extension_degree)
+        fn exact_order<F: PseudoMersenne>(extension_degree: usize) -> (u32, u128, usize) {
+            (F::MODULUS_BITS, F::OFFSET, extension_degree)
         }
 
         for (bits, _, degree) in [
@@ -151,7 +151,7 @@ mod tests {
 
         fn audit<Cfg: CommitmentConfig>()
         where
-            Cfg::Field: CanonicalField,
+            Cfg::Field: CanonicalEncoding,
             Cfg::ExtField: ExtField<Cfg::Field>,
         {
             for entry in Cfg::schedule_catalog().expect("production catalog").entries {

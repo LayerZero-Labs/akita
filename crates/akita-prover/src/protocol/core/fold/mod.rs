@@ -69,14 +69,6 @@ pub(super) fn uniform_opening_method(
     Ok(method)
 }
 
-pub(super) const fn extension_opening_reduction_enabled(
-    opening_method: akita_types::OpeningMethod,
-    geometry_requires_reduction: bool,
-) -> bool {
-    matches!(opening_method, akita_types::OpeningMethod::EvaluationTrace)
-        && geometry_requires_reduction
-}
-
 pub(in crate::protocol::core) struct PreparedFold<F: Field, E: Field> {
     pub(in crate::protocol::core) instance: RingRelationInstance<F>,
     pub(in crate::protocol::core) witness: RingRelationWitness<F>,

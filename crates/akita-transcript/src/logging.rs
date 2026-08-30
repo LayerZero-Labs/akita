@@ -408,7 +408,7 @@ where
 
 impl<F, T> crate::TranscriptFactory<F> for LoggingTranscript<T>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes,
+    F: Field + CanonicalEncoding + CanonicalBytes,
     T: crate::TranscriptFactory<F>,
 {
     fn new(domain_label: &[u8]) -> Self {

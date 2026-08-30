@@ -347,14 +347,19 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     ];
     let mut prover_transcript =
         AkitaTranscript::<Base>::new(b"test/mixed-setup-prefix-suffix-dense-oracle");
+    let grinding_plan = eor_test_plan(long_point.len() - 1, true);
+    let mut prover_transcript =
+        akita_types::ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
     let proved = prove_extension_opening_reduction::<Base, Extension, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &inputs,
         &mut prover_transcript,
+        1,
         "recursive",
     )
     .unwrap();
+    let nonce_stream = prover_transcript.finish().unwrap();
 
     let opening_layout = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(9, 2),
@@ -374,14 +379,22 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     .concat();
     assert_eq!(proved.reduction.proof.partials, expected_partials);
     let mut replay = AkitaTranscript::<Base>::new(b"test/mixed-setup-prefix-suffix-dense-oracle");
+    let mut replay =
+        akita_types::VerifierGrindingTranscript::new(&mut replay, &nonce_stream, &grinding_plan)
+            .unwrap();
     append_claim_values_to_transcript::<Base, Extension, _>(&openings, &mut replay);
     for partial in &proved.reduction.proof.partials {
         append_ext_field::<Base, Extension, _>(&mut replay, ABSORB_EVALUATION_CLAIMS, partial);
     }
+    akita_types::TranscriptGrinding::grind_query(
+        &mut replay,
+        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+    )
+    .unwrap();
     let eta = sample_ext_challenge::<Base, Extension, _>(&mut replay, CHALLENGE_SUMCHECK_BATCH);
-    let claim_coefficients = sample_row_coefficients::<Base, Extension, _>(
+    let claim_coefficients = akita_types::sample_row_coefficients::<Base, Extension, _>(
         &opening_layout,
-        CHALLENGE_EOR_CLAIM_BATCH,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
         &mut replay,
     )
     .unwrap();
@@ -420,20 +433,32 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             acc + coefficient * claim
         });
     replay.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
-    let (batched_final_claim, rho) = proved
-        .reduction
-        .proof
-        .sumcheck
-        .verify::<Base, _, _>(
-            input_claim,
-            8,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-            &mut replay,
-            |transcript| {
-                sample_ext_challenge::<Base, Extension, _>(transcript, CHALLENGE_SUMCHECK_ROUND)
-            },
-        )
-        .unwrap();
+    let mut round = 0u32;
+    let (batched_final_claim, rho) =
+        proved
+            .reduction
+            .proof
+            .sumcheck
+            .verify::<Base, _, _>(
+                input_claim,
+                8,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+                &mut replay,
+                |transcript| {
+                    let challenge =
+                        akita_types::sample_grinded_sumcheck_challenge::<Base, Extension, _>(
+                            transcript,
+                            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                            1,
+                            0,
+                            round,
+                        )?;
+                    round = round.checked_add(1).expect("EOR test round count fits u32");
+                    Ok(challenge)
+                },
+            )
+            .unwrap();
+    replay.finish().unwrap();
 
     let long_final_factor = akita_sumcheck::multilinear_eval(&long_factor, &rho[..8]).unwrap();
     let short_final_factor = akita_sumcheck::multilinear_eval(&short_factor, &rho[..6]).unwrap()

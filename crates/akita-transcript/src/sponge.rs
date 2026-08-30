@@ -288,7 +288,7 @@ where
 
 impl<F, S> crate::TranscriptFactory<F> for AkitaTranscript<F, S>
 where
-    F: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    F: Field + CanonicalEncoding + CanonicalBytes + 'static,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
     fn new(domain_label: &[u8]) -> Self {

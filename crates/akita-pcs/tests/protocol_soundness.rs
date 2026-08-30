@@ -810,7 +810,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     | akita_types::GrindingSite::Tau0Point { .. }
                     | akita_types::GrindingSite::Tau1Point { .. } => {
                         let expected_draws = usize::try_from(run.loss_factor()).unwrap()
-                            * <SE as ExtField<SF>>::EXT_DEGREE;
+                            * <SE as ExtField<SF>>::DEGREE;
                         assert_eq!(
                             *actual_draws, expected_draws,
                             "extension point draw count must match the public geometry"
@@ -820,7 +820,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     | akita_types::GrindingSite::ExtensionOpeningClaimBatch { .. } => {}
                     _ => assert_eq!(
                         *actual_draws,
-                        <SE as ExtField<SF>>::EXT_DEGREE,
+                        <SE as ExtField<SF>>::DEGREE,
                         "one-element challenge must consume exactly one extension-field draw"
                     ),
                 }

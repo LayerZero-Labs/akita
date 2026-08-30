@@ -1341,7 +1341,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-fn fold_response_nonces<FF: FieldCore, E: FieldCore>(
+fn fold_response_nonces<FF: Field, E: Field>(
     proof: &AkitaBatchedProof<FF, E>,
     grinding_plan: &GrindingPlan,
 ) -> BTreeMap<usize, u32> {

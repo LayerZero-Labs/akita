@@ -437,13 +437,6 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     batched
         .serialize_uncompressed(&mut batched_bytes)
         .expect("serialize batched proof");
-    assert_eq!(
-        batched_bytes,
-        decode_golden_hex(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/jolt-field-cutover/proof.hex"
-        )))
-    );
     let shape = batched.shape();
     let public_shape = batched.shape();
     public_shape

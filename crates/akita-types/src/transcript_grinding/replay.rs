@@ -292,7 +292,7 @@ impl<'a> TranscriptNonceWriter<'a> {
     /// Search and commit the next scheduled proof-of-work transition.
     pub fn grind<F, T>(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F> + TranscriptChallengePreview,
     {
         let entry = self
@@ -372,7 +372,7 @@ impl TranscriptNonceReader<'_> {
     /// Read and verify the next scheduled proof-of-work transition.
     pub fn grind<F, T>(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
     {
         let entry = self
@@ -419,7 +419,7 @@ impl TranscriptNonceReader<'_> {
 /// Transcript operations shared by prover and verifier grinding replay.
 pub trait TranscriptGrinding<F>: Transcript<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Apply or verify the scheduled PoW transition before its challenge draw.
     fn grind_query(&mut self, site: GrindingSite) -> Result<(), AkitaError>;
@@ -436,7 +436,7 @@ where
 /// Prover-side transcript operations backed by the canonical nonce writer.
 pub trait ProverTranscriptGrinding<F>: TranscriptGrinding<F> + TranscriptChallengePreview
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Commit the accepted fold-response nonce before replaying its indexed challenges.
     fn commit_fold_response(&mut self, site: GrindingSite, counter: u32) -> Result<(), AkitaError>;
@@ -445,7 +445,7 @@ where
 /// Verifier-side transcript operations backed by the canonical nonce reader.
 pub trait VerifierTranscriptGrinding<F>: TranscriptGrinding<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Read the next scheduled fold-response nonce before replaying its challenges.
     fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError>;
@@ -474,7 +474,7 @@ pub trait NonceCursor<F, T> {
 
 impl<F, T> NonceCursor<F, T> for TranscriptNonceWriter<'_>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F> + TranscriptChallengePreview,
 {
     fn grind_query(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError> {
@@ -494,7 +494,7 @@ where
 
 impl<F, T> NonceCursor<F, T> for TranscriptNonceReader<'_>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     fn grind_query(&mut self, transcript: &mut T, site: GrindingSite) -> Result<(), AkitaError> {
@@ -591,7 +591,7 @@ impl<'transcript, 'proof, T> GrindingTranscript<'transcript, T, TranscriptNonceR
 
 impl<F, T, C> Transcript<F> for GrindingTranscript<'_, T, C>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
     C: Send,
 {
@@ -712,7 +712,7 @@ where
 
 impl<F, T, C> TranscriptGrinding<F> for GrindingTranscript<'_, T, C>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
     C: NonceCursor<F, T> + Send,
 {
@@ -756,7 +756,7 @@ where
 
 impl<F, T> ProverTranscriptGrinding<F> for ProverGrindingTranscript<'_, '_, T>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F> + TranscriptChallengePreview,
 {
     fn commit_fold_response(&mut self, site: GrindingSite, counter: u32) -> Result<(), AkitaError> {
@@ -776,7 +776,7 @@ where
 
 impl<F, T> VerifierTranscriptGrinding<F> for VerifierGrindingTranscript<'_, '_, T>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
 {
     fn read_fold_response(&mut self, site: GrindingSite) -> Result<u32, AkitaError> {

@@ -3,7 +3,6 @@
 use crate::instance_descriptor::digest_descriptor_bytes;
 use crate::OpeningMethod;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::{AkitaSerialize, SerializationError};
 use akita_transcript::{
     grinding_predicate_accepts, sample_ext_challenge, search_grinding_nonce, Transcript,
@@ -13,6 +12,7 @@ pub use akita_transcript::{
     GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
     MAX_GRINDING_BITS,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::num::NonZeroU8;
 
 /// Target work factor for every grinding-priced Fiat-Shamir query.
@@ -497,7 +497,7 @@ pub fn sample_grinded_sumcheck_challenge<F, E, T>(
     round: u32,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: TranscriptGrinding<F>,
 {

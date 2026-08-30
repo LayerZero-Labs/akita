@@ -23,6 +23,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
+use crate::GrindingPlan;
 use crate::{
     canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
     sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,

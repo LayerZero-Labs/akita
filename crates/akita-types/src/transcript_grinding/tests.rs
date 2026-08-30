@@ -1,9 +1,9 @@
 use super::*;
-use akita_field::Prime128Offset275;
 use akita_transcript::{
     grinding_predicate_accepts, preview_grinding_predicate, search_grinding_nonce, AkitaTranscript,
     Transcript,
 };
+use jolt_field::Prime128Offset275;
 use std::num::NonZeroU8;
 
 fn stream_test_plan() -> GrindingPlan {

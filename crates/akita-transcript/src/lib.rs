@@ -131,7 +131,7 @@ where
 /// existing transcript while still implementing [`Transcript`].
 pub trait TranscriptFactory<F>: Transcript<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Construct a new transcript under a domain label.
     fn new(domain_label: &[u8]) -> Self;
