@@ -169,6 +169,40 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         "successors in one parent-observable bucket must price identically"
     );
 
+    let mut reduced_successor = evaluation_trace.clone();
+    reduced_successor.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        reduced_successor.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        evaluation_trace.recursive_opening_num_vars().unwrap(),
+        reduced_successor.recursive_opening_num_vars().unwrap()
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&reduced_successor), None).unwrap(),
+        "relation details invisible to the parent must share one successor class"
+    );
+    let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
+    let grind_bits = |successor| {
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            &evaluation_trace,
+            512,
+            &layout,
+            akita_types::GrindingPlanSuccessor::Recursive(successor),
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            1,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        grind_bits(&evaluation_trace),
+        grind_bits(&reduced_successor),
+        "one parent-observable successor class must have one grinding price"
+    );
+
     let outer = wider_opening.outer().matrix;
     wider_opening.own_group_mut().profile.outer.matrix =
         akita_types::OuterCommitMatrixParams::new_unchecked(
