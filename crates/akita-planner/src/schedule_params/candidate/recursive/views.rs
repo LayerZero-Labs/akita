@@ -105,7 +105,9 @@ pub(crate) fn derive_recursive_candidate_views(
                     terminal_best_score.set(Some(score));
                     terminal_best = Some((score, split, candidate.clone(), next_witness_len));
                 }
-                if next_witness_len >= request.current_witness_len {
+                if !relation_domain.admits(candidate.relation_transition)
+                    || next_witness_len >= request.current_witness_len
+                {
                     return;
                 }
                 if fold_best

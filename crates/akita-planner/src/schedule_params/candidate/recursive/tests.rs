@@ -114,6 +114,49 @@ fn combined_relation_views_match_mode_specific_searches() {
 }
 
 #[test]
+fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,
+    };
+    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+    let policy = policy_of::<Recursive>();
+    let request = RecursiveCandidateRequest {
+        policy: &policy,
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
+        opening: PlannerOpeningCandidate::evaluation_trace(
+            Recursive::ring_challenge_config(64).expect("challenge config"),
+        ),
+        dimensions: CommitmentRingDims::uniform(64),
+        current_witness_len: 948_672,
+        source: crate::InnerBasisSource::BalancedDigits { log_basis: 4 },
+        log_basis_inner: 4,
+        log_basis_open: 4,
+        fold_level: 3,
+        source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
+    };
+    let relation_domain = RelationSearchDomain::ReducedOnly;
+    for fold_policy in [
+        FoldCandidatePolicy::Best,
+        FoldCandidatePolicy::Frontier(SplitBoundPolicy::Enabled),
+    ] {
+        let views = derive_recursive_candidate_views(request, fold_policy, relation_domain)
+            .expect("reduced-only combined search");
+        assert!(!views.terminal.is_empty());
+        assert!(views
+            .terminal
+            .iter()
+            .all(|params| params.ring_relation_mode == QuotientLift));
+        assert!(!views.folds.is_empty());
+        assert!(views.folds.iter().all(|(candidate, _)| {
+            candidate.params.ring_relation_mode == ReducedEvaluation
+                && relation_domain.admits(candidate.relation_transition)
+        }));
+    }
+}
+
+#[test]
 fn combined_views_keep_a_noncontracting_terminal_candidate() {
     use akita_config::{
         policy_of, proof_optimized::fp128::OneHot, CommitmentConfig, RecursiveCommitmentConfig,

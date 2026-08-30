@@ -400,14 +400,20 @@ impl<'a> CandidateDomain<'a> {
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             }
                         }));
-                        folds.extend(views.folds.into_iter().map(
-                            |(candidate, next_witness_len)| RawFoldCandidate {
+                        for (candidate, next_witness_len) in views.folds {
+                            if !relation_domain.admits(candidate.relation_transition) {
+                                return Err(AkitaError::InvalidSetup(
+                                    "combined recursive view emitted a fold outside its relation domain"
+                                        .into(),
+                                ));
+                            }
+                            folds.push(RawFoldCandidate {
                                 relation_transition: candidate.relation_transition,
                                 params: candidate.params,
                                 next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
-                            },
-                        ));
+                            });
+                        }
                         continue;
                     }
                     if work.purpose.allows_terminal() {
