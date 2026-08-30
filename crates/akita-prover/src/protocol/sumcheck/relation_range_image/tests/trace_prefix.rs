@@ -95,7 +95,7 @@ fn stage2_two_shared_sources_match_direct_path_through_all_transitions() {
         structured,
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
 
     let mut optimized_claim = optimized.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -166,7 +166,7 @@ fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
     assert!(!direct.can_use_deferred_compact_prefix());
 
     let mut prover_claim = prover.input_claim();

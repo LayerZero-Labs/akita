@@ -15,9 +15,19 @@ use crate::protocol::ring_relation::{
 use crate::protocol::ring_relation_witness::{
     FoldChunkCoefficients, RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
+use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
+use crate::protocol::sumcheck::{
+    DenseRelationWeights, RelationRangeImageProver, RelationWeightOracle,
+};
 use crate::{AkitaProverSetup, DecomposeFoldWitness};
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
+use akita_error::AkitaError;
+use akita_sumcheck::{
+    SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
+    SumcheckInstanceVerifierExt,
+};
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget, AkitaCommitmentHint,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
@@ -31,6 +41,34 @@ use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;
 const REDUCED_D: usize = 64;
+
+struct ReducedStage2Replay {
+    num_rounds: usize,
+    input_claim: ReducedF,
+    expected_point: Vec<ReducedF>,
+    expected_claim: ReducedF,
+}
+
+impl SumcheckInstanceVerifier<ReducedF> for ReducedStage2Replay {
+    fn num_rounds(&self) -> usize {
+        self.num_rounds
+    }
+
+    fn degree_bound(&self) -> usize {
+        3
+    }
+
+    fn input_claim(&self) -> ReducedF {
+        self.input_claim
+    }
+
+    fn expected_output_claim(&self, challenges: &[ReducedF]) -> Result<ReducedF, AkitaError> {
+        if challenges != self.expected_point {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(self.expected_claim)
+    }
+}
 
 fn reduced_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
@@ -171,6 +209,7 @@ fn assert_reduced_compiler_matches_structured_verifier(
     params: &CommittedGroupParams,
     instance: &RingRelationInstance<ReducedF>,
     setup: &akita_types::AkitaExpandedSetup<ReducedF>,
+    witness: &crate::RecursiveWitnessFlat,
 ) {
     let opening_batch = instance.opening_batch();
     let witness_layout = instance
@@ -217,7 +256,7 @@ fn assert_reduced_compiler_matches_structured_verifier(
     let point = (0..geometry.relation_point_variable_count())
         .map(|index| ReducedF::from_u64(41 + index as u64))
         .collect::<Vec<_>>();
-    let dense_evaluation = multilinear_eval(&dense, &point).expect("dense MLE");
+    let dense_evaluation = multilinear_eval(dense.evaluations(), &point).expect("dense MLE");
 
     let row_count = params
         .relation_matrix_row_count(opening_batch.num_groups())
@@ -299,7 +338,96 @@ fn assert_reduced_compiler_matches_structured_verifier(
             .expect("direct reduced setup evaluation")
         + compression_evaluation;
     assert_eq!(dense_evaluation, verifier_evaluation);
-    assert!(dense[live_len..].iter().all(ReducedF::is_zero));
+    assert!(dense.evaluations()[live_len..]
+        .iter()
+        .all(ReducedF::is_zero));
+
+    let dense_evaluations = dense.evaluations().to_vec();
+    let witness_digits = witness.to_i8_digits();
+    assert_eq!(witness_digits.len(), live_len);
+    let witness_table = witness_digits
+        .iter()
+        .map(|&digit| ReducedF::from_i64(i64::from(digit)))
+        .chain(std::iter::repeat(ReducedF::zero()))
+        .take(physical_field_len)
+        .collect::<Vec<_>>();
+    let range_table = witness_table
+        .iter()
+        .map(|&digit| digit * (digit + ReducedF::one()))
+        .collect::<Vec<_>>();
+    let stage1_point = (0..geometry.relation_point_variable_count())
+        .map(|index| ReducedF::from_u64(101 + index as u64))
+        .collect::<Vec<_>>();
+    let range_image = multilinear_eval(&range_table, &stage1_point).expect("range-image MLE");
+    let relation_claim = witness_table
+        .iter()
+        .zip(&dense_evaluations)
+        .fold(ReducedF::zero(), |sum, (&digit, &weight)| {
+            sum + digit * weight
+        });
+    let batching = ReducedF::from_u64(137);
+    let mut prover = RelationRangeImageProver::new(
+        batching,
+        witness.packed_digits(),
+        &stage1_point,
+        range_image,
+        1usize << params.open().digits.log_basis,
+        RelationWeightOracle::ReducedDense(
+            DenseRelationWeights::new(dense_evaluations.clone(), live_len)
+                .expect("typed dense weights"),
+        ),
+        geometry.live_relation_lane_count(),
+        geometry.relation_lane_variable_count(),
+        geometry.relation_coefficient_variable_count(),
+        relation_claim,
+        PreparedProverLinearTerms::zero(
+            geometry.live_relation_lane_count(),
+            geometry.relation_coefficient_block_len(),
+        ),
+        ReducedF::zero(),
+        None,
+    )
+    .expect("reduced Stage-2 prover");
+    let input_claim = prover.input_claim();
+    let mut prover_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let (proof, challenges, final_claim) = prover
+        .prove::<ReducedF, _, _>(&mut prover_transcript, |transcript| {
+            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
+        })
+        .expect("reduced Stage-2 proof");
+    let witness_evaluation =
+        multilinear_eval(&witness_table, &challenges).expect("witness MLE at Stage-2 point");
+    let relation_evaluation =
+        multilinear_eval(&dense_evaluations, &challenges).expect("relation MLE at Stage-2 point");
+    let equality = EqPolynomial::mle(&stage1_point, &challenges).expect("Stage-2 equality");
+    let expected_claim =
+        batching * equality * witness_evaluation * (witness_evaluation + ReducedF::one())
+            + witness_evaluation * relation_evaluation;
+    assert_eq!(final_claim, expected_claim);
+    let verifier = ReducedStage2Replay {
+        num_rounds: geometry.relation_point_variable_count(),
+        input_claim,
+        expected_point: challenges.clone(),
+        expected_claim,
+    };
+    let mut verifier_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    let replayed = verifier
+        .verify::<ReducedF, _, _>(&proof, &mut verifier_transcript, |transcript| {
+            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
+        })
+        .expect("reduced Stage-2 transcript replay");
+    assert_eq!(replayed, challenges);
+
+    let wrong_verifier = ReducedStage2Replay {
+        expected_claim: expected_claim + ReducedF::one(),
+        ..verifier
+    };
+    let mut wrong_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
+    assert!(wrong_verifier
+        .verify::<ReducedF, _, _>(&proof, &mut wrong_transcript, |transcript| {
+            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
+        })
+        .is_err());
 }
 
 #[test]
@@ -508,6 +636,7 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
         &compressed_params,
         &compressed_instance,
         setup.expanded.as_ref(),
+        &compressed_w,
     );
 
     let raw_params = reduced_params(CommitmentPayloadMode::Raw);
@@ -535,6 +664,7 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
         &raw_params,
         &raw_instance,
         setup.expanded.as_ref(),
+        &raw_w,
     );
 
     let mismatched_hint =

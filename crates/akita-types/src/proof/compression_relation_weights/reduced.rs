@@ -9,16 +9,16 @@ struct ReducedCompressionMapEvent<E: FieldCore> {
 }
 
 /// Checked physical/setup-column view for one canonical compression map.
-struct CompressionMapColumns<F> {
-    row: Vec<F>,
+struct CompressionMapColumns<'a, F> {
+    row: &'a [F],
     physical_start: usize,
     input_width: usize,
     ring_dimension: usize,
 }
 
-impl<F: FieldCore> CompressionMapColumns<F> {
+impl<'a, F: FieldCore> CompressionMapColumns<'a, F> {
     fn new(
-        setup: &AkitaExpandedSetup<F>,
+        setup: &'a AkitaExpandedSetup<F>,
         span: &CompressionWitnessSpan,
         physical_field_len: usize,
     ) -> Result<Self, AkitaError> {
@@ -40,7 +40,7 @@ impl<F: FieldCore> CompressionMapColumns<F> {
                 .shared_matrix()
                 .ring_view_dyn(1, map.input_width(), map.ring_dimension())?;
         Ok(Self {
-            row: matrix.row_flat(0)?.to_vec(),
+            row: matrix.row_flat(0)?,
             physical_start: digit_span.start,
             input_width: map.input_width(),
             ring_dimension: map.ring_dimension(),

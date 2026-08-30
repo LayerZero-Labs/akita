@@ -190,11 +190,9 @@ where
                         opening_points,
                     })?;
                 let ordinary = events.factor_common_alpha()?;
-                let compression = lp
-                    .payload_mode
-                    .is_compressed()
-                    .then(|| {
-                        akita_types::build_compression_relation_weights(
+                let compression = if lp.payload_mode.is_compressed() {
+                    super::RingSwitchCompression::QuotientLift {
+                        weights: akita_types::build_compression_relation_weights(
                             setup,
                             instance,
                             alpha,
@@ -203,11 +201,17 @@ where
                             &witness_layout,
                             opening_ring_dim,
                             physical_field_len,
-                        )
-                    })
-                    .transpose()?;
+                        )?,
+                        support: akita_types::NegativeBinarySupport::new(
+                            &witness_layout,
+                            physical_field_len,
+                        )?,
+                    }
+                } else {
+                    super::RingSwitchCompression::Raw
+                };
                 Ok::<_, AkitaError>((
-                    crate::protocol::sumcheck::CompiledRelationWeights::QuotientLift(ordinary),
+                    crate::protocol::sumcheck::RelationWeightOracle::QuotientFactored(ordinary),
                     compression,
                     opening_semantics,
                 ))
@@ -221,7 +225,7 @@ where
                         "reduced relation weights require evaluation-trace openings".into(),
                     ));
                 }
-                let evaluations = relation_weights::build_reduced_dense_relation_weights(
+                let dense = relation_weights::build_reduced_dense_relation_weights(
                     setup,
                     instance,
                     alpha,
@@ -231,13 +235,19 @@ where
                     opening_ring_dim,
                     &relation_plan,
                 )?;
-                let dense = crate::protocol::sumcheck::DenseRelationWeights::new(
-                    evaluations,
-                    witness_layout.live_coeff_len(),
-                )?;
+                let compression = if lp.payload_mode.is_compressed() {
+                    super::RingSwitchCompression::ReducedEvaluation {
+                        support: akita_types::NegativeBinarySupport::new(
+                            &witness_layout,
+                            physical_field_len,
+                        )?,
+                    }
+                } else {
+                    super::RingSwitchCompression::Raw
+                };
                 Ok((
-                    crate::protocol::sumcheck::CompiledRelationWeights::ReducedEvaluation(dense),
-                    None,
+                    crate::protocol::sumcheck::RelationWeightOracle::ReducedDense(dense),
+                    compression,
                     akita_types::OpeningFamily::EvaluationTrace(()),
                 ))
             }
@@ -256,8 +266,8 @@ where
         (relation_weights, w_compact)
     };
 
-    let (relation_weights, compression_weights, opening_semantics) = relation_weights_result
-        .map_err(|err| {
+    let (relation_weights, compression, opening_semantics) =
+        relation_weights_result.map_err(|err| {
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
@@ -268,31 +278,6 @@ where
             "prepared witness geometry disagrees with the current relation split".into(),
         ));
     }
-    let negative_binary_support = lp
-        .payload_mode
-        .is_compressed()
-        .then(|| akita_types::NegativeBinarySupport::new(&witness_layout, physical_field_len))
-        .transpose()?;
-    let compression = match (
-        lp.payload_mode.is_compressed(),
-        lp.ring_relation_mode,
-        compression_weights,
-        negative_binary_support,
-    ) {
-        (false, _, None, None) => super::RingSwitchCompression::Raw,
-        (true, akita_types::RingRelationMode::QuotientLift, Some(weights), Some(support)) => {
-            super::RingSwitchCompression::QuotientLift { weights, support }
-        }
-        (true, akita_types::RingRelationMode::ReducedEvaluation, None, Some(support)) => {
-            super::RingSwitchCompression::ReducedEvaluation { support }
-        }
-        _ => {
-            return Err(AkitaError::InvalidSetup(
-                "compression state disagrees with payload and relation modes".into(),
-            ));
-        }
-    };
-
     Ok(RingSwitchFinalization {
         output: RingSwitchOutput {
             w_evals_compact,

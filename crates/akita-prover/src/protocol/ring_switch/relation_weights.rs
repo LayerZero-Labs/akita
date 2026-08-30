@@ -23,10 +23,10 @@ pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use compiler::{
-    compile_group_et_addresses, compile_group_z_addresses, EAddress, RelationWeightCompilationPlan,
-    RelationWeightSink, TAddress, ZAddress,
+    compile_group_et_addresses, compile_group_z_addresses, EAddress, EtWeightSink,
+    RelationWeightCompilationPlan, RelationWeightSetupSources, TAddress, ZAddress, ZWeightSink,
 };
-use setup_columns::{evaluate_setup_columns, SetupColumnEvaluations, SetupRows};
+use setup_columns::{contract_setup_columns, SetupColumnValues, SetupRows};
 
 /// Source of setup-matrix relation weights for this evaluation.
 #[derive(Clone, Copy)]
@@ -135,17 +135,23 @@ fn matching_row_range(
     Ok(start..end)
 }
 
-struct LiftedGroupSink<'a, E: Field> {
+#[derive(Clone, Copy)]
+enum LiftedEtSetup<'a, E: Field> {
+    Matrix {
+        d: &'a SetupColumnValues<E>,
+        b: &'a SetupColumnValues<E>,
+    },
+    Deferred,
+}
+
+struct LiftedEtSink<'a, E: Field> {
     events: &'a mut RelationWeightEvents<E>,
     plan: &'a compiler::RelationWeightGroupPlan<E>,
     challenge_evaluations: &'a [E],
-    opening_evaluations: &'a [E],
-    d_setup: Option<&'a SetupColumnEvaluations<E>>,
-    b_setup: Option<&'a SetupColumnEvaluations<E>>,
-    a_setup: Option<&'a [E]>,
+    setup: LiftedEtSetup<'a, E>,
 }
 
-impl<E: Field> RelationWeightSink<E> for LiftedGroupSink<'_, E> {
+impl<E: Field> EtWeightSink<E> for LiftedEtSink<'_, E> {
     fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
         if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
             self.events.push(
@@ -160,12 +166,12 @@ impl<E: Field> RelationWeightSink<E> for LiftedGroupSink<'_, E> {
                 RelationWeightContribution::Constraint,
             )?;
         }
-        if let Some(setup) = self.d_setup {
+        if let LiftedEtSetup::Matrix { d, .. } = self.setup {
             self.events.push(
                 address.physical_start,
                 self.plan.group_d_d,
                 0,
-                setup.get(0, address.setup_column)?,
+                d.get_scalar(0, address.setup_column)?,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
@@ -184,18 +190,33 @@ impl<E: Field> RelationWeightSink<E> for LiftedGroupSink<'_, E> {
                 * address.constraint_scale,
             RelationWeightContribution::Constraint,
         )?;
-        if let Some(setup) = self.b_setup {
+        if let LiftedEtSetup::Matrix { b, .. } = self.setup {
             self.events.push(
                 address.physical_start,
                 self.plan.group_d_b,
                 0,
-                setup.get(address.slice_index, address.setup_column)?,
+                b.get_scalar(address.slice_index, address.setup_column)?,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
         Ok(())
     }
+}
 
+#[derive(Clone, Copy)]
+enum LiftedZSetup<'a, E: Field> {
+    Matrix(&'a SetupColumnValues<E>),
+    Deferred,
+}
+
+struct LiftedZSink<'a, E: Field> {
+    events: &'a mut RelationWeightEvents<E>,
+    plan: &'a compiler::RelationWeightGroupPlan<E>,
+    opening_evaluations: &'a [E],
+    setup: LiftedZSetup<'a, E>,
+}
+
+impl<E: Field> ZWeightSink<E> for LiftedZSink<'_, E> {
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
         if matches!(self.plan.opening_method, OpeningMethod::EvaluationTrace) {
             self.events.push_native_ring(
@@ -209,15 +230,11 @@ impl<E: Field> RelationWeightSink<E> for LiftedGroupSink<'_, E> {
                 RelationWeightContribution::Constraint,
             )?;
         }
-        if let Some(setup) = self.a_setup {
+        if let LiftedZSetup::Matrix(setup) = self.setup {
             self.events.push_native_ring(
                 address.physical_start,
                 self.plan.group_d_a,
-                setup
-                    .get(address.setup_column)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?
-                    * address.setup_scale,
+                setup.get_scalar(0, address.setup_column)? * address.setup_scale,
                 RelationWeightContribution::SetupMatrix,
             )?;
         }
@@ -310,7 +327,6 @@ where
     let row_weights = (0..rows)
         .map(|row| eq_tau1.eval_at(row))
         .collect::<Result<Vec<_>, _>>()?;
-    let n_d_active = lp.open().matrix.output_rank();
     let levels = r_decomp_levels::<F>(lp.open().digits.log_basis);
     let witness_layout = instance.segment_layout(lp, None)?;
     if witness_layout.r_rows().len() != rows || witness_layout.quotient_depth() != Some(levels) {
@@ -340,11 +356,6 @@ where
         RelationSetupSource::DeferredClaim => None,
     };
     let setup_is_deferred = setup_matrix.is_none();
-    let d_column_ranges = if setup_matrix.is_some() {
-        relation_d_column_ranges(lp, opening_batch, &relation_geometry)?
-    } else {
-        Vec::new()
-    };
     let relation_coefficient_block_len = RelationAddressGeometry::for_relation(
         &relation_geometry,
         opening_ring_dim,
@@ -369,6 +380,9 @@ where
         &row_families,
         &row_weights,
     )?;
+    let setup_sources = setup_matrix
+        .map(|setup| RelationWeightSetupSources::new(setup, lp, &compilation))
+        .transpose()?;
     let (coefficient_packing_events, opening_semantics) = match opening_points {
         OpeningFamily::SubringCoefficientPacking(prepared_points) => {
             let (events, batch) = prepare_coefficient_packing_batch_semantics(
@@ -430,51 +444,19 @@ where
         }
     }
     relation_events.extend_events(coefficient_packing_events)?;
-    let d_view = if let Some(setup) = setup_matrix {
-        let d_physical_columns = d_column_ranges
-            .iter()
-            .map(|range| range.end)
-            .max()
-            .unwrap_or(0);
-        let rank = lp.open().matrix.output_rank();
-        Some((&setup.shared_matrix, rank, d_physical_columns))
-    } else {
-        None
-    };
-    let d_family = match &d_view {
-        Some((matrix, rows, cols)) => {
-            let view = matrix.ring_view_dyn(*rows, *cols, d_d)?;
-            Some(SetupRows {
-                rows: (0..*rows)
-                    .map(|row| view.row_flat(row))
-                    .collect::<Result<Vec<_>, _>>()?,
-                ring_d: d_d,
-            })
-        }
-        None => None,
-    };
-    let d_start = row_families
-        .iter()
-        .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
-        .ok_or(AkitaError::InvalidProof)?;
     for group_plan in &compilation.groups {
         let group_index = group_plan.group_index;
+        let group_setup = setup_sources
+            .as_ref()
+            .map(|sources| sources.group(group_index))
+            .transpose()?;
         let packing_semantics = *packing_semantics_by_group
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let e_setup_offset = if setup_matrix.is_some() {
-            d_column_ranges
-                .get(group_index)
-                .ok_or(AkitaError::InvalidProof)?
-                .start
-        } else {
-            0
-        };
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let group_d_a = group_plan.group_d_a;
         let group_d_b = group_plan.group_d_b;
         let group_d_d = group_plan.group_d_d;
-        let d_ratio = group_plan.d_ratio;
         let group_alpha_pows_a = scalar_powers(alpha, group_d_a);
         let group_alpha_pows_b = scalar_powers(alpha, group_d_b);
         let group_alpha_pows_d = scalar_powers(alpha, group_d_d);
@@ -511,107 +493,58 @@ where
         let challenge_evaluations = (0..total_blocks)
             .map(|index| challenges.eval_at_pows::<F, E>(index, &group_alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
-        let depth_open = group_plan.depth_open;
-        let n_a = group_plan.n_a;
-        let physical_n_b = group_lp.b_rows_len();
-        let inner_width = group_plan.inner_width;
-        // Hoist per-group geometry into `Copy` locals so the parallel closures
-        // below capture scalars instead of the `!Sync` `&dyn LevelParamsLike`.
-        let slice_geometry = &group_plan.slice_geometry;
-        let b_width = slice_geometry.physical_input_width();
-        let (setup_a_family, b_family) = if let Some(setup) = setup_matrix {
-            let a_view = setup
-                .shared_matrix
-                .ring_view_dyn(n_a, inner_width, group_d_a)?;
-            let a_family = SetupRows {
-                rows: (0..n_a)
-                    .map(|row| a_view.row_flat(row))
-                    .collect::<Result<Vec<_>, _>>()?,
-                ring_d: group_d_a,
-            };
-            let b_view = setup
-                .shared_matrix
-                .ring_view_dyn(physical_n_b, b_width, group_d_b)?;
-            let b_family = SetupRows {
-                rows: (0..physical_n_b)
-                    .map(|row| b_view.row_flat(row))
-                    .collect::<Result<Vec<_>, _>>()?,
-                ring_d: group_d_b,
-            };
-            (Some(a_family), Some(b_family))
-        } else {
-            (None, None)
-        };
-        let d_setup_start = e_setup_offset;
-        let d_setup_len = total_blocks
-            .checked_mul(d_ratio)
-            .and_then(|len| len.checked_mul(depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
-        let d_setup_end = d_setup_start
-            .checked_add(d_setup_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".to_string()))?;
-        let d_setup_accs = if let Some(d_family) = &d_family {
+        let d_setup_accs = if let Some(setup) = setup_sources.as_ref() {
             let _span = tracing::info_span!("relation_weight_d_setup_columns").entered();
-            let row_weights = (0..n_d_active)
-                .map(|row| Ok((row, vec![eq_tau1.eval_at(d_start + row)?])))
-                .filter_map(|result| match result {
-                    Ok((_, weights)) if weights[0].is_zero() => None,
-                    other => Some(other),
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            Some(evaluate_setup_columns(
-                d_family,
-                d_setup_start..d_setup_end,
-                &row_weights,
+            Some(contract_setup_columns(
+                &setup.d,
+                group_plan.d_setup_range.clone(),
+                &compilation.d_row_weights,
                 1,
-                &group_alpha_pows_d,
+                1,
+                |coefficients| {
+                    Ok(vec![eval_flat_ring_at_pows_fast(
+                        coefficients,
+                        &group_alpha_pows_d,
+                    )])
+                },
             )?)
         } else {
             None
         };
-        let b_setup_accs = if let Some(b_family) = &b_family {
+        let b_setup_accs = if let Some(group_setup) = group_setup {
             let _span = tracing::info_span!("relation_weight_b_setup_columns").entered();
-            let slice_count = group_lp.outer_slice_count().get();
-            let row_weights = (0..physical_n_b)
-                .map(|row| {
-                    let weights = (0..slice_count)
-                        .map(|slice_index| {
-                            let logical_row =
-                                slice_geometry.logical_row_index(slice_index, row, physical_n_b)?;
-                            group_plan
-                                .b_row_weights
-                                .get(logical_row)
-                                .copied()
-                                .ok_or(AkitaError::InvalidProof)
-                        })
-                        .collect::<Result<Vec<_>, AkitaError>>()?;
-                    Ok((row, weights))
-                })
-                .filter_map(|result| match result {
-                    Ok((_, ref weights)) if weights.iter().all(|weight| weight.is_zero()) => None,
-                    other => Some(other),
-                })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            Some(evaluate_setup_columns(
-                b_family,
-                0..b_width,
-                &row_weights,
-                slice_count,
-                &group_alpha_pows_b,
+            Some(contract_setup_columns(
+                &group_setup.b,
+                0..group_plan.b_width,
+                &group_plan.b_setup_row_weights,
+                group_plan.slice_count,
+                1,
+                |coefficients| {
+                    Ok(vec![eval_flat_ring_at_pows_fast(
+                        coefficients,
+                        &group_alpha_pows_b,
+                    )])
+                },
             )?)
         } else {
             None
         };
 
         {
-            let mut et_sink = LiftedGroupSink {
+            let setup = match (d_setup_accs.as_ref(), b_setup_accs.as_ref()) {
+                (Some(d), Some(b)) => LiftedEtSetup::Matrix { d, b },
+                (None, None) => LiftedEtSetup::Deferred,
+                _ => {
+                    return Err(AkitaError::InvalidSetup(
+                        "lifted E/T setup phases disagree".into(),
+                    ));
+                }
+            };
+            let mut et_sink = LiftedEtSink {
                 events: &mut relation_events,
                 plan: group_plan,
                 challenge_evaluations: &challenge_evaluations,
-                opening_evaluations: &[],
-                d_setup: d_setup_accs.as_ref(),
-                b_setup: b_setup_accs.as_ref(),
-                a_setup: None,
+                setup,
             };
             compile_group_et_addresses(group_plan, &witness_layout, &mut et_sink)?;
         }
@@ -638,34 +571,32 @@ where
         } else {
             vec![E::zero(); group_plan.num_positions]
         };
-        let a_setup = setup_a_family
-            .as_ref()
-            .map(|setup_a_family| {
-                cfg_into_iter!(0..inner_width)
-                    .map(|k| {
-                        let mut setup = E::zero();
-                        for (a_idx, &row_weight) in group_plan.a_row_weights.iter().enumerate() {
-                            if !row_weight.is_zero() {
-                                setup += row_weight
-                                    * eval_flat_ring_at_pows_fast(
-                                        setup_a_family.ring_slice(a_idx, k)?,
-                                        &group_alpha_pows_a,
-                                    );
-                            }
-                        }
-                        Ok(setup)
-                    })
-                    .collect::<Result<Vec<_>, AkitaError>>()
+        let a_setup = group_setup
+            .map(|group_setup| {
+                contract_setup_columns(
+                    &group_setup.a,
+                    0..group_plan.inner_width,
+                    &group_plan.a_setup_row_weights,
+                    1,
+                    1,
+                    |coefficients| {
+                        Ok(vec![eval_flat_ring_at_pows_fast(
+                            coefficients,
+                            &group_alpha_pows_a,
+                        )])
+                    },
+                )
             })
             .transpose()?;
-        let mut z_sink = LiftedGroupSink {
+        let setup = match a_setup.as_ref() {
+            Some(values) => LiftedZSetup::Matrix(values),
+            None => LiftedZSetup::Deferred,
+        };
+        let mut z_sink = LiftedZSink {
             events: &mut relation_events,
             plan: group_plan,
-            challenge_evaluations: &[],
             opening_evaluations: &opening_evaluations,
-            d_setup: None,
-            b_setup: None,
-            a_setup: a_setup.as_deref(),
+            setup,
         };
         compile_group_z_addresses(group_plan, &witness_layout, &mut z_sink)?;
     }

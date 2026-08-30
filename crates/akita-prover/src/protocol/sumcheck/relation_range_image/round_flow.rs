@@ -1,11 +1,31 @@
 use super::*;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
+    fn finish_ingested_round(&mut self, fold_started: Instant) {
+        self.rounds_completed += 1;
+        if self.rounds_completed < self.num_vars {
+            if self.cached_round_poly.is_none() {
+                self.cached_round_poly = Some(self.compute_current_round_poly_from_state());
+            }
+        } else {
+            self.cached_round_poly = None;
+        }
+        self.fold_time_total += fold_started.elapsed().as_secs_f64();
+        if self.rounds_completed == self.num_vars {
+            tracing::debug!(
+                rounds = self.num_vars,
+                scan_s = self.scan_time_total,
+                fold_s = self.fold_time_total,
+                "stage2 sumcheck rounds complete"
+            );
+        }
+    }
+
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let rounds_completed = self.rounds_completed;
-        let poly = match &self.relation_weights {
-            RelationWeightOracle::ReducedDense(dense) => match &self.witness_state {
+        let poly = match &self.relation_state {
+            RelationRoundState::ReducedDense { weights: dense } => match &self.witness_state {
                 WitnessState::CompactPrefix(compact_witness) => {
                     let (virt_terms, rel_terms) = self.compute_round_compact_reduced_dense_terms(
                         compact_witness.view(),
@@ -21,7 +41,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     self.combine_terms(virt_terms, rel_terms)
                 }
             },
-            RelationWeightOracle::QuotientFactored(_) => {
+            RelationRoundState::QuotientFactored { .. } => {
                 self.compute_quotient_round_from_state(rounds_completed)
             }
         };
@@ -164,8 +184,8 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }
 
-        match &self.relation_weights {
-            RelationWeightOracle::ReducedDense(_) => {
+        match &self.relation_state {
+            RelationRoundState::ReducedDense { .. } => {
                 self.split_eq.bind(r);
                 let folding_lane_round = !self.in_coefficient_round();
                 self.witness_state = match mem::replace(
@@ -189,29 +209,20 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                         WitnessState::FoldedSuffix(next)
                     }
                 };
-                match &mut self.relation_weights {
-                    RelationWeightOracle::ReducedDense(dense) => dense.bind(r),
-                    RelationWeightOracle::QuotientFactored(_) => return,
+                match &mut self.relation_state {
+                    RelationRoundState::ReducedDense { weights } => weights.bind(r),
+                    RelationRoundState::QuotientFactored { .. } => {
+                        panic!("relation mode changed during dense fold")
+                    }
                 }
                 if folding_lane_round {
                     self.live_lane_count = self.live_lane_count.div_ceil(2);
                 }
-                self.rounds_completed += 1;
-                self.cached_round_poly = (self.rounds_completed < self.num_vars)
-                    .then(|| self.compute_current_round_poly_from_state());
                 drop(_span);
-                self.fold_time_total += t_fold.elapsed().as_secs_f64();
-                if self.rounds_completed == self.num_vars {
-                    tracing::debug!(
-                        rounds = self.num_vars,
-                        scan_s = self.scan_time_total,
-                        fold_s = self.fold_time_total,
-                        "stage2 sumcheck rounds complete"
-                    );
-                }
+                self.finish_ingested_round(t_fold);
                 return;
             }
-            RelationWeightOracle::QuotientFactored(_) => {}
+            RelationRoundState::QuotientFactored { .. } => {}
         }
 
         if self.using_deferred_compact_prefix() {
@@ -264,30 +275,13 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
                 };
                 let (common_alpha_factor, _) = self.quotient_factored_weights_mut();
                 *common_alpha_factor = alpha_round2;
-                self.deferred_compact_prefix = None;
-                self.compact_prefix_stage1_point = None;
+                self.finish_deferred_compact_prefix();
                 if let Some((virt_terms, rel_coeffs)) = round2_terms {
                     self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                 }
             }
-            self.rounds_completed += 1;
-            if self.rounds_completed < self.num_vars {
-                if self.cached_round_poly.is_none() {
-                    self.cached_round_poly = Some(self.compute_current_round_poly_from_state());
-                }
-            } else {
-                self.cached_round_poly = None;
-            }
             drop(_span);
-            self.fold_time_total += t_fold.elapsed().as_secs_f64();
-            if self.rounds_completed == self.num_vars {
-                tracing::debug!(
-                    rounds = self.num_vars,
-                    scan_s = self.scan_time_total,
-                    fold_s = self.fold_time_total,
-                    "stage2 sumcheck rounds complete"
-                );
-            }
+            self.finish_ingested_round(t_fold);
             return;
         }
 
@@ -404,24 +398,7 @@ impl<E: Field + Ring + Unreduced + Fold> SumcheckInstanceProver<E> for RelationR
             fold_evals_in_place(common_alpha_factor, r);
         }
 
-        self.rounds_completed += 1;
-        if self.rounds_completed < self.num_vars {
-            if self.cached_round_poly.is_none() {
-                self.cached_round_poly = Some(self.compute_current_round_poly_from_state());
-            }
-        } else {
-            self.cached_round_poly = None;
-        }
         drop(_span);
-        self.fold_time_total += t_fold.elapsed().as_secs_f64();
-
-        if self.rounds_completed == self.num_vars {
-            tracing::debug!(
-                rounds = self.num_vars,
-                scan_s = self.scan_time_total,
-                fold_s = self.fold_time_total,
-                "stage2 sumcheck rounds complete"
-            );
-        }
+        self.finish_ingested_round(t_fold);
     }
 }

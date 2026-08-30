@@ -114,6 +114,24 @@ struct TwoRoundCompactPrefix<E: Field> {
     first_challenge: Option<E>,
 }
 
+enum QuotientPrefixState<E: FieldCore> {
+    Disabled,
+    Deferred {
+        stage1_point: Vec<E>,
+        round_state: Option<TwoRoundCompactPrefix<E>>,
+    },
+}
+
+enum RelationRoundState<E: FieldCore> {
+    QuotientFactored {
+        weights: RelationWeightFactorization<E>,
+        prefix: QuotientPrefixState<E>,
+    },
+    ReducedDense {
+        weights: DenseRelationWeights<E>,
+    },
+}
+
 #[derive(Clone, Copy)]
 enum NormRoundTerms<E: Field> {
     Full([E; 3]),
@@ -239,7 +257,7 @@ pub struct RelationRangeImageProver<E: Field> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    relation_weights: RelationWeightOracle<E>,
+    relation_state: RelationRoundState<E>,
     additional_relation_terms: Option<AdditionalRelationTerms<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     live_lane_count: usize,
@@ -248,8 +266,6 @@ pub struct RelationRangeImageProver<E: Field> {
     relation_linear_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
-    compact_prefix_stage1_point: Option<Vec<E>>,
-    deferred_compact_prefix: Option<TwoRoundCompactPrefix<E>>,
     cached_round_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
@@ -276,41 +292,35 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
-pub(crate) use weight_oracle::{
-    CompiledRelationWeights, DenseRelationWeights, RelationWeightOracle,
-};
+pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     #[inline]
     fn common_alpha_factor(&self) -> &[E] {
-        match &self.relation_weights {
-            RelationWeightOracle::QuotientFactored(factorization) => {
-                factorization.common_alpha_factor()
-            }
-            RelationWeightOracle::ReducedDense(_) => {
-                unreachable!("dense relation weights do not expose a factored low axis")
-            }
-        }
+        self.quotient_weights().common_alpha_factor()
     }
 
     #[inline]
     fn relation_lane_weights(&self) -> &[E] {
-        match &self.relation_weights {
-            RelationWeightOracle::QuotientFactored(factorization) => {
-                factorization.relation_lane_weights()
-            }
-            RelationWeightOracle::ReducedDense(_) => {
-                unreachable!("dense relation weights do not expose factored lanes")
+        self.quotient_weights().relation_lane_weights()
+    }
+
+    #[inline]
+    fn quotient_factored_weights_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
+        match &mut self.relation_state {
+            RelationRoundState::QuotientFactored { weights, .. } => weights.components_mut(),
+            RelationRoundState::ReducedDense { .. } => {
+                panic!("quotient-only transition used for reduced relation weights")
             }
         }
     }
 
     #[inline]
-    fn quotient_factored_weights_mut(&mut self) -> (&mut Vec<E>, &mut Vec<E>) {
-        match &mut self.relation_weights {
-            RelationWeightOracle::QuotientFactored(factorization) => factorization.components_mut(),
-            RelationWeightOracle::ReducedDense(_) => {
-                unreachable!("dense relation weights do not expose factored lanes")
+    fn quotient_weights(&self) -> &RelationWeightFactorization<E> {
+        match &self.relation_state {
+            RelationRoundState::QuotientFactored { weights, .. } => weights,
+            RelationRoundState::ReducedDense { .. } => {
+                panic!("quotient-only kernel used for reduced relation weights")
             }
         }
     }

@@ -1,7 +1,7 @@
 //! Verifier for the Akita stage-2 fused sumcheck.
 
 use crate::protocol::evaluation_trace::PreparedEvaluationTrace;
-use crate::protocol::ring_switch::{PreparedCompressionRelation, RelationMatrixEvaluator};
+use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::{
     eq_poly::EqPolynomial,
     offset_eq::{eval_boolean_pair_tensor_families, EqPairTensorFamily},
@@ -10,7 +10,8 @@ use akita_error::AkitaError;
 use akita_sumcheck::SumcheckInstanceVerifier;
 use akita_types::{
     AkitaExpandedSetup, CoefficientPackingVerifierBatchSemantics,
-    CoefficientPackingVerifierGroupSemantics, FpExtEncoding, NegativeBinarySupport, OpeningFamily,
+    CoefficientPackingVerifierGroupSemantics, CompressionRelationWeights, FpExtEncoding,
+    NegativeBinarySupport, OpeningFamily, ReducedCompressionRelationWeights,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -141,8 +142,13 @@ pub(crate) struct AkitaStage2Verifier<'a, F: Field, E: Field> {
 
 pub(crate) enum Stage2CompressionOracle<'a, E: FieldCore> {
     Raw,
-    Compressed {
-        weights: &'a PreparedCompressionRelation<E>,
+    QuotientLift {
+        weights: &'a CompressionRelationWeights<E>,
+        support: &'a NegativeBinarySupport,
+        binary_batching: E,
+    },
+    ReducedEvaluation {
+        weights: &'a ReducedCompressionRelationWeights<E>,
         support: &'a NegativeBinarySupport,
         binary_batching: E,
     },
@@ -308,7 +314,21 @@ where
     E: ExtField<F> + MulBaseUnreduced<F>,
 {
     match compression {
-        Stage2CompressionOracle::Compressed {
+        Stage2CompressionOracle::QuotientLift {
+            weights,
+            support,
+            binary_batching,
+        } => {
+            let relation_weight = weights.evaluate_at_point(point)?;
+            let binary_weight =
+                support.evaluate_restricted_equality_at_point(stage1_point, point)?;
+            Ok(witness_evaluation * relation_weight
+                + *binary_batching
+                    * binary_weight
+                    * witness_evaluation
+                    * (witness_evaluation + E::one()))
+        }
+        Stage2CompressionOracle::ReducedEvaluation {
             weights,
             support,
             binary_batching,

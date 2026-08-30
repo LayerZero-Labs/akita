@@ -707,8 +707,6 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     );
     assert!(!prover.can_use_deferred_compact_prefix());
     assert!(!prover.using_deferred_compact_prefix());
-    assert!(prover.compact_prefix_stage1_point.is_none());
-    assert!(prover.deferred_compact_prefix.is_none());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
@@ -951,7 +949,7 @@ fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path()
         relation_lane_weights,
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -1087,7 +1085,7 @@ fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
-    direct.compact_prefix_stage1_point = None;
+    direct.disable_deferred_compact_prefix();
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();

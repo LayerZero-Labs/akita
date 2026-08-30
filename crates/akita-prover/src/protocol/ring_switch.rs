@@ -44,7 +44,7 @@ pub struct RingSwitchOutput<E: Field> {
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Mode-typed ordinary and compression ring-relation weights.
-    pub(crate) relation_weights: crate::protocol::sumcheck::CompiledRelationWeights<E>,
+    pub(crate) relation_weights: crate::protocol::sumcheck::RelationWeightOracle<E>,
     /// Atomic payload-mode state for Stage-2 compression and binary terms.
     pub(crate) compression: RingSwitchCompression<E>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -68,12 +68,6 @@ pub(crate) enum RingSwitchCompression<E: FieldCore> {
     ReducedEvaluation {
         support: NegativeBinarySupport,
     },
-}
-
-impl<E: FieldCore> RingSwitchCompression<E> {
-    pub(crate) const fn is_compressed(&self) -> bool {
-        !matches!(self, Self::Raw)
-    }
 }
 
 /// Transcript-complete ring-switch state and the exact relation authority

@@ -552,17 +552,38 @@ where
         None
     };
     let stage1_proof = Some(stage1_proof);
-    let compression_batching = if rs.compression.is_compressed() {
-        transcript.grind_query(akita_types::GrindingSite::CompressionBinary {
-            level: u32::try_from(level)
-                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
-        })?;
-        stages::CompressionBatching::Compressed(sample_ext_challenge::<F, E, T>(
-            transcript,
-            CHALLENGE_COMPRESSION_BINARY,
-        ))
-    } else {
-        stages::CompressionBatching::Raw
+    let compression = match std::mem::replace(
+        &mut rs.compression,
+        crate::protocol::ring_switch::RingSwitchCompression::Raw,
+    ) {
+        crate::protocol::ring_switch::RingSwitchCompression::Raw => stages::Stage2Compression::Raw,
+        crate::protocol::ring_switch::RingSwitchCompression::QuotientLift { weights, support } => {
+            transcript.grind_query(akita_types::GrindingSite::CompressionBinary {
+                level: u32::try_from(level)
+                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+            })?;
+            stages::Stage2Compression::QuotientLift {
+                weights,
+                support,
+                binary_batching: sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    CHALLENGE_COMPRESSION_BINARY,
+                ),
+            }
+        }
+        crate::protocol::ring_switch::RingSwitchCompression::ReducedEvaluation { support } => {
+            transcript.grind_query(akita_types::GrindingSite::CompressionBinary {
+                level: u32::try_from(level)
+                    .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?,
+            })?;
+            stages::Stage2Compression::ReducedEvaluation {
+                support,
+                binary_batching: sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    CHALLENGE_COMPRESSION_BINARY,
+                ),
+            }
+        }
     };
     transcript.grind_query(akita_types::GrindingSite::Stage2Batch {
         level: u32::try_from(level)
@@ -675,7 +696,7 @@ where
         &stage1_point,
         range_image_evaluation,
         relation_claim,
-        compression_batching,
+        compression,
         physical_l2,
         linear_terms,
         scalar_opening_claim,

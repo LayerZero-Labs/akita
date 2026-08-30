@@ -15,86 +15,6 @@ use akita_types::{
     dispatch_for_field, RelationQuotientLayout, RingMultiplierOpeningPoint, RingRelationMode,
 };
 
-struct SetupColumnKernels<E> {
-    batch_count: usize,
-    column_count: usize,
-    ring_dimension: usize,
-    values: Vec<E>,
-}
-
-impl<E: Copy> SetupColumnKernels<E> {
-    fn get(&self, batch: usize, column: usize) -> Result<&[E], AkitaError> {
-        if batch >= self.batch_count || column >= self.column_count {
-            return Err(AkitaError::InvalidProof);
-        }
-        let start = column
-            .checked_mul(self.batch_count)
-            .and_then(|offset| offset.checked_add(batch))
-            .and_then(|index| index.checked_mul(self.ring_dimension))
-            .ok_or(AkitaError::InvalidProof)?;
-        self.values
-            .get(start..start + self.ring_dimension)
-            .ok_or(AkitaError::InvalidProof)
-    }
-}
-
-fn evaluate_setup_column_kernels<F, E>(
-    family: &SetupRows<'_, F>,
-    columns: Range<usize>,
-    row_weights: &[(usize, Vec<E>)],
-    batch_count: usize,
-    alpha: E,
-) -> Result<SetupColumnKernels<E>, AkitaError>
-where
-    F: FieldCore,
-    E: FieldCore + LiftBase<F>,
-{
-    if batch_count == 0
-        || row_weights
-            .iter()
-            .any(|(_, weights)| weights.len() != batch_count)
-    {
-        return Err(AkitaError::InvalidSetup(
-            "reduced setup column weight batches are malformed".into(),
-        ));
-    }
-    let column_count = columns.len();
-    let output_len = column_count
-        .checked_mul(batch_count)
-        .and_then(|len| len.checked_mul(family.ring_d))
-        .ok_or_else(|| AkitaError::InvalidSetup("reduced setup kernel size overflow".into()))?;
-    let mut values = vec![E::zero(); output_len];
-    cfg_chunks_mut!(&mut values, batch_count * family.ring_d)
-        .enumerate()
-        .try_for_each(|(column_offset, output)| -> Result<(), AkitaError> {
-            let column = columns
-                .start
-                .checked_add(column_offset)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup column offset overflow".into()))?;
-            for (row, weights) in row_weights {
-                let kernel = residue_kernel::<F, E>(family.ring_slice(*row, column)?, alpha)?;
-                for (batch, &row_weight) in weights.iter().enumerate() {
-                    if row_weight.is_zero() {
-                        continue;
-                    }
-                    let destination = output
-                        .get_mut(batch * family.ring_d..(batch + 1) * family.ring_d)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    for (weight, &coefficient) in destination.iter_mut().zip(&kernel) {
-                        *weight += row_weight * coefficient;
-                    }
-                }
-            }
-            Ok(())
-        })?;
-    Ok(SetupColumnKernels {
-        batch_count,
-        column_count,
-        ring_dimension: family.ring_d,
-        values,
-    })
-}
-
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,
     index: usize,
@@ -186,21 +106,18 @@ fn add_scaled_kernel<E: FieldCore>(
     Ok(())
 }
 
-struct ReducedGroupSink<'a, E> {
+struct ReducedEtSink<'a, E> {
     dense: &'a mut [E],
     plan: &'a compiler::RelationWeightGroupPlan<E>,
-    challenge_kernels: Option<&'a [Vec<E>]>,
-    opening_kernels: Option<&'a [Vec<E>]>,
-    d_setup_kernels: Option<&'a SetupColumnKernels<E>>,
-    b_setup_kernels: Option<&'a SetupColumnKernels<E>>,
-    a_setup_kernels: Option<&'a SetupColumnKernels<E>>,
+    challenge_kernels: &'a [Vec<E>],
+    d_setup_kernels: &'a SetupColumnValues<E>,
+    b_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
+impl<E: FieldCore> EtWeightSink<E> for ReducedEtSink<'_, E> {
     fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError> {
         let kernel = self
             .challenge_kernels
-            .ok_or(AkitaError::InvalidProof)?
             .get(address.challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
         let kernel_start = address.role_subcolumn * self.plan.group_d_d;
@@ -215,9 +132,7 @@ impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
         add_scaled_kernel(
             self.dense,
             address.physical_start,
-            self.d_setup_kernels
-                .ok_or(AkitaError::InvalidProof)?
-                .get(0, address.setup_column)?,
+            self.d_setup_kernels.get(0, address.setup_column)?,
             E::one(),
         )
     }
@@ -225,7 +140,6 @@ impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
     fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError> {
         let kernel = self
             .challenge_kernels
-            .ok_or(AkitaError::InvalidProof)?
             .get(address.challenge_index)
             .ok_or(AkitaError::InvalidProof)?;
         let kernel_start = address.role_subcolumn * self.plan.group_d_b;
@@ -241,18 +155,24 @@ impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
             self.dense,
             address.physical_start,
             self.b_setup_kernels
-                .ok_or(AkitaError::InvalidProof)?
                 .get(address.slice_index, address.setup_column)?,
             E::one(),
         )
     }
+}
 
+struct ReducedZSink<'a, E> {
+    dense: &'a mut [E],
+    opening_kernels: &'a [Vec<E>],
+    a_setup_kernels: &'a SetupColumnValues<E>,
+}
+
+impl<E: FieldCore> ZWeightSink<E> for ReducedZSink<'_, E> {
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
         add_scaled_kernel(
             self.dense,
             address.physical_start,
             self.opening_kernels
-                .ok_or(AkitaError::InvalidProof)?
                 .get(address.position)
                 .ok_or(AkitaError::InvalidProof)?,
             address.constraint_scale,
@@ -260,9 +180,7 @@ impl<E: FieldCore> RelationWeightSink<E> for ReducedGroupSink<'_, E> {
         add_scaled_kernel(
             self.dense,
             address.physical_start,
-            self.a_setup_kernels
-                .ok_or(AkitaError::InvalidProof)?
-                .get(0, address.setup_column)?,
+            self.a_setup_kernels.get(0, address.setup_column)?,
             address.setup_scale,
         )
     }
@@ -281,7 +199,7 @@ pub(in super::super) fn build_reduced_dense_relation_weights<F, E>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     relation_plan: &RelationRangeImagePlan,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<crate::protocol::sumcheck::DenseRelationWeights<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
@@ -336,34 +254,16 @@ where
         &row_families,
         &row_weights,
     )?;
-    let n_d_active = lp.open().matrix.output_rank();
-    let d_column_ranges = relation_d_column_ranges(lp, opening_batch, &relation_geometry)?;
-    let d_physical_columns = d_column_ranges
-        .iter()
-        .map(|range| range.end)
-        .max()
-        .unwrap_or(0);
-    let d_d = lp.role_dims().d_d();
-    let d_view = setup
-        .shared_matrix()
-        .ring_view_dyn(n_d_active, d_physical_columns, d_d)?;
-    let d_family = SetupRows {
-        rows: (0..n_d_active)
-            .map(|row| d_view.row_flat(row))
-            .collect::<Result<Vec<_>, _>>()?,
-        ring_d: d_d,
-    };
-    let d_start = row_families
-        .iter()
-        .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
-        .ok_or(AkitaError::InvalidProof)?;
+    let setup_sources = RelationWeightSetupSources::new(setup, lp, &compilation)?;
     let mut dense = vec![E::zero(); physical_field_len];
 
     for group_plan in &compilation.groups {
         let group_index = group_plan.group_index;
+        let group_setup = setup_sources.group(group_index)?;
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let group_d_a = group_plan.group_d_a;
         let group_d_b = group_plan.group_d_b;
+        let group_d_d = group_plan.group_d_d;
         let k_g = group_plan.num_claims;
         let challenges = instance.group_ambient_a_challenges(group_index)?;
         let ring_multiplier_point = instance.group_ring_multiplier_point(group_index)?;
@@ -379,98 +279,30 @@ where
         let challenge_kernels = (0..total_blocks)
             .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, group_d_a, alpha))
             .collect::<Result<Vec<_>, _>>()?;
-        let n_a = group_plan.n_a;
-        let physical_n_b = group_lp.b_rows_len();
-        let inner_width = group_plan.inner_width;
-        let slice_geometry = &group_plan.slice_geometry;
-        let b_width = slice_geometry.physical_input_width();
-        let a_view = setup
-            .shared_matrix()
-            .ring_view_dyn(n_a, inner_width, group_d_a)?;
-        let a_family = SetupRows {
-            rows: (0..n_a)
-                .map(|row| a_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?,
-            ring_d: group_d_a,
-        };
-        let b_view = setup
-            .shared_matrix()
-            .ring_view_dyn(physical_n_b, b_width, group_d_b)?;
-        let b_family = SetupRows {
-            rows: (0..physical_n_b)
-                .map(|row| b_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?,
-            ring_d: group_d_b,
-        };
-        let d_setup_start = d_column_ranges
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?
-            .start;
-        let d_setup_len = total_blocks
-            .checked_mul(group_plan.d_ratio)
-            .and_then(|len| len.checked_mul(group_plan.depth_open))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
-        let d_setup_end = d_setup_start
-            .checked_add(d_setup_len)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".into()))?;
-        let d_row_weights = (0..n_d_active)
-            .map(|row| {
-                Ok((
-                    row,
-                    vec![*row_weights
-                        .get(d_start + row)
-                        .ok_or(AkitaError::InvalidProof)?],
-                ))
-            })
-            .filter_map(|result| match result {
-                Ok((_, ref weights)) if weights[0].is_zero() => None,
-                other => Some(other),
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let d_setup_kernels = evaluate_setup_column_kernels(
-            &d_family,
-            d_setup_start..d_setup_end,
-            &d_row_weights,
+        let d_setup_kernels = contract_setup_columns(
+            &setup_sources.d,
+            group_plan.d_setup_range.clone(),
+            &compilation.d_row_weights,
             1,
-            alpha,
+            group_d_d,
+            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
         )?;
-        let slice_count = group_lp.outer_slice_count().get();
-        let b_row_weights = (0..physical_n_b)
-            .map(|row| {
-                let weights = (0..slice_count)
-                    .map(|slice| {
-                        let logical = slice_geometry.logical_row_index(slice, row, physical_n_b)?;
-                        group_plan
-                            .b_row_weights
-                            .get(logical)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok((row, weights))
-            })
-            .filter_map(|result| match result {
-                Ok((_, ref weights)) if weights.iter().all(|weight| weight.is_zero()) => None,
-                other => Some(other),
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let b_setup_kernels = evaluate_setup_column_kernels(
-            &b_family,
-            0..b_width,
-            &b_row_weights,
-            slice_count,
-            alpha,
+        let b_setup_kernels = contract_setup_columns(
+            &group_setup.b,
+            0..group_plan.b_width,
+            &group_plan.b_setup_row_weights,
+            group_plan.slice_count,
+            group_d_b,
+            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
         )?;
 
         {
-            let mut et_sink = ReducedGroupSink {
+            let mut et_sink = ReducedEtSink {
                 dense: &mut dense,
                 plan: group_plan,
-                challenge_kernels: Some(&challenge_kernels),
-                opening_kernels: None,
-                d_setup_kernels: Some(&d_setup_kernels),
-                b_setup_kernels: Some(&b_setup_kernels),
-                a_setup_kernels: None,
+                challenge_kernels: &challenge_kernels,
+                d_setup_kernels: &d_setup_kernels,
+                b_setup_kernels: &b_setup_kernels,
             };
             compile_group_et_addresses(group_plan, &witness_layout, &mut et_sink)?;
         }
@@ -484,23 +316,18 @@ where
             group_d_a,
             alpha,
         )?;
-        let a_row_weights = (0..n_a)
-            .map(|row| Ok((row, vec![group_plan.a_row_weights[row]])))
-            .filter_map(|result| match result {
-                Ok((_, ref weights)) if weights[0].is_zero() => None,
-                other => Some(other),
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let a_setup_kernels =
-            evaluate_setup_column_kernels(&a_family, 0..inner_width, &a_row_weights, 1, alpha)?;
-        let mut z_sink = ReducedGroupSink {
+        let a_setup_kernels = contract_setup_columns(
+            &group_setup.a,
+            0..group_plan.inner_width,
+            &group_plan.a_setup_row_weights,
+            1,
+            group_d_a,
+            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
+        )?;
+        let mut z_sink = ReducedZSink {
             dense: &mut dense,
-            plan: group_plan,
-            challenge_kernels: None,
-            opening_kernels: Some(&opening_kernels),
-            d_setup_kernels: None,
-            b_setup_kernels: None,
-            a_setup_kernels: Some(&a_setup_kernels),
+            opening_kernels: &opening_kernels,
+            a_setup_kernels: &a_setup_kernels,
         };
         compile_group_z_addresses(group_plan, &witness_layout, &mut z_sink)?;
     }
@@ -518,13 +345,5 @@ where
         )?;
         compression.accumulate_dense(setup, &mut dense)?;
     }
-    if dense[domain.live_len()..]
-        .iter()
-        .any(|weight| !weight.is_zero())
-    {
-        return Err(AkitaError::InvalidSetup(
-            "reduced relation weights are nonzero outside the live witness".into(),
-        ));
-    }
-    Ok(dense)
+    crate::protocol::sumcheck::DenseRelationWeights::new(dense, domain.live_len())
 }

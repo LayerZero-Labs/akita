@@ -178,11 +178,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
             batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
-        let use_two_round_prefix = match &relation_weights {
-            RelationWeightOracle::QuotientFactored(_) => {
-                can_use_stage2_two_round_prefix(coefficient_bits, b)
+        let relation_state = match relation_weights {
+            RelationWeightOracle::QuotientFactored(weights) => {
+                let prefix = if can_use_stage2_two_round_prefix(coefficient_bits, b) {
+                    QuotientPrefixState::Deferred {
+                        stage1_point: stage1_point.to_vec(),
+                        round_state: None,
+                    }
+                } else {
+                    QuotientPrefixState::Disabled
+                };
+                RelationRoundState::QuotientFactored { weights, prefix }
             }
-            RelationWeightOracle::ReducedDense(_) => false,
+            RelationWeightOracle::ReducedDense(weights) => {
+                RelationRoundState::ReducedDense { weights }
+            }
         };
 
         Ok(Self {
@@ -192,7 +202,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
-            relation_weights,
+            relation_state,
             additional_relation_terms,
             linear_terms,
             live_lane_count,
@@ -201,8 +211,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             relation_linear_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            compact_prefix_stage1_point: use_two_round_prefix.then(|| stage1_point.to_vec()),
-            deferred_compact_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
@@ -230,7 +238,19 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
         let witness = self.final_w_eval();
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
-        let ordinary_relation = witness * self.relation_weights.terminal_weight()?;
+        let ordinary_relation = witness
+            * match &self.relation_state {
+                RelationRoundState::QuotientFactored { weights, .. } => {
+                    match (
+                        weights.common_alpha_factor(),
+                        weights.relation_lane_weights(),
+                    ) {
+                        ([alpha], [lane]) => *alpha * *lane,
+                        _ => return Err(AkitaError::InvalidProof),
+                    }
+                }
+                RelationRoundState::ReducedDense { weights } => weights.terminal_weight()?,
+            };
         let linear_claim = witness * self.linear_terms.final_value()?;
         let additional = self
             .additional_relation_terms
@@ -247,8 +267,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     None
                 } else {
                     Some(
-                        self.deferred_compact_prefix
-                            .as_ref()
+                        self.deferred_compact_prefix()
                             .and_then(|prefix| prefix.first_challenge)
                             .expect("compact round 1 requires the first prefix challenge"),
                     )
@@ -319,7 +338,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     #[inline]
     pub(crate) fn can_use_deferred_compact_prefix(&self) -> bool {
-        self.compact_prefix_stage1_point.is_some()
+        matches!(
+            self.relation_state,
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Deferred { .. },
+                ..
+            }
+        )
     }
 
     #[inline]
@@ -386,11 +411,24 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(super) fn ensure_deferred_compact_prefix(&mut self) -> &mut TwoRoundCompactPrefix<E> {
-        if self.deferred_compact_prefix.is_none() {
-            let stage1_point = self
-                .compact_prefix_stage1_point
-                .clone()
-                .expect("two-round prefix requested without cached stage-1 challenges");
+        let needs_initialization = matches!(
+            self.relation_state,
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Deferred {
+                    round_state: None,
+                    ..
+                },
+                ..
+            }
+        );
+        if needs_initialization {
+            let stage1_point = match &self.relation_state {
+                RelationRoundState::QuotientFactored {
+                    prefix: QuotientPrefixState::Deferred { stage1_point, .. },
+                    ..
+                } => stage1_point.clone(),
+                _ => panic!("two-round prefix requested outside quotient prefix state"),
+            };
             let coefficient_bits = self.num_vars - self.lane_bits;
             let compact_witness = match &self.witness_state {
                 WitnessState::CompactPrefix(compact_witness) => compact_witness.view(),
@@ -418,13 +456,53 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");
-            self.deferred_compact_prefix = Some(TwoRoundCompactPrefix {
-                skip_state,
-                first_challenge: None,
-            });
+            match &mut self.relation_state {
+                RelationRoundState::QuotientFactored {
+                    prefix: QuotientPrefixState::Deferred { round_state, .. },
+                    ..
+                } => {
+                    *round_state = Some(TwoRoundCompactPrefix {
+                        skip_state,
+                        first_challenge: None,
+                    });
+                }
+                _ => panic!("quotient prefix state changed during initialization"),
+            }
         }
-        self.deferred_compact_prefix
-            .as_mut()
-            .expect("two-round prefix should be initialized")
+        match &mut self.relation_state {
+            RelationRoundState::QuotientFactored {
+                prefix:
+                    QuotientPrefixState::Deferred {
+                        round_state: Some(prefix),
+                        ..
+                    },
+                ..
+            } => prefix,
+            _ => panic!("two-round prefix should be initialized"),
+        }
+    }
+
+    fn deferred_compact_prefix(&self) -> Option<&TwoRoundCompactPrefix<E>> {
+        match &self.relation_state {
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Deferred { round_state, .. },
+                ..
+            } => round_state.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn finish_deferred_compact_prefix(&mut self) {
+        match &mut self.relation_state {
+            RelationRoundState::QuotientFactored { prefix, .. } => {
+                *prefix = QuotientPrefixState::Disabled;
+            }
+            RelationRoundState::ReducedDense { .. } => {}
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn disable_deferred_compact_prefix(&mut self) {
+        self.finish_deferred_compact_prefix();
     }
 }

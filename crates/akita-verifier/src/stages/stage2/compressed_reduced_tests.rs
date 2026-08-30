@@ -1,5 +1,4 @@
 use super::*;
-use crate::protocol::ring_switch::PreparedCompressionRelation;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
@@ -399,7 +398,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         physical_field_len,
     )
     .unwrap();
-    let prepared = PreparedCompressionRelation::ReducedEvaluation(program);
+    let prepared = program;
     let support = NegativeBinarySupport::new(&layout, physical_field_len).unwrap();
     let point = (0..physical_field_len.trailing_zeros() as usize)
         .map(|index| {
@@ -441,7 +440,7 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
         });
     let expected = witness_evaluation * relation_weight
         + binary_batching * binary_weight * witness_evaluation * (witness_evaluation + E::one());
-    let compression = Stage2CompressionOracle::Compressed {
+    let compression = Stage2CompressionOracle::ReducedEvaluation {
         weights: &prepared,
         support: &support,
         binary_batching,
@@ -475,19 +474,17 @@ fn compressed_reduced_stage2_matches_literal_full_equation_and_rejects_mutations
 
     let mut reordered_tau1 = tau1.clone();
     reordered_tau1.swap(0, 1);
-    let reordered = PreparedCompressionRelation::ReducedEvaluation(
-        build_reduced_compression_relation_weights::<F, E>(
-            alpha,
-            &params,
-            &opening_batch,
-            <E as ExtField<F>>::EXT_DEGREE,
-            &reordered_tau1,
-            &layout,
-            64,
-            physical_field_len,
-        )
-        .unwrap(),
-    );
+    let reordered = build_reduced_compression_relation_weights::<F, E>(
+        alpha,
+        &params,
+        &opening_batch,
+        <E as ExtField<F>>::EXT_DEGREE,
+        &reordered_tau1,
+        &layout,
+        64,
+        physical_field_len,
+    )
+    .unwrap();
     assert_ne!(
         reordered.evaluate_at_point(&setup, &point).unwrap(),
         relation_weight

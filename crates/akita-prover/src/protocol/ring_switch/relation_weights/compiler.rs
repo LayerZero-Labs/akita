@@ -3,6 +3,8 @@ use akita_types::{CommitmentSliceGeometry, RelationRangeImageGroupPlan, WitnessL
 
 pub(super) struct RelationWeightCompilationPlan<E> {
     pub(super) groups: Vec<RelationWeightGroupPlan<E>>,
+    pub(super) d_row_weights: Vec<(usize, Vec<E>)>,
+    pub(super) d_column_count: usize,
 }
 
 pub(super) struct RelationWeightGroupPlan<E> {
@@ -22,14 +24,28 @@ pub(super) struct RelationWeightGroupPlan<E> {
     pub(super) depth_fold: usize,
     pub(super) n_a: usize,
     pub(super) inner_width: usize,
+    pub(super) physical_n_b: usize,
+    pub(super) b_width: usize,
+    pub(super) slice_count: usize,
+    pub(super) d_setup_range: std::ops::Range<usize>,
     pub(super) slice_geometry: CommitmentSliceGeometry,
     pub(super) consistency_weight: E,
     pub(super) a_row_weights: Vec<E>,
-    pub(super) b_row_weights: Vec<E>,
+    pub(super) b_setup_row_weights: Vec<(usize, Vec<E>)>,
+    pub(super) a_setup_row_weights: Vec<(usize, Vec<E>)>,
     pub(super) opening_gadget: Vec<E>,
     pub(super) commitment_gadget: Vec<E>,
     pub(super) witness_gadget: Vec<E>,
     pub(super) fold_gadget: Vec<E>,
+}
+
+struct RelationWeightCompilationInputs<'a, E> {
+    lp: &'a CommittedGroupParams,
+    opening_batch: &'a OpeningClaimsLayout,
+    relation_geometry: &'a RelationWitnessGeometry,
+    witness_layout: &'a WitnessLayout,
+    row_families: &'a [RelationRowFamily],
+    row_weights: &'a [E],
 }
 
 impl<E: FieldCore> RelationWeightCompilationPlan<E> {
@@ -45,37 +61,73 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
         E: LiftBase<F>,
     {
         let relation_geometry = relation_plan.relation_witness_geometry();
+        let d_column_ranges = relation_d_column_ranges(lp, opening_batch, relation_geometry)?;
+        let d_column_count = d_column_ranges
+            .iter()
+            .map(|range| range.end)
+            .max()
+            .unwrap_or(0);
+        let d_start = row_families
+            .iter()
+            .position(|row| matches!(row, RelationRowFamily::Opening { .. }))
+            .ok_or(AkitaError::InvalidProof)?;
+        let n_d_active = lp.open().matrix.output_rank();
+        let d_row_weights = (0..n_d_active)
+            .filter_map(|row| {
+                let weight = row_weights.get(d_start + row).copied();
+                match weight {
+                    Some(weight) if !weight.is_zero() => Some(Ok((row, vec![weight]))),
+                    Some(_) => None,
+                    None => Some(Err(AkitaError::InvalidProof)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let inputs = RelationWeightCompilationInputs {
+            lp,
+            opening_batch,
+            relation_geometry,
+            witness_layout: relation_plan.witness_layout(),
+            row_families,
+            row_weights,
+        };
         let groups = relation_plan
             .groups()
             .iter()
             .map(|canonical_group| {
+                let group_index = canonical_group.group_index();
                 Self::build_group::<F>(
-                    lp,
-                    opening_batch,
-                    relation_geometry,
-                    relation_plan.witness_layout(),
+                    &inputs,
                     canonical_group,
-                    row_families,
-                    row_weights,
+                    d_column_ranges
+                        .get(group_index)
+                        .ok_or(AkitaError::InvalidProof)?,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { groups })
+        Ok(Self {
+            groups,
+            d_row_weights,
+            d_column_count,
+        })
     }
 
     fn build_group<F>(
-        lp: &CommittedGroupParams,
-        opening_batch: &OpeningClaimsLayout,
-        relation_geometry: &RelationWitnessGeometry,
-        witness_layout: &WitnessLayout,
+        inputs: &RelationWeightCompilationInputs<'_, E>,
         canonical_group: &RelationRangeImageGroupPlan,
-        row_families: &[RelationRowFamily],
-        row_weights: &[E],
+        d_columns: &std::ops::Range<usize>,
     ) -> Result<RelationWeightGroupPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: LiftBase<F>,
     {
+        let RelationWeightCompilationInputs {
+            lp,
+            opening_batch,
+            relation_geometry,
+            witness_layout,
+            row_families,
+            row_weights,
+        } = *inputs;
         let group_index = canonical_group.group_index();
         let group_lp = lp.group_params_geometry(opening_batch, group_index)?;
         let group_dims = lp.group_role_dims_geometry(opening_batch, group_index)?;
@@ -121,6 +173,9 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
             group_d_a,
             group_d_b,
         )?;
+        let physical_n_b = group_lp.b_rows_len();
+        let b_width = slice_geometry.physical_input_width();
+        let slice_count = group_lp.outer_slice_count().get();
         let a_range = matching_row_range(
             row_families,
             |family| matches!(family, RelationRowFamily::Inner { group_index: group, .. } if *group == group_index),
@@ -146,6 +201,41 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
                 .map(E::lift_base)
                 .collect::<Vec<_>>()
         };
+        let b_row_weights = row_weights[b_range].to_vec();
+        let b_setup_row_weights = (0..physical_n_b)
+            .filter_map(|row| {
+                let weights = (0..slice_count)
+                    .map(|slice| {
+                        let logical = slice_geometry.logical_row_index(slice, row, physical_n_b)?;
+                        b_row_weights
+                            .get(logical)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)
+                    })
+                    .collect::<Result<Vec<_>, _>>();
+                match weights {
+                    Ok(weights) if weights.iter().all(|weight| weight.is_zero()) => None,
+                    other => Some(other.map(|weights| (row, weights))),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let a_row_weights = row_weights[a_range].to_vec();
+        let a_setup_row_weights = a_row_weights
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(row, weight)| (!weight.is_zero()).then_some((row, vec![weight])))
+            .collect();
+        let d_setup_len = num_claims
+            .checked_mul(num_live_blocks)
+            .and_then(|len| len.checked_mul(d_ratio))
+            .and_then(|len| len.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
+        let d_setup_end = d_columns
+            .start
+            .checked_add(d_setup_len)
+            .filter(|end| *end <= d_columns.end)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".into()))?;
         Ok(RelationWeightGroupPlan {
             group_index,
             opening_method: relation_geometry.group_opening_method(group_index)?,
@@ -163,15 +253,96 @@ impl<E: FieldCore> RelationWeightCompilationPlan<E> {
             depth_fold,
             n_a,
             inner_width: group_lp.a_col_len(),
+            physical_n_b,
+            b_width,
+            slice_count,
+            d_setup_range: d_columns.start..d_setup_end,
             slice_geometry,
             consistency_weight,
-            a_row_weights: row_weights[a_range].to_vec(),
-            b_row_weights: row_weights[b_range].to_vec(),
+            a_row_weights,
+            b_setup_row_weights,
+            a_setup_row_weights,
             opening_gadget: lift_gadget(depth_open, group_lp.log_basis_open()),
             commitment_gadget: lift_gadget(depth_commit, group_lp.log_basis_outer()),
             witness_gadget: lift_gadget(depth_witness, group_lp.log_basis_inner()),
             fold_gadget: lift_gadget(depth_fold, group_lp.log_basis_open()),
         })
+    }
+}
+
+pub(super) struct RelationWeightSetupSources<'a, F: FieldCore> {
+    pub(super) d: SetupRows<'a, F>,
+    groups: Vec<RelationWeightGroupSetupSources<'a, F>>,
+}
+
+pub(super) struct RelationWeightGroupSetupSources<'a, F: FieldCore> {
+    group_index: usize,
+    pub(super) a: SetupRows<'a, F>,
+    pub(super) b: SetupRows<'a, F>,
+}
+
+impl<'a, F: FieldCore> RelationWeightSetupSources<'a, F> {
+    pub(super) fn new<E: FieldCore>(
+        setup: &'a AkitaExpandedSetup<F>,
+        lp: &CommittedGroupParams,
+        compilation: &RelationWeightCompilationPlan<E>,
+    ) -> Result<Self, AkitaError> {
+        let d_d = lp.role_dims().d_d();
+        let n_d_active = lp.open().matrix.output_rank();
+        let d_view =
+            setup
+                .shared_matrix()
+                .ring_view_dyn(n_d_active, compilation.d_column_count, d_d)?;
+        let d = SetupRows {
+            rows: (0..n_d_active)
+                .map(|row| d_view.row_flat(row))
+                .collect::<Result<Vec<_>, _>>()?,
+            ring_d: d_d,
+        };
+        let groups = compilation
+            .groups
+            .iter()
+            .map(|group| {
+                let a_view = setup.shared_matrix().ring_view_dyn(
+                    group.n_a,
+                    group.inner_width,
+                    group.group_d_a,
+                )?;
+                let a = SetupRows {
+                    rows: (0..group.n_a)
+                        .map(|row| a_view.row_flat(row))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    ring_d: group.group_d_a,
+                };
+                let b_view = setup.shared_matrix().ring_view_dyn(
+                    group.physical_n_b,
+                    group.b_width,
+                    group.group_d_b,
+                )?;
+                let b = SetupRows {
+                    rows: (0..group.physical_n_b)
+                        .map(|row| b_view.row_flat(row))
+                        .collect::<Result<Vec<_>, _>>()?,
+                    ring_d: group.group_d_b,
+                };
+                Ok(RelationWeightGroupSetupSources {
+                    group_index: group.group_index,
+                    a,
+                    b,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        Ok(Self { d, groups })
+    }
+
+    pub(super) fn group(
+        &self,
+        group_index: usize,
+    ) -> Result<&RelationWeightGroupSetupSources<'a, F>, AkitaError> {
+        self.groups
+            .iter()
+            .find(|group| group.group_index == group_index)
+            .ok_or(AkitaError::InvalidProof)
     }
 }
 
@@ -212,16 +383,19 @@ pub(super) struct ZAddress<E> {
     pub(super) setup_scale: E,
 }
 
-pub(super) trait RelationWeightSink<E> {
+pub(super) trait EtWeightSink<E> {
     fn add_e(&mut self, address: EAddress<E>) -> Result<(), AkitaError>;
     fn add_t(&mut self, address: TAddress<E>) -> Result<(), AkitaError>;
+}
+
+pub(super) trait ZWeightSink<E> {
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError>;
 }
 
 pub(super) fn compile_group_et_addresses<E: FieldCore>(
     plan: &RelationWeightGroupPlan<E>,
     witness_layout: &WitnessLayout,
-    sink: &mut impl RelationWeightSink<E>,
+    sink: &mut impl EtWeightSink<E>,
 ) -> Result<(), AkitaError> {
     for claim in 0..plan.num_claims {
         for block in 0..plan.num_live_blocks {
@@ -311,7 +485,7 @@ pub(super) fn compile_group_et_addresses<E: FieldCore>(
 pub(super) fn compile_group_z_addresses<E: FieldCore>(
     plan: &RelationWeightGroupPlan<E>,
     witness_layout: &WitnessLayout,
-    sink: &mut impl RelationWeightSink<E>,
+    sink: &mut impl ZWeightSink<E>,
 ) -> Result<(), AkitaError> {
     for unit in witness_layout.units_for_group(plan.group_index)? {
         for position in 0..plan.num_positions {
