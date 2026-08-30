@@ -15,19 +15,9 @@ use crate::protocol::ring_relation::{
 use crate::protocol::ring_relation_witness::{
     FoldChunkCoefficients, RelationDQuotientWitness, RingRelationGroupWitness, RingRelationWitness,
 };
-use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
-use crate::protocol::sumcheck::{
-    DenseRelationWeights, RelationRangeImageProver, RelationWeightOracle,
-};
 use crate::{AkitaProverSetup, DecomposeFoldWitness};
 use akita_algebra::{poly::multilinear_eval, CyclotomicRing, EqPolynomial};
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
-use akita_error::AkitaError;
-use akita_sumcheck::{
-    SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
-    SumcheckInstanceVerifierExt,
-};
-use akita_transcript::{labels, AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, relation_rhs_coeff_len, shared_setup_fold_gadget, AkitaCommitmentHint,
     CommitmentPayloadMode, CommittedGroupParams, CompressionWitnessSpan, DigitBlocks,
@@ -41,34 +31,6 @@ use std::array::from_fn;
 
 type ReducedF = Prime64Offset59;
 const REDUCED_D: usize = 64;
-
-struct ReducedStage2Replay {
-    num_rounds: usize,
-    input_claim: ReducedF,
-    expected_point: Vec<ReducedF>,
-    expected_claim: ReducedF,
-}
-
-impl SumcheckInstanceVerifier<ReducedF> for ReducedStage2Replay {
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn degree_bound(&self) -> usize {
-        3
-    }
-
-    fn input_claim(&self) -> ReducedF {
-        self.input_claim
-    }
-
-    fn expected_output_claim(&self, challenges: &[ReducedF]) -> Result<ReducedF, AkitaError> {
-        if challenges != self.expected_point {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(self.expected_claim)
-    }
-}
 
 fn reduced_params(payload_mode: CommitmentPayloadMode) -> CommittedGroupParams {
     let mut params = CommittedGroupParams::params_only(
@@ -205,19 +167,28 @@ fn expected_packed_digits(
         .collect()
 }
 
-fn assert_reduced_compiler_matches_structured_verifier(
+struct ReducedCompilerFixture {
+    witness_layout: akita_types::WitnessLayout,
+    live_len: usize,
+    physical_field_len: usize,
+    opening_source_len: usize,
+    geometry: RelationAddressGeometry,
+    relation_plan: RelationRangeImagePlan,
+    tau1: Vec<ReducedF>,
+    alpha: ReducedF,
+    point: Vec<ReducedF>,
+}
+
+fn reduced_compiler_fixture(
     params: &CommittedGroupParams,
     instance: &RingRelationInstance<ReducedF>,
-    setup: &akita_types::AkitaExpandedSetup<ReducedF>,
-    witness: &crate::RecursiveWitnessFlat,
-) {
+) -> ReducedCompilerFixture {
     let opening_batch = instance.opening_batch();
     let witness_layout = instance
         .segment_layout(params, None)
         .expect("reduced witness layout");
     let live_len = witness_layout.live_coeff_len();
     let physical_field_len = live_len.next_power_of_two();
-    let opening_source_len = physical_field_len / REDUCED_D;
     let geometry = RelationAddressGeometry::for_relation(
         &akita_types::RelationWitnessGeometry::for_level(params, opening_batch, 1)
             .expect("relation geometry"),
@@ -240,28 +211,34 @@ fn assert_reduced_compiler_matches_structured_verifier(
         .relation_row_index_num_vars(opening_batch)
         .expect("row variables"))
         .map(|index| ReducedF::from_u64(17 + index as u64))
-        .collect::<Vec<_>>();
-    let alpha = ReducedF::from_u64(29);
-    let dense = super::relation_weights::build_reduced_dense_relation_weights(
-        setup,
-        instance,
-        alpha,
-        params,
-        &tau1,
-        opening_source_len,
-        REDUCED_D,
-        &relation_plan,
-    )
-    .expect("reduced dense relation weights");
+        .collect();
     let point = (0..geometry.relation_point_variable_count())
         .map(|index| ReducedF::from_u64(41 + index as u64))
-        .collect::<Vec<_>>();
-    let dense_evaluation = multilinear_eval(dense.evaluations(), &point).expect("dense MLE");
+        .collect();
+    ReducedCompilerFixture {
+        witness_layout,
+        live_len,
+        physical_field_len,
+        opening_source_len: physical_field_len / REDUCED_D,
+        geometry,
+        relation_plan,
+        tau1,
+        alpha: ReducedF::from_u64(29),
+        point,
+    }
+}
 
+fn structured_reduced_evaluation(
+    params: &CommittedGroupParams,
+    instance: &RingRelationInstance<ReducedF>,
+    setup: &akita_types::AkitaExpandedSetup<ReducedF>,
+    fixture: &ReducedCompilerFixture,
+) -> ReducedF {
+    let opening_batch = instance.opening_batch();
     let row_count = params
         .relation_matrix_row_count(opening_batch.num_groups())
         .expect("relation rows");
-    let eq_tau1 = EqPolynomial::evals_prefix(&tau1, row_count)
+    let eq_tau1 = EqPolynomial::evals_prefix(&fixture.tau1, row_count)
         .expect("row equality")
         .into();
     let group_params = params.group_params(opening_batch, 0).expect("group params");
@@ -280,25 +257,25 @@ fn assert_reduced_compiler_matches_structured_verifier(
     }];
     let fold_gadget = shared_setup_fold_gadget(params, opening_batch, &setup_groups)
         .expect("evaluation-trace fold gadget");
-    let coefficient_bits = geometry.relation_coefficient_variable_count();
+    let coefficient_bits = fixture.geometry.relation_coefficient_variable_count();
     let mut setup_plan = SetupContributionPlan::prepare::<ReducedF>(
         params,
         opening_batch,
         1,
         eq_tau1,
-        &witness_layout,
+        &fixture.witness_layout,
         &setup_groups,
-        PreparedRelationAddress::new(&point[coefficient_bits..]).expect("relation address"),
+        PreparedRelationAddress::new(&fixture.point[coefficient_bits..]).expect("relation address"),
         Some(&fold_gadget),
-        geometry,
+        fixture.geometry,
     )
     .expect("setup contribution plan");
     setup_plan
         .materialize_direct_scan(
             PreparedCoefficientFunctional::reduced_evaluation(
-                alpha,
-                &point[..coefficient_bits],
-                geometry,
+                fixture.alpha,
+                &fixture.point[..coefficient_bits],
+                fixture.geometry,
             )
             .expect("reduced coefficient functional"),
         )
@@ -315,119 +292,56 @@ fn assert_reduced_compiler_matches_structured_verifier(
                 .prepare_functional_multiplier(),
         )
         .expect("structured reduced evaluation");
-    let compression_evaluation = if params.payload_mode.is_compressed() {
+    let compression = if params.payload_mode.is_compressed() {
         akita_types::build_reduced_compression_relation_weights::<ReducedF, ReducedF>(
-            alpha,
+            fixture.alpha,
             params,
             opening_batch,
             1,
-            &tau1,
-            &witness_layout,
+            &fixture.tau1,
+            &fixture.witness_layout,
             REDUCED_D,
-            physical_field_len,
+            fixture.physical_field_len,
         )
         .expect("reduced compression relation weights")
-        .evaluate_at_point(setup, &point)
+        .evaluate_at_point(setup, &fixture.point)
         .expect("reduced compression evaluation")
     } else {
         ReducedF::zero()
     };
-    let verifier_evaluation = structured
+    structured
         + setup_plan
             .evaluate_direct::<ReducedF>(setup)
             .expect("direct reduced setup evaluation")
-        + compression_evaluation;
-    assert_eq!(dense_evaluation, verifier_evaluation);
-    assert!(dense.evaluations()[live_len..]
+        + compression
+}
+
+fn assert_reduced_compiler_matches_structured_verifier(
+    params: &CommittedGroupParams,
+    instance: &RingRelationInstance<ReducedF>,
+    setup: &akita_types::AkitaExpandedSetup<ReducedF>,
+) {
+    let fixture = reduced_compiler_fixture(params, instance);
+    let dense = super::relation_weights::build_reduced_dense_relation_weights(
+        setup,
+        instance,
+        fixture.alpha,
+        params,
+        &fixture.tau1,
+        fixture.opening_source_len,
+        REDUCED_D,
+        &fixture.relation_plan,
+    )
+    .expect("reduced dense relation weights");
+    let dense_evaluation =
+        multilinear_eval(dense.evaluations(), &fixture.point).expect("dense MLE");
+    assert_eq!(
+        dense_evaluation,
+        structured_reduced_evaluation(params, instance, setup, &fixture),
+    );
+    assert!(dense.evaluations()[fixture.live_len..]
         .iter()
         .all(ReducedF::is_zero));
-
-    let dense_evaluations = dense.evaluations().to_vec();
-    let witness_digits = witness.to_i8_digits();
-    assert_eq!(witness_digits.len(), live_len);
-    let witness_table = witness_digits
-        .iter()
-        .map(|&digit| ReducedF::from_i64(i64::from(digit)))
-        .chain(std::iter::repeat(ReducedF::zero()))
-        .take(physical_field_len)
-        .collect::<Vec<_>>();
-    let range_table = witness_table
-        .iter()
-        .map(|&digit| digit * (digit + ReducedF::one()))
-        .collect::<Vec<_>>();
-    let stage1_point = (0..geometry.relation_point_variable_count())
-        .map(|index| ReducedF::from_u64(101 + index as u64))
-        .collect::<Vec<_>>();
-    let range_image = multilinear_eval(&range_table, &stage1_point).expect("range-image MLE");
-    let relation_claim = witness_table
-        .iter()
-        .zip(&dense_evaluations)
-        .fold(ReducedF::zero(), |sum, (&digit, &weight)| {
-            sum + digit * weight
-        });
-    let batching = ReducedF::from_u64(137);
-    let mut prover = RelationRangeImageProver::new(
-        batching,
-        witness.packed_digits(),
-        &stage1_point,
-        range_image,
-        1usize << params.open().digits.log_basis,
-        RelationWeightOracle::ReducedDense(
-            DenseRelationWeights::new(dense_evaluations.clone(), live_len)
-                .expect("typed dense weights"),
-        ),
-        geometry.live_relation_lane_count(),
-        geometry.relation_lane_variable_count(),
-        geometry.relation_coefficient_variable_count(),
-        relation_claim,
-        PreparedProverLinearTerms::zero(
-            geometry.live_relation_lane_count(),
-            geometry.relation_coefficient_block_len(),
-        ),
-        ReducedF::zero(),
-        None,
-    )
-    .expect("reduced Stage-2 prover");
-    let input_claim = prover.input_claim();
-    let mut prover_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let (proof, challenges, final_claim) = prover
-        .prove::<ReducedF, _, _>(&mut prover_transcript, |transcript| {
-            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
-        })
-        .expect("reduced Stage-2 proof");
-    let witness_evaluation =
-        multilinear_eval(&witness_table, &challenges).expect("witness MLE at Stage-2 point");
-    let relation_evaluation =
-        multilinear_eval(&dense_evaluations, &challenges).expect("relation MLE at Stage-2 point");
-    let equality = EqPolynomial::mle(&stage1_point, &challenges).expect("Stage-2 equality");
-    let expected_claim =
-        batching * equality * witness_evaluation * (witness_evaluation + ReducedF::one())
-            + witness_evaluation * relation_evaluation;
-    assert_eq!(final_claim, expected_claim);
-    let verifier = ReducedStage2Replay {
-        num_rounds: geometry.relation_point_variable_count(),
-        input_claim,
-        expected_point: challenges.clone(),
-        expected_claim,
-    };
-    let mut verifier_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    let replayed = verifier
-        .verify::<ReducedF, _, _>(&proof, &mut verifier_transcript, |transcript| {
-            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
-        })
-        .expect("reduced Stage-2 transcript replay");
-    assert_eq!(replayed, challenges);
-
-    let wrong_verifier = ReducedStage2Replay {
-        expected_claim: expected_claim + ReducedF::one(),
-        ..verifier
-    };
-    let mut wrong_transcript = AkitaTranscript::<ReducedF>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert!(wrong_verifier
-        .verify::<ReducedF, _, _>(&proof, &mut wrong_transcript, |transcript| {
-            Ok(transcript.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
-        })
-        .is_err());
 }
 
 #[test]
@@ -484,31 +398,10 @@ fn packed_compact_witness_keeps_exact_live_prefix() {
     assert_eq!(col_bits, 3);
     assert_eq!(ring_bits, 2);
 }
-
-#[test]
-fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
-    let compressed_params = reduced_params(CommitmentPayloadMode::Compressed);
-    let (compressed_instance, rhs_layout) = reduced_instance(&compressed_params);
-    let outer_plan = rhs_layout
-        .group_compression_plan(0)
-        .expect("outer compression plan")
-        .1
-        .clone();
-    let opening_plan = rhs_layout
-        .opening_compression_plan()
-        .expect("opening compression plan")
-        .clone();
-    let compression_setup_coefficients = outer_plan
-        .maps()
-        .iter()
-        .chain(opening_plan.maps())
-        .map(|map| map.input_width() * map.ring_dimension())
-        .max()
-        .expect("compression maps");
-    let setup_coefficients = compression_setup_coefficients.max(
-        active_setup_field_len(&compressed_params, compressed_instance.opening_batch())
-            .expect("active setup field length"),
-    );
+fn with_reduced_setup<R>(
+    setup_coefficients: usize,
+    test: impl FnOnce(&OperationCtx<'_, ReducedF, CpuBackend>, &AkitaProverSetup<ReducedF>) -> R,
+) -> R {
     let setup = AkitaProverSetup::<ReducedF>::generate_with_capacity(
         8,
         1,
@@ -517,67 +410,47 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
         },
     )
     .expect("prover setup");
-    let prepared = CpuBackend::DEFAULT
+    let backend = CpuBackend::DEFAULT;
+    let prepared = backend
         .prepare_expanded(setup.expanded.clone())
         .expect("prepared setup");
-    let ctx = OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
-        .expect("operation context");
+    let ctx =
+        OperationCtx::new(&backend, &prepared, setup.expanded.as_ref()).expect("operation context");
+    test(&ctx, &setup)
+}
 
-    let compressed_inner_rows = inner_rows(&compressed_params);
-    let (mut outer_outputs, outer_report) = execute_compression_chains(
-        &ctx,
-        vec![CompressionExecutionInput {
-            id: (),
-            plan: outer_plan.clone(),
-            coefficients: vec![ReducedF::from_i64(-1); outer_plan.source_coefficients()],
-            relation_mode: RingRelationMode::ReducedEvaluation,
-        }],
-    )
-    .expect("reduced outer compression");
-    assert_eq!(outer_report.quotient_lift_batches, 0);
-    assert_eq!(outer_report.quotient_rows, 0);
-    assert_eq!(outer_report.reduced_evaluation_batches, outer_report.maps);
-    assert!(outer_report
+fn assert_reduced_compression_report(
+    report: &crate::compute::compression::CompressionExecutionReport,
+) {
+    assert_eq!(report.quotient_lift_batches, 0);
+    assert_eq!(report.quotient_rows, 0);
+    assert_eq!(report.reduced_evaluation_batches, report.maps);
+    assert!(report
         .batches
         .iter()
         .all(|batch| batch.relation_mode == RingRelationMode::ReducedEvaluation));
-    let outer_output = outer_outputs.pop().expect("outer output");
-    let compressed_hint = AkitaCommitmentHint::singleton_with_reduced_outer_compression(
-        compressed_inner_rows,
-        &outer_output.witness,
-    )
-    .expect("compressed hint");
-    let outer_source = CompressionSourceWitness::from_outer_hint(
-        0,
-        &outer_plan,
-        &compressed_hint,
-        outer_output.terminal.coefficients().to_vec(),
-        RingRelationMode::ReducedEvaluation,
-    )
-    .expect("retained outer source");
-    let (compression, opening_report) = materialize_compression_witness(
-        &ctx,
-        &rhs_layout,
-        vec![outer_source],
-        compressed_instance.v(),
-        RingRelationMode::ReducedEvaluation,
-    )
-    .expect("reduced relation compression");
-    assert_eq!(opening_report.quotient_lift_batches, 0);
-    assert_eq!(opening_report.quotient_rows, 0);
-    assert_eq!(
-        opening_report.reduced_evaluation_batches,
-        opening_report.maps
-    );
-    assert!(opening_report
-        .batches
-        .iter()
-        .all(|batch| batch.relation_mode == RingRelationMode::ReducedEvaluation));
+}
 
-    let compressed_layout = compressed_instance
-        .segment_layout(&compressed_params, None)
-        .expect("compressed witness layout");
-    let retained_compression_digits = compressed_layout
+fn build_reduced_without_quotients(
+    instance: &RingRelationInstance<ReducedF>,
+    witness: RingRelationWitness<ReducedF>,
+    ctx: &OperationCtx<'_, ReducedF, CpuBackend>,
+    params: &CommittedGroupParams,
+) -> crate::RecursiveWitnessFlat {
+    reset_multi_group_quotient_calls();
+    reset_quotient_decomposition_calls();
+    let flat = ring_switch_build_w(instance, witness, ctx, params)
+        .expect("valid reduced-evaluation witness");
+    assert_eq!(multi_group_quotient_calls(), 0);
+    assert_eq!(quotient_decomposition_calls(), 0);
+    flat
+}
+
+fn retained_compression_digits(
+    layout: &akita_types::WitnessLayout,
+    compression: &crate::protocol::ring_relation::CompressionWitnessMaterialization<ReducedF>,
+) -> Vec<(CompressionWitnessSpan, Vec<i8>)> {
+    layout
         .compression_layers()
         .iter()
         .flat_map(|layer| {
@@ -605,78 +478,140 @@ fn reduced_ring_switch_build_w_keeps_every_quotient_path_cold() {
                 ),
             ]
         })
-        .collect::<Vec<_>>();
-    let compressed_witness = RingRelationWitness::from_groups(
-        vec![reduced_group_witness(&compressed_params, compressed_hint)],
-        RelationDQuotientWitness::ReducedEvaluation,
-        Some(compression),
-    );
-    reset_multi_group_quotient_calls();
-    reset_quotient_decomposition_calls();
-    let compressed_w = ring_switch_build_w(
-        &compressed_instance,
-        compressed_witness,
-        &ctx,
-        &compressed_params,
-    )
-    .expect("compressed reduced witness");
-    assert_eq!(multi_group_quotient_calls(), 0);
-    assert_eq!(quotient_decomposition_calls(), 0);
-    assert!(compressed_layout.r_rows().is_empty());
-    assert_eq!(compressed_layout.quotient_depth(), None);
-    assert_eq!(
-        compressed_w.live_coeff_len(),
-        compressed_layout.live_coeff_len()
-    );
-    let compressed_digits = compressed_w.to_i8_digits();
-    for (span, expected) in retained_compression_digits {
-        assert_eq!(&compressed_digits[span.range()], expected);
-    }
-    assert_reduced_compiler_matches_structured_verifier(
-        &compressed_params,
-        &compressed_instance,
-        setup.expanded.as_ref(),
-        &compressed_w,
-    );
+        .collect()
+}
 
-    let raw_params = reduced_params(CommitmentPayloadMode::Raw);
-    let (raw_instance, _) = reduced_instance(&raw_params);
-    let raw_hint = AkitaCommitmentHint::singleton(inner_rows(&raw_params)).expect("raw hint");
-    let raw_witness = RingRelationWitness::from_groups(
-        vec![reduced_group_witness(&raw_params, raw_hint)],
-        RelationDQuotientWitness::ReducedEvaluation,
-        None,
+#[test]
+fn compressed_reduced_ring_switch_keeps_quotient_paths_cold() {
+    let params = reduced_params(CommitmentPayloadMode::Compressed);
+    let (instance, rhs_layout) = reduced_instance(&params);
+    let outer_plan = rhs_layout
+        .group_compression_plan(0)
+        .expect("outer compression plan")
+        .1
+        .clone();
+    let opening_plan = rhs_layout
+        .opening_compression_plan()
+        .expect("opening compression plan")
+        .clone();
+    let compression_setup_coefficients = outer_plan
+        .maps()
+        .iter()
+        .chain(opening_plan.maps())
+        .map(|map| map.input_width() * map.ring_dimension())
+        .max()
+        .expect("compression maps");
+    let setup_coefficients = compression_setup_coefficients.max(
+        active_setup_field_len(&params, instance.opening_batch())
+            .expect("active setup field length"),
     );
-    reset_multi_group_quotient_calls();
-    reset_quotient_decomposition_calls();
-    let raw_w = ring_switch_build_w(&raw_instance, raw_witness, &ctx, &raw_params)
-        .expect("raw reduced witness");
-    let raw_layout = raw_instance
-        .segment_layout(&raw_params, None)
-        .expect("raw witness layout");
-    assert_eq!(multi_group_quotient_calls(), 0);
-    assert_eq!(quotient_decomposition_calls(), 0);
-    assert!(raw_layout.r_rows().is_empty());
-    assert_eq!(raw_layout.quotient_depth(), None);
-    assert!(raw_layout.compression_layers().is_empty());
-    assert_eq!(raw_w.live_coeff_len(), raw_layout.live_coeff_len());
-    assert_reduced_compiler_matches_structured_verifier(
-        &raw_params,
-        &raw_instance,
-        setup.expanded.as_ref(),
-        &raw_w,
-    );
+    with_reduced_setup(setup_coefficients, |ctx, setup| {
+        let (mut outer_outputs, outer_report) = execute_compression_chains(
+            ctx,
+            vec![CompressionExecutionInput {
+                id: (),
+                plan: outer_plan.clone(),
+                coefficients: vec![ReducedF::from_i64(-1); outer_plan.source_coefficients()],
+                relation_mode: RingRelationMode::ReducedEvaluation,
+            }],
+        )
+        .expect("reduced outer compression");
+        assert_reduced_compression_report(&outer_report);
+        let outer_output = outer_outputs.pop().expect("outer output");
+        let hint = AkitaCommitmentHint::singleton_with_reduced_outer_compression(
+            inner_rows(&params),
+            &outer_output.witness,
+        )
+        .expect("compressed hint");
+        let outer_source = CompressionSourceWitness::from_outer_hint(
+            0,
+            &outer_plan,
+            &hint,
+            outer_output.terminal.coefficients().to_vec(),
+            RingRelationMode::ReducedEvaluation,
+        )
+        .expect("retained outer source");
+        let (compression, opening_report) = materialize_compression_witness(
+            ctx,
+            &rhs_layout,
+            vec![outer_source],
+            instance.v(),
+            RingRelationMode::ReducedEvaluation,
+        )
+        .expect("reduced relation compression");
+        assert_reduced_compression_report(&opening_report);
 
-    let mismatched_hint =
-        AkitaCommitmentHint::singleton(inner_rows(&raw_params)).expect("mismatched hint");
-    let mismatched = RingRelationWitness::from_groups(
-        vec![reduced_group_witness(&raw_params, mismatched_hint)],
-        RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new())),
-        None,
-    );
-    reset_multi_group_quotient_calls();
-    reset_quotient_decomposition_calls();
-    assert!(ring_switch_build_w(&raw_instance, mismatched, &ctx, &raw_params).is_err());
-    assert_eq!(multi_group_quotient_calls(), 0);
-    assert_eq!(quotient_decomposition_calls(), 0);
+        let layout = instance
+            .segment_layout(&params, None)
+            .expect("compressed witness layout");
+        let expected_digits = retained_compression_digits(&layout, &compression);
+        let witness = RingRelationWitness::from_groups(
+            vec![reduced_group_witness(&params, hint)],
+            RelationDQuotientWitness::ReducedEvaluation,
+            Some(compression),
+        );
+        let flat = build_reduced_without_quotients(&instance, witness, ctx, &params);
+        assert!(layout.r_rows().is_empty());
+        assert_eq!(layout.quotient_depth(), None);
+        assert_eq!(flat.live_coeff_len(), layout.live_coeff_len());
+        let digits = flat.to_i8_digits();
+        for (span, expected) in expected_digits {
+            assert_eq!(&digits[span.range()], expected);
+        }
+        assert_reduced_compiler_matches_structured_verifier(
+            &params,
+            &instance,
+            setup.expanded.as_ref(),
+        );
+    });
+}
+
+#[test]
+fn raw_reduced_ring_switch_keeps_quotient_paths_cold() {
+    let params = reduced_params(CommitmentPayloadMode::Raw);
+    let (instance, _) = reduced_instance(&params);
+    let setup_coefficients = active_setup_field_len(&params, instance.opening_batch())
+        .expect("active setup field length");
+    with_reduced_setup(setup_coefficients, |ctx, setup| {
+        let hint = AkitaCommitmentHint::singleton(inner_rows(&params)).expect("raw hint");
+        let witness = RingRelationWitness::from_groups(
+            vec![reduced_group_witness(&params, hint)],
+            RelationDQuotientWitness::ReducedEvaluation,
+            None,
+        );
+        let flat = build_reduced_without_quotients(&instance, witness, ctx, &params);
+        let layout = instance
+            .segment_layout(&params, None)
+            .expect("raw witness layout");
+        assert!(layout.r_rows().is_empty());
+        assert_eq!(layout.quotient_depth(), None);
+        assert!(layout.compression_layers().is_empty());
+        assert_eq!(flat.live_coeff_len(), layout.live_coeff_len());
+        assert_reduced_compiler_matches_structured_verifier(
+            &params,
+            &instance,
+            setup.expanded.as_ref(),
+        );
+    });
+}
+
+#[test]
+fn reduced_ring_switch_rejects_quotient_witness_without_running_quotients() {
+    let params = reduced_params(CommitmentPayloadMode::Raw);
+    let (instance, _) = reduced_instance(&params);
+    let setup_coefficients = active_setup_field_len(&params, instance.opening_batch())
+        .expect("active setup field length");
+    with_reduced_setup(setup_coefficients, |ctx, _| {
+        let hint = AkitaCommitmentHint::singleton(inner_rows(&params)).expect("mismatched hint");
+        let witness = RingRelationWitness::from_groups(
+            vec![reduced_group_witness(&params, hint)],
+            RelationDQuotientWitness::QuotientLift(RingVec::from_coeffs(Vec::new())),
+            None,
+        );
+        reset_multi_group_quotient_calls();
+        reset_quotient_decomposition_calls();
+        assert!(ring_switch_build_w(&instance, witness, ctx, &params).is_err());
+        assert_eq!(multi_group_quotient_calls(), 0);
+        assert_eq!(quotient_decomposition_calls(), 0);
+    });
 }

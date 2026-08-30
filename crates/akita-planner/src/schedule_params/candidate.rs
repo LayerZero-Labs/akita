@@ -278,7 +278,11 @@ pub(crate) use opening::PlannerOpeningCandidate;
 pub(crate) use recursive::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     recursive_split_search_domain, FoldCandidatePolicy, RecursiveCandidateRequest,
-    RecursiveSetupPrefix, SplitBoundPolicy,
+    RecursiveFoldWork, SplitBoundPolicy,
+};
+#[cfg(test)]
+pub(crate) use recursive::{
+    derive_unpruned_fold_candidates_for_oracle, RecursiveRelationCandidate,
 };
 pub(crate) use setup_prefix::SetupPrefixSearchCache;
 pub(super) use setup_prefix::{derive_setup_prefix_groups, SetupPrefixSearchRequest};

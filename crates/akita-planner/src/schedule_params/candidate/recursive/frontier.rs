@@ -4,8 +4,8 @@ pub(super) fn derive_fold_candidate_frontier(
     request: RecursiveCandidateRequest<'_>,
     setup_prefix: RecursiveSetupPrefix<'_>,
     split_bounds: SplitBoundPolicy,
-    relation_transitions: &[RelationTransition],
-) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    relation_domain: RelationSearchDomain,
+) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(&request, setup_prefix)? else {
         return Ok(Vec::new());
     };
@@ -18,7 +18,12 @@ pub(super) fn derive_fold_candidate_frontier(
     let mut candidates = Vec::new();
     let mut best_modeled_with_score = std::collections::BTreeMap::<
         akita_types::RingRelationMode,
-        (LayoutCandidateScore, usize, CommittedGroupParams, usize),
+        (
+            LayoutCandidateScore,
+            usize,
+            RecursiveRelationCandidate,
+            usize,
+        ),
     >::new();
     let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
     for (source_index, candidate_source_moment) in
@@ -35,12 +40,13 @@ pub(super) fn derive_fold_candidate_frontier(
             ..modeled_context
         };
         context.walk_splits(
-            relation_transitions,
+            relation_domain,
+            SliceRetention::ObjectiveLocal,
             |_, bounds| {
                 if !split_bounds.is_enabled() {
                     return true;
                 }
-                if relation_transitions.len() != 1 {
+                if relation_domain.has_multiple_modes() {
                     return true;
                 }
                 let frontier_admits = bounds
@@ -54,8 +60,8 @@ pub(super) fn derive_fold_candidate_frontier(
                     .is_none_or(|score| bounds.score.is_none_or(|bound| bound <= score.0));
                 frontier_admits || best_search_admits
             },
-            |score, r, params, next_witness_len| {
-                let mode = params.ring_relation_mode;
+            |score, r, candidate, next_witness_len| {
+                let mode = candidate.relation_transition.mode();
                 if source_index == 0
                     && next_witness_len < request.current_witness_len
                     && best_modeled_with_score.get(&mode).is_none_or(
@@ -65,16 +71,16 @@ pub(super) fn derive_fold_candidate_frontier(
                         },
                     )
                 {
-                    if relation_transitions.len() == 1 {
+                    if !relation_domain.has_multiple_modes() {
                         best_modeled_score.set(Some(score));
                     }
                     best_modeled_with_score
-                        .insert(mode, (score, r, params.clone(), next_witness_len));
+                        .insert(mode, (score, r, candidate.clone(), next_witness_len));
                 }
                 if next_witness_len < request.current_witness_len
-                    && !candidates.contains(&(params.clone(), next_witness_len))
+                    && !candidates.contains(&(candidate.clone(), next_witness_len))
                 {
-                    candidates.push((params, next_witness_len));
+                    candidates.push((candidate, next_witness_len));
                 }
             },
         )?;
@@ -84,26 +90,17 @@ pub(super) fn derive_fold_candidate_frontier(
     }
     let best_modeled = best_modeled_with_score
         .into_values()
-        .map(|(_, r, params, next)| (r, params, next))
+        .map(|(_, r, candidate, next)| (r, candidate, next))
         .collect::<Vec<_>>();
     if !request.opening.is_coefficient_packing() {
         for best in &best_modeled {
-            let transition = relation_transitions
-                .iter()
-                .copied()
-                .find(|transition| transition.mode() == best.1.ring_relation_mode)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "mode-specific frontier winner has no relation transition".into(),
-                    )
-                })?;
             append_selective_l2_candidates(
                 &mut candidates,
                 Some(best),
                 &request,
                 &search,
                 SuccessorPolicy::RequireContraction,
-                transition,
+                SliceRetention::ObjectiveLocal,
             )?;
         }
     }

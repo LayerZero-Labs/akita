@@ -36,22 +36,21 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         let expected_terminal = derive_terminal_candidates(request).expect("terminal search");
         let expected_folds = derive_fold_candidates(
             request,
-            RecursiveSetupPrefix::None,
+            RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
             fold_policy,
-            RelationTransition::quotient_only(),
         )
         .expect("fold search");
         let actual = derive_recursive_candidate_views(
             request,
             fold_policy,
-            RelationTransition::quotient_only(),
+            RelationSearchDomain::QuotientOnly,
         )
         .expect("combined search");
 
         assert_eq!(actual.terminal, expected_terminal);
         assert_eq!(actual.folds, expected_folds);
-        assert!(actual.folds.iter().any(|(params, _)| matches!(
-            params.inner().matrix.security_route(),
+        assert!(actual.folds.iter().any(|(candidate, _)| matches!(
+            candidate.params.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )));
     }
@@ -80,7 +79,7 @@ fn combined_relation_views_match_mode_specific_searches() {
         fold_level: 3,
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
     };
-    let transitions = RingRelationPhase::QuotientPrefix
+    let relation_domain = RingRelationPhase::QuotientPrefix
         .transitions(
             request.fold_level,
             RelationCandidateTopology::DirectEvaluationTrace,
@@ -91,20 +90,20 @@ fn combined_relation_views_match_mode_specific_searches() {
         .flat_map(|mode| {
             derive_fold_candidates(
                 request,
-                RecursiveSetupPrefix::None,
+                RecursiveFoldWork::direct(RelationSearchDomain::for_mode(mode)),
                 FoldCandidatePolicy::Best,
-                RelationTransition::for_mode(mode),
             )
             .expect("mode-specific fold search")
         })
-        .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+        .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
-    let actual = derive_recursive_candidate_views(request, FoldCandidatePolicy::Best, transitions)
-        .expect("shared relation search");
+    let actual =
+        derive_recursive_candidate_views(request, FoldCandidatePolicy::Best, relation_domain)
+            .expect("shared relation search");
     let actual_folds = actual
         .folds
         .into_iter()
-        .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+        .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
 
     assert_eq!(actual_folds, expected);
@@ -142,7 +141,7 @@ fn combined_views_keep_a_noncontracting_terminal_candidate() {
                 source_moment: None,
             },
             FoldCandidatePolicy::Best,
-            RelationTransition::quotient_only(),
+            RelationSearchDomain::QuotientOnly,
         )
         .expect("combined search");
         if !views.terminal.is_empty() && views.folds.is_empty() {

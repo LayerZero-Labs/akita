@@ -34,60 +34,18 @@ fn removed_quotient_coefficients(
     if !params.ring_relation_mode.is_reduced_evaluation() {
         return Ok((0, 0));
     }
-    let mut lifted = params.clone();
-    lifted.ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
     let final_group = akita_types::PolynomialGroupLayout::singleton(
         akita_types::padded_boolean_opening_vars(input_witness_len)
             .map_err(|error| format!("derive quotient-report opening arity: {error}"))?,
     );
-    let opening_layout = lifted
-        .opening_layout_for_final_group(final_group)
-        .map_err(|error| format!("derive quotient-report opening layout: {error}"))?;
-    let relation_geometry = akita_types::RelationWitnessGeometry::for_level(
-        &lifted,
-        &opening_layout,
+    let breakdown = akita_types::QuotientCoefficientBreakdown::for_reduced_counterfactual(
+        params,
+        final_group,
         spec.policy.claim_ext_degree,
-    )
-    .map_err(|error| format!("derive quotient-report relation geometry: {error}"))?;
-    let quotient_plan = akita_types::RelationQuotientPlan::for_field_bits(
-        &lifted,
         spec.policy.decomposition.field_bits(),
     )
-    .map_err(|error| format!("derive quotient-report decomposition: {error}"))?;
-    let layout = akita_types::WitnessLayout::new(
-        &lifted,
-        &opening_layout,
-        &relation_geometry,
-        lifted.witness_chunk.num_chunks,
-        quotient_plan,
-    )
-    .map_err(|error| format!("derive quotient-report witness layout: {error}"))?;
-    let mut compression_rows = std::collections::BTreeSet::new();
-    for layer in layout.compression_layers() {
-        compression_rows.extend(
-            layer
-                .f_quotient_rows()
-                .into_iter()
-                .flatten()
-                .map(|(_, row)| *row),
-        );
-        if let Some(row) = layer.h_quotient_row() {
-            compression_rows.insert(row);
-        }
-    }
-    let mut ordinary = 0usize;
-    let mut compression = 0usize;
-    for (index, row) in layout.r_rows().iter().enumerate() {
-        let target = if compression_rows.contains(&index) {
-            &mut compression
-        } else {
-            &mut ordinary
-        };
-        *target = target
-            .checked_add(row.range().len())
-            .ok_or_else(|| "catalog quotient-removal coefficient count overflow".to_string())?;
-    }
-    Ok((ordinary, compression))
+    .map_err(|error| format!("derive quotient-report counterfactual: {error}"))?;
+    Ok((breakdown.ordinary, breakdown.compression))
 }
 
 fn opening_policy_signature(

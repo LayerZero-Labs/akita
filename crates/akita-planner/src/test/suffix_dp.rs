@@ -50,6 +50,7 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         prefix
             .transitions(1, direct_trace)
             .unwrap()
+            .transitions()
             .iter()
             .map(|transition| transition.mode())
             .collect::<Vec<_>>(),
@@ -59,12 +60,17 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
         prefix
             .transitions(2, direct_trace)
             .unwrap()
+            .transitions()
             .iter()
             .map(|transition| transition.mode())
             .collect::<Vec<_>>(),
         vec![QuotientLift, ReducedEvaluation]
     );
-    let reduced_transition = reduced.transitions(2, direct_trace).unwrap()[0];
+    let reduced_transition = reduced
+        .transitions(2, direct_trace)
+        .unwrap()
+        .transition_for(akita_types::RingRelationMode::ReducedEvaluation)
+        .unwrap();
     assert_eq!(reduced_transition.mode(), ReducedEvaluation);
     assert_eq!(reduced_transition.next_phase(), reduced);
     assert!(!reduced_transition.allows_setup_offload());

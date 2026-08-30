@@ -15,10 +15,12 @@ use crate::{
 };
 
 mod chunk_partition;
+mod quotient_breakdown;
 mod scalar_len;
 mod tail;
 
 pub use chunk_partition::dyadic_block_ranges;
+pub use quotient_breakdown::QuotientCoefficientBreakdown;
 pub use tail::RelationQuotientPlan;
 
 /// Exact physical coefficient count of the grouped `[Z | E | T]` witness body.

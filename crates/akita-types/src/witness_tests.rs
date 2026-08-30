@@ -182,6 +182,22 @@ fn relation_mode_is_the_authority_for_raw_and_compressed_quotient_ranges() {
         reduced
             .validate_internal_ranges()
             .expect("valid reduced-evaluation ranges");
+        let breakdown = QuotientCoefficientBreakdown::for_reduced_counterfactual(
+            &reduced_params,
+            PolynomialGroupLayout::new(0, 2),
+            2,
+            32,
+        )
+        .expect("canonical quotient-lift counterfactual");
+        assert!(breakdown.ordinary > 0);
+        assert_eq!(breakdown.compression > 0, payload_mode.is_compressed());
+        assert!(QuotientCoefficientBreakdown::for_reduced_counterfactual(
+            &lifted_params,
+            PolynomialGroupLayout::new(0, 2),
+            2,
+            32,
+        )
+        .is_err());
 
         assert!(matches!(
             lifted.relation_quotient_layout(),

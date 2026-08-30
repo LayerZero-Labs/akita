@@ -42,15 +42,17 @@ pub(crate) use akita_schedules::planner_support::{
     materialize_candidate_schedule, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_types::suffix_opening_layout;
+#[cfg(test)]
+pub(crate) use candidate::derive_unpruned_fold_candidates_for_oracle;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveSetupPrefix,
+    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
     SetupPrefixSearchCache, SplitBoundPolicy,
 };
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
 pub(crate) use relation_transition::{
-    RelationCandidateTopology, RelationTransition, RingRelationPhase,
+    RelationCandidateTopology, RelationSearchDomain, RelationTransition, RingRelationPhase,
 };
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
 pub(crate) use suffix_dp::{
@@ -365,8 +367,8 @@ impl PackedProofCost {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_nonce_bits(self, nonce_bits: usize) -> Result<Self, AkitaError> {
-        Self::new(self.payload_bytes, nonce_bits)
+    pub(crate) const fn nonce_bits(self) -> usize {
+        self.nonce_bits
     }
 
     pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {

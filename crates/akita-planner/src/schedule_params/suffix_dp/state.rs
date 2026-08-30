@@ -298,11 +298,11 @@ impl SuffixTopology {
         }
     }
 
-    pub(crate) fn relation_transitions(
+    pub(crate) fn relation_domain(
         self,
         absolute_fold_level: usize,
         opening: akita_types::OpeningMethod,
-    ) -> Result<&'static [RelationTransition], AkitaError> {
+    ) -> Result<RelationSearchDomain, AkitaError> {
         let (relation_phase, consumes_setup_prefix) = match self {
             Self::Direct { relation_phase, .. } => (relation_phase, false),
             Self::SetupPrefixed { .. } => (RingRelationPhase::QuotientPrefix, true),

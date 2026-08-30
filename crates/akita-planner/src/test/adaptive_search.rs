@@ -113,7 +113,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     ];
     let domain = RingDimensionSearchDomain::new(dimensions).unwrap();
     let policy = policy_for_domain(base_policy, &domain);
-    let key = onehot_group(16, 1);
+    let key = onehot_group(15, 4);
     let selected = find_schedule(
         key,
         &policy,
@@ -194,13 +194,19 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    assert!(
+        selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
+        "bounded oracle must cover the production winner's recursion depth",
+    );
     let unpruned = unpruned_search::find_schedule(
         onehot_group(14, 1),
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
+        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .unwrap();
+    let unpruned = &unpruned.planned;
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
@@ -217,6 +223,19 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
     assert_eq!(
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes(),
+    );
+    assert_eq!(
+        std::iter::once(selected.schedule.root.output_witness_len)
+            .chain(
+                selected
+                    .schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|fold| fold.output_witness_len),
+            )
+            .collect::<Vec<_>>(),
+        vec![215_104, 162_624, 130_048, 96_256],
+        "the complete objective must retain the canonical level-2 split tie-break",
     );
     let root = &selected.schedule.root.params;
     assert!(matches!(
@@ -270,6 +289,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
+        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .expect_err("the bounds-disabled oracle must use the same hard packing policy");
     assert!(matches!(error, AkitaError::UnsupportedSchedule(_)));
@@ -315,8 +335,10 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
+        unpruned_search::OracleRelationPlan::AllLegal,
     )
     .expect("unpruned packing schedule from mixed domain");
+    let unpruned = &unpruned.planned;
     assert!(matches!(
         unpruned.schedule.root.params.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -327,7 +349,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     );
     assert_eq!(
         estimated_first_direct_setup_capacity(&selected),
-        estimated_first_direct_setup_capacity(&unpruned),
+        estimated_first_direct_setup_capacity(unpruned),
     );
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
@@ -447,13 +469,18 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
 }
 
 #[test]
-fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
+fn bounded_suffix_dp_matches_unpruned_fixed_cutover_search() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
-    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let domain = RingDimensionSearchDomain::uniform(256).unwrap();
     let base_policy = policy_of::<OneHot>();
-    let policy = policy_for_domain(base_policy, &domain);
-    let key = onehot_group(16, 1);
+    let mut policy = policy_for_domain(base_policy, &domain);
+    // The oracle enumerates every complete suffix, so keep this correctness
+    // fixture focused on relation cutovers rather than multiplying it by the
+    // independent basis-search axis.
+    policy.inner_basis_range.1 = policy.inner_basis_range.0;
+    policy.opening_basis_range.1 = policy.opening_basis_range.0;
+    let key = onehot_group(20, 1);
     let selected = find_schedule(
         key,
         &policy,
@@ -462,21 +489,70 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    assert!(
+        selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
+        "bounded oracle must cover the production winner's recursion depth",
+    );
     let unpruned = unpruned_search::find_schedule(
         key,
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         OneHot::ring_challenge_config,
+        unpruned_search::OracleRelationPlan::EarliestReduced,
     )
     .unwrap();
-    let reversed = unpruned_search::find_schedule_with_cutover_order(
-        key,
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        OneHot::ring_challenge_config,
-        true,
-    )
-    .unwrap();
+    assert!(unpruned.reduced_fold_candidates > 0);
+    assert!(unpruned.suffix_states <= unpruned_search::MAX_ORACLE_SUFFIX_STATES);
+    assert!(unpruned.complete_schedules <= unpruned_search::MAX_ORACLE_COMPLETE_SCHEDULES);
+    let unpruned = &unpruned.planned;
+
+    // Frozen acceptance data makes this test sensitive to defects in the
+    // production candidate constructor and byte model that the bounded
+    // traversal deliberately reuses. A candidate-filter mutation changes the
+    // descriptor digest; a pricing mutation changes the exact payload value.
+    assert_eq!(
+        akita_types::digest_descriptor_bytes(&unpruned.schedule.canonical_descriptor_bytes()),
+        [
+            85, 179, 106, 151, 191, 26, 198, 172, 121, 188, 187, 183, 116, 249, 185, 29, 34, 176,
+            111, 15, 77, 190, 189, 176, 156, 115, 12, 145, 108, 75, 133, 242,
+        ],
+        "the independently reviewed fixed-cutover descriptor changed",
+    );
+    assert_eq!(
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
+        130_022,
+        "the independently reviewed fixed-cutover price changed",
+    );
+    assert_eq!(
+        unpruned.estimate.estimated_num_setup_field_elements, 131_072,
+        "the independently reviewed fixed-cutover setup footprint changed",
+    );
+    assert_eq!(
+        std::iter::once(unpruned.schedule.root.output_witness_len)
+            .chain(
+                unpruned
+                    .schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|fold| fold.output_witness_len),
+            )
+            .collect::<Vec<_>>(),
+        [554_240, 510_720, 372_736],
+        "the fixed-cutover witness chain changed",
+    );
+    assert_eq!(
+        unpruned
+            .schedule
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.params.ring_relation_mode)
+            .collect::<Vec<_>>(),
+        [
+            akita_types::RingRelationMode::QuotientLift,
+            akita_types::RingRelationMode::ReducedEvaluation,
+        ],
+        "the fixture must cross from a quotient prefix into a reduced suffix",
+    );
 
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
@@ -489,11 +565,6 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
     assert_eq!(
         selected.schedule.canonical_descriptor_bytes(),
         unpruned.schedule.canonical_descriptor_bytes()
-    );
-    assert_eq!(
-        unpruned.schedule.canonical_descriptor_bytes(),
-        reversed.schedule.canonical_descriptor_bytes(),
-        "explicit cutover enumeration must be independent of traversal order",
     );
 }
 
@@ -613,8 +684,10 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
             &policy,
             akita_config::honest_fold_policy_of::<OneHot>(),
             OneHot::ring_challenge_config,
+            unpruned_search::OracleRelationPlan::AllLegal,
         )
         .expect("unpruned adaptive search");
+        let unpruned = &unpruned.planned;
 
         assert_eq!(
             selected.schedule.root.params.role_dims(),
@@ -629,7 +702,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         );
         assert_eq!(
             estimated_first_direct_setup_capacity(&selected),
-            estimated_first_direct_setup_capacity(&unpruned),
+            estimated_first_direct_setup_capacity(unpruned),
             "domain {domain_index} first direct padded setup capacity"
         );
         assert_eq!(

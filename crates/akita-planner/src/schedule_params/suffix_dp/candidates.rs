@@ -9,7 +9,7 @@ use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
     dimension_candidates, suffix_opening_layout, FoldCandidatePolicy, RecursiveCandidateRequest,
-    RecursiveSetupPrefix, SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
+    RecursiveFoldWork, SetupPrefixSearchCache, SplitBoundPolicy, SuffixCtx, SuffixState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,15 +50,21 @@ struct OpeningWork {
     purpose: OpeningPurpose,
 }
 
-pub(super) struct RawLevelCandidate {
+pub(super) struct RawTerminalCandidate {
     pub(super) params: CommittedGroupParams,
-    pub(super) next_witness_len: usize,
     pub(super) opening_reduction_bytes: usize,
 }
 
+pub(super) struct RawFoldCandidate {
+    pub(super) params: CommittedGroupParams,
+    pub(super) next_witness_len: usize,
+    pub(super) opening_reduction_bytes: usize,
+    pub(super) relation_transition: super::RelationTransition,
+}
+
 pub(super) struct GeneratedCandidates {
-    pub(super) terminal: Vec<RawLevelCandidate>,
-    pub(super) folds: Vec<RawLevelCandidate>,
+    pub(super) terminal: Vec<RawTerminalCandidate>,
+    pub(super) folds: Vec<RawFoldCandidate>,
 }
 
 pub(super) struct CandidateDomain<'a> {
@@ -279,8 +285,7 @@ impl<'a> CandidateDomain<'a> {
             crate::policy::log_basis_search_range_at_level(policy, state.level);
         let opening_work = opening_work_domain(ctx, state, root_level_key, opening_shape)?;
         let retain_split_frontier = state.topology.incoming_setup_prefix().is_some()
-            || (policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
-                && state.level < akita_schedules::ADAPTIVE_SEARCH_LEVELS)
+            || policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
             || matches!(
                 policy.ring_dimension_schedule_mode,
                 crate::RingDimensionScheduleMode::AdaptiveDimension {
@@ -338,16 +343,20 @@ impl<'a> CandidateDomain<'a> {
                         inner_lb,
                         open_lb,
                     )?;
+                    let relation_domain = state
+                        .topology
+                        .relation_domain(state.level, work.opening.method())?;
+                    let relation_transition = relation_domain.only_transition()?;
                     for (params, next_witness_len) in dimension_candidates {
                         if work.purpose.allows_terminal() {
-                            terminal.push(RawLevelCandidate {
+                            terminal.push(RawTerminalCandidate {
                                 params: params.clone(),
-                                next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             });
                         }
                         if work.purpose.allows_fold() {
-                            folds.push(RawLevelCandidate {
+                            folds.push(RawFoldCandidate {
+                                relation_transition,
                                 params,
                                 next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
@@ -376,36 +385,35 @@ impl<'a> CandidateDomain<'a> {
                         fold_level: state.level,
                         source_moment: state.source_moment,
                     };
-                    let relation_transitions = state
+                    let relation_domain = state
                         .topology
-                        .relation_transitions(state.level, work.opening.method())?;
+                        .relation_domain(state.level, work.opening.method())?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
                             request,
                             self.fold_policy,
-                            relation_transitions,
+                            relation_domain,
                         )?;
                         terminal.extend(views.terminal.into_iter().map(|params| {
-                            RawLevelCandidate {
+                            RawTerminalCandidate {
                                 params,
-                                next_witness_len: 0,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             }
                         }));
-                        folds.extend(views.folds.into_iter().map(|(params, next_witness_len)| {
-                            RawLevelCandidate {
-                                params,
+                        folds.extend(views.folds.into_iter().map(
+                            |(candidate, next_witness_len)| RawFoldCandidate {
+                                relation_transition: candidate.relation_transition,
+                                params: candidate.params,
                                 next_witness_len,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
-                            }
-                        }));
+                            },
+                        ));
                         continue;
                     }
                     if work.purpose.allows_terminal() {
                         terminal.extend(derive_terminal_candidates(request)?.into_iter().map(
-                            |params| RawLevelCandidate {
+                            |params| RawTerminalCandidate {
                                 params,
-                                next_witness_len: 0,
                                 opening_reduction_bytes: work.opening_reduction_bytes,
                             },
                         ));
@@ -413,23 +421,17 @@ impl<'a> CandidateDomain<'a> {
                     if !work.purpose.allows_fold() {
                         continue;
                     }
-                    let setup_prefix = if let Some(natural_len) = incoming_setup_prefix {
-                        RecursiveSetupPrefix::Search {
-                            cache: setup_prefixes,
-                            natural_len,
-                        }
+                    let fold_work = if let Some(natural_len) = incoming_setup_prefix {
+                        RecursiveFoldWork::setup_prefixed(setup_prefixes, natural_len)
                     } else {
-                        RecursiveSetupPrefix::None
+                        RecursiveFoldWork::direct(relation_domain)
                     };
-                    let level_candidates = derive_fold_candidates(
-                        request,
-                        setup_prefix,
-                        self.fold_policy,
-                        relation_transitions,
-                    )?;
-                    for (params, next_witness_len) in level_candidates {
-                        folds.push(RawLevelCandidate {
-                            params,
+                    let level_candidates =
+                        derive_fold_candidates(request, fold_work, self.fold_policy)?;
+                    for (candidate, next_witness_len) in level_candidates {
+                        folds.push(RawFoldCandidate {
+                            relation_transition: candidate.relation_transition,
+                            params: candidate.params,
                             next_witness_len,
                             opening_reduction_bytes: work.opening_reduction_bytes,
                         });

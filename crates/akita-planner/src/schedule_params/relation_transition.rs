@@ -53,6 +53,70 @@ pub(crate) struct RelationTransition {
     allows_setup_offload: bool,
 }
 
+/// Non-empty legal relation domain for one recursive fold topology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RelationSearchDomain {
+    QuotientOnly,
+    ReducedOnly,
+    QuotientAndReduced,
+}
+
+impl RelationSearchDomain {
+    #[must_use]
+    pub(crate) const fn transitions(self) -> &'static [RelationTransition] {
+        match self {
+            Self::QuotientOnly => RelationTransition::QUOTIENT_ONLY,
+            Self::ReducedOnly => RelationTransition::REDUCED_ONLY,
+            Self::QuotientAndReduced => RelationTransition::QUOTIENT_OR_REDUCED,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn has_multiple_modes(self) -> bool {
+        matches!(self, Self::QuotientAndReduced)
+    }
+
+    #[must_use]
+    pub(crate) const fn including_terminal_quotient(self) -> Self {
+        match self {
+            Self::ReducedOnly | Self::QuotientAndReduced => Self::QuotientAndReduced,
+            Self::QuotientOnly => Self::QuotientOnly,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn transition_for(
+        self,
+        mode: RingRelationMode,
+    ) -> Result<RelationTransition, AkitaError> {
+        self.transitions()
+            .iter()
+            .copied()
+            .find(|transition| transition.mode == mode)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "materialized fold has no transition in its relation domain".into(),
+                )
+            })
+    }
+
+    pub(crate) fn only_transition(self) -> Result<RelationTransition, AkitaError> {
+        let [transition] = self.transitions() else {
+            return Err(AkitaError::InvalidSetup(
+                "relation domain does not contain exactly one transition".into(),
+            ));
+        };
+        Ok(*transition)
+    }
+
+    pub(crate) const fn for_mode(mode: RingRelationMode) -> Self {
+        match mode {
+            RingRelationMode::QuotientLift => Self::QuotientOnly,
+            RingRelationMode::ReducedEvaluation => Self::ReducedOnly,
+        }
+    }
+}
+
 impl RelationTransition {
     const QUOTIENT: Self = Self {
         mode: RingRelationMode::QuotientLift,
@@ -67,32 +131,6 @@ impl RelationTransition {
     const QUOTIENT_ONLY: &[Self] = &[Self::QUOTIENT];
     const QUOTIENT_OR_REDUCED: &[Self] = &[Self::QUOTIENT, Self::REDUCED];
     const REDUCED_ONLY: &[Self] = &[Self::REDUCED];
-
-    #[must_use]
-    pub(crate) const fn quotient_only() -> &'static [Self] {
-        Self::QUOTIENT_ONLY
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) const fn for_mode(mode: RingRelationMode) -> &'static [Self] {
-        match mode {
-            RingRelationMode::QuotientLift => Self::QUOTIENT_ONLY,
-            RingRelationMode::ReducedEvaluation => Self::REDUCED_ONLY,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn with_terminal_quotient(transitions: &[Self]) -> &'static [Self] {
-        if transitions
-            .iter()
-            .any(|transition| transition.mode == RingRelationMode::ReducedEvaluation)
-        {
-            Self::QUOTIENT_OR_REDUCED
-        } else {
-            Self::QUOTIENT_ONLY
-        }
-    }
 
     #[must_use]
     pub(crate) const fn mode(self) -> RingRelationMode {
@@ -116,18 +154,18 @@ impl RingRelationPhase {
         self,
         absolute_fold_level: usize,
         topology: RelationCandidateTopology,
-    ) -> Result<&'static [RelationTransition], AkitaError> {
+    ) -> Result<RelationSearchDomain, AkitaError> {
         match self {
             Self::QuotientPrefix
                 if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
             {
-                Ok(RelationTransition::QUOTIENT_OR_REDUCED)
+                Ok(RelationSearchDomain::QuotientAndReduced)
             }
-            Self::QuotientPrefix => Ok(RelationTransition::QUOTIENT_ONLY),
+            Self::QuotientPrefix => Ok(RelationSearchDomain::QuotientOnly),
             Self::ReducedEvaluationSuffix
                 if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
             {
-                Ok(RelationTransition::REDUCED_ONLY)
+                Ok(RelationSearchDomain::ReducedOnly)
             }
             Self::ReducedEvaluationSuffix => Err(AkitaError::InvalidSetup(
                 "reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later"
