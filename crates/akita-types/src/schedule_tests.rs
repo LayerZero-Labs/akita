@@ -358,7 +358,7 @@ fn proof_shape_accepts_group_local_subring_dimensions_within_packing_family() {
     ])
     .expect("grouped opening layout");
 
-    let shape = canonical_proof_shape(&schedule, &layout, 1)
+    let shape = canonical_proof_shape(&schedule, &layout, 2)
         .expect("group-local packing dimensions share one opening family");
     assert!(shape.root.extension_opening_reduction.is_none());
 }
