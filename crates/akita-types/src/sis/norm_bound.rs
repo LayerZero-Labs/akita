@@ -192,7 +192,7 @@ pub fn certified_terminal_response_linf_cap(
 /// balanced `δ_fold`-digit string independently in each response chunk. Binding
 /// compares two accepted responses, so one chunk's exact coefficient difference
 /// envelope is [`balanced_digit_interval_diameter`], not twice the asymmetric
-/// single-response envelope [`balanced_digit_abs_max`]. The shared A rows act on
+/// single-response envelope [`crate::sis::balanced_digit_abs_max`]. The shared A rows act on
 /// the sum of all `num_response_chunks` responses, so their difference envelope
 /// is the per-chunk diameter times `num_response_chunks`. MSIS accounting prices
 /// the weak-binding collision `2 · c_bar · delta_z_sum`, where

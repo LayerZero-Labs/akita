@@ -203,10 +203,10 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
         (1, 1),
         (2, 2),
         (4, 2),
-        (2, 4),
         (4, 4),
         (2, 8),
         (4, 8),
+        (8, 4),
         (8, 8),
     ] {
         assert!(
