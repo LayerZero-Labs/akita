@@ -1,8 +1,7 @@
 //! Compare Python-local-minimum, certified, and full-domain search on golden cells.
 //!
-//! Default CI runs a small smoke grid. The medium trusted subset and rank-20
-//! geometries are `#[ignore]` manual gates before infinity table generation;
-//! use the same filter via `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
+//! The same grids are available for benchmarking via
+//! `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
 #[cfg(feature = "parallel")]
@@ -142,7 +141,6 @@ fn full_exhaustive_parallel_matches_certified_search_smoke() {
 }
 
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn certified_search_covers_medium_trusted_grid() {
     let rows = exhaustive_subset_rows();
     assert!(
@@ -157,7 +155,6 @@ fn certified_search_covers_medium_trusted_grid() {
 }
 
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn certified_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let mut violations = Vec::new();
@@ -180,7 +177,6 @@ fn certified_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
 
 #[cfg(feature = "parallel")]
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
 fn full_exhaustive_parallel_matches_certified_search_on_medium_subset() {
     let mut mismatches = Vec::new();
     for row in exhaustive_subset_rows() {
@@ -200,11 +196,9 @@ fn full_exhaustive_parallel_matches_certified_search_on_medium_subset() {
     }
 }
 
-/// Rank-20 geometries have `m = 1280` and are too slow for default CI.
-/// Run with `cargo test -p akita-sis-estimator --test search_mode_parity -- --ignored`.
+/// Rank-20 geometries have `m = 1280`.
 #[test]
-#[ignore = "rank-20 exhaustive cells are slow; run manually before table generation changes"]
-fn certified_search_rank20_geometries_manual() {
+fn certified_search_rank20_geometries() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let rows: Vec<_> = parse_trusted_rows()
         .into_iter()

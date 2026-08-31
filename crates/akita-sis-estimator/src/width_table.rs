@@ -349,6 +349,9 @@ impl InfinityWidthRow {
     const WORK_RESULT_SCHEMA: &'static str = "akita-infinity-width-row-result-v1";
 
     /// CSV header for the single hard model and both certificates.
+    ///
+    /// An `above-target:<v>` cost is a certified lower bound, not the true
+    /// cost: the search stopped at `v` once `v` cleared `target_bits`.
     pub const fn csv_header() -> &'static str {
         "policy,modulus_profile,d,rank,coeff_linf_bound,max_width,scalar_n,search_cap,hit_cap,profile,target_bits,max_adps16_quantum_rop_log2,next_adps16_quantum_rop_log2,max_beta,max_zeta,next_beta,next_zeta,cutoff_kind"
     }

@@ -43,8 +43,8 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, allowed_dims: &[usize]) {
 fn accepts_real_fp64_adaptive_schedule() {
     let schedule = schedule::<fp64::Dense>(20);
     validate_schedule_ring_dims(&schedule).expect("adaptive fp64 schedule");
-    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024]);
-    assert_eq!(schedule.root.params.d_a(), 1024);
+    assert_schedule_geometry(&schedule, &[64, 128, 256, 512, 1024, 2048]);
+    assert_eq!(schedule.root.params.d_a(), 2048);
 }
 
 #[test]
