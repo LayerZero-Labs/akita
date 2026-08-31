@@ -281,6 +281,7 @@ fn retarget_synthetic_terminal<Cfg: CommitmentConfig>(
             terminal.fold.log_basis,
             &terminal.fold_challenge_config,
             fold_digit_count,
+            1,
         ) else {
             continue;
         };
@@ -431,6 +432,7 @@ where
             root.open().digits.log_basis,
             &root.fold_challenge_config(),
             root.num_digits_fold(),
+            root.witness_chunk.num_chunks,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("root packing challenge family has no audited A bound".into())
@@ -538,6 +540,7 @@ where
             successor_witness.open().digits.log_basis,
             &successor_witness.fold_challenge_config(),
             successor_witness.num_digits_fold(),
+            successor_witness.witness_chunk.num_chunks,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("packing successor has no audited A bound".into())
@@ -641,6 +644,7 @@ where
             prefix_params.opening.log_basis_open,
             &prefix_params.opening.fold_challenge_config,
             prefix_params.opening.num_digits_fold,
+            successor_witness.witness_chunk.num_chunks,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("packing prefix has no audited A bound".into()))?;
         let mut prefix_a_key = prefix_params

@@ -62,7 +62,7 @@ fn fixed_matrix_capacity_inverts_the_checked_sis_table() {
 }
 
 #[test]
-fn inner_linf_key_requires_an_exact_protocol_target() {
+fn inner_linf_key_rounds_up_to_the_next_audited_target() {
     let linf = 130_023_300u128;
     let key = sis_table_key_for_linf_bound(
         DEFAULT_SIS_SECURITY_POLICY,
@@ -75,6 +75,21 @@ fn inner_linf_key_requires_an_exact_protocol_target() {
     .expect("exact q32 D128 target");
     assert_eq!(key.coeff_linf_bound, linf);
     assert_eq!(key.policy, DEFAULT_SIS_SECURITY_POLICY);
+    let rounded = sis_table_key_for_linf_bound(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q32Offset99,
+        SisMatrixRole::Inner,
+        128,
+        linf - 1,
+    )
+    .expect("intermediate A target rounds to the next audited cell");
+    assert_eq!(rounded.coeff_linf_bound, linf);
+
+    let largest = inner_coeff_linf_bounds(SisModulusProfileId::Q32Offset99, 128)
+        .into_iter()
+        .max()
+        .expect("q32 D128 A coverage");
     assert_eq!(
         sis_table_key_for_linf_bound(
             DEFAULT_SIS_SECURITY_POLICY,
@@ -82,7 +97,7 @@ fn inner_linf_key_requires_an_exact_protocol_target() {
             SisModulusProfileId::Q32Offset99,
             SisMatrixRole::Inner,
             128,
-            linf - 1,
+            largest + 1,
         ),
         None,
     );

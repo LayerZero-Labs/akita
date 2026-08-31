@@ -297,8 +297,9 @@ struct PreparedFoldGrindGroup<'group, G> {
 /// window equals the global centered response (byte-identical to the
 /// pre-chunking path). For `num_chunks > 1` the fold is computed per block
 /// window (`window_sparse_challenges`) and the global witness is the exact
-/// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
-/// the global L∞ is identical to a standalone global fold over all blocks.
+/// coefficient-wise sum of the windows (`Σ_i z_i = z`). Each full-width window
+/// is checked against the common digit interval independently: cancellation in
+/// the aggregate cannot make an out-of-range chunk acceptable.
 #[allow(clippy::type_complexity)]
 pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     backend: &B,
@@ -780,6 +781,18 @@ mod tests {
             FoldChunkCoefficients::chunked(vec![CenteredFoldChunk::from_witness(&witness)])
                 .is_err()
         );
+
+        let wider_witness = DecomposeFoldWitness::from_parts::<D>(
+            vec![CyclotomicRing::<F, D>::zero(); 2],
+            vec![[0; D]; 2],
+        );
+        assert!(matches!(
+            FoldChunkCoefficients::chunked(vec![
+                CenteredFoldChunk::from_witness(&witness),
+                CenteredFoldChunk::from_witness(&wider_witness),
+            ]),
+            Err(AkitaError::InvalidSize { .. })
+        ));
     }
 
     #[test]

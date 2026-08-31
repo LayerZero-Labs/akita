@@ -34,6 +34,21 @@ pub const INNER_RESPONSE_DIFFERENCE_EXPONENTS: &[u32] = &[
     3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 21, 24, 25, 27, 28, 30, 32, 33,
 ];
 
+/// Sparse q128 A-role refinements for measured two- and four-response catalog
+/// geometries. These are explicit operating points, not a chunk-count coverage
+/// axis. The ordinary ceiling rule remains the fallback for every other raw
+/// chunk-aware target.
+pub const Q128_MULTI_CHUNK_INNER_REFINEMENTS: &[(u32, u128)] = &[
+    (64, 417_384),
+    (64, 1_670_760),
+    (64, 3_341_520),
+    (256, 416_976),
+    (256, 753_480),
+    (256, 3_341_520),
+    (512, 15_624),
+    (512, 416_976),
+];
+
 /// Largest exact accepted-response interval diameter covered by A-role rows.
 pub const MAX_INNER_RESPONSE_DIFFERENCE: u128 = (1u128 << 33) - 1;
 
@@ -151,6 +166,13 @@ pub fn inner_coeff_linf_bounds(
                         exponent,
                     )
                 }),
+        );
+    }
+    if modulus_profile == SisModulusProfileId::Q128OffsetA7F7 {
+        bounds.extend(
+            Q128_MULTI_CHUNK_INNER_REFINEMENTS
+                .iter()
+                .filter_map(|&(dimension, bound)| (dimension == ring_dimension).then_some(bound)),
         );
     }
     let max_bound = max_inner_coeff_linf_bound(modulus_profile);
@@ -332,7 +354,27 @@ mod tests {
         };
         assert_eq!(count(SisModulusProfileId::Q32Offset99), 215);
         assert_eq!(count(SisModulusProfileId::Q64Offset59), 440);
-        assert_eq!(count(SisModulusProfileId::Q128OffsetA7F7), 320);
+        assert_eq!(count(SisModulusProfileId::Q128OffsetA7F7), 328);
+    }
+
+    #[test]
+    fn q128_multi_chunk_refinements_are_dimension_specific() {
+        for &(dimension, bound) in Q128_MULTI_CHUNK_INNER_REFINEMENTS {
+            assert!(sis_role_cell(
+                SisMatrixRole::Inner,
+                SisModulusProfileId::Q128OffsetA7F7,
+                dimension,
+                bound,
+            )
+            .is_some());
+            assert!(sis_role_cell(
+                SisMatrixRole::Inner,
+                SisModulusProfileId::Q64Offset59,
+                dimension,
+                bound,
+            )
+            .is_none());
+        }
     }
 
     #[test]

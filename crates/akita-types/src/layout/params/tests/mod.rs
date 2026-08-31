@@ -72,6 +72,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.open().digits.log_basis,
         &lp.fold_challenge_config(),
         lp.num_digits_fold(),
+        lp.witness_chunk.num_chunks,
     )
     .expect("exact A-role test bound");
     lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(

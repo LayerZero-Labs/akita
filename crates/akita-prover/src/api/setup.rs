@@ -269,6 +269,7 @@ mod tests {
             &akita_challenges::SparseChallengeConfig::production_for_ring_dim(PREFIX_D)
                 .expect("D=64 has a production challenge configuration"),
             1,
+            1,
         )
         .expect("audited prefix A bound");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(

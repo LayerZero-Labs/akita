@@ -54,13 +54,14 @@ output ordering.
 The estimator hardening described above changes the acceptance model. The
 checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
 and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
-table digest, and dependent catalog identities bind the corrected semantics. The q32
-Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128 uses
-`2^44 - 1`. Within those guards, A is keyed by the exact protocol collision
-`4 * ||c||_1 * (2^t - 1)` for reachable opening-basis/digit-depth products
-`t <= 33` and dimension-compatible challenge families. It does not round an A
-collision up to a generic power-of-two bucket. B and D retain their exact
-gadget-anchor rounding.
+table digest, and dependent catalog identities bind the corrected semantics.
+The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
+uses `2^44 - 1`. Within those guards, the audited A cells are the exact
+one-response protocol collisions `4 * ||c||_1 * (2^t - 1)` for reachable
+opening-basis/digit-depth products `t <= 33` and dimension-compatible challenge
+families. A raw collision target selects the smallest covering audited cell for
+the same profile and dimension; it does not jump to a generic power-of-two
+bucket. B and D retain their exact gadget-anchor rounding.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These
@@ -180,6 +181,45 @@ These formulas use the physical ring coefficients that enter the A role
 Module SIS kernel. The small field extension embedding has already produced
 those coefficients. Applying the Hachi logical to physical conversion at this
 point would count that conversion twice.
+
+For a chunked response, the A rows do not bind each chunk independently. They
+bind the effective response
+
+```text
+z_sum = z^(0) + ... + z^(C-1).
+```
+
+Stage 1 nevertheless range-checks every chunk in the same balanced
+base-`2^ell` digit interval. If each chunk uses `delta` digits, the exact
+difference between two accepted values in one chunk has diameter
+`2^(ell * delta) - 1`. Differences add across the `C` chunks, so the exact
+coefficient collision target used by the A role is
+
+```text
+C_inf_chunked = 4 * kappa_1 * C * (2^(ell * delta) - 1).
+```
+
+This is the chunk-aware form of the same weak-binding calculation. Pricing a
+chunked row as though `C = 1` would certify only one accepted response even
+though the shared relation admits their sum. Akita therefore treats the
+response-chunk count as a schedule parameter, re-derives this target during
+planner replay and verifier admission, and rejects a row whose stored A bound
+is smaller. All chunks use the same digit basis, digit depth, and full ambient
+Z width. Their honest norms and their assigned E/T block counts may differ.
+The selective `L2` route remains restricted to one response chunk.
+
+The checked-in infinity table does not multiply its coverage by every supported
+response-chunk count. Instead, a chunked raw target reuses the smallest audited
+A cell that covers it. This is usually tight, but two- and four-chunk schedules
+can inherit a conservative collision bound when their target lies in a gap
+between existing cells. That choice can make the resulting SIS rank larger
+than a table search specialized to that exact chunk geometry. We accept this
+possible loss to keep the certified table small. Maintainers add a sparse
+refinement cell only when catalog measurements show a material schedule
+improvement; lookup fails closed when no existing cell covers the target. The
+current table adds eight fp128 refinement cells for measured two- and
+four-chunk operating points, contributing 160 certified rank rows. It adds no
+eight-chunk coverage axis or dedicated eight-chunk cell.
 
 An `L∞` schedule carries no norm proof. An `L2` schedule binds its cap and
 integer proof shape into the schedule descriptor. The verifier proves the norm

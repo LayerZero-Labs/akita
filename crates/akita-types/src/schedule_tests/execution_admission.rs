@@ -14,6 +14,7 @@ pub(super) fn exact_test_a_bound(params: &CommittedGroupParams) -> u128 {
         params.open().digits.log_basis,
         &params.fold_challenge_config(),
         params.num_digits_fold(),
+        params.witness_chunk.num_chunks,
     )
     .expect("exact test A bound")
 }

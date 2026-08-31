@@ -61,6 +61,7 @@ fn audited_commit_params(
         params.open().digits.log_basis,
         &params.fold_challenge_config(),
         params.num_digits_fold(),
+        params.witness_chunk.num_chunks,
     )
     .expect("audited fixture A bucket");
     params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
