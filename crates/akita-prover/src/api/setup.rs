@@ -158,7 +158,9 @@ impl<F: Field> AkitaProverSetup<F> {
         F: Field + CanonicalEncoding + Valid,
     {
         expanded.descriptor().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup descriptor validation failed: {err}"))
+            AkitaError::InvalidSetup(format!(
+                "expanded setup descriptor validation failed: {err}"
+            ))
         })?;
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
