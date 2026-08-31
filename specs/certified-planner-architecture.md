@@ -5,7 +5,8 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-08-21 |
 | Status        | proposed |
-| PR            | [#434](https://github.com/LayerZero-Labs/akita/pull/434) |
+| PR            | [#449](https://github.com/LayerZero-Labs/akita/pull/449) |
+| Depends-on    | [#445](https://github.com/LayerZero-Labs/akita/pull/445), quotient-free tail ring relations |
 | Supersedes    | Planner architecture portions of [`archive/2026-Q3/modular-planner-and-precommit-roles.md`](archive/2026-Q3/modular-planner-and-precommit-roles.md) |
 | Superseded-by | |
 | Book-chapter  | book/src/how/configuration.md |
@@ -34,8 +35,16 @@ The supporting pruning proof file states the first concrete theorems for that
 result. It derives an exact mandatory recursive witness body, an incumbent
 interval for split search, an admissible relaxed suffix search, and transition
 dominance rules. It also gives separate proof contracts for selective L2
-routes and setup first slice choices. Those two current shortcuts must be
+routes and setup first slice choices. Those two current restrictions must be
 removed or certified in later implementation pull requests.
+
+This specification is stacked on the planner and protocol state established by
+#445. In particular, quotient lift versus reduced evaluation is already an
+independent, authenticated, monotone planner decision; the complete objective
+already compares the root output-witness length after its policy coordinates;
+and small independent oracle paths already cover complete relation cutovers and
+unpruned recursive candidates. The target architecture must preserve and reuse
+those foundations rather than introduce parallel replacements.
 
 The specification also replaces the narrow semantic model of one main group
 plus precommitted groups. A commitment workload may contain several semantic
@@ -55,7 +64,7 @@ shared opening policy.
 
 All planning remains offline. The planner emits a compact complete plan which
 `akita-schedules` expands and validates. Runtime setup, commitment, proving,
-and verification consume an approved catalog artifact. Runtime code never
+and verification consume an approved generated catalog row. Runtime code never
 invokes planner search or trusts a planner cost estimate.
 
 ## Current baseline and unresolved problems
@@ -73,6 +82,21 @@ The target architecture starts from several settled changes.
    defines group owned honest fold sizing while keeping runtime profiles free
    of source identity.
 5. Generated catalogs, rather than planner execution, remain the runtime path.
+6. [PR #445](https://github.com/LayerZero-Labs/akita/pull/445) added the
+   authenticated `RingRelationMode`, a monotone quotient-prefix to
+   reduced-evaluation-suffix state machine, exact relation-transition
+   enumeration, an independent cutover oracle, traversal-order invariance
+   tests, and generated replay of the selected relation modes.
+7. PR #445 also versioned the complete selection policies so the root output
+   witness is compared after the existing numeric policy coordinates and
+   before the canonical descriptor. It added complete-source compression-plan
+   reuse, response-model reuse, setup-prefix search reuse, and bounded exact
+   suffix memoization. Those caches are accelerators, not search authorities.
+8. The current test support has an unpruned recursive candidate enumerator. It
+   scans every split and derives Linf and eligible selective-L2 candidates
+   independently of the production split walker and local slice pruning. The
+   production and reference paths still share materializers rather than one
+   search orchestrator.
 
 The remaining problems concern the meaning and proof of the search.
 
@@ -84,18 +108,30 @@ is large. The omitted splits are not currently excluded by a proof that they
 cannot win the complete objective. Root totality therefore holds only within
 this configured split domain.
 
-Selective L2 planning currently derives a candidate from the split selected
-by the best modeled Linf candidate. Setup first slice pruning keeps one local
-slice choice before successor witness sizing and suffix search. Some levels
-retain a split frontier while others keep a local best candidate according to
-level and policy conditions. Each choice may be useful, but the code does not
-give every omission a common proof contract.
+Selective L2 planning currently derives candidates from the split selected by
+the best modeled Linf candidate for each admitted relation mode. Setup-first
+slice pruning now preserves every candidate tied at the minimum local padded
+setup, but it still removes strictly larger local setup choices before
+successor witness sizing and suffix search. Some levels retain a split
+frontier while others keep a local best candidate according to level and policy
+conditions. Each choice may be useful, but the code does not give every
+omission a common proof contract.
 
 There is no theorem which says that the best L2 route uses the best Linf split.
-There is also no theorem which says that the smallest local padded setup gives
-the best complete setup first schedule. The audited domain must include the
-other L2 splits and slice choices until a checked certificate covers their
+There is also no theorem which says that a larger local padded setup cannot
+produce the best complete setup-first schedule. The audited domain must include
+the other L2 splits and slice choices until a checked certificate covers their
 complete objective effect.
+
+### Reference and production search remain separate
+
+The independent recursive and relation-cutover oracles added by #445 are
+meaningful correctness checks: they enumerate every split or every monotone
+cutover and compare the complete objective and descriptor. They are not yet an
+execution mode of the production suffix engine. The target architecture must
+converge production and oracle execution on the same decision enumerators,
+transition materializer, selector, and frontier semantics while retaining an
+independent test oracle for the highest-risk relation cutover law.
 
 ### Local and global choices remain mixed
 
@@ -129,7 +165,10 @@ The repository checks catalog drift, but it does not yet define a supported
 fast search setting, a guide artifact, or per fixture time and memory budgets.
 An implementation can remain exact and still be unusable for iterative
 schedule work. It can also become fast by silently narrowing the domain.
-Neither outcome is acceptable.
+Neither outcome is acceptable. Exact generated rows, relation cutovers,
+witness lengths, and proof-byte totals are outputs, not compatibility
+fixtures; performance evidence must measure the engine without freezing those
+choices into a second protocol contract.
 
 ## Intent
 
@@ -158,6 +197,10 @@ plan under an explicit complete schedule objective.
 7. `UnsupportedSchedule` **MUST** mean that the audited domain contains no
    complete feasible schedule. It **MUST NOT** mean that a fast subset found no
    schedule.
+8. The monotone ring-relation transition authority from #445 **MUST** remain
+   the only definition of quotient-prefix and reduced-evaluation-suffix
+   eligibility. Oracle, guided, and generated replay paths **MUST** call it
+   directly.
 
 #### Objective and frontier meaning
 
@@ -172,6 +215,9 @@ plan under an explicit complete schedule objective.
    independent in the required order.
 5. Memo eviction **MAY** cause recomputation. It **MUST NOT** change frontier
    contents or the final result.
+6. The root output-witness length **MUST** follow every policy-specific numeric
+   coordinate and precede the canonical descriptor. A frontier or lower bound
+   which omits it **MUST** retain equality on all earlier coordinates.
 
 #### Security and arithmetic
 
@@ -229,6 +275,8 @@ plan under an explicit complete schedule objective.
    before publication.
 4. Runtime catalog trust, versioned artifact loading, and row authentication
    are consumer contracts. They are not alternate planner algorithms.
+5. Planner guides, diagnostics, and benchmark reports **MUST NOT** become
+   verifier inputs or compatibility authorities for exact generated rows.
 
 ### Non-goals
 
@@ -258,6 +306,12 @@ This specification does not require one universal objective for every Akita
 application. It requires every policy to define one complete deterministic
 order and every catalog to bind its policy identity.
 
+This specification does not require checked-in golden catalogs, cutover
+snapshots, or exact schedule evidence. Generated tables remain validated
+runtime inputs, but tests of planner semantics compare canonical objectives,
+descriptors, expansion, and independent-oracle agreement rather than freezing
+today's selected rows.
+
 This specification does not make the planner a runtime service. Applications
 continue to consume generated schedules.
 
@@ -281,6 +335,11 @@ a feasibility rule.
 
 A **complete schedule** contains the root, every recursive fold, and the
 terminal response.
+
+A **ring-relation phase** is the monotone planner state introduced by #445.
+It is either a quotient prefix or a reduced-evaluation suffix. The public
+per-fold decision remains the authenticated `RingRelationMode` in
+`CommittedGroupParams`.
 
 A **guide** is a versioned offline artifact that provides candidate ordering,
 an incumbent, and optional certified exclusions.
@@ -342,7 +401,7 @@ compact commitment and opening plan
 akita-schedules expansion and validation
     |
     v
-versioned catalog artifact
+versioned generated catalog row
 ```
 
 The exact Rust module names are not normative. The ownership boundaries are.
@@ -453,6 +512,8 @@ For a root or recursive fold, this includes as applicable:
 - witness chunk layout;
 - honest fold policy result;
 - Linf or L2 security route;
+- quotient lift or reduced evaluation where the current relation phase and
+  fold topology admit both;
 - setup prefix edge and exact prefix geometry;
 - terminal strategy;
 - commitment group profile choice;
@@ -474,6 +535,7 @@ The following values are derived and must not become independent knobs:
 - next witness length;
 - setup field requirements;
 - contraction status;
+- next ring-relation phase and whether setup offload remains legal;
 - proof shape and proof byte estimate;
 - parent observable geometry;
 - canonical descriptor bytes.
@@ -496,6 +558,7 @@ In particular, recursive state must preserve:
 - incoming setup prefix state;
 - active ring dimensions or their admissible ceiling;
 - payload phase;
+- ring-relation phase;
 - workload and policy identities needed by later materialization.
 
 The state may use a stable compact identity for large immutable workload data.
@@ -514,6 +577,7 @@ UnsupportedOpeningMethod
 UnsupportedChunkLayout
 NoRecursiveProgress
 InvalidSetupPrefixEdge
+InvalidRelationTransition
 UnavailableSecurityRoute
 TerminalUnavailable
 WorkloadOrderViolation
@@ -738,6 +802,28 @@ state which may price a later witness. The selected route fixes exact verifier
 visible bounds and ranks in the emitted schedule. Runtime expansion never
 reruns the response model.
 
+### Ring-relation decisions
+
+The canonical relation-transition authority from #445 defines the complete
+domain for one fold from the absolute fold level, incoming setup-prefix
+topology, opening method, and current `RingRelationPhase`. In a quotient
+prefix it admits quotient lift and, from level 2 onward on a direct
+`EvaluationTrace` edge, reduced evaluation. In a reduced-evaluation suffix it
+admits only another direct reduced-evaluation fold. It never admits a return to
+quotient lifting or a later setup prefix.
+
+Relation mode is independent of payload phase, split, dimensions, slice count,
+and Linf versus selective L2 wherever the feature matrix permits their
+combination. An enumerator may share geometry work before witness layouts
+diverge, but it must retain the typed `RelationTransition`; mode alone is not a
+sufficient transition token because the next phase and setup-offload
+eligibility are part of the consequence.
+
+The independent monotone-cutover oracle remains a required test authority even
+after oracle and guided executions share the production engine. It enumerates
+the `m + 1` legal cutovers for a fixed skeleton and detects accidental
+oscillation or omission in that engine.
+
 ### Slice decisions
 
 Slice candidates must remain until exact future irrelevance is established.
@@ -772,22 +858,27 @@ to contract.
 This architecture preserves the current complete schedule orders until a
 separate policy revision changes them.
 
-`MinEstimatedProofPayload` uses:
+`MinEstimatedProofPayloadV2` uses:
 
 ```text
-(proof bytes, total setup field elements, canonical descriptor)
+(proof bytes,
+ total setup field elements,
+ root output-witness length,
+ canonical descriptor)
 ```
 
-`MinFirstDirectSetupThenPayload` uses:
+`MinFirstDirectSetupThenPayloadV2` uses:
 
 ```text
 (first direct padded setup capacity,
  proof bytes,
  total setup field elements,
+ root output-witness length,
  canonical descriptor)
 ```
 
-The descriptor is compared only after all numeric coordinates tie.
+The descriptor is compared only after all numeric coordinates, including the
+root output-witness length, tie.
 
 If joint commitment profile planning needs commitment payload bytes in the
 objective, the policy must add that coordinate explicitly and change its
@@ -813,8 +904,10 @@ affect the current local score.
 ### Complete lower bounds
 
 A lower bound used to prune a partial schedule must be a prefix of the same
-lexicographic objective used for complete selection. It may omit the descriptor
-only when pruning requires strict numeric inferiority.
+lexicographic objective used for complete selection. It may omit the root
+output-witness length only when an earlier policy coordinate is already
+strictly worse. It may omit the descriptor only when pruning establishes
+strict numeric inferiority before the descriptor.
 
 Equal numeric lower bounds cannot prune because an unvisited schedule may win
 the canonical descriptor tie break.
@@ -901,6 +994,13 @@ certified exclusions
 generator revision and evidence reference
 guide digest
 ```
+
+The guide is a disposable planner accelerator, not a catalog or protocol
+artifact. Its incumbent and exclusions are revalidated under the bound domain
+before use. Deleting a guide may increase work but cannot change the selected
+schedule; changing only ordering hints cannot change catalog identity or row
+identity. A repository test must not assert the exact schedule stored in a
+guide as a compatibility snapshot.
 
 Ordering hints may be broad and empirical. Certified exclusions must name a
 checker implemented by the bound library and contain only the data needed by
@@ -1032,6 +1132,12 @@ Diagnostics are not schedule identity unless a separate artifact format names
 them. Timing, memory, and empirical estimates never enter proof or transcript
 state.
 
+Diagnostic reports and PR-attached performance records may show exact selected
+rows for attribution. The repository must not retain those observations as
+golden acceptance fixtures. The durable assertions are semantic: objective
+order, descriptor determinism, oracle agreement, expansion, validation, and
+declared performance envelopes.
+
 ## Output and runtime boundary
 
 ### Compact plan
@@ -1047,6 +1153,7 @@ The compact plan contains:
 - root decision;
 - recursive decisions;
 - setup prefix decisions;
+- ring-relation transitions;
 - terminal decision;
 - objective policy identity;
 - guide evidence identity for audit only.
@@ -1061,10 +1168,12 @@ The runtime consumer obtains an approved versioned catalog and resolves a row
 from public workload geometry and profiles. Prover and verifier reconstruct the
 same selection without running the planner.
 
-If trusted catalog artifacts replace generated Rust tables, as proposed by
-[PR #428](https://github.com/LayerZero-Labs/akita/pull/428), the planner output
-contract remains the same. Artifact trust, loading, and digest binding are
-owned by `akita-schedules` and application configuration.
+Generated Rust tables remain the current runtime representation. A future
+trusted-artifact migration is outside this planner overhaul and must not be a
+prerequisite for it. If such a migration is adopted separately, artifact
+trust, loading, and digest binding belong to `akita-schedules` and application
+configuration; they do not give planner observations authority over protocol
+semantics.
 
 ### Compatibility
 
@@ -1096,19 +1205,28 @@ The first implementation must include at least these named fixtures:
 
 ### Initial budgets
 
-After compilation, on the checked in planner reference runner:
+The first implementation records a post-#445 baseline before changing the
+candidate language. On the same machine, toolchain, feature set, and bounded
+thread count, each slice must report whether guided row time, full-catalog
+time, and peak resident memory improved or regressed. A semantic-completeness
+slice may temporarily regress, but it must identify the newly admitted domain
+and recover the supported normal-path budget before the final cutover.
+
+After the repository selects a reference runner and guide format, the target
+budgets are:
 
 - each named guided row **MUST** complete in at most 60 seconds;
 - the full stock catalog **MUST** complete in at most 10 minutes;
 - peak resident memory **MUST** remain at or below 4 GiB;
-- each high pressure guided fixture **MUST** use at most 20 percent of the
+- each high pressure guided fixture **SHOULD** use at most 20 percent of the
   median oracle wall time when the oracle completes within the audit window.
 
 The benchmark record must name the exact CPU, memory, operating system, Rust
 version, feature set, thread count, and commit. Until the repository selects a
-shared reference runner, the relative 20 percent requirement is the blocking
-cross machine criterion and absolute budgets are reported rather than enforced
-in ordinary pull request CI.
+shared reference runner, no wall-clock number is a cross-machine merge gate.
+Pull requests report paired before-and-after measurements, exact semantic
+counters, and peak memory; correctness gates do not weaken when the host is
+under load.
 
 Three fresh process runs are required. The median wall time and maximum peak
 memory are reported. Compilation and dependency download are excluded.
@@ -1151,6 +1269,8 @@ It must not maintain a second fixture planner.
 - [ ] Oracle and guided executions use the same materializer, objective,
       frontier, descriptor, and validator.
 - [ ] Root contraction is not an admission rule or search mode.
+- [ ] The post-#445 monotone relation transition is the only relation-mode
+      domain authority, and relation traversal reversal preserves the result.
 - [ ] Every production domain restriction is documented as an exact
       equivalence, a certified pruning rule, or an explicitly approximate
       policy which cannot publish an exact catalog.
@@ -1158,6 +1278,8 @@ It must not maintain a second fixture planner.
       has no feasible complete schedule.
 - [ ] Traversal order, batch size, parallel order, and memo capacity do not
       change the selected descriptor.
+- [ ] Both V2 selection policies compare root output-witness length after their
+      policy coordinates and before the descriptor.
 
 #### Certified pruning
 
@@ -1246,6 +1368,11 @@ Property tests must randomize enumeration order, reverse candidate order, vary
 streaming batch size, and vary memo capacity. Every run must return the same
 complete objective and descriptor.
 
+Relation tests must vary every legal monotone cutover independently of payload
+phase, Linf or L2 route, dimensions, and setup-prefix disappearance. They must
+retain the small `m + 1` cutover oracle even after the shared engine has an
+oracle execution mode.
+
 Each pruning certificate must have a focused proof test and an integration
 test which disables only that rule. Boundary tests must cover equality with the
 incumbent because equal numeric bounds cannot prune the descriptor tie break.
@@ -1275,6 +1402,11 @@ Catalog tests must distinguish:
 - compact plan expansion changes;
 - row identity changes.
 
+They must not snapshot exact selected rows, cutover levels, witness lengths, or
+proof-byte totals merely to preserve the current planner output. Intentional
+selection changes are reviewed through regenerated tables, semantic replay,
+and PR-attached attribution.
+
 The standard repository checks remain required. Planner implementation pull
 requests must also run all Clippy feature graphs listed in `AGENTS.md` and the
 full schedule drift job command from `.github/workflows/ci.yml`.
@@ -1283,8 +1415,9 @@ full schedule drift job command from `.github/workflows/ci.yml`.
 
 ### Slice 1: Domain and pruning census
 
-Inventory every current candidate omission and pruning rule. Record its domain,
-current rationale, selected schedule effect, and oracle switch. Classify it as:
+Inventory every current candidate omission, local retention rule, cache, and
+pruning rule. Record its owning function, domain, current rationale, selected
+schedule effect, diagnostic counter, and oracle switch. Classify it as:
 
 ```text
 exact domain definition
@@ -1292,54 +1425,82 @@ proved equivalence
 certified pruning
 ordering heuristic
 unproved semantic restriction
+cache or memo only
 ```
 
-No unproved semantic restriction may remain in an exact production catalog.
+Start from the post-#445 implementation: include the bounded split walker,
+L2-at-best-Linf production route, setup-first minimum-padded-setup filter,
+relation-transition domain, compression-plan cache, response-model caches,
+setup-prefix cache, suffix memo, parent-observable frontiers, and objective
+bounds. Add counters and a machine-readable diagnostic report without changing
+candidate selection. Record paired baselines for one cheap direct row and the
+named high-pressure recursive row with a bounded Rayon thread count. Do not
+regenerate all schedules for this instrumentation-only slice.
+
+No unproved semantic restriction may remain in an exact production catalog at
+the final cutover. Slice 1 makes the debt explicit; it does not mislabel current
+production catalogs as exact.
 
 ### Slice 2: Canonical decisions and typed rejection
 
 Introduce small decision types for root, recursive, terminal, security route,
-and group commitment choices. Extract canonical materialization and typed
-rejections without changing selected schedules.
+and group commitment choices. Reuse the existing typed `RelationTransition`
+and `RingRelationPhase`; do not wrap or duplicate them. Extract canonical
+materialization and typed rejections without changing selected schedules.
+Make the complete enumerated domain inspectable before materialization.
 
 ### Slice 3: Shared oracle
 
-Make every enumerator expose its complete audited domain. Add the oracle
-configuration to the shared engine and establish exact small grid results.
+Make every enumerator expose its complete audited domain. Convert the current
+test-only unpruned recursive enumeration into an oracle execution setting of
+the shared engine, while keeping the small monotone relation-cutover oracle
+independent. Establish exact small-grid agreement on the full V2 objective and
+descriptor. Oracle mode disables optional pruning; it does not fork
+materialization or selection.
 
 ### Slice 4: Exact split cells and local bounds
 
 Implement the exact mandatory body identity, split cell builder, discrete
 convex interval, and incumbent interval. Keep the cheap scan over every integer
-split. Remove the fixed radius as a production domain while preserving the
-balance estimate as traversal order.
+split. Remove `BoundedBalancedExtremesV1` as an exact production domain while
+preserving its balance estimate as traversal order. Relation mode, payload
+phase, security route, and every rank or digit boundary participate in the
+cell signature. Compare exhaustive and guided objectives and descriptors; do
+not snapshot the resulting schedule rows.
 
-### Slice 5: Relaxed suffix bounds and transition dominance
+### Slice 5: Selective L2 route frontier
 
-Add `relaxed_suffix_dp_v1` with exact current edge bytes and a proved minimum
-terminal cost. Extend it one monotone term at a time. Add the shared transition
-dominance checker and replace level based frontier retention with consumer
-proved bounds.
+Remove the production dependency on the best modeled Linf split. Enumerate L2
+at every surviving split cell and relation mode, build the full route
+transition signature, and retain both routes unless
+`l2_route_dominance_v1` proves complete-objective irrelevance. Reuse the
+post-#445 independent L2 enumerator as comparison evidence until shared oracle
+execution supersedes it.
 
-### Slice 6: Selective L2 route frontier
-
-Remove the dependency on the best modeled Linf split. Enumerate L2 at every
-surviving split cell, build the full route transition signature, and apply
-`l2_route_dominance_v1` only after all complete objective effects are covered.
-Add exhaustive route by split tests.
-
-### Slice 7: Setup first slice frontier
+### Slice 6: Setup-first slice frontier
 
 Replace `prune_locally_unprofitable_slices` with one canonical slice transition
 frontier. Materialize the four cheap slice signatures, retain different child
 states, and apply `setup_slice_dominance_v1` only when the shared dominance
-theorem holds. Add exhaustive slice tests under both complete objectives.
+theorem holds. Test all slices under both V2 objectives, including root
+output-witness and descriptor ties.
+
+### Slice 7: Relaxed suffix bounds and transition dominance
+
+Add `relaxed_suffix_dp_v1` with exact current edge bytes and a proved minimum
+terminal cost. Extend it one monotone term at a time. Add the shared transition
+dominance checker and replace level-based frontier retention only where its
+complete consumer proof is checked. An equal bound through root output witness
+must retain the candidate for descriptor comparison.
 
 ### Slice 8: Guide artifacts
 
 Add guide generation, validation, incumbent seeding, ordering hints, and
-certificate replay. Produce guides for the named recursive fixtures and stock
-catalog rows.
+certificate replay. A guide is disposable acceleration data: tests prove that
+deleting it changes only work, and no checked-in exact incumbent becomes a
+compatibility fixture. Produce review evidence for named recursive fixtures;
+check in a guide only if routine generation cannot meet its supported budget
+without it.
 
 ### Slice 9: Workload and group profile planning
 
@@ -1360,13 +1521,17 @@ facing model.
 
 Emit one compact plan, validate it through `akita-schedules`, regenerate stock
 catalogs, and remove superseded planner request and wrapper paths. Keep any
-trusted catalog artifact migration separate from search semantics.
+trusted catalog artifact migration separate from search semantics. Generated
+Rust tables remain acceptable; this slice does not introduce an artifact
+catalog or golden planner-output report.
 
 ### Slice 12: Performance gate and documentation
 
 Land the performance harness, named fixture records, guide evidence, and CI or
 scheduled audit jobs. Update the Book configuration chapter and archive this
-spec after the durable architecture is implemented and taught there.
+spec after the durable architecture is implemented and taught there. Store
+semantic counters and environment-pinned performance evidence, not exact
+generated schedule choices.
 
 ## Intended code ownership
 
@@ -1480,6 +1645,21 @@ This is the main exactness risk. Every frontier proof must begin from the code
 which prices a child in its parent. Tests must compare against the oracle under
 all parent forms, including setup offload and grouped roots.
 
+### Relation phase may be omitted from a state or bound
+
+The same witness length and basis can have different legal successors in the
+quotient prefix and reduced-evaluation suffix. Memo, relaxed-state, split-cell,
+and transition signatures must preserve the typed phase or prove it
+irrelevant. The canonical #445 transition token is the source of truth; a
+Boolean `reduced` flag or mode-only cache key is insufficient.
+
+### The objective may regress to its pre-V2 order
+
+The root output-witness length is deliberately after the policy-specific setup
+and proof coordinates and before the descriptor. Frontiers and bounds that
+compare only proof, setup, and descriptor can select a different row on an
+exact numeric tie. Focused tests must force this tie under both V2 policies.
+
 ### A split cell signature may miss a boundary
 
 A missing rank, digit, relation, compression, source, or route field can apply
@@ -1515,14 +1695,24 @@ actual role and prevents that role from owning unrelated semantic policy.
 ### Performance budgets can become machine noise
 
 Every measurement records the exact environment and uses repeated fresh
-process runs. Relative oracle comparisons are the cross machine gate until a
-shared reference runner is selected.
+process runs. Before a shared reference runner is selected, paired semantic
+counters and same-host measurements are review evidence rather than a
+cross-machine wall-clock gate.
+
+### Caches may become hidden semantic authorities
+
+The complete-source compression cache, response-model caches, setup-prefix
+cache, and suffix memo all predate this target architecture. Cache identity,
+capacity, and eviction must affect work only. Zero-reuse and eviction tests
+must preserve the complete objective and descriptor, and cache contents must
+not be serialized as proof, catalog, or guide authority.
 
 ### A guide may overfit checked catalog rows
 
-Exact row guides are still useful for reproducible regeneration. Broader guides
-must declare a region predicate and pass oracle audits on interior and boundary
-samples before they may prune that region.
+An exact-row guide can accelerate regeneration, but the stored incumbent must
+not become a golden schedule fixture. Broader guides must declare a region
+predicate and pass oracle audits on interior and boundary samples before they
+may prune that region. In both cases, deleting the guide preserves semantics.
 
 ## Documentation
 
@@ -1562,6 +1752,6 @@ When implementation is complete:
 - [PR #409, exact precommit profile planning](https://github.com/LayerZero-Labs/akita/pull/409)
 - [PR #412, grouped root scaling](https://github.com/LayerZero-Labs/akita/pull/412)
 - [PR #416, parameter consolidation](https://github.com/LayerZero-Labs/akita/pull/416)
-- [PR #428, trusted runtime catalogs](https://github.com/LayerZero-Labs/akita/pull/428)
+- [PR #445, quotient-free tail ring relations](https://github.com/LayerZero-Labs/akita/pull/445)
 - [Aerie Falcon version 1 specification at the adopted commit](https://github.com/a16z/aerie/blob/e102ee371d08770b6fdfcebc33abe169e60e2756/specs/falcon-v1.md)
 - [Aerie PR #52, adopted JL4-final layout](https://github.com/a16z/aerie/pull/52)

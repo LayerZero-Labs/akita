@@ -117,7 +117,8 @@ The implementation should derive bounds in increasing cost order:
 3. minimum possible successor and terminal bytes;
 4. minimum first direct setup capacity;
 5. minimum total setup envelope;
-6. parent visible payload and admission class.
+6. root output-witness length when it is not already fixed by the prefix;
+7. parent visible payload and admission class.
 
 The engine may stop evaluating later bound terms once an earlier objective
 coordinate is already strictly worse than the incumbent.
@@ -132,6 +133,7 @@ all permutations. The certificate must prove that permutation does not change:
 - feasibility;
 - exact root widths and proof cost;
 - setup envelope;
+- root output-witness length;
 - parent observations;
 - canonical descriptor comparison.
 
@@ -146,7 +148,8 @@ proof exists, all feasible slice choices remain in the exact frontier.
 
 A security route dominance proof must compare the exact norm proof, A payload,
 next witness, later suffix, terminal response, and setup consequences. A lower
-A rank alone is not enough.
+A rank alone is not enough. Equality on all earlier V2 coordinates also
+requires the root output-witness and descriptor order.
 
 ### Memo and cache rules
 
@@ -160,6 +163,12 @@ reuse, and obtain the same selected descriptor.
 Guide caches and local profile caches follow the same rule. A cache hit may
 save work. It may not add authority.
 
+The post-#445 complete-source compression-plan cache, response-model caches,
+setup-prefix search cache, and bounded suffix memo follow this contract. The
+suffix key must distinguish `RingRelationPhase`; a quotient prefix and a
+reduced-evaluation suffix do not have the same legal transition domain even if
+their other scalar fields happen to match.
+
 ## Formal pruning proofs
 
 This section states the formal obligations behind the certified pruning
@@ -172,23 +181,25 @@ The planner minimizes a total order on complete schedules. The numeric prefix
 is one of these orders.
 
 \[
-(P,S)
+(P,S,W)
 \]
 
 or
 
 \[
-(C_1,P,S).
+(C_1,P,S,W).
 \]
 
 Here \(P\) is proof bytes, \(S\) is the total setup envelope, and \(C_1\) is
-the first direct padded setup capacity. The canonical descriptor follows the
-numeric prefix in both orders.
+the first direct padded setup capacity. \(W\) is the root output-witness
+length introduced into the V2 objectives by #445. The canonical descriptor
+follows the numeric prefix in both orders.
 
-A lower bound contains only numeric coordinates. It may prune a region only
-when it is strictly worse than a completed incumbent on the numeric order.
-Equality is not enough because the canonical descriptor can still choose a
-candidate from that region.
+A lower bound contains only numeric coordinates. It may prune a region when an
+earlier coordinate is strictly worse than a completed incumbent. If all
+earlier coordinates tie, it must bound \(W\) before using it to prune; equality
+through \(W\) is not enough because the canonical descriptor can still choose
+a candidate from that region.
 
 All formulas use mathematical integers. Their checkers use the canonical
 checked arithmetic functions. An overflow or an unsupported table lookup
@@ -204,11 +215,12 @@ returns unknown and retains the region.
 | Relaxed suffix lower bound | Proved below by induction over remaining depth | Current direct edge bound uses a zero suffix cost |
 | Same state transition dominance | Proved below | Exact completed suffix frontiers implement part of this idea |
 | Interchangeable group symmetry | Proved below under an explicit equivalence relation | PR #412 applies a narrower form |
-| L2 route omission at the Linf winning split | Not proved and not accepted as an exact domain | Current code uses this shortcut |
-| Local setup first slice pruning | Not proved and not accepted as an exact domain | Current code keeps one local slice |
+| Monotone ring-relation transition | Implemented prerequisite from #445; not a pruning theorem | Typed transition authority and independent `m + 1` cutover oracle are present |
+| L2 route omission at the Linf winning split | Not proved and not accepted as an exact domain | Production uses this shortcut; the test oracle derives L2 independently at every split |
+| Local setup first slice pruning | Not proved and not accepted as an exact domain | Current code retains every minimum-padded-setup tie but removes larger local setup choices |
 | Fixed radius recursive split search | Not proved and not accepted as an exact domain | Current bounded policy uses this shortcut |
 
-The last three rows are migration requirements. This PR specifies their
+The final three rows are migration requirements. This PR specifies their
 replacement. It does not claim that the present planner already satisfies the
 target contract.
 
@@ -224,7 +236,8 @@ the following data are constant.
 - The A row count \(n_A\).
 - The inner, fold, opening, and outer digit depths
   \(\delta_i,\delta_f,\delta_o,\delta_B\).
-- The source encoding, security route, relation geometry, and compression plan.
+- The source encoding, security route, typed relation transition, relation
+  geometry, and compression plan.
 
 Call such a region a split cell. Let \(M_p=2^p\), and let
 \(q_p=\lceil N/M_p\rceil\). The canonical witness layout creates one Z range
@@ -271,9 +284,12 @@ chunk ranges partition the \(q_p\) live blocks. Summing their lengths gives
 result.
 
 Every coefficient is positive for a valid candidate. Frozen group bodies,
-setup prefixes, quotient rows, compression layers, and alignment can only add
-physical coefficients. The planner may add any of those terms when it can
-compute them cheaply. Omitting them preserves a lower bound.
+setup prefixes, mode-dependent quotient rows, compression layers, and
+alignment can only add physical coefficients. Reduced evaluation makes the
+corresponding quotient term zero; quotient lift charges it canonically. The
+planner may add any of those terms when it can compute them cheaply. Omitting
+them preserves a lower bound, but the typed relation transition remains part
+of the cell and successor-state signature.
 
 ### Corollary 1.1: discrete convexity
 
@@ -322,6 +338,7 @@ the successor state. These changes include:
 - an inner, fold, opening, or outer digit depth;
 - an opening relation width or A row count;
 - a source encoding or response basis;
+- a typed relation transition or relation phase;
 - a compression plan or setup offload form;
 - a selective L2 eligibility or norm proof shape change.
 
@@ -455,8 +472,9 @@ best real value.
 For proof bytes, prefix combination is addition. For total setup, it is the
 maximum of the edge setup and suffix setup. For the first direct setup
 coordinate, it keeps the first direct capacity already chosen by the prefix or
-uses the suffix value when the prefix is offloaded. Each operation is
-monotone.
+uses the suffix value when the prefix is offloaded. The root output-witness
+length is fixed by the root edge and carried unchanged while its suffix is
+compared. Each operation is monotone.
 
 The planner can combine the exact fixed prefix with \(h(s)\). It may prune the
 region only when the result is strictly worse than a completed incumbent on
@@ -469,6 +487,7 @@ The first implementation should retain at least:
 
 - the payload phase and the minimum and maximum remaining fold depth allowed
   by admission;
+- the ring-relation phase and its legal setup-offload consequence;
 - a checked witness length interval;
 - the incoming setup prefix capacity class;
 - the available ring dimension ceiling;
@@ -484,6 +503,8 @@ The first useful relaxed edge should include:
 - minimum mandatory bytes for every fold which admission still requires;
 - a lower bound on the first direct setup capacity;
 - a lower bound on the total setup envelope.
+- the root output-witness length when it is not already fixed by the exact
+  prefix.
 
 The current direct edge bound is the valid but weak special case where the
 suffix contributes zero. The implementation can strengthen one term at a time.
@@ -499,9 +520,9 @@ Transition \(t_a\) dominates \(t_b\) only if all of these conditions hold.
    maps every child completion of \(t_b\) to a no worse completion of \(t_a\).
 3. Every exact edge and parent visible objective projection of \(t_a\) is no
    worse than the matching projection of \(t_b\).
-4. If the numeric projections can tie, descriptor composition proves that
-   \(t_a\) is no worse. Otherwise one numeric coordinate before the descriptor
-   must be strictly better.
+4. If the numeric projections, including the root output-witness coordinate,
+   can tie, descriptor composition proves that \(t_a\) is no worse. Otherwise
+   one numeric coordinate before the descriptor must be strictly better.
 
 Under these conditions, removing \(t_b\) cannot change the selected complete
 schedule.
@@ -524,11 +545,14 @@ Selective L2 and Linf are separate routes. Their security ranks, proof shapes,
 and successor witnesses can cross at different split values. There is no
 general implication from the best Linf split to the best L2 split.
 
-The current shortcut creates selective L2 only at the split chosen by the best
-modeled Linf candidate. It also rejects L2 when its inner A rank is not smaller
-than the Linf rank. Neither fact alone compares the norm proof, the B rank, the
-next witness, the suffix, the setup envelope, or the descriptor. The target
-exact planner must not use either fact as a complete route proof.
+The production shortcut creates selective L2 only at the split chosen by the
+best modeled Linf candidate for each admitted relation mode. The independent
+test oracle added by #445 derives eligible L2 candidates at every split. The
+production path also rejects L2 when its inner A rank is not smaller than the
+Linf rank. Neither fact alone compares the norm proof, the B rank, the next
+witness, the relation phase, the suffix, the setup envelope, the root output
+witness, or the descriptor. The target exact planner must not use either fact
+as a complete route proof.
 
 The complete route search works as follows.
 
@@ -549,6 +573,7 @@ The L2 transition signature contains at least:
 - the next witness body, relation tail, and exact length when available;
 - the current edge proof bytes;
 - the level setup envelope;
+- the root output-witness projection when the route can affect it;
 - the sufficient child state and parent admission class;
 - the canonical descriptor prefix.
 
@@ -569,11 +594,12 @@ splits differ.
 
 ### Setup first slice completeness
 
-The current setup first shortcut chooses the smallest local padded setup and
-then the smallest slice count before it computes every successor witness and
-suffix. Slice count changes the outer commitment input width and can change the
-B rank. It can also change relation rows, compression, the next witness, proof
-bytes, total setup, parent admission, and descriptor order.
+The current setup-first shortcut retains every slice tied at the smallest local
+padded setup, but removes every strictly larger local setup before it computes
+all successor witnesses and suffixes. Slice count changes the outer commitment
+input width and can change the B rank. It can also change relation rows,
+compression, the next witness, proof bytes, total setup, root output witness,
+parent admission, and descriptor order.
 
 The exact planner treats slice count as an ordinary transition decision. Since
 the current domain has only four values, it first builds all feasible cheap
@@ -589,6 +615,7 @@ The slice transition signature contains at least:
 - the next witness body and exact length when available;
 - the active and padded setup capacities;
 - the current edge proof bytes and setup field elements;
+- the root output-witness projection when the slice can affect it;
 - the sufficient child state, including source moment and response basis;
 - the parent admission class and descriptor prefix.
 
@@ -613,6 +640,7 @@ permutation of those groups preserves all of the following.
 - Commitment epoch and transcript position class.
 - Candidate feasibility and security sizing.
 - Exact current proof and setup costs.
+- Root output-witness projection.
 - Sufficient successor state and parent observations.
 - Batch opening and closing group behavior.
 - Canonical descriptor comparison after a declared representative is chosen.

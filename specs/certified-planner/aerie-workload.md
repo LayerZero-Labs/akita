@@ -253,6 +253,9 @@ The planner test suite must contain at least these fixtures.
 
 The performance report records compilation time separately. The guided target
 applies after compilation, as defined by the parent specification.
+These fixtures assert workload lowering, transcript order, security ownership,
+and oracle agreement. They must not pin the exact selected profiles, witness
+lengths, proof bytes, or relation cutover as compatibility snapshots.
 
 ## Non-inferences
 
