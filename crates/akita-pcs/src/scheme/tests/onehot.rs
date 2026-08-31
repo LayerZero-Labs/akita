@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 #[test]
 fn profile_native_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
@@ -13,7 +14,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE, AkitaSetupSeed::DEFAULT).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -71,7 +72,8 @@ fn with_precommit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = OneHotScheme::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let setup = OneHotScheme::setup_prover(max_num_vars, max_num_polys, AkitaSetupSeed::DEFAULT)
+        .expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -222,7 +224,8 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         0x0bee_fcaf_9a77_6001,
     )];
 
-    let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE).expect("protocol setup");
+    let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE, AkitaSetupSeed::DEFAULT)
+        .expect("protocol setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
@@ -341,7 +344,7 @@ fn commit_group_returns_frozen_exact_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE, AkitaSetupSeed::DEFAULT).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared setup");
@@ -407,8 +410,12 @@ where
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
     let opening_num_vars = pre_num_vars.max(final_num_vars);
 
-    let setup =
-        AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(opening_num_vars, total).expect("setup");
+    let setup = AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(
+        opening_num_vars,
+        total,
+        AkitaSetupSeed::DEFAULT,
+    )
+    .expect("setup");
     let cached_backend = CpuBackend::with_resource_limits(
         max_cached_ring_switch_elements,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
@@ -819,7 +826,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         })
         .collect();
 
-    let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE).unwrap();
+    let setup = OneHotScheme::setup_prover(NV, BATCH_SIZE, AkitaSetupSeed::DEFAULT).unwrap();
     let cached_backend = CpuBackend::with_resource_limits(
         usize::MAX,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,

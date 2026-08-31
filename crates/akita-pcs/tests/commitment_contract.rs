@@ -21,7 +21,7 @@ use akita_prover::compute::{
 use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
-use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use akita_types::{AkitaSetupSeed, CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -210,8 +210,13 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
 
     let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
-        .expect("setup");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        CONTRACT_NUM_VARS,
+        1,
+        setup_envelope,
+        AkitaSetupSeed::DEFAULT,
+    )
+    .expect("setup");
     let contract_backend = ContractCommitBackend;
     let prepared = contract_backend.prepare_setup(&setup).expect("prepared");
     let expanded = setup.expanded.as_ref();

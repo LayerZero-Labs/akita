@@ -13,7 +13,7 @@ use crate::kernels::linear::{
 };
 use crate::AkitaProverSetup;
 use akita_error::AkitaError;
-use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use akita_types::{AkitaSetupSeed, NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use std::sync::atomic::Ordering;
 
@@ -27,7 +27,13 @@ fn setup_capacity(num_ring_elements: usize) -> SetupMatrixCapacity {
 }
 
 fn prepared() -> CpuPreparedSetup<F> {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        setup_capacity(D),
+        AkitaSetupSeed::DEFAULT,
+    )
+    .unwrap();
     CpuBackend::DEFAULT.prepare_setup(&setup).unwrap()
 }
 
@@ -68,7 +74,13 @@ fn cpu_resource_limits_have_checked_defaults_and_boundaries() {
 
 #[test]
 fn configured_ring_switch_routes_preserve_relation_rows() {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        setup_capacity(D),
+        AkitaSetupSeed::DEFAULT,
+    )
+    .unwrap();
     let cached_backend = CpuBackend::with_resource_limits(
         usize::MAX,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
@@ -117,7 +129,13 @@ fn configured_ring_switch_routes_preserve_relation_rows() {
 
 #[test]
 fn configured_ring_switch_routes_reject_malformed_active_roles() {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        setup_capacity(D),
+        AkitaSetupSeed::DEFAULT,
+    )
+    .unwrap();
     let cached_backend = CpuBackend::with_resource_limits(
         usize::MAX,
         CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER,
@@ -218,6 +236,7 @@ fn cached_and_streamed_routes_share_acceptance_across_crt_bounds() {
         SetupMatrixCapacity {
             num_field_elements: 64 * D,
         },
+        AkitaSetupSeed::DEFAULT,
     )
     .unwrap();
     let streamed_backend =
@@ -307,7 +326,13 @@ fn streamed_relation_rows_match_cached_kernel() {
 #[test]
 fn streamed_relation_rows_match_cached_q32_kernel() {
     type F32 = Prime32Offset99;
-    let setup = AkitaProverSetup::<F32>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = AkitaProverSetup::<F32>::generate_with_capacity(
+        8,
+        1,
+        setup_capacity(D),
+        AkitaSetupSeed::DEFAULT,
+    )
+    .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let t_hat = vec![[-1i8; D], [3i8; D]];
     let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
@@ -419,6 +444,7 @@ fn streamed_chunked_t_rows_match_cached_kernel() {
         SetupMatrixCapacity {
             num_field_elements: T_LEN * D128,
         },
+        AkitaSetupSeed::DEFAULT,
     )
     .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

@@ -16,8 +16,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
+    AkitaSetupSeed, BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule,
+    FpExtEncoding, OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
 };
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
@@ -65,7 +65,9 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys, AkitaSetupSeed::DEFAULT)
+                .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

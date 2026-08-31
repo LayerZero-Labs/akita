@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 #[cfg(feature = "schedules-fp128-dense-bounded")]
 use jolt_field::Zero;
 use jolt_field::{One, Ring};
@@ -22,7 +23,9 @@ fn heterogeneous_group_types() {
         const DENSE_PRE_NV: usize = 15;
         const FINAL_NV: usize = 16;
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 4).expect("setup");
+        let setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 4, AkitaSetupSeed::DEFAULT)
+                .expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -68,8 +71,12 @@ fn heterogeneous_group_types() {
 
         // Dense pre-group committed with DenseCfg so its profile matches the
         // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
-        let dense_setup =
-            AkitaCommitmentScheme::<DenseCfg>::setup_prover(DENSE_PRE_NV, 2).expect("dense setup");
+        let dense_setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(
+            DENSE_PRE_NV,
+            2,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .expect("dense setup");
         let dense_prepared = CpuBackend::DEFAULT
             .prepare_setup(&dense_setup)
             .expect("dense prepared");
@@ -250,9 +257,12 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
         // Each group commits under the config that owns its bound, so its frozen
         // profile matches the descriptor the catalog row carries.
-        let bounded_setup =
-            AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(BOUNDED_PRE_NV, 1)
-                .expect("bounded dense setup");
+        let bounded_setup = AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(
+            BOUNDED_PRE_NV,
+            1,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .expect("bounded dense setup");
         let bounded_prepared = CpuBackend::DEFAULT
             .prepare_setup(&bounded_setup)
             .expect("bounded dense prepared");
@@ -288,8 +298,9 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             full_width_profile.inner.digits.num_digits,
         );
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)
-            .expect("one-hot root setup");
+        let setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2, AkitaSetupSeed::DEFAULT)
+                .expect("one-hot root setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -480,7 +491,9 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(NV, 1).expect("setup");
+        let setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT)
+                .expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -607,7 +620,8 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let setup =
-            AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(NV, 1).expect("bounded setup");
+            AkitaCommitmentScheme::<BoundedDenseCfg>::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT)
+                .expect("bounded setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -677,7 +691,9 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // A full-width dense commitment of the same out-of-range polynomial is
         // fine: it declares the whole field, so the guard is specific to a bounded
         // source and costs unbounded configs nothing.
-        let full_setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).expect("setup");
+        let full_setup =
+            AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT)
+                .expect("setup");
         let full_prepared = CpuBackend::DEFAULT
             .prepare_setup(&full_setup)
             .expect("prepared");
@@ -712,7 +728,7 @@ fn heterogeneous_compute_backends() {
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
-        let setup = Scheme::setup_prover(NV, 1).unwrap();
+        let setup = Scheme::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
 
         let commit_backend = CommitCluster;

@@ -56,8 +56,9 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement,
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    lagrange_weights, AkitaBatchedProof, AkitaScheduleLookupKey, AkitaSetupSeed, BasisMode,
+    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PolynomialGroupLayout,
 };
 use common::*;
 use jolt_field::{ExtField, One, Ring, Zero};
@@ -155,7 +156,7 @@ macro_rules! small_field_test {
                 for &final_nv in &[$($fnv),+] {
                     let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
                         final_nv.max(PRE_NV),
-                        2,
+                        2, AkitaSetupSeed::DEFAULT,
                     )
                     .expect("setup");
                     let prepared =
@@ -336,7 +337,7 @@ macro_rules! small_field_test {
                 for &final_nv in &[$($fnv),+] {
                     let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
                         final_nv.max(PRE_NV),
-                        2,
+                        2, AkitaSetupSeed::DEFAULT,
                     )
                     .expect("setup");
                     let prepared =
@@ -555,7 +556,8 @@ fn fp32_onehot_multi_group() {
         let pre_params = &pre_group_schedule.root.params;
         let pre_poly = grouped_poly(pre_params, 1);
 
-        let pre_setup = SmallScheme::setup_prover(PRE_NV, 1).expect("pre setup");
+        let pre_setup =
+            SmallScheme::setup_prover(PRE_NV, 1, AkitaSetupSeed::DEFAULT).expect("pre setup");
         let pre_prepared = CpuBackend::DEFAULT
             .prepare_setup(&pre_setup)
             .expect("prepared");
@@ -585,7 +587,7 @@ fn fp32_onehot_multi_group() {
         let final_params = &multi_schedule.root.params;
         let final_poly = grouped_poly(final_params, 2);
 
-        let setup = SmallScheme::setup_prover(FINAL_NV, 2).expect("setup");
+        let setup = SmallScheme::setup_prover(FINAL_NV, 2, AkitaSetupSeed::DEFAULT).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())

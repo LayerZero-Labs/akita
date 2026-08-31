@@ -6,7 +6,7 @@ use crate::compute::{
     RootOpeningSource, RootPolyShape,
 };
 use crate::{AkitaProverSetup, DensePoly, OneHotPoly};
-use akita_types::SetupMatrixCapacity;
+use akita_types::{AkitaSetupSeed, SetupMatrixCapacity};
 use jolt_field::{CanonicalEncoding, Prime24Offset3};
 
 fn sample_dense<const D: usize>() -> DensePoly<Prime24Offset3> {
@@ -66,6 +66,7 @@ fn multilinear_onehot_group_commit_matches_inner_kernel() {
         SetupMatrixCapacity {
             num_field_elements: 4096,
         },
+        AkitaSetupSeed::DEFAULT,
     )
     .unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

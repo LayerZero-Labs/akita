@@ -8,7 +8,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup,
+    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaSetupSeed, AkitaVerifierSetup,
+    CommittedGroup,
 };
 use common::*;
 
@@ -45,7 +46,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
 
-    let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+    let setup = Scheme::setup_prover(num_vars, 1, AkitaSetupSeed::DEFAULT).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepare setup");
@@ -175,7 +176,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::setup_prover(num_vars, 1).expect("setup");
+        let setup = Scheme::setup_prover(num_vars, 1, AkitaSetupSeed::DEFAULT).expect("setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepare setup");

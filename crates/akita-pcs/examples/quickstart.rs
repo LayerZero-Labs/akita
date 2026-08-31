@@ -8,7 +8,8 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    AkitaBatchedProof, AkitaSetupSeed, BasisMode, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 use jolt_field::CanonicalEncoding;
 
@@ -28,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let evaluation = evaluate_multilinear(&evaluations, &point);
 
-    let setup = AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1)?;
+    let setup =
+        AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1, AkitaSetupSeed::DEFAULT)?;
     let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(&setup)?;
     let stack = UniformProverStack::uniform(&backend, &prepared, setup.expanded.as_ref())?;

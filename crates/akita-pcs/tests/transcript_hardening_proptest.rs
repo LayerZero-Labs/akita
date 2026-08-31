@@ -6,7 +6,7 @@ mod common;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::{labels, AkitaTranscript, LoggingTranscript};
-use akita_types::OpeningClaimsLayout;
+use akita_types::{AkitaSetupSeed, OpeningClaimsLayout};
 use common::*;
 use proptest::prelude::*;
 
@@ -43,7 +43,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .map(|poly| opening_from_poly_for_layout(*poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup = Scheme::setup_prover(num_vars, total_claims).unwrap();
+    let setup = Scheme::setup_prover(num_vars, total_claims, AkitaSetupSeed::DEFAULT).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,

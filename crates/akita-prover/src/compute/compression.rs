@@ -414,7 +414,7 @@ mod tests {
     use super::*;
     use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::AkitaProverSetup;
-    use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
+    use akita_types::{AkitaSetupSeed, SetupMatrixCapacity, SisModulusProfileId};
     use jolt_field::{Prime128OffsetA7F7, Ring};
 
     type F = Prime128OffsetA7F7;
@@ -442,6 +442,7 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: max_flat_coefficients,
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .unwrap();
         let prepared = CpuBackend::DEFAULT

@@ -15,8 +15,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaBatchedProof, AkitaScheduleLookupKey, AkitaSetupSeed, BasisMode, GroupBatchStatement,
+    OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
 /// Single-group recursive roundtrip: one two-polynomial final group at `nv=32`, no
@@ -52,8 +52,9 @@ where
             "recursive schedule must carry setup-prefix metadata"
         );
 
-        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, FINAL_GROUP_SIZE)
-            .expect("recursive direct setup");
+        let setup =
+            Recursive::<BaseCfg>::setup_prover(FINAL_NV, FINAL_GROUP_SIZE, AkitaSetupSeed::DEFAULT)
+                .expect("recursive direct setup");
         assert!(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute prefix slots"
@@ -169,7 +170,8 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         // Independent oracle: raw evaluations folded against the point.
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -234,7 +236,8 @@ where
         // Independent oracle: sum of Lagrange weights at the hot indices.
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -296,7 +299,12 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &final_nv in final_nvs {
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+            final_nv.max(PRE_NV),
+            2,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -439,7 +447,12 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     for &final_nv in final_nvs {
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(final_nv.max(PRE_NV), 2).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+            final_nv.max(PRE_NV),
+            2,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,

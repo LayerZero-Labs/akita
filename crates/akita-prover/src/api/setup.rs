@@ -4,7 +4,7 @@ use akita_error::AkitaError;
 
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
-    derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
+    derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
     AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
@@ -31,8 +31,9 @@ impl<F: Field> AkitaProverSetup<F> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived provisioning bounds in base-field
-    /// elements. This constructor owns only the concrete prover artifact:
-    /// materialization of that prefix of the public field stream.
+    /// elements and the public setup identity to derive from. This constructor
+    /// owns only the concrete prover artifact: materialization of that prefix of
+    /// the public field stream.
     ///
     /// # Errors
     ///
@@ -43,31 +44,37 @@ impl<F: Field> AkitaProverSetup<F> {
         max_num_vars: usize,
         max_num_batched_polys: usize,
         setup_capacity: SetupMatrixCapacity,
+        setup_seed: AkitaSetupSeed,
     ) -> Result<Self, AkitaError>
     where
         F: Field + CanonicalEncoding + AkitaSerialize,
     {
-        let setup_seed = sample_akita_setup_seed();
-        let seed = AkitaSetupDescriptor {
+        let descriptor = AkitaSetupDescriptor {
             max_num_vars,
             max_num_batched_polys,
             num_field_elements: setup_capacity.num_field_elements,
             setup_seed: setup_seed.clone(),
         };
-        seed.check().map_err(|err| {
+        descriptor.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("setup seed validation failed: {err}"))
         })?;
 
         let shared_flat =
             derive_public_matrix_prefix::<F>(setup_capacity.num_field_elements, &setup_seed);
         let expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_flat),
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, shared_flat),
         );
 
         Ok(Self {
             expanded,
             prefix_slots: SetupPrefixProverRegistry::new(setup_seed),
         })
+    }
+
+    /// Semantic identity of the public field stream this setup was derived from.
+    #[must_use]
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        self.expanded.setup_seed()
     }
 
     /// Derive a verifier setup with an explicit public-matrix capacity.
@@ -117,8 +124,7 @@ impl<F: Field> AkitaProverSetup<F> {
                 ),
             )
         };
-        let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(self.expanded.descriptor().setup_seed.clone());
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(self.setup_seed().clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
         AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
@@ -144,10 +150,13 @@ impl<F: Field> AkitaProverSetup<F> {
 
     /// Wrap a seed-validated [`AkitaExpandedSetup`] in a prover setup.
     ///
-    /// This skips seed-to-matrix rederivation. Use it only when the caller
-    /// just verified the matrix with `validate_public_matrix_matches_seed` in
-    /// the same trust boundary, such as the disk-cache loader in
-    /// `akita-setup`.
+    /// This skips seed-to-matrix rederivation, so use it only when the caller
+    /// verified the matrix with `validate_public_matrix_matches_seed` inside the
+    /// same trust boundary.
+    ///
+    /// The returned setup carries an empty setup-prefix registry. A caller that
+    /// must preserve an already-loaded registry, such as the disk-cache loader
+    /// in `akita-setup`, assembles [`AkitaProverSetup`] itself instead.
     ///
     /// # Errors
     ///
@@ -171,7 +180,7 @@ impl<F: Field> AkitaProverSetup<F> {
                 "expanded setup matrix field count does not match setup descriptor".to_string(),
             ));
         }
-        let setup_seed = expanded.descriptor().setup_seed.clone();
+        let setup_seed = expanded.setup_seed().clone();
         let expanded = Arc::new(expanded);
         Ok(Self {
             expanded,
@@ -183,7 +192,7 @@ impl<F: Field> AkitaProverSetup<F> {
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.setup_seed() != &self.expanded.descriptor().setup_seed {
+        if self.prefix_slots.setup_seed() != self.setup_seed() {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -205,9 +214,40 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: 0,
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("num_field_elements"));
+    }
+
+    #[test]
+    fn generated_setup_binds_every_artifact_to_the_requested_seed() {
+        let setup_seed = AkitaSetupSeed::shake256_paged_v1([0x5a; 32]);
+        assert_ne!(setup_seed, AkitaSetupSeed::DEFAULT);
+
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: 8,
+            },
+            setup_seed.clone(),
+        )
+        .expect("generate setup");
+
+        // The prefix registry and the expanded setup must agree on identity, or
+        // later prefix commitments would attest to the wrong public matrix.
+        assert_eq!(*setup.setup_seed(), setup_seed);
+        assert_eq!(*setup.prefix_slots.setup_seed(), setup_seed);
+        assert_eq!(setup.expanded.descriptor().setup_seed, setup_seed);
+
+        let verifier = setup
+            .to_verifier_setup(SetupMatrixCapacity {
+                num_field_elements: 8,
+            })
+            .expect("verifier setup");
+        assert_eq!(*verifier.setup_seed(), setup_seed);
+        assert_eq!(*verifier.prefix_slots.setup_seed(), setup_seed);
     }
 
     #[test]
@@ -218,6 +258,7 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: 8,
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .expect("generate setup");
 
@@ -259,6 +300,7 @@ mod tests {
             8,
             1,
             SetupMatrixCapacity::minimum(),
+            AkitaSetupSeed::DEFAULT,
         )
         .expect("generate setup");
         let decomposed =

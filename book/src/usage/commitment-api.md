@@ -143,7 +143,7 @@ final group and opening proof use the recursive configuration.
 ```rust
 let setup = AkitaCommitmentScheme::<
     RecursiveCommitmentConfig<BaseConfig>,
->::setup_prover(max_num_vars, max_group_size)?;
+>::setup_prover(max_num_vars, max_group_size, setup_seed)?;
 
 let earlier = AkitaCommitmentScheme::<BaseConfig>::commit(
     &setup,

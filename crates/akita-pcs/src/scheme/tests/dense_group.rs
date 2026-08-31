@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 type DenseGroupCfg = Cfg;
 type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
 
@@ -7,7 +8,8 @@ type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
 fn dense_group_commit_freezes_scalar_s_profile() {
     const NUM_VARS: usize = 16;
 
-    let setup = DenseGroupScheme::setup_prover(NUM_VARS, 1).expect("dense group setup");
+    let setup = DenseGroupScheme::setup_prover(NUM_VARS, 1, AkitaSetupSeed::DEFAULT)
+        .expect("dense group setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared dense group setup");

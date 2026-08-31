@@ -16,8 +16,8 @@ use akita_transcript::Transcript;
 use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
-    BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
-    SetupMatrixCapacity,
+    AkitaSetupSeed, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement,
+    OpeningClaimsLayout, SetupMatrixCapacity,
 };
 use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
@@ -42,12 +42,20 @@ where
 {
     /// Build a flat prover setup for the config's provisioning policy.
     ///
+    /// `setup_seed` is the public identity of the deterministic matrix stream.
+    /// Prover and verifier must supply the same seed. It is trusted deployment
+    /// configuration on both sides and must never be taken from a proof. Pass
+    /// [`akita_types::AkitaSetupSeed::DEFAULT`] for the stable protocol default,
+    /// or mint a deployment-specific identity once with
+    /// `AkitaSetupSeed::from_rng`.
+    ///
     /// # Errors
     ///
     /// Returns an error if the requested capacity, field tower, or generated setup is invalid.
     pub fn setup_prover(
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
+        setup_seed: AkitaSetupSeed,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError>
     where
         Cfg::Field: AkitaDeserialize<Context = ()>,
@@ -55,6 +63,7 @@ where
         akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
             max_num_vars,
             max_num_polys_per_commitment_group,
+            setup_seed,
         )
     }
 

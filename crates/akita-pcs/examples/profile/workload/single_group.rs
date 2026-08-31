@@ -21,8 +21,8 @@ use akita_prover::{DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
-    OpeningClaimsLayout, PolynomialGroupLayout,
+    AkitaSetupSeed, BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule,
+    FpExtEncoding, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use jolt_field::solinas::parallel::*;
 use jolt_field::{
@@ -327,9 +327,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         statement_prepare_start.elapsed().as_secs_f64(),
     );
     let t0 = Instant::now();
-    let setup =
-        AkitaCommitmentScheme::<Cfg>::setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
-            .unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+        RootPolyShape::<FF, D>::num_vars(&poly),
+        1,
+        AkitaSetupSeed::DEFAULT,
+    )
+    .unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
@@ -413,7 +416,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
     let t0 = Instant::now();
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

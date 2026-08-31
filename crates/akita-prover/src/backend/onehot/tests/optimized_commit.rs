@@ -65,7 +65,7 @@ fn retained_sweeps_match_across_polys_and_dimensions() {
 fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
     use crate::compute::{CommitInnerPlan, ComputeBackendSetup, CpuBackend, RootCommitKernel};
     use crate::AkitaProverSetup;
-    use akita_types::SetupMatrixCapacity;
+    use akita_types::{AkitaSetupSeed, SetupMatrixCapacity};
 
     type F = Prime128Offset275;
     const D: usize = 64;
@@ -90,6 +90,7 @@ fn configured_scratch_budget_preserves_onehot_commit_arithmetic() {
         SetupMatrixCapacity {
             num_field_elements: plan.n_a * plan.num_positions_per_block * D,
         },
+        AkitaSetupSeed::DEFAULT,
     )
     .unwrap();
     let default_backend = CpuBackend::DEFAULT;

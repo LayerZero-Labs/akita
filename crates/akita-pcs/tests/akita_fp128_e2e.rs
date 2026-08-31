@@ -102,8 +102,8 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims,
+    AkitaBatchedProof, AkitaSetupSeed, BasisMode, GroupBatchStatement, OpeningClaims,
+    OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use common::*;
 use matrix_drivers::*;
@@ -352,7 +352,12 @@ fn fp128_onehot_batched() {
             .map(|p| onehot_opening_lagrange(p, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(nv, batch_size).unwrap();
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(
+            nv,
+            batch_size,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -426,7 +431,12 @@ fn fp128_dense_batched() {
             .map(|e| dense_opening_lagrange(e, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, batch_size).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(
+            nv,
+            batch_size,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -525,7 +535,9 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             MultilinearPolynomial::onehot(onehot_b),
         ];
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, BATCH, AkitaSetupSeed::DEFAULT)
+                .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -576,7 +588,9 @@ fn fp128_onehot_oversized_setup() {
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_prover(setup_nv, 1, AkitaSetupSeed::DEFAULT)
+                .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -648,7 +662,8 @@ fn fp128_dense_monomial_basis() {
         let pt = random_point(NV, 0xc0de_0000);
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT)
+            .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())

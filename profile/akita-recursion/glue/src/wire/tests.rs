@@ -2,11 +2,11 @@ use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_types::{
-    derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
-    CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
-    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout, RingVec,
-    SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
-    SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    derive_public_matrix_prefix, scheduled_setup_prefix, AkitaSetupSeed, CompressionChainPlan,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan, InnerCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RingVec, SetupPrefixPublicCommitment,
+    SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 use jolt_field::Zero;
 
@@ -161,7 +161,7 @@ fn opening_point_len_must_match_num_vars_before_allocation() {
 
 #[test]
 fn strict_setup_decoder_preserves_prefix_slots() {
-    let setup_seed = sample_akita_setup_seed();
+    let setup_seed = AkitaSetupSeed::DEFAULT;
     let seed = AkitaSetupDescriptor {
         max_num_vars: 8,
         max_num_batched_polys: 1,
