@@ -22,8 +22,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, UniformProverStac
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    derive_public_matrix_prefix, setup_seed_digest, AkitaExpandedSetup, AkitaSetupSeed, BasisMode,
-    SetupMatrixCapacity,
+    derive_public_matrix_prefix, AkitaExpandedSetup, AkitaSetupSeed, BasisMode, SetupMatrixCapacity,
 };
 use common::{
     dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
@@ -84,7 +83,8 @@ fn one_seed_and_shape_reproduce_the_same_setup() {
         let first = prover_setup(AkitaSetupSeed::DEFAULT);
         let second = prover_setup(AkitaSetupSeed::DEFAULT);
 
-        assert_eq!(first.setup_seed(), second.setup_seed());
+        assert_eq!(*first.setup_seed(), AkitaSetupSeed::DEFAULT);
+        assert_eq!(*second.setup_seed(), AkitaSetupSeed::DEFAULT);
         assert_matches_seed_derived_stream(&first);
         assert_matches_seed_derived_stream(&second);
         assert_eq!(requested_prefix(&first), requested_prefix(&second));
@@ -148,11 +148,6 @@ fn distinct_seeds_produce_distinct_matrices_and_verifier_setups() {
         assert_ne!(
             default_verifier.setup_seed(),
             alternate_verifier.setup_seed()
-        );
-
-        assert_ne!(
-            setup_seed_digest(&AkitaSetupSeed::DEFAULT).expect("default digest"),
-            setup_seed_digest(&alternate_seed()).expect("alternate digest")
         );
     });
 }

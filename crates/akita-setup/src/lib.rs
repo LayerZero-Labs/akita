@@ -58,8 +58,9 @@ where
     recursive_prefixes::validate_prefix_registry_complete(&setup.prefix_slots, &required_ids)
 }
 
-/// Lowercase hex, for cache identities and setup-identity logs.
-fn hex(bytes: &[u8]) -> String {
+/// Lowercase hex, for cache identities and setup-identity logs and reports.
+#[must_use]
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

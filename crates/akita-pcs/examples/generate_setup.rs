@@ -10,6 +10,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_pcs::AkitaCommitmentScheme;
+use akita_setup::hex;
 use akita_types::{setup_seed_digest, AkitaSetupSeed};
 use rand::rngs::OsRng;
 
@@ -43,8 +44,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("verifier with it out of band; never read a setup seed from a proof.");
 
     Ok(())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
