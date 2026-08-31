@@ -655,12 +655,13 @@ pub fn expanded_schedule_proof_payload_bytes(
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }
 
+    let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
+    })?;
     let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
-        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-            schedule.terminal.input_witness_len,
-        )?),
+        PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
     let terminal_response = akita_types::terminal_response_planner_bytes(
         field_bits,

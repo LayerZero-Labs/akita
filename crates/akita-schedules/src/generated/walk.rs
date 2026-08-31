@@ -238,12 +238,13 @@ pub(crate) fn walk_generated_schedule_entry(
             estimated_stage3_payload_bytes: stage3_bytes,
         });
     }
+    let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
+    })?;
     let terminal_direct_bytes = extension_opening_reduction_level_bytes(
         challenge_field_bits,
         policy.claim_ext_degree,
-        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-            input_witness_len,
-        )?),
+        PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
     let terminal_bytes = akita_types::terminal_response_planner_bytes(
         field_bits,

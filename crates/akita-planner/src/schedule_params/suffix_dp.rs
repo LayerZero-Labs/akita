@@ -320,13 +320,13 @@ fn direct_edge_lower_bound(
     output_witness_len: usize,
     natural_setup_field_len: usize,
 ) -> Result<CompleteObjectiveBound, AkitaError> {
-    // Before a child is selected, price the smallest same-dimension terminal
-    // relation and omit its next payload. Every concrete successor is at
-    // least this expensive, so the guide remains a conservative lower bound.
+    // Before a child is selected, price the smallest valid power-of-two
+    // successor relation and omit its next payload. Every concrete successor
+    // is at least this expensive, so the guide remains a conservative bound.
     let relation_geometry = params.relation_address_geometry(
         opening_layout,
         policy.claim_ext_degree,
-        params.d_a(),
+        1,
         output_witness_len,
     )?;
     let proof_bytes = akita_types::level_proof_bytes(

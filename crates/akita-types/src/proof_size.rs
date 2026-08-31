@@ -551,6 +551,22 @@ mod tests {
             .unwrap()
             .relation_point_variable_count();
         assert_eq!(rounds, 7);
+        let successor_padded_terminal_eor = crate::extension_opening_reduction_level_bytes(
+            128,
+            2,
+            crate::PolynomialGroupLayout::singleton(rounds),
+        )
+        .unwrap();
+        let stale_terminal_eor = crate::extension_opening_reduction_level_bytes(
+            128,
+            2,
+            crate::PolynomialGroupLayout::singleton(crate::sumcheck_rounds(
+                current.d_a(),
+                output_witness_len,
+            )),
+        )
+        .unwrap();
+        assert!(successor_padded_terminal_eor > stale_terminal_eor);
 
         assert_eq!(
             level_proof_bytes(

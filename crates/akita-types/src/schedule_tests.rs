@@ -283,13 +283,23 @@ fn canonical_shape_follows_successor_padded_relation_domain() {
     let root_layout = OpeningClaimsLayout::new(6, 1).expect("root opening layout");
 
     let grinding_plan = GrindingPlan::new(Vec::new(), 1).expect("empty grinding plan");
-    let shape = canonical_proof_shape(&schedule, &root_layout, 1, &grinding_plan)
+    let shape = canonical_proof_shape(&schedule, &root_layout, 2, &grinding_plan)
         .expect("successor-aware proof shape");
     assert_eq!(shape.root.stage2_sumcheck_proof.len(), 7);
     assert_ne!(
         shape.root.stage2_sumcheck_proof.len(),
         sumcheck_rounds(schedule.root.params.d_a(), schedule.root.output_witness_len),
         "the fixture must distinguish successor padding from the retired shortcut"
+    );
+    assert_eq!(
+        shape
+            .terminal
+            .extension_opening_reduction
+            .expect("extension terminal reduction")
+            .sumcheck
+            .len(),
+        6,
+        "terminal EOR must inherit the seven-variable predecessor relation"
     );
 }
 
