@@ -158,7 +158,7 @@ impl<F: Field> AkitaProverSetup<F> {
         F: Field + CanonicalEncoding + Valid,
     {
         expanded.descriptor().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
+            AkitaError::InvalidSetup(format!("expanded setup descriptor validation failed: {err}"))
         })?;
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
@@ -166,7 +166,7 @@ impl<F: Field> AkitaProverSetup<F> {
         if expanded.shared_matrix().num_field_elements() != expanded.descriptor().num_field_elements
         {
             return Err(AkitaError::InvalidSetup(
-                "expanded setup matrix field count does not match setup seed".to_string(),
+                "expanded setup matrix field count does not match setup descriptor".to_string(),
             ));
         }
         let setup_seed = expanded.descriptor().setup_seed.clone();
