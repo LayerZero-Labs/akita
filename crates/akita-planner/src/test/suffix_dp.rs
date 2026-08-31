@@ -92,20 +92,21 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         super::ParentObservableKey::new(&policy, Some(&wider_opening), None).unwrap(),
         "a parent grinding edge prices the successor opening width"
     );
+    let opening_layout = super::suffix_opening_layout(1024, None).unwrap();
     assert_eq!(
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             &evaluation_trace,
-            Some(&evaluation_trace),
-            1024,
+            &opening_layout,
+            akita_types::FoldSuccessor::Recursive(&evaluation_trace),
             512,
         )
         .unwrap(),
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             &evaluation_trace,
-            Some(&wider_opening),
-            1024,
+            &opening_layout,
+            akita_types::FoldSuccessor::Recursive(&wider_opening),
             512,
         )
         .unwrap(),

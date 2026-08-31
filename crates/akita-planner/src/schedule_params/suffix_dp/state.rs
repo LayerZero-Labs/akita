@@ -93,7 +93,7 @@ impl ParentObservableKey {
             setup_prefix_payload_bytes:
                 akita_schedules::planner_support::stage3_payload_bytes_for_successor(
                     policy,
-                    Some(first),
+                    akita_types::FoldSuccessor::Recursive(first),
                 )?,
             grinding_successor: GrindingSuccessorKey::Recursive {
                 d_a: first.d_a(),

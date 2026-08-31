@@ -275,6 +275,24 @@ fn recursive_schedule(
     }
 }
 
+#[test]
+fn canonical_shape_follows_successor_padded_relation_domain() {
+    let mut schedule = recursive_schedule(64, 128, false);
+    schedule.root.output_witness_len = 64;
+    schedule.recursive_folds[0].input_witness_len = 64;
+    let root_layout = OpeningClaimsLayout::new(6, 1).expect("root opening layout");
+
+    let grinding_plan = GrindingPlan::new(Vec::new(), 1).expect("empty grinding plan");
+    let shape = canonical_proof_shape(&schedule, &root_layout, 1, &grinding_plan)
+        .expect("successor-aware proof shape");
+    assert_eq!(shape.root.stage2_sumcheck_proof.len(), 7);
+    assert_ne!(
+        shape.root.stage2_sumcheck_proof.len(),
+        sumcheck_rounds(schedule.root.params.d_a(), schedule.root.output_witness_len),
+        "the fixture must distinguish successor padding from the retired shortcut"
+    );
+}
+
 fn append_recursive_fold(schedule: &mut FoldSchedule) {
     let mut step = schedule
         .recursive_folds
@@ -833,14 +851,21 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
+        let opening_layout =
+            OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
                 level_proof_bytes(
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -940,6 +965,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
+        let opening_layout = OpeningClaimsLayout::new(rounds, 1).unwrap();
         let b = 1usize << log_basis;
         let level_proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -973,9 +999,14 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),

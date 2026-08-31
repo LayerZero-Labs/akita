@@ -312,6 +312,35 @@ impl TerminalFoldParams {
     }
 }
 
+/// Successor consumed by one nonterminal fold.
+///
+/// Recursive and terminal successors expose different wire payloads, but both
+/// determine the outgoing relation domain. Proof shape, proof sizing, and
+/// transcript planning therefore share this one schedule-owned distinction.
+#[derive(Clone, Copy)]
+pub enum FoldSuccessor<'a> {
+    Recursive(&'a CommittedGroupParams),
+    Terminal(&'a TerminalFoldParams),
+}
+
+impl FoldSuccessor<'_> {
+    #[inline]
+    #[must_use]
+    pub fn ring_dimension(self) -> usize {
+        match self {
+            Self::Recursive(params) => params.d_a(),
+            Self::Terminal(params) => params.d_a(),
+        }
+    }
+
+    pub fn recursive_opening_num_vars(self) -> Result<usize, AkitaError> {
+        match self {
+            Self::Recursive(params) => params.recursive_opening_num_vars(),
+            Self::Terminal(params) => params.recursive_opening_num_vars(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldSchedule {
     pub root: FoldParams,

@@ -85,8 +85,8 @@ struct ChildEdge<'a> {
 impl ChildEdge<'_> {
     fn grinding_nonce_bits(&self, suffix: &ScheduleCandidate) -> Result<usize, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
-            || akita_types::GrindingPlanSuccessor::Terminal(&suffix.terminal.params),
-            |fold| akita_types::GrindingPlanSuccessor::Recursive(fold.params.as_ref()),
+            || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
+            |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
         akita_types::transcript_grinding_nonce_bits_for_planner_edge(
             self.candidate_params.as_ref(),
@@ -232,14 +232,18 @@ impl PendingScheduleCandidate {
 
 fn child_edge_price(
     edge: &ChildEdge<'_>,
-    successor: Option<&CommittedGroupParams>,
+    suffix: &ScheduleCandidate,
 ) -> Result<ChildEdgePrice, AkitaError> {
+    let successor = suffix.folds.first().map_or_else(
+        || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
+        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
+    );
     let (direct_payload_bytes, stage3_payload_bytes) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             edge.policy,
             &edge.candidate_params,
+            edge.opening_layout,
             successor,
-            edge.current_witness_len,
             edge.next_witness_len,
         )?;
     if edge.offloaded != (stage3_payload_bytes != 0) {
@@ -312,23 +316,26 @@ fn child_choice(
 fn direct_edge_lower_bound(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
-    input_witness_len: usize,
+    opening_layout: &OpeningClaimsLayout,
     output_witness_len: usize,
     natural_setup_field_len: usize,
 ) -> Result<CompleteObjectiveBound, AkitaError> {
-    let (proof_bytes, stage3_bytes) =
-        akita_schedules::planner_support::nonterminal_level_payload_bytes(
-            policy,
-            params,
-            None,
-            input_witness_len,
-            output_witness_len,
-        )?;
-    if stage3_bytes != 0 {
-        return Err(AkitaError::InvalidSetup(
-            "direct-edge lower bound unexpectedly includes Stage-3 bytes".into(),
-        ));
-    }
+    // Before a child is selected, price the smallest same-dimension terminal
+    // relation and omit its next payload. Every concrete successor is at
+    // least this expensive, so the guide remains a conservative lower bound.
+    let relation_geometry = params.relation_address_geometry(
+        opening_layout,
+        policy.claim_ext_degree,
+        params.d_a(),
+        output_witness_len,
+    )?;
+    let proof_bytes = akita_types::level_proof_bytes(
+        policy.decomposition.field_bits(),
+        policy.challenge_field_bits()?,
+        params,
+        relation_geometry,
+        None,
+    )?;
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
@@ -385,7 +392,6 @@ fn candidate_traversal(
     policy: &PlannerPolicy,
     guide_scope: Option<GuideScope>,
     opening_layout: &OpeningClaimsLayout,
-    current_witness_len: usize,
     candidates: Vec<LevelCandidate>,
 ) -> Result<CandidateTraversal, AkitaError> {
     if guide_scope.is_none() {
@@ -401,7 +407,7 @@ fn candidate_traversal(
             let lower_bound = direct_edge_lower_bound(
                 policy,
                 &candidate.0,
-                current_witness_len,
+                opening_layout,
                 candidate.1,
                 natural_len.unwrap_or_default(),
             )?;
@@ -757,13 +763,8 @@ pub(crate) fn derive_selected_suffix_schedule(
 
         let guide_scope =
             GuideScope::for_state(policy, root_level_key.is_some(), incoming_setup_prefix);
-        let candidates = candidate_traversal(
-            policy,
-            guide_scope,
-            current_opening_layout,
-            current_witness_len,
-            candidates,
-        )?;
+        let candidates =
+            candidate_traversal(policy, guide_scope, current_opening_layout, candidates)?;
 
         for (guide, (candidate_params, next_witness_len, _, next_source_moment)) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {

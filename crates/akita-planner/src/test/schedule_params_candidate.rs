@@ -469,12 +469,14 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     .expect("root packing candidates");
     assert!(!candidates.is_empty());
     let (first_params, first_next_witness_len) = &candidates[0];
+    let opening_layout = key.opening_layout().expect("root opening layout");
+    let terminal = akita_types::TerminalFoldParams::from_expanded_group(first_params.clone());
     let (packing_direct_bytes, _) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             first_params,
-            None,
-            1 << 16,
+            &opening_layout,
+            akita_types::FoldSuccessor::Terminal(&terminal),
             *first_next_witness_len,
         )
         .expect("packing level payload");
@@ -484,9 +486,15 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             policy.decomposition.field_bits(),
             policy.challenge_field_bits().unwrap(),
             first_params,
+            first_params
+                .relation_address_geometry(
+                    &opening_layout,
+                    policy.claim_ext_degree,
+                    terminal.d_a(),
+                    *first_next_witness_len,
+                )
+                .unwrap(),
             None,
-            *first_next_witness_len,
-            Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .expect("packing direct payload without EOR"),
     );
@@ -751,7 +759,6 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             prefix_params,
         )))
         .expect("valid setup-prefix topology");
-    let witness_len = 1 << 4;
     let output_witness_len = 1 << 4;
     let final_group = PolynomialGroupLayout::singleton(4);
     let opening_layout = params
@@ -771,16 +778,23 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         policy.decomposition.field_bits(),
         policy.challenge_field_bits().unwrap(),
         &params,
+        params
+            .relation_address_geometry(
+                &opening_layout,
+                policy.claim_ext_degree,
+                params.d_a(),
+                output_witness_len,
+            )
+            .unwrap(),
         None,
-        output_witness_len,
-        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
     )
     .expect("base level payload");
+    let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
     let (runtime, stage3) = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         &params,
-        None,
-        witness_len,
+        &opening_layout,
+        akita_types::FoldSuccessor::Terminal(&terminal),
         output_witness_len,
     )
     .expect("runtime level payload");

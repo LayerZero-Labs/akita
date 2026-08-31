@@ -16,6 +16,36 @@ Active hardening pillars:
 | **P2** | Use `AkitaTranscript` plus production-ZST labels only as diagnostics |
 | **P3** | `LoggingTranscript` tests enforce prover/verifier event-stream equality and wire-before-squeeze discipline |
 
+## Grinding plan and nonce stream
+
+Each proof has one public `GrindingPlan`, derived from the selected schedule,
+normalized opening layout, field tower, and descriptor-bound policy before the
+proof shape is constructed. The plan fixes the order and bit width of every
+transcript proof-of-work query and every bounded fold-response search. Its
+digest is part of the instance descriptor, and its total bit count fixes the
+leading headerless `TranscriptNonceStream` in the proof.
+
+Proof-of-work and fold-response search use the same packed stream but have
+different security meanings. A protected Fiat-Shamir query first checks its
+scheduled nonce against a separate 32-byte predicate, then draws the protocol
+challenge from the advanced transcript. A fold-response nonce is instead a
+12-bit honest-prover retry value, shared by all commitment groups in that fold;
+the verifier still checks the resulting response representation and norm
+bound. Zero-bit sites consume no proof bits and do not change the transcript.
+
+Sparse fold challenges preserve one live transcript squeeze per commitment
+group. The 32-byte group root and numeric fold-response nonce define a fresh
+indexed SHAKE256 stream for each claim-major block coordinate. Coordinate XOF
+queries do not mutate the live transcript, so changing one coordinate leaves
+the other coordinates and transcript state fixed. Prover and verifier must
+consume the complete plan in order; truncation, reordering, nonzero tail
+padding, or leftover nonce bits is an error.
+
+Implementation: `crates/akita-types/src/transcript_grinding_plan.rs`,
+`crates/akita-transcript/src/grinding.rs`, and
+`crates/akita-challenges/src/sampler/xof.rs`.
+Normative design: [`specs/transcript-grinding.md`](../../specs/transcript-grinding.md).
+
 Deferred work: prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration.
 
 Implementation: `crates/akita-transcript/`.

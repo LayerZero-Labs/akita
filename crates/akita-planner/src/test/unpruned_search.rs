@@ -208,18 +208,22 @@ fn enumerate_suffixes(
                         )?
                         .iter()
                         {
-                            let child_is_terminal = child.folds.is_empty();
+                            let opening_layout = suffix_opening_layout(input_witness_len, None)?;
+                            let successor_d = child
+                                .folds
+                                .first()
+                                .map_or(child.terminal.params.d_a(), |fold| fold.params.d_a());
                             let direct_bytes = level_proof_bytes(
                                 field_bits,
                                 challenge_field_bits,
                                 &params,
+                                params.relation_address_geometry(
+                                    &opening_layout,
+                                    policy.claim_ext_degree,
+                                    successor_d,
+                                    output_witness_len,
+                                )?,
                                 child.first_fold_params(),
-                                output_witness_len,
-                                Some(if child_is_terminal {
-                                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                                } else {
-                                    akita_types::NextWitnessBindingPolicy::OuterPayload
-                                }),
                             )?
                             .checked_add(opening_reduction_bytes)
                             .ok_or_else(|| {
@@ -356,18 +360,21 @@ pub(super) fn find_schedule(
                                     "unpruned root setup field length must be nonzero".into(),
                                 )
                             })?;
-                            let child_is_terminal = suffix.folds.is_empty();
+                            let successor_d = suffix
+                                .folds
+                                .first()
+                                .map_or(suffix.terminal.params.d_a(), |fold| fold.params.d_a());
                             let root_bytes = level_proof_bytes(
                                 field_bits,
                                 policy.challenge_field_bits()?,
                                 &root_params,
+                                root_params.relation_address_geometry(
+                                    &opening_layout,
+                                    policy.claim_ext_degree,
+                                    successor_d,
+                                    output_witness_len,
+                                )?,
                                 suffix.first_fold_params(),
-                                output_witness_len,
-                                Some(if child_is_terminal {
-                                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                                } else {
-                                    akita_types::NextWitnessBindingPolicy::OuterPayload
-                                }),
                             )?;
                             let folds = suffix.folds.prepend(CandidateFoldStep {
                                 params: Arc::new(root_params.clone()),

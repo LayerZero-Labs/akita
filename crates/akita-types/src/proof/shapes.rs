@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningMethod, PolynomialGroupLayout,
+    CommittedGroupParams, FoldSchedule, FoldSuccessor, OpeningClaimsLayout, OpeningMethod,
+    PolynomialGroupLayout,
 };
 
 /// Degree bound for the setup-product sumcheck (`S(lambda, y) * omega(lambda) * alpha(y)`).
@@ -215,9 +216,12 @@ pub fn canonical_proof_shape(
     }
 
     fn stage3_shape(
-        successor: Option<&CommittedGroupParams>,
+        successor: FoldSuccessor<'_>,
     ) -> Result<Option<SetupProductSumcheckShape>, AkitaError> {
-        let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
+        let Some(prefix) = (match successor {
+            FoldSuccessor::Recursive(params) => params.setup_prefix(),
+            FoldSuccessor::Terminal(_) => None,
+        }) else {
             return Ok(None);
         };
         let n_prefix = prefix.n_prefix()?;
@@ -242,9 +246,16 @@ pub fn canonical_proof_shape(
         opening_layout: &OpeningClaimsLayout,
         extension_degree: usize,
         output_witness_len: usize,
-        successor: Option<&CommittedGroupParams>,
-    ) -> Result<LevelProofShape, AkitaError> {
-        let rounds = crate::sumcheck_rounds(params.d_a(), output_witness_len);
+        successor: FoldSuccessor<'_>,
+    ) -> Result<(LevelProofShape, usize), AkitaError> {
+        let rounds = params
+            .relation_address_geometry(
+                opening_layout,
+                extension_degree,
+                successor.ring_dimension(),
+                output_witness_len,
+            )?
+            .relation_point_variable_count();
         let basis = 1usize
             .checked_shl(params.open().digits.log_basis)
             .ok_or_else(|| {
@@ -253,30 +264,38 @@ pub fn canonical_proof_shape(
         let (stage1_stages, stage1_norm) = DigitRangePlan::new(basis)?
             .proof_shapes_for_route(rounds, params.inner().matrix.security_route())?;
         let next_witness_binding = match successor {
-            Some(next) => NextWitnessBindingShape::OuterPayload {
+            FoldSuccessor::Recursive(next) => NextWitnessBindingShape::OuterPayload {
                 coeffs: next.outer_payload_geometry()?.transmitted_coefficients(),
             },
-            None => NextWitnessBindingShape::TerminalInnerState,
+            FoldSuccessor::Terminal(_) => NextWitnessBindingShape::TerminalInnerState,
         };
-        Ok(LevelProofShape {
-            extension_opening_reduction: level_extension_shape(
-                params,
-                opening_layout,
-                extension_degree,
-            )?,
-            opening_payload_coeffs: params
-                .opening_payload_geometry()?
-                .transmitted_coefficients(),
-            stage1_stages,
-            stage1_norm,
-            stage2_sumcheck_proof: vec![3; rounds],
-            stage3_sumcheck: stage3_shape(successor)?,
-            next_witness_binding,
-        })
+        Ok((
+            LevelProofShape {
+                extension_opening_reduction: level_extension_shape(
+                    params,
+                    opening_layout,
+                    extension_degree,
+                )?,
+                opening_payload_coeffs: params
+                    .opening_payload_geometry()?
+                    .transmitted_coefficients(),
+                stage1_stages,
+                stage1_norm,
+                stage2_sumcheck_proof: vec![3; rounds],
+                stage3_sumcheck: stage3_shape(successor)?,
+                next_witness_binding,
+            },
+            rounds,
+        ))
     }
 
-    let root_successor = schedule.recursive_folds.first().map(|step| &step.params);
-    let root = level_shape(
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+            FoldSuccessor::Recursive(&step.params)
+        });
+    let (root, mut predecessor_rounds) = level_shape(
         &schedule.root.params,
         root_opening_layout,
         extension_degree,
@@ -284,24 +303,25 @@ pub fn canonical_proof_shape(
         root_successor,
     )?;
     let mut recursive_folds = Vec::with_capacity(schedule.recursive_folds.len());
-    let mut predecessor_rounds =
-        crate::sumcheck_rounds(schedule.root.params.d_a(), schedule.root.output_witness_len);
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let successor = schedule
             .recursive_folds
             .get(index + 1)
-            .map(|next| &next.params);
+            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |next| {
+                FoldSuccessor::Recursive(&next.params)
+            });
         let opening_layout = step
             .params
             .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
-        recursive_folds.push(level_shape(
+        let (shape, rounds) = level_shape(
             &step.params,
             &opening_layout,
             extension_degree,
             step.output_witness_len,
             successor,
-        )?);
-        predecessor_rounds = crate::sumcheck_rounds(step.params.d_a(), step.output_witness_len);
+        )?;
+        recursive_folds.push(shape);
+        predecessor_rounds = rounds;
     }
     Ok(AkitaBatchedProofShape {
         nonce_stream_bits: grinding_plan.total_nonce_bits(),
