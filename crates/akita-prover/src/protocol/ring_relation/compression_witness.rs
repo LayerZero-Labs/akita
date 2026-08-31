@@ -23,7 +23,6 @@ pub(crate) enum CompressionSourceId {
 pub(crate) struct CompressionSourceWitness<F: Field> {
     pub(crate) id: CompressionSourceId,
     pub(crate) witness: CompressionChainWitness,
-    #[allow(dead_code)] // Read by the atomic compressed-RHS and wire cutover.
     pub(crate) terminal: CompressionTerminalPayload<F>,
     relation: CompressionRelationOutput<F>,
 }

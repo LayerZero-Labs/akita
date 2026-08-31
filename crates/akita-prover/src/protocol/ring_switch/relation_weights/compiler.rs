@@ -269,6 +269,7 @@ pub(super) struct RelationWeightGadgets<E> {
 struct RelationWeightCompilationInputs<'a, E> {
     lp: &'a CommittedGroupParams,
     opening_batch: &'a OpeningClaimsLayout,
+    relation_plan: &'a RelationRangeImagePlan,
     relation_geometry: &'a RelationWitnessGeometry,
     witness_layout: &'a WitnessLayout,
     row_families: &'a [RelationRowFamily],
@@ -312,6 +313,7 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
         let inputs = RelationWeightCompilationInputs {
             lp,
             opening_batch,
+            relation_plan,
             relation_geometry,
             witness_layout: relation_plan.witness_layout(),
             row_families,
@@ -350,6 +352,7 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
         let RelationWeightCompilationInputs {
             lp,
             opening_batch,
+            relation_plan,
             relation_geometry,
             witness_layout,
             row_families,
@@ -418,7 +421,7 @@ impl<E: Field> RelationWeightCompilationPlan<E> {
         {
             return Err(AkitaError::InvalidProof);
         }
-        let consistency_row = relation_plan_consistency_row(row_families, group_index)?;
+        let consistency_row = relation_plan.consistency_row_index(group_index)?;
         let consistency_weight = *row_weights
             .get(consistency_row)
             .ok_or(AkitaError::InvalidProof)?;
@@ -579,18 +582,6 @@ impl<'a, F: Field> RelationWeightSetupSources<'a, F> {
             .find(|group| group.group_index == group_index)
             .ok_or(AkitaError::InvalidProof)
     }
-}
-
-fn relation_plan_consistency_row(
-    row_families: &[RelationRowFamily],
-    group_index: usize,
-) -> Result<usize, AkitaError> {
-    row_families
-        .iter()
-        .position(|family| {
-            matches!(family, RelationRowFamily::Consistency { group_index: group, .. } if *group == group_index)
-        })
-        .ok_or(AkitaError::InvalidProof)
 }
 
 pub(super) struct EAddress<E> {

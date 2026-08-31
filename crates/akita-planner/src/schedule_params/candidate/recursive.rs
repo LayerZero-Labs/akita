@@ -486,12 +486,6 @@ impl RecursiveCandidateContext<'_, '_> {
 
 type BestLinfCandidate = (usize, RecursiveRelationCandidate, usize);
 
-fn best_linf_candidates(
-    context: &RecursiveCandidateContext<'_, '_>,
-) -> Result<Vec<BestLinfCandidate>, AkitaError> {
-    best_linf_candidates_for(context, RelationSearchDomain::QuotientOnly)
-}
-
 fn best_linf_candidates_for(
     context: &RecursiveCandidateContext<'_, '_>,
     relation_domain: RelationSearchDomain,
@@ -736,7 +730,8 @@ pub(crate) fn derive_terminal_candidates(
         source_moment: request.source_moment,
         successor_policy: SuccessorPolicy::AllowNonContracting,
     };
-    let best_modeled = best_linf_candidates(&modeled_context)?;
+    let best_modeled =
+        best_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?;
     let mut candidates = best_modeled
         .iter()
         .map(|(_, candidate, next)| (candidate.clone(), *next))
@@ -746,7 +741,9 @@ pub(crate) fn derive_terminal_candidates(
             source_moment: None,
             ..modeled_context
         };
-        for (_, candidate, next) in best_linf_candidates(&universal_context)? {
+        for (_, candidate, next) in
+            best_linf_candidates_for(&universal_context, RelationSearchDomain::QuotientOnly)?
+        {
             let universal = (candidate, next);
             if !candidates.contains(&universal) {
                 candidates.push(universal);
