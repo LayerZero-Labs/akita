@@ -313,7 +313,7 @@ fn serialize_public_matrix_cache<F: Field + AkitaSerialize>(
     writer: &mut std::io::BufWriter<fs::File>,
 ) -> Result<(), SerializationError> {
     expanded
-        .seed()
+        .descriptor()
         .setup_seed
         .serialize_compressed(&mut *writer)?;
     expanded
@@ -337,7 +337,7 @@ pub(crate) fn save_prover_setup<
     // public-matrix cache bytes are deterministically validated on load.
     // Prefix-registry provenance is a separate setup-validation boundary.
     let public_matrix_path =
-        get_public_matrix_storage_path::<F>(&setup.expanded.seed().setup_seed)?;
+        get_public_matrix_storage_path::<F>(&setup.expanded.descriptor().setup_seed)?;
     let Some(prefix_registry_path) =
         get_prefix_registry_storage_path::<Cfg>(max_num_vars, max_num_batched_polys)
     else {
@@ -376,7 +376,7 @@ pub(crate) fn save_prover_setup<
             let existing = deserialize_cached_public_matrix::<F>(
                 &mut reader,
                 0,
-                &setup.expanded.seed().setup_seed,
+                &setup.expanded.descriptor().setup_seed,
             );
             let mut trailing = [0u8; 1];
             match existing {
@@ -457,7 +457,7 @@ pub(crate) fn load_prover_setup<
             trailing[0]
         )));
     }
-    expanded.seed = AkitaSetupDescriptor {
+    expanded.descriptor = AkitaSetupDescriptor {
         max_num_vars,
         max_num_batched_polys,
         num_field_elements: expanded.shared_matrix().num_field_elements(),
@@ -498,7 +498,7 @@ pub(crate) fn load_prover_setup<
     } else {
         SetupPrefixProverRegistry::new(setup_seed)
     };
-    if prefix_slots.setup_seed() != &expanded.seed().setup_seed {
+    if prefix_slots.setup_seed() != &expanded.descriptor().setup_seed {
         return Err(AkitaError::InvalidSetup(
             "cached setup-prefix registry belongs to a different public matrix".to_string(),
         ));
@@ -516,7 +516,7 @@ pub(crate) fn load_prover_setup<
     .is_err()
     {
         setup.prefix_slots =
-            SetupPrefixProverRegistry::new(setup.expanded.seed().setup_seed.clone());
+            SetupPrefixProverRegistry::new(setup.expanded.descriptor().setup_seed.clone());
         recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
             &mut setup,
             max_num_vars,
@@ -653,7 +653,7 @@ mod tests {
         let decoded = AkitaExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
-        assert_eq!(decoded.seed().max_num_batched_polys, 3);
+        assert_eq!(decoded.descriptor().max_num_batched_polys, 3);
 
         let decoded_prover = AkitaProverSetup::from_validated_expanded(decoded.clone()).unwrap();
         let derived_verifier = decoded_prover.to_verifier_setup(capacity).unwrap();
@@ -948,11 +948,11 @@ mod tests {
                     large_fields
                 );
                 assert_eq!(
-                    covered.expanded.seed().setup_seed,
-                    large.expanded.seed().setup_seed
+                    covered.expanded.descriptor().setup_seed,
+                    large.expanded.descriptor().setup_seed
                 );
-                assert_eq!(covered.expanded.seed().max_num_vars, SMALL_VARS);
-                assert_eq!(covered.expanded.seed().max_num_batched_polys, 1);
+                assert_eq!(covered.expanded.descriptor().max_num_vars, SMALL_VARS);
+                assert_eq!(covered.expanded.descriptor().max_num_batched_polys, 1);
 
                 cleanup_setup_file_shape(LARGE_VARS, 1);
                 if let Some(path) = get_prefix_registry_storage_path::<Cfg>(SMALL_VARS, 1) {
@@ -1024,7 +1024,7 @@ mod tests {
                 let prover_setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let total = prover_setup.expanded.shared_matrix().num_field_elements();
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    prover_setup.expanded.seed().clone(),
+                    prover_setup.expanded.descriptor().clone(),
                     FlatMatrix::from_flat_data(vec![TestF::zero(); total]),
                 );
                 let path =

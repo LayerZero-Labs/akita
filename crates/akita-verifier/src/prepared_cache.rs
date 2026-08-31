@@ -51,12 +51,12 @@ pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     schedule_row_digest: ScheduleRowDigest,
 ) -> Result<Vec<u8>, AkitaError> {
     let requirement = terminal_ntt_cache_requirement(schedule)?;
-    let setup_seed_digest = setup_seed_digest(&setup.expanded.seed.setup_seed)
+    let setup_seed_digest = setup_seed_digest(&setup.expanded.descriptor.setup_seed)
         .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
         schedule_row_digest,
-        setup_field_elements: setup.expanded.seed.num_field_elements,
+        setup_field_elements: setup.expanded.descriptor.num_field_elements,
     };
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
