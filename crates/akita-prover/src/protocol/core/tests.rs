@@ -8,22 +8,50 @@ use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};
 type F = Fp32<251>;
 type E = FpExt2<F, TwoNr>;
 
+fn eor_test_plan(rounds: usize, batches_claims: bool) -> akita_types::GrindingPlan {
+    let mut runs = vec![akita_types::GrindingRun::proof_of_work(
+        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+        1,
+        128,
+    )
+    .unwrap()];
+    if batches_claims {
+        runs.push(
+            akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
+                1,
+                128,
+            )
+            .unwrap(),
+        );
+    }
+    for round in 0..rounds {
+        runs.push(
+            akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::SumcheckRound {
+                    protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                    level: 1,
+                    stage: 0,
+                    round: u32::try_from(round).unwrap(),
+                },
+                1,
+                128,
+            )
+            .unwrap(),
+        );
+    }
+    akita_types::GrindingPlan::new(runs, 128).unwrap()
+}
+
 #[test]
 fn coefficient_packing_bypasses_eor_while_evaluation_trace_uses_it() {
     let packing = akita_types::OpeningMethod::SubringCoefficientPacking {
         challenge_subring_dimension: 64,
     };
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing, true
-    ));
-    assert!(!super::fold::extension_opening_reduction_enabled(
-        packing,
-        <E as ExtField<F>>::DEGREE > 1,
-    ));
-    assert!(super::fold::extension_opening_reduction_enabled(
-        akita_types::OpeningMethod::EvaluationTrace,
-        true,
-    ));
+    assert!(!packing.requires_extension_opening_reduction(2));
+    assert!(!packing.requires_extension_opening_reduction(<E as ExtField<F>>::DEGREE));
+    assert!(akita_types::OpeningMethod::EvaluationTrace
+        .requires_extension_opening_reduction(<E as ExtField<F>>::DEGREE));
 }
 
 #[test]
@@ -51,14 +79,19 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         point: &point,
         ring_dimension: 64,
     }];
+    let plan = eor_test_plan(point.len() - 1, false);
+    let mut transcript =
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
+        1,
         "recursive",
     )
     .expect("padded logical witnesses should reduce over the opening cube");
+    transcript.finish().unwrap();
 
     assert_eq!(
         proved.reduction.proof.partials.len(),
@@ -97,15 +130,20 @@ fn extension_opening_reduction_shares_challenges_across_groups() {
         },
     ];
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
+    let plan = eor_test_plan(long_point.len() - 1, true);
+    let mut transcript =
+        akita_types::ProverGrindingTranscript::<_>::new(&mut transcript, &plan).unwrap();
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &groups,
         &mut transcript,
+        1,
         "recursive",
     )
     .expect("all groups should reduce through one shared challenge sequence");
+    transcript.finish().unwrap();
 
     assert_eq!(proved.protocol_points.len(), 2);
     assert_eq!(proved.reduction.final_factors.len(), 2);
@@ -207,13 +245,17 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     .with_decomp(4, 4, 2, 2, 2)
     .unwrap();
     let inner = &params.inner().matrix;
+    let inner_bound =
+        *akita_types::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
+            .first()
+            .expect("audited setup-prefix A bound");
     params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().unwrap().table_digest,
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        2,
+        inner_bound,
         D,
     );
     let outer = &params.outer().matrix;
@@ -309,14 +351,19 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     ];
     let mut prover_transcript =
         AkitaTranscript::<Base>::new(b"test/mixed-setup-prefix-suffix-dense-oracle");
+    let grinding_plan = eor_test_plan(long_point.len() - 1, true);
+    let mut prover_transcript =
+        akita_types::ProverGrindingTranscript::new(&mut prover_transcript, &grinding_plan).unwrap();
     let proved = prove_extension_opening_reduction::<Base, Extension, _, _, _>(
         &crate::compute::CpuBackend::DEFAULT,
         None,
         &inputs,
         &mut prover_transcript,
+        1,
         "recursive",
     )
     .unwrap();
+    let nonce_stream = prover_transcript.finish().unwrap();
 
     let opening_layout = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(9, 2),
@@ -336,14 +383,22 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     .concat();
     assert_eq!(proved.reduction.proof.partials, expected_partials);
     let mut replay = AkitaTranscript::<Base>::new(b"test/mixed-setup-prefix-suffix-dense-oracle");
+    let mut replay =
+        akita_types::VerifierGrindingTranscript::new(&mut replay, &nonce_stream, &grinding_plan)
+            .unwrap();
     append_claim_values_to_transcript::<Base, Extension, _>(&openings, &mut replay);
     for partial in &proved.reduction.proof.partials {
         append_ext_field::<Base, Extension, _>(&mut replay, ABSORB_EVALUATION_CLAIMS, partial);
     }
+    akita_types::TranscriptGrinding::grind_query(
+        &mut replay,
+        akita_types::GrindingSite::ExtensionOpeningPoint { level: 1 },
+    )
+    .unwrap();
     let eta = sample_ext_challenge::<Base, Extension, _>(&mut replay, CHALLENGE_SUMCHECK_BATCH);
-    let claim_coefficients = sample_row_coefficients::<Base, Extension, _>(
+    let claim_coefficients = akita_types::sample_row_coefficients::<Base, Extension, _>(
         &opening_layout,
-        CHALLENGE_EOR_CLAIM_BATCH,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level: 1 },
         &mut replay,
     )
     .unwrap();
@@ -382,20 +437,32 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
             acc + coefficient * claim
         });
     replay.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
-    let (batched_final_claim, rho) = proved
-        .reduction
-        .proof
-        .sumcheck
-        .verify::<Base, _, _>(
-            input_claim,
-            8,
-            EXTENSION_OPENING_REDUCTION_DEGREE,
-            &mut replay,
-            |transcript| {
-                sample_ext_challenge::<Base, Extension, _>(transcript, CHALLENGE_SUMCHECK_ROUND)
-            },
-        )
-        .unwrap();
+    let mut round = 0u32;
+    let (batched_final_claim, rho) =
+        proved
+            .reduction
+            .proof
+            .sumcheck
+            .verify::<Base, _, _>(
+                input_claim,
+                8,
+                EXTENSION_OPENING_REDUCTION_DEGREE,
+                &mut replay,
+                |transcript| {
+                    let challenge =
+                        akita_types::sample_grinded_sumcheck_challenge::<Base, Extension, _>(
+                            transcript,
+                            akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                            1,
+                            0,
+                            round,
+                        )?;
+                    round = round.checked_add(1).expect("EOR test round count fits u32");
+                    Ok(challenge)
+                },
+            )
+            .unwrap();
+    replay.finish().unwrap();
 
     let long_final_factor = akita_sumcheck::multilinear_eval(&long_factor, &rho[..8]).unwrap();
     let short_final_factor = akita_sumcheck::multilinear_eval(&short_factor, &rho[..6]).unwrap()

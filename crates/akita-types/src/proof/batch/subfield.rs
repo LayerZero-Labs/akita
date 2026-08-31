@@ -73,6 +73,14 @@ impl<F: Field> SubfieldMultiplierOpeningPoint<F> {
         self.live_block_coordinates.len() / self.extension_degree
     }
 
+    pub(super) fn position_coordinates_flat(&self) -> &[F] {
+        &self.position_coordinates
+    }
+
+    pub(super) const fn extension_degree(&self) -> usize {
+        self.extension_degree
+    }
+
     pub(super) fn is_constant(&self) -> bool {
         self.position_coordinates
             .chunks_exact(self.extension_degree)
@@ -312,16 +320,9 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let (&constant, nonconstant) = coordinates.split_first().ok_or(AkitaError::InvalidProof)?;
-    let stride = ring_dim / (2 * extension_degree);
+    let basis_pairs = subfield_basis_pairs(ring_dim, extension_degree)?;
     let mut value = E::lift_base(constant);
-    for (offset, &coordinate) in nonconstant.iter().enumerate() {
-        let basis_index = offset
-            .checked_add(1)
-            .and_then(|index| index.checked_mul(stride))
-            .ok_or(AkitaError::InvalidProof)?;
-        let inverse_index = ring_dim
-            .checked_sub(basis_index)
-            .ok_or(AkitaError::InvalidProof)?;
+    for (&coordinate, &(basis_index, inverse_index)) in nonconstant.iter().zip(&basis_pairs) {
         let positive = alpha_pows
             .get(basis_index)
             .ok_or(AkitaError::InvalidProof)?;
@@ -331,6 +332,33 @@ where
         value += (*positive - *negative).mul_base(coordinate);
     }
     Ok(value)
+}
+
+/// Canonical positive/inverse basis indices for nonconstant subfield coordinates.
+pub(super) fn subfield_basis_pairs(
+    ring_dim: usize,
+    extension_degree: usize,
+) -> Result<Vec<(usize, usize)>, AkitaError> {
+    let denominator = 2usize
+        .checked_mul(extension_degree)
+        .filter(|&value| value != 0 && ring_dim.is_multiple_of(value))
+        .ok_or(AkitaError::InvalidProof)?;
+    let stride = ring_dim
+        .checked_div(denominator)
+        .filter(|&value| value != 0)
+        .ok_or(AkitaError::InvalidProof)?;
+    (1..extension_degree)
+        .map(|coordinate| {
+            let basis_index = coordinate
+                .checked_mul(stride)
+                .filter(|&index| index < ring_dim)
+                .ok_or(AkitaError::InvalidProof)?;
+            let inverse_index = ring_dim
+                .checked_sub(basis_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            Ok((basis_index, inverse_index))
+        })
+        .collect()
 }
 
 fn add_subfield_product<F: Field, const D: usize>(

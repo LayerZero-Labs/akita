@@ -1,6 +1,6 @@
 use akita_sis_estimator::{
-    estimate, scalar_sis_from_ring, AkitaModulusProfileId, EstimateConfig, OptimizerConfig,
-    SearchMode,
+    estimate, scalar_sis_from_ring, width_table::InfinityWidthProfile, AkitaModulusProfileId,
+    EstimateConfig,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::{
@@ -142,30 +142,27 @@ impl CaseSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Profile {
     LocalMinimum,
-    ExhaustiveSerial,
-    ExhaustiveParallel,
+    CertifiedPruned,
+    FullExhaustiveSerial,
+    FullExhaustiveParallel,
 }
 
 impl Profile {
     fn label(self) -> &'static str {
         match self {
             Self::LocalMinimum => "local_minimum",
-            Self::ExhaustiveSerial => "exhaustive_serial",
-            Self::ExhaustiveParallel => "exhaustive_parallel",
+            Self::CertifiedPruned => "certified_pruned",
+            Self::FullExhaustiveSerial => "full_exhaustive_serial",
+            Self::FullExhaustiveParallel => "full_exhaustive_parallel",
         }
     }
 
     fn config(self) -> EstimateConfig {
         match self {
             Self::LocalMinimum => EstimateConfig::lattice_estimator_parity(),
-            Self::ExhaustiveSerial => EstimateConfig::akita_infinity_table(),
-            Self::ExhaustiveParallel => EstimateConfig {
-                optimizer: OptimizerConfig::OptimizeZeta {
-                    beta: SearchMode::ExhaustiveParallel,
-                    zeta: SearchMode::ExhaustiveParallel,
-                },
-                ..EstimateConfig::default()
-            },
+            Self::CertifiedPruned => EstimateConfig::akita_infinity_table(),
+            Self::FullExhaustiveSerial => InfinityWidthProfile::ExhaustiveSerial.config(),
+            Self::FullExhaustiveParallel => InfinityWidthProfile::ExhaustiveParallel.config(),
         }
     }
 }
@@ -189,27 +186,30 @@ fn load_profiles() -> Vec<Profile> {
 fn default_profiles() -> Vec<Profile> {
     vec![
         Profile::LocalMinimum,
-        Profile::ExhaustiveSerial,
-        Profile::ExhaustiveParallel,
+        Profile::CertifiedPruned,
+        Profile::FullExhaustiveParallel,
     ]
 }
 
 #[cfg(not(feature = "parallel"))]
 fn default_profiles() -> Vec<Profile> {
-    vec![Profile::LocalMinimum, Profile::ExhaustiveSerial]
+    vec![Profile::LocalMinimum, Profile::CertifiedPruned]
 }
 
 fn parse_profile(value: &str) -> Profile {
     let profile = match value.trim() {
         "local-minimum" | "local_minimum" => Profile::LocalMinimum,
-        "exhaustive-serial" | "exhaustive_serial" => Profile::ExhaustiveSerial,
-        "exhaustive-parallel" | "exhaustive_parallel" => Profile::ExhaustiveParallel,
+        "certified-pruned" | "certified_pruned" => Profile::CertifiedPruned,
+        "full-exhaustive-serial" | "full_exhaustive_serial" => Profile::FullExhaustiveSerial,
+        "full-exhaustive-parallel" | "full_exhaustive_parallel" => {
+            Profile::FullExhaustiveParallel
+        }
         value => panic!(
-            "{PROFILES_ENV} entries must be local-minimum, exhaustive-serial, or exhaustive-parallel; got {value:?}"
+            "{PROFILES_ENV} entries must be local-minimum, certified-pruned, full-exhaustive-serial, or full-exhaustive-parallel; got {value:?}"
         ),
     };
-    if profile == Profile::ExhaustiveParallel && !cfg!(feature = "parallel") {
-        panic!("{PROFILES_ENV}=exhaustive-parallel requires `--features parallel`");
+    if profile == Profile::FullExhaustiveParallel && !cfg!(feature = "parallel") {
+        panic!("{PROFILES_ENV}=full-exhaustive-parallel requires `--features parallel`");
     }
     profile
 }

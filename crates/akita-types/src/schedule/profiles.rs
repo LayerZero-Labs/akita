@@ -274,6 +274,48 @@ impl GroupCommitPhaseParams {
         Ok(())
     }
 
+    /// Validate this profile as a commitment to one complete setup prefix.
+    ///
+    /// `natural_len` is only the support of the later setup-index weight. The
+    /// committed source is the complete canonical power-of-two prefix, so its
+    /// block geometry must cover every ring in that domain without a partial
+    /// block or an omitted tail.
+    pub fn validate_setup_prefix_geometry(&self, natural_len: usize) -> Result<(), AkitaError> {
+        if self.group.num_polynomials() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix commitment profile must be singleton".into(),
+            ));
+        }
+        let n_prefix = 1usize
+            .checked_shl(self.group.num_vars() as u32)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
+        crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
+
+        let d_setup = self.inner.matrix.ring_dimension();
+        if d_setup == 0 || !n_prefix.is_multiple_of(d_setup) {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix domain must be a multiple of its A ring dimension".into(),
+            ));
+        }
+        let full_prefix_rings = n_prefix / d_setup;
+        let committed_rings = self
+            .blocks
+            .live_blocks
+            .checked_mul(self.blocks.positions_per_block)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup-prefix block geometry overflow".into())
+            })?;
+        if self.blocks.live_ring_elements_per_claim != full_prefix_rings
+            || committed_rings != full_prefix_rings
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup-prefix block geometry must commit all {full_prefix_rings} rings in the full power-of-two prefix"
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Validate that frozen exact block geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
         let inner_ring_dimension = self.inner.matrix.ring_dimension();

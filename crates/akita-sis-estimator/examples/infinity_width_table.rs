@@ -1,11 +1,16 @@
 use akita_sis_estimator::{
     width_table::{
-        generate_infinity_width_rows, is_production_infinity_width_table_config,
-        runtime_width_rows, validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
-        InfinityWidthTableConfig, RuntimeWidthRow, PRODUCTION_CERTIFICATE_DOMAIN,
+        generate_infinity_width_row, generate_infinity_width_rows, infinity_width_work_items,
+        is_production_infinity_width_table_config, runtime_width_rows,
+        validate_infinity_width_rows, InfinityWidthProfile, InfinityWidthRow,
+        InfinityWidthTableConfig, InfinityWidthWorkItem, RuntimeWidthRow,
+        INFINITY_WIDTH_EVALUATOR_ID, PRODUCTION_CERTIFICATE_DOMAIN,
     },
+    work_cache::WorkCache,
     AkitaModulusProfileId,
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use sha3::{Digest, Sha3_256};
 use std::{
     env, fs,
@@ -21,6 +26,16 @@ struct Args {
     output: Option<PathBuf>,
     format: OutputFormat,
     skip_validation: bool,
+    results_dir: Option<PathBuf>,
+    plan_only: bool,
+    assemble_only: bool,
+    shard: Option<Shard>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Shard {
+    index: u32,
+    count: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,8 +49,26 @@ fn main() {
     validate_output_request(args.format, args.skip_validation, &args.config)
         .unwrap_or_else(|error| fatal(error));
     let t0 = Instant::now();
-    let rows = generate_infinity_width_rows(&args.config)
-        .unwrap_or_else(|error| fatal(&format!("width-table generation failed: {error}")));
+    let rows = if args.plan_only {
+        write_plan(&args).unwrap_or_else(|error| fatal(&error));
+        return;
+    } else if let Some(results_dir) = args.results_dir.as_ref() {
+        let cache = WorkCache::new(results_dir);
+        let work = infinity_width_work_items(&args.config)
+            .unwrap_or_else(|error| fatal(&format!("width-table planning failed: {error}")));
+        if !args.assemble_only {
+            run_missing_work(&work, &args.config, &cache, args.shard)
+                .unwrap_or_else(|error| fatal(&error));
+        }
+        if args.shard.is_some() {
+            report_cache_status(&work, &args.config, &cache).unwrap_or_else(|error| fatal(&error));
+            return;
+        }
+        load_complete_rows(&work, &args.config, &cache).unwrap_or_else(|error| fatal(&error))
+    } else {
+        generate_infinity_width_rows(&args.config)
+            .unwrap_or_else(|error| fatal(&format!("width-table generation failed: {error}")))
+    };
     if !args.skip_validation {
         validate_infinity_width_rows(&rows)
             .unwrap_or_else(|error| fatal(&format!("width-table validation failed: {error}")));
@@ -78,17 +111,24 @@ impl Args {
         let mut output = None;
         let mut format = OutputFormat::Csv;
         let mut skip_validation = false;
+        let mut results_dir = None;
+        let mut plan_only = false;
+        let mut assemble_only = false;
+        let mut shard = None;
         let mut args = env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--help" | "-h" => usage(0),
                 "--skip-validation" => skip_validation = true,
+                "--plan-only" => plan_only = true,
+                "--assemble-only" => assemble_only = true,
                 _ => {
                     let value = args
                         .next()
                         .unwrap_or_else(|| fatal(&format!("missing value for {arg}")));
                     match arg.as_str() {
                         "--output" => output = Some(PathBuf::from(value)),
+                        "--results-dir" => results_dir = Some(PathBuf::from(value)),
                         "--format" => format = parse_format(&value),
                         "--profiles" => config.profiles = parse_profiles(&value),
                         "--dims" => config.ring_dims = parse_csv(&value, "--dims"),
@@ -101,17 +141,234 @@ impl Args {
                             config.progress_every = Some(parse(&value, "--progress-every"));
                         }
                         "--profile" => config.profile = parse_profile(&value),
+                        "--shard" => shard = Some(parse_shard(&value)),
                         _ => fatal(&format!("unknown argument {arg}")),
                     }
                 }
             }
+        }
+        if plan_only && assemble_only {
+            fatal("--plan-only and --assemble-only are mutually exclusive");
+        }
+        if (assemble_only || shard.is_some() && !plan_only) && results_dir.is_none() {
+            fatal("--assemble-only and shard execution require --results-dir");
+        }
+        if assemble_only && shard.is_some() {
+            fatal("--assemble-only and --shard are mutually exclusive");
         }
         Self {
             config,
             output,
             format,
             skip_validation,
+            results_dir,
+            plan_only,
+            assemble_only,
+            shard,
         }
+    }
+}
+
+fn write_plan(args: &Args) -> Result<(), String> {
+    let work = infinity_width_work_items(&args.config)
+        .map_err(|error| format!("width-table planning failed: {error}"))?;
+    let cache = args.results_dir.as_ref().map(WorkCache::new);
+    println!("evaluator_id,work_id,status,modulus_profile,d,rank,coeff_linf_bound");
+    for item in work {
+        let id = item
+            .work_id(&args.config)
+            .map_err(|error| format!("work identifier failed: {error}"))?;
+        if let Some(shard) = args.shard {
+            let assigned = id
+                .shard(shard.count)
+                .map_err(|error| format!("shard selection failed: {error}"))?;
+            if assigned != shard.index {
+                continue;
+            }
+        }
+        let status = match cache.as_ref() {
+            Some(cache) if cached_row(cache, item, &args.config)?.is_some() => "cached",
+            _ => "missing",
+        };
+        println!(
+            "{INFINITY_WIDTH_EVALUATOR_ID},{},{status},{},{},{},{}",
+            id.hex(),
+            item.modulus_profile.label(),
+            item.d,
+            item.rank,
+            item.coeff_linf_bound,
+        );
+    }
+    Ok(())
+}
+
+fn run_missing_work(
+    work: &[InfinityWidthWorkItem],
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+    shard: Option<Shard>,
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+    for &item in work {
+        let id = item
+            .work_id(config)
+            .map_err(|error| format!("work identifier failed: {error}"))?;
+        let selected = shard
+            .map(|shard| {
+                id.shard(shard.count)
+                    .map(|index| index == shard.index)
+                    .map_err(|error| format!("shard selection failed: {error}"))
+            })
+            .transpose()?
+            .unwrap_or(true);
+        if selected && cached_row(cache, item, config)?.is_none() {
+            missing.push(item);
+        }
+    }
+    let total = missing.len();
+    if total == 0 {
+        eprintln!("all selected infinity-width work items are already cached");
+        return Ok(());
+    }
+    eprintln!("evaluating {total} missing infinity-width work item(s)");
+    evaluate_missing(&missing, config, cache)?;
+    Ok(())
+}
+
+#[cfg(feature = "parallel")]
+fn evaluate_missing(
+    missing: &[InfinityWidthWorkItem],
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+) -> Result<(), String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let completed = AtomicUsize::new(0);
+    let total = missing.len();
+    missing.par_iter().try_for_each(|&item| {
+        evaluate_and_store(item, config, cache)?;
+        let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+        report_cached_progress(config.progress_every, done, total);
+        Ok(())
+    })
+}
+
+#[cfg(not(feature = "parallel"))]
+fn evaluate_missing(
+    missing: &[InfinityWidthWorkItem],
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+) -> Result<(), String> {
+    for (index, &item) in missing.iter().enumerate() {
+        evaluate_and_store(item, config, cache)?;
+        report_cached_progress(config.progress_every, index + 1, missing.len());
+    }
+    Ok(())
+}
+
+fn evaluate_and_store(
+    item: InfinityWidthWorkItem,
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+) -> Result<(), String> {
+    let row = generate_infinity_width_row(item, config).map_err(|error| {
+        format!(
+            "profile={} d={} rank={} bound={}: {error}",
+            item.modulus_profile.label(),
+            item.d,
+            item.rank,
+            item.coeff_linf_bound
+        )
+    })?;
+    row.validate_for_work_item(item, config)
+        .map_err(|error| format!("generated work result failed validation: {error}"))?;
+    cache
+        .store(
+            item.work_id(config)
+                .map_err(|error| format!("work identifier failed: {error}"))?,
+            row.to_work_result().as_bytes(),
+        )
+        .map_err(|error| format!("store work result failed: {error}"))
+}
+
+fn cached_row(
+    cache: &WorkCache,
+    item: InfinityWidthWorkItem,
+    config: &InfinityWidthTableConfig,
+) -> Result<Option<InfinityWidthRow>, String> {
+    let id = item
+        .work_id(config)
+        .map_err(|error| format!("work identifier failed: {error}"))?;
+    let Some(payload) = cache
+        .load(id)
+        .map_err(|error| format!("load work result failed: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let row = InfinityWidthRow::from_work_result(&payload)
+        .map_err(|error| format!("decode cached work result {} failed: {error}", id.hex()))?;
+    row.validate_for_work_item(item, config)
+        .map_err(|error| format!("cached work result {} failed validation: {error}", id.hex()))?;
+    Ok(Some(row))
+}
+
+fn load_complete_rows(
+    work: &[InfinityWidthWorkItem],
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+) -> Result<Vec<InfinityWidthRow>, String> {
+    let mut rows = Vec::with_capacity(work.len());
+    let mut missing = Vec::new();
+    for &item in work {
+        match cached_row(cache, item, config)? {
+            Some(row) => rows.push(row),
+            None => missing.push(
+                item.work_id(config)
+                    .map_err(|error| format!("work identifier failed: {error}"))?
+                    .hex(),
+            ),
+        }
+    }
+    if !missing.is_empty() {
+        let sample = missing
+            .iter()
+            .take(8)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "cannot assemble: {} work result(s) are missing; first missing IDs: {sample}",
+            missing.len()
+        ));
+    }
+    rows.sort_by_key(|row| (row.modulus_profile, row.coeff_linf_bound, row.d, row.rank));
+    Ok(rows)
+}
+
+fn report_cache_status(
+    work: &[InfinityWidthWorkItem],
+    config: &InfinityWidthTableConfig,
+    cache: &WorkCache,
+) -> Result<(), String> {
+    let mut cached = 0;
+    for &item in work {
+        if cached_row(cache, item, config)?.is_some() {
+            cached += 1;
+        }
+    }
+    eprintln!(
+        "infinity width work cache: {cached}/{} complete; run remaining shards, then use --assemble-only",
+        work.len()
+    );
+    Ok(())
+}
+
+fn report_cached_progress(progress_every: Option<usize>, completed: usize, total: usize) {
+    let Some(every) = progress_every.filter(|value| *value > 0) else {
+        return;
+    };
+    if completed == total || completed.is_multiple_of(every) {
+        eprintln!("infinity width work progress: {completed}/{total}");
     }
 }
 
@@ -250,7 +507,7 @@ fn policy_review_source(rows: &[InfinityWidthRow], config: &InfinityWidthTableCo
     let mut source = format!(
         "Akita SIS generated-table policy review\n\
 policy={}\n\
-estimator_revision=akita-sis-estimator-adps16-quantum-lgsa-v1\n\
+estimator_revision={}\n\
 optimizer_profile={}\n\
 certificate_domain={}\n\
 modulus_profiles=q32:2^32-99,q64:2^64-59,q128:2^128-(2^32-22537)\n\
@@ -266,6 +523,7 @@ cap_hits={}\n\
 monotonicity=validated across rank and coefficient-bound axes\n\
 structured_attack_review=The scalarized estimate does not model ring/module structure, CRT splitting, subfield projection, or role-specific matrix structure. No extra numerical adjustment is applied; public claims remain explicitly limited to the scalarized ADPS16 quantum LGSA attack model.\n",
         config.policy.label(),
+        INFINITY_WIDTH_EVALUATOR_ID,
         config.profile.label(),
         PRODUCTION_CERTIFICATE_DOMAIN,
         config
@@ -281,28 +539,16 @@ structured_attack_review=The scalarized estimate does not model ring/module stru
         cap_hits,
     );
     source.push_str("role_coverage_columns=role,modulus_profile,d,coeff_linf_bound,max_module_rank,required_max_width\n");
-    for profile in [
-        akita_types::sis::SisModulusProfileId::Q32Offset99,
-        akita_types::sis::SisModulusProfileId::Q64Offset59,
-        akita_types::sis::SisModulusProfileId::Q128OffsetA7F7,
-    ] {
-        for &role in akita_types::sis::SIS_MATRIX_ROLES {
-            for &d in akita_sis_estimator::width_table::RING_DIMS.iter() {
-                for &bound in akita_types::sis::COEFF_LINF_BUCKETS {
-                    if let Some(cell) = akita_types::sis::sis_role_cell(role, profile, d, bound) {
-                        source.push_str(&format!(
-                            "role_coverage={},{},{},{},{},{}\n",
-                            role.name(),
-                            profile.name(),
-                            cell.ring_dimension,
-                            cell.coeff_linf_bound,
-                            cell.max_module_rank,
-                            cell.required_max_width,
-                        ));
-                    }
-                }
-            }
-        }
+    for cell in akita_types::sis::sis_role_cells() {
+        source.push_str(&format!(
+            "role_coverage={},{},{},{},{},{}\n",
+            cell.role.name(),
+            cell.modulus_profile.name(),
+            cell.ring_dimension,
+            cell.coeff_linf_bound,
+            cell.max_module_rank,
+            cell.required_max_width,
+        ));
     }
     source
 }
@@ -406,6 +652,21 @@ fn parse_format(value: &str) -> OutputFormat {
     }
 }
 
+fn parse_shard(value: &str) -> Shard {
+    let Some((index, count)) = value.split_once('/') else {
+        fatal("--shard must use one-based INDEX/COUNT syntax, for example 3/16");
+    };
+    let index: u32 = parse(index, "--shard index");
+    let count: u32 = parse(count, "--shard count");
+    if count == 0 || index == 0 || index > count {
+        fatal("--shard requires 1 <= INDEX <= COUNT");
+    }
+    Shard {
+        index: index - 1,
+        count,
+    }
+}
+
 fn parse<T>(value: &str, field: &str) -> T
 where
     T: std::str::FromStr,
@@ -418,7 +679,7 @@ where
 
 fn usage(code: i32) -> ! {
     eprintln!(
-        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--profiles q32,q64,q128] [--dims 32,64,128,256,512] [--bounds B1,B2] [--max-rank N] [--search-cap N] [--profile local-minimum|lattice-estimator|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
+        "usage: infinity_width_table [--output PATH] [--format csv|rust-split] [--results-dir PATH] [--plan-only|--assemble-only|--shard INDEX/COUNT] [--profiles q32,q64,q128] [--dims 32,64,128,256,512] [--bounds B1,B2] [--max-rank N] [--search-cap N] [--profile local-minimum|lattice-estimator|exhaustive-serial|exhaustive-parallel] [--progress-every N] [--skip-validation]"
     );
     process::exit(code);
 }
@@ -431,6 +692,17 @@ fn fatal(message: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
+
+    fn test_results_dir() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "akita-infinity-work-results-{}-{}",
+            std::process::id(),
+            TEST_NONCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     #[test]
     fn production_rust_output_requires_the_certified_profile() {
@@ -453,5 +725,30 @@ mod tests {
         assert!(source.contains(&format!(
             "certificate_domain={PRODUCTION_CERTIFICATE_DOMAIN}\n"
         )));
+        assert!(source.contains(&format!(
+            "estimator_revision={INFINITY_WIDTH_EVALUATOR_ID}\n"
+        )));
+    }
+
+    #[test]
+    fn cached_generation_resumes_and_assembles_exact_rows() {
+        let root = test_results_dir();
+        let cache = WorkCache::new(&root);
+        let config = InfinityWidthTableConfig {
+            profiles: vec![AkitaModulusProfileId::Q32Offset99],
+            ring_dims: vec![64],
+            coeff_linf_bounds: vec![2],
+            max_rank: 1,
+            search_cap: Some(4),
+            profile: InfinityWidthProfile::LatticeEstimatorParity,
+            ..InfinityWidthTableConfig::default()
+        };
+        let work = infinity_width_work_items(&config).unwrap();
+        assert!(load_complete_rows(&work, &config, &cache).is_err());
+        run_missing_work(&work, &config, &cache, None).unwrap();
+        let cached = load_complete_rows(&work, &config, &cache).unwrap();
+        assert_eq!(cached, generate_infinity_width_rows(&config).unwrap());
+        run_missing_work(&work, &config, &cache, None).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }

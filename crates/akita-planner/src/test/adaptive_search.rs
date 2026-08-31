@@ -1,4 +1,8 @@
 use super::*;
+#[path = "adaptive_search/relation_cutover.rs"]
+mod relation_cutover;
+#[path = "adaptive_search/selective_l2.rs"]
+mod selective_l2;
 #[cfg(feature = "catalog-gen")]
 use akita_types::extension_opening_reduction_level_bytes;
 
@@ -113,7 +117,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     ];
     let domain = RingDimensionSearchDomain::new(dimensions).unwrap();
     let policy = policy_for_domain(base_policy, &domain);
-    let key = onehot_group(16, 1);
+    let key = onehot_group(15, 4);
     let selected = find_schedule(
         key,
         &policy,
@@ -132,7 +136,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let mut uniform_policy = policy_of::<OneHot>();
     uniform_policy.ring_dimension_schedule_mode =
         crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-    uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     let candidate = find_schedule(
         key,
         &uniform_policy,
@@ -184,7 +188,7 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 256,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let selected = find_schedule(
         onehot_group(14, 1),
@@ -194,6 +198,10 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    assert!(
+        selected.schedule.recursive_folds.len() < unpruned_search::MAX_ORACLE_RECURSION_DEPTH,
+        "bounded oracle must cover the production winner's recursion depth",
+    );
     let unpruned = unpruned_search::find_schedule(
         onehot_group(14, 1),
         &policy,
@@ -201,6 +209,7 @@ fn proof_first_uniform_search_matches_unpruned_descriptor() {
         OneHot::ring_challenge_config,
     )
     .unwrap();
+    let unpruned = &unpruned.planned;
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
         unpruned.estimate.estimated_proof_payload_bytes().unwrap(),
@@ -254,7 +263,7 @@ fn statically_infeasible_early_packing_domain_is_unsupported() {
     policy.ring_dimension_schedule_mode = crate::RingDimensionScheduleMode::UniformDimension {
         ring_dimension: 128,
     };
-    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
     policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
     let error = find_schedule(
         onehot_group(14, 1),
@@ -317,6 +326,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
         OneHot::ring_challenge_config,
     )
     .expect("unpruned packing schedule from mixed domain");
+    let unpruned = &unpruned.planned;
     assert!(matches!(
         unpruned.schedule.root.params.opening_method(),
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -327,7 +337,7 @@ fn feasible_packing_dimension_ignores_infeasible_smaller_dimensions() {
     );
     assert_eq!(
         estimated_first_direct_setup_capacity(&selected),
-        estimated_first_direct_setup_capacity(&unpruned),
+        estimated_first_direct_setup_capacity(unpruned),
     );
     assert_eq!(
         selected.estimate.estimated_num_setup_field_elements,
@@ -446,42 +456,47 @@ fn production_suffix_selects_l2_with_the_typed_response_model() {
     );
 }
 
+#[cfg(feature = "catalog-gen")]
 #[test]
-fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
+fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp128::OneHot, CommitmentConfig,
+        RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
 
     let domain = RingDimensionSearchDomain::uniform(64).unwrap();
-    let base_policy = policy_of::<OneHot>();
-    let policy = policy_for_domain(base_policy, &domain);
+    let bounded = policy_for_domain(policy_of::<Recursive>(), &domain);
+    assert_eq!(
+        bounded.recursive_setup_search_policy,
+        crate::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+    );
+    let mut exhaustive = bounded;
+    exhaustive.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;
     let key = onehot_group(16, 1);
-    let selected = find_schedule(
+    let bounded_schedule = find_schedule(
         key,
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
+        &bounded,
+        honest_fold_policy_of::<Recursive>(),
         &domain,
-        OneHot::ring_challenge_config,
+        Recursive::ring_challenge_config,
     )
-    .unwrap();
-    let unpruned = unpruned_search::find_schedule(
+    .expect("bounded recursive setup search");
+    let exhaustive_schedule = find_schedule(
         key,
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHot>(),
-        OneHot::ring_challenge_config,
+        &exhaustive,
+        honest_fold_policy_of::<Recursive>(),
+        &domain,
+        Recursive::ring_challenge_config,
     )
-    .unwrap();
+    .expect("exhaustive recursive setup search");
 
     assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+        bounded_schedule.schedule.canonical_descriptor_bytes(),
+        exhaustive_schedule.schedule.canonical_descriptor_bytes()
     );
-    assert_eq!(
-        selected.estimate.estimated_num_setup_field_elements,
-        unpruned.estimate.estimated_num_setup_field_elements,
-    );
-    assert_eq!(
-        selected.schedule.canonical_descriptor_bytes(),
-        unpruned.schedule.canonical_descriptor_bytes()
-    );
+    assert_eq!(bounded_schedule.estimate, exhaustive_schedule.estimate);
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -559,6 +574,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
             OneHot::ring_challenge_config,
         )
         .expect("unpruned adaptive search");
+        let unpruned = &unpruned.planned;
 
         assert_eq!(
             selected.schedule.root.params.role_dims(),
@@ -573,7 +589,7 @@ fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
         );
         assert_eq!(
             estimated_first_direct_setup_capacity(&selected),
-            estimated_first_direct_setup_capacity(&unpruned),
+            estimated_first_direct_setup_capacity(unpruned),
             "domain {domain_index} first direct padded setup capacity"
         );
         assert_eq!(
@@ -704,7 +720,11 @@ fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
             opening: 64,
         }
     );
-    assert_eq!(selected.schedule.recursive_folds[0].params.role_dims(), d64);
+    assert_eq!(
+        selected.schedule.recursive_folds[0].params.role_dims(),
+        selected_root.role_dims(),
+        "exact packed grinding cost keeps the D256 A-role through the first packing fold"
+    );
     let opening_methods = std::iter::once(selected_root.opening_method()).chain(
         selected
             .schedule
@@ -909,44 +929,19 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     .unwrap();
     let exact_fields =
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
-    policy.setup_field_budget = Some(exact_fields - 1);
+    let setup_field_budget = exact_fields - 1;
+    policy.setup_field_budget = Some(setup_field_budget);
 
-    let error = find_schedule(
+    let budgeted = find_schedule(
         onehot_group(16, 1),
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         &domain,
         OneHot::ring_challenge_config,
     )
-    .unwrap_err();
-    assert!(error.to_string().contains("no mixed-D schedule"));
-}
-
-#[test]
-fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHotMultiChunkW4R2, CommitmentConfig};
-
-    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
-    // Production W4R2 is adaptive now. Keep this regression on its original
-    // fixed-D64 domain, where two equal-payload schedules differ in setup size.
-    let mut base_policy = policy_of::<OneHotMultiChunkW4R2>();
-    base_policy.selective_l2_response_model = crate::SelectiveL2ResponseModelId::Disabled;
-    let policy = policy_for_domain(base_policy, &domain);
-    let selected = find_schedule(
-        onehot_group(32, 1),
-        &policy,
-        akita_config::honest_fold_policy_of::<OneHotMultiChunkW4R2>(),
-        &domain,
-        OneHotMultiChunkW4R2::ring_challenge_config,
-    )
-    .expect("W4R2 schedule");
-
-    assert_eq!(
-        selected.estimate.estimated_num_setup_field_elements,
-        8_388_608
-    );
-    assert_eq!(
-        selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        112_616
-    );
+    .expect("the setup budget should select the smaller physical setup");
+    let budgeted_fields =
+        akita_types::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
+    assert!(budgeted_fields <= setup_field_budget);
+    assert!(budgeted_fields < exact_fields);
 }

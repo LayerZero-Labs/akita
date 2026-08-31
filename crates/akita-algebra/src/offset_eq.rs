@@ -1220,6 +1220,12 @@ impl<F: Field> OffsetEqWindow<F> {
         })
     }
 
+    /// Number of Boolean variables in the represented equality domain.
+    #[must_use]
+    pub fn variable_count(&self) -> usize {
+        self.low_bits + self.high_challenges.len()
+    }
+
     /// Evaluate `eq(challenges, index)` for a little-endian hypercube index.
     ///
     /// Matches [`eq_eval_at_index`] exactly, including returning zero for

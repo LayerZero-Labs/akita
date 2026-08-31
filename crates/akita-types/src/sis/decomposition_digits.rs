@@ -170,6 +170,27 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
     max_abs_digit.saturating_mul(series)
 }
 
+/// Diameter of the signed interval represented by `num_digits` balanced
+/// base-`2^log_basis` digits.
+///
+/// Balanced digits lie in `[-b/2, b/2 - 1]`. The difference of two accepted
+/// recompositions therefore has per-digit magnitude at most `b - 1`, so the
+/// complete interval diameter is
+/// `(b - 1) * (1 + b + ... + b^(num_digits - 1)) = b^num_digits - 1`.
+/// This is tighter than twice [`balanced_digit_abs_max`] because the accepted
+/// interval is asymmetric. The result saturates when the exact diameter does
+/// not fit in `u128`.
+#[inline]
+#[must_use]
+pub fn balanced_digit_interval_diameter(log_basis: u32, num_digits: usize) -> u128 {
+    let base: u128 = 1u128 << log_basis;
+    let mut power = 1u128;
+    for _ in 0..num_digits {
+        power = power.saturating_mul(base);
+    }
+    power.saturating_sub(1)
+}
+
 /// Minimum number of balanced base-`2^log_basis` digits needed to represent a
 /// `log_bound`-bit *signed* coefficient, using symmetric centering.
 ///
@@ -368,6 +389,19 @@ mod tests {
         // b = 8, δ = 2 digits represent [-36, 27].
         assert_eq!(balanced_digit_max(3, 2), 27);
         assert_eq!(balanced_digit_abs_max(3, 2), 36);
+    }
+
+    #[test]
+    fn balanced_digit_interval_diameter_is_positive_minus_negative_reach() {
+        for (log_basis, num_digits) in [(2, 3), (3, 2), (11, 6), (16, 4)] {
+            let negative = balanced_digit_abs_max(log_basis, num_digits);
+            let positive = balanced_digit_max(log_basis, num_digits);
+            assert_eq!(
+                balanced_digit_interval_diameter(log_basis, num_digits),
+                negative + positive
+            );
+        }
+        assert_eq!(balanced_digit_interval_diameter(3, 2), 63);
     }
 
     /// The checked reaches agree with the saturating ones inside `u128` and

@@ -9,6 +9,10 @@ use jolt_field::{CanonicalEncoding, One, Ring};
 
 #[test]
 fn recursive_commit_selects_exact_i16_from_inner_basis() {
+    run_exact_i16_test(recursive_commit_selects_exact_i16_from_inner_basis_inner);
+}
+
+fn recursive_commit_selects_exact_i16_from_inner_basis_inner() {
     let prepared = prepared();
     let coeffs = vec![[1i8; D], [-1i8; D]];
     let packed =
@@ -44,6 +48,10 @@ fn recursive_commit_selects_exact_i16_from_inner_basis() {
 
 #[test]
 fn dense_coeff_commit_selects_exact_i16_from_inner_basis() {
+    run_exact_i16_test(dense_coeff_commit_selects_exact_i16_from_inner_basis_inner);
+}
+
+fn dense_coeff_commit_selects_exact_i16_from_inner_basis_inner() {
     let prepared = prepared();
     let block = vec![
         CyclotomicRing::from_coefficients([F::one(); D]),
@@ -68,6 +76,20 @@ fn dense_coeff_commit_selects_exact_i16_from_inner_basis() {
 
 #[test]
 fn dense_i16_commit_matches_schoolbook_composition() {
+    run_exact_i16_test(dense_i16_commit_matches_schoolbook_composition_inner);
+}
+
+fn run_exact_i16_test(test: fn()) {
+    std::thread::Builder::new()
+        .name("dense-i16-schoolbook-test".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(test)
+        .expect("spawn dense i16 test")
+        .join()
+        .expect("dense i16 test thread");
+}
+
+fn dense_i16_commit_matches_schoolbook_composition_inner() {
     let prepared = prepared();
     let mut state = 0x8f3d_71a5_c29b_4e67u64;
     let block: Vec<_> = (0..2)

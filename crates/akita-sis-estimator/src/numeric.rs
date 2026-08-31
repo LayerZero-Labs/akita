@@ -88,6 +88,9 @@ impl NumericConfig {
                     reason: "high-precision backend must request more than 64 bits".to_string(),
                 });
             }
+            return Err(EstimatorError::Unsupported {
+                feature: "high-precision numeric backend",
+            });
         }
         Ok(())
     }
@@ -136,6 +139,16 @@ mod tests {
         }
         .validate()
         .is_err());
+        assert!(matches!(
+            NumericConfig {
+                backend: NumericBackend::HighPrecision { bits: 128 },
+                ..NumericConfig::default()
+            }
+            .validate(),
+            Err(EstimatorError::Unsupported {
+                feature: "high-precision numeric backend"
+            })
+        ));
         assert!(NumericConfig {
             sage_abs_tolerance: -1.0,
             ..NumericConfig::default()

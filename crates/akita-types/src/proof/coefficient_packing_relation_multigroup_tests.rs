@@ -17,6 +17,12 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
     let mut frozen = params.with_decomp(4, 8, 2, 2, 2).unwrap();
     frozen.set_precommitted_groups(Vec::new()).unwrap();
     frozen.own_group_mut().profile.inner.digits.log_basis = 9;
+    let a_bound = *crate::sis::inner_coeff_linf_bounds(
+        frozen.inner().matrix.sis_modulus_profile(),
+        u32::try_from(frozen.d_a()).expect("test ring dimension"),
+    )
+    .first()
+    .expect("exact frozen A bounds");
     let inner = frozen.inner().matrix;
     frozen.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
@@ -24,7 +30,7 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        2,
+        a_bound,
         inner.ring_dimension(),
     );
     let outer = frozen.outer().matrix;
@@ -61,7 +67,10 @@ fn multi_group_semantics_follow_authenticated_root_order_and_claim_ranges() {
         &opening_batch,
         &relation_geometry,
         params.witness_chunk.num_chunks,
-        r_decomp_levels::<F>(params.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(r_decomp_levels::<F>(
+            params.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .unwrap();
     let relation_address = RelationAddressGeometry::for_relation(

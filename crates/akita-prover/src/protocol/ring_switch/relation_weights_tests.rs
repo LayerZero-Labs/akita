@@ -145,16 +145,22 @@ fn setup_columns_batch_logical_weights_over_one_physical_family() {
         (1, vec![TestField::from_u64(5), TestField::zero()]),
     ];
 
-    let evaluated = evaluate_setup_columns(&family, 0..2, &row_weights, 2, &alpha_powers).unwrap();
+    let evaluated = contract_setup_columns(&family, 0..2, &row_weights, 2, 1, |coefficients| {
+        Ok(vec![eval_flat_ring_at_pows_fast(
+            coefficients,
+            &alpha_powers,
+        )])
+    })
+    .unwrap();
     for column in 0..2 {
         let row_0_eval = row_0[2 * column] + alpha * row_0[2 * column + 1];
         let row_1_eval = row_1[2 * column] + alpha * row_1[2 * column + 1];
         assert_eq!(
-            evaluated.get(0, column).unwrap(),
+            evaluated.get_scalar(0, column).unwrap(),
             TestField::from_u64(2) * row_0_eval + TestField::from_u64(5) * row_1_eval,
         );
         assert_eq!(
-            evaluated.get(1, column).unwrap(),
+            evaluated.get_scalar(1, column).unwrap(),
             TestField::from_u64(3) * row_0_eval,
         );
     }

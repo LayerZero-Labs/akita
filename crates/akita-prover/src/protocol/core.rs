@@ -12,8 +12,8 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::{AdditionalRelationTerms, RelationRangeImageProver};
 use crate::protocol::RingRelationProver;
 use crate::{
-    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, ProverTranscriptGrind,
-    RingRelationInstance, RingRelationWitness,
+    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, RingRelationInstance,
+    RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
@@ -24,9 +24,11 @@ use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY,
-    CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_SUMCHECK_BATCH,
 };
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_transcript::{
+    append_ext_field, sample_ext_challenge, Transcript, TranscriptChallengePreview,
+};
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
@@ -35,17 +37,18 @@ use akita_types::{
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::relation_row_weight, recover_ring_subfield_inner_product, reduction_table_len,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    root_input_witness_len, sample_row_coefficients, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
-    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule,
-    NegativeBinarySupport, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
-    RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    root_input_witness_len, tensor_equality_factor_eval_at_point, tensor_equality_factor_evals,
+    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
+    AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode,
+    Commitment, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    PreparedOpeningPoint, RelationWitnessGeometry, RingMultiplierOpeningPoint, RingVec,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, TerminalFoldParams,
+    TerminalLevelProof,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced};
+
 use std::sync::Arc;
 
 pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: Field> {

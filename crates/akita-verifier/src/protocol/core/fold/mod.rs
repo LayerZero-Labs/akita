@@ -5,7 +5,7 @@ mod extension_claim;
 mod single_field;
 
 use super::*;
-use crate::stages::stage2::Stage2OpeningSemantics;
+use crate::stages::stage2::{Stage2CompressionOracle, Stage2OpeningSemantics};
 use akita_algebra::offset_eq::EqPairTensorFamily;
 use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningFamily,
@@ -53,11 +53,12 @@ pub(in crate::protocol::core) fn bind_opening_payload_and_finalize_claims<F, E, 
     opening_payload: &RingVec<F>,
     material: FoldClaimMaterial<F, E>,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let geometry = RelationWitnessGeometry::for_level(lp, opening_shape, E::DEGREE)?
         .rhs_layout()
@@ -75,9 +76,9 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_shape,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
     )?;
     let trace_claim_coefficients = material.reduction_factors.as_ref().map_or_else(
@@ -111,7 +112,7 @@ where
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: Field, E: Field> {
     pub(in crate::protocol::core) lp: &'a CommittedGroupParams,
-    pub(in crate::protocol::core) fold_grind_nonce: u32,
+    pub(in crate::protocol::core) level: u32,
     pub(in crate::protocol::core) opening_payload: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
     /// groups for multi-group roots).
@@ -144,26 +145,27 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: Field, E: Field> {
     },
 }
 
-struct Stage1Replay<E: Field> {
+struct Stage1Replay<'a, E: Field> {
     batching_coeff: E,
-    binary_batching: Option<E>,
+    compression: Stage2CompressionOracle<'a, E>,
     range_image_evaluation: E,
     stage1_point: Vec<E>,
     physical_l2_claim: E,
     physical_l2_families: Vec<EqPairTensorFamily<E>>,
 }
 
-fn verify_stage1<F, E, T>(
+fn verify_stage1<'a, F, E, T>(
     proof: &AkitaStage1Proof<E>,
-    rs: &RingSwitchVerifyOutput<E>,
+    rs: &'a RingSwitchVerifyOutput<E>,
     lp: &CommittedGroupParams,
     relation_plan: &RelationRangeImagePlan,
     transcript: &mut T,
-) -> Result<Stage1Replay<E>, AkitaError>
+    level: u32,
+) -> Result<Stage1Replay<'a, E>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
     if rs.tau0.len() != num_rounds {
@@ -190,7 +192,7 @@ where
             (None, None) => {
                 let point = {
                     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-                    stage1_verifier.verify::<F, T>(proof, transcript)?
+                    stage1_verifier.verify::<F, T>(proof, transcript, level)?
                 };
                 (point, None, None)
             }
@@ -203,8 +205,11 @@ where
                         "physical response plan exists for a non-L2 route".into(),
                     ));
                 };
-                let leaf =
-                    stage1_verifier.verify_product_prefix::<F, T>(&proof.stages, transcript)?;
+                let leaf = stage1_verifier.verify_product_prefix::<F, T>(
+                    &proof.stages,
+                    transcript,
+                    level,
+                )?;
                 let replay = verify_physical_l2_norm::<F, E, T>(
                     plan,
                     norm_proof,
@@ -217,6 +222,7 @@ where
                     lp.inner().matrix.sis_modulus_profile(),
                     response_l2_sq_cap,
                     transcript,
+                    level,
                 )?;
                 (replay.point, Some(replay.virtual_evaluations), Some(plan))
             }
@@ -226,6 +232,7 @@ where
     let (physical_l2_claim, physical_l2_families) =
         match (physical_l2_virtual_evaluations, physical_plan) {
             (Some(evaluations), Some(plan)) => {
+                transcript.grind_query(akita_types::GrindingSite::L2VirtualBatch { level })?;
                 let eta = sample_ext_challenge::<F, E, T>(
                     transcript,
                     akita_transcript::labels::CHALLENGE_L2_VIRTUAL_BATCH,
@@ -243,14 +250,44 @@ where
             (None, None) => (E::zero(), Vec::new()),
             _ => return Err(AkitaError::InvalidProof),
         };
-    let binary_batching = rs
-        .compression_relation_weights
-        .as_ref()
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY));
+    let compression = match &rs.compression {
+        crate::protocol::ring_switch::PreparedStage2Compression::Raw => {
+            Stage2CompressionOracle::Raw
+        }
+        crate::protocol::ring_switch::PreparedStage2Compression::QuotientLift {
+            weights,
+            support,
+        } => {
+            transcript.grind_query(akita_types::GrindingSite::CompressionBinary { level })?;
+            Stage2CompressionOracle::QuotientLift {
+                weights,
+                support,
+                binary_batching: sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    CHALLENGE_COMPRESSION_BINARY,
+                ),
+            }
+        }
+        crate::protocol::ring_switch::PreparedStage2Compression::ReducedEvaluation {
+            weights,
+            support,
+        } => {
+            transcript.grind_query(akita_types::GrindingSite::CompressionBinary { level })?;
+            Stage2CompressionOracle::ReducedEvaluation {
+                weights,
+                support,
+                binary_batching: sample_ext_challenge::<F, E, T>(
+                    transcript,
+                    CHALLENGE_COMPRESSION_BINARY,
+                ),
+            }
+        }
+    };
+    transcript.grind_query(akita_types::GrindingSite::Stage2Batch { level })?;
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
-        binary_batching,
+        compression,
         range_image_evaluation: proof.range_image_evaluation,
         stage1_point,
         physical_l2_claim,
@@ -261,9 +298,10 @@ where
 #[allow(clippy::too_many_arguments)]
 fn verify_stage2<F, E, T>(
     transcript: &mut T,
+    level: u32,
     setup: &AkitaVerifierSetup<F>,
     stage2: &AkitaStage2Proof<F, E>,
-    stage1: Stage1Replay<E>,
+    stage1: Stage1Replay<'_, E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
     setup_claim: Option<E>,
@@ -272,7 +310,7 @@ fn verify_stage2<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let witness_eval = stage2.next_w_eval();
     let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
@@ -281,9 +319,7 @@ where
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
-        rs.compression_relation_weights.as_ref(),
-        rs.negative_binary_support.as_ref(),
-        stage1.binary_batching,
+        stage1.compression,
         &setup.expanded,
         rs.alpha,
         setup_claim,
@@ -296,10 +332,19 @@ where
         stage1.physical_l2_families,
     )?;
 
+    let mut round = 0u32;
     let sumcheck_challenges = {
         let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
         stage2_verifier.verify::<F, T, _>(&stage2.sumcheck_proof, transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::Stage2,
+                level,
+                0,
+                round,
+            )?;
+            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+            Ok(challenge)
         })?
     };
     transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &stage2.next_w_eval());
@@ -312,11 +357,12 @@ fn verify_stage3<F, E, T>(
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
     stage3: Option<(&SetupSumcheckProof<E>, &CommittedGroupParams)>,
+    level: u32,
 ) -> Result<Option<(Vec<E>, E)>, AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
         let setup_coefficient_bits = rs
@@ -330,8 +376,13 @@ where
             setup_x_challenges,
             rs.alpha,
         )?;
-        let setup_point =
-            verifier.verify_stage3::<F, T>(setup, next_fold_level_params, proof, transcript)?;
+        let setup_point = verifier.verify_stage3::<F, T>(
+            setup,
+            next_fold_level_params,
+            proof,
+            transcript,
+            level,
+        )?;
         return Ok(next_fold_level_params
             .setup_prefix()
             .as_ref()
@@ -350,7 +401,7 @@ pub(in crate::protocol::core) fn verify_fold<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let opening_shape = prepared.opening_shape.clone();
     let num_groups = opening_shape.num_groups();
@@ -388,11 +439,13 @@ where
         groups = num_groups,
     )
     .entered();
+    let fold_grind_nonce =
+        transcript.read_fold_response(akita_types::GrindingSite::FoldResponse {
+            level: prepared.level,
+        })?;
     {
         let _span = tracing::info_span!("fold_validate_inputs").entered();
-        prepared
-            .lp
-            .validate_fold_grind_nonce(&opening_shape, prepared.fold_grind_nonce)?;
+        prepared.lp.validate_opening_batch(&opening_shape)?;
         if prefix.prepared_points.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }
@@ -401,9 +454,10 @@ where
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
         derive_multi_group_stage1_challenges::<F, E, T>(
             transcript,
+            prepared.level,
             &opening_shape,
             prepared.lp,
-            prepared.fold_grind_nonce,
+            fold_grind_nonce,
         )
         .map_err(|error| {
             AkitaError::InvalidInput(format!("fold challenge replay failed: {error:?}"))
@@ -530,10 +584,15 @@ where
             PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
         }
     }
-    let rs = ring_switch_verifier::<F, E, T>(&ring_switch_replay, prepared.w_len, transcript)
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
-        })?;
+    let rs = ring_switch_verifier::<F, E, T>(
+        &ring_switch_replay,
+        prepared.w_len,
+        transcript,
+        prepared.level,
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
+    })?;
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         relation_rhs_layout,
         &rs.tau1,
@@ -588,6 +647,7 @@ where
         prepared.lp,
         &relation_range_image_plan,
         transcript,
+        prepared.level,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-1 replay failed: {error:?}"))
@@ -599,6 +659,13 @@ where
             actual: prepared.w_len,
         });
     }
+    let stage2_span = tracing::info_span!(
+        "stage2_verifier",
+        level = prepared.level,
+        relation_mode = ?prepared.lp.ring_relation_mode,
+        reduced = prepared.lp.ring_relation_mode.is_reduced_evaluation(),
+    )
+    .entered();
     let opening_semantics = if let Some(batch) = &coefficient_packing_batch {
         if prefix
             .prepared_points
@@ -677,6 +744,7 @@ where
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
+        prepared.level,
         setup,
         stage2,
         stage1_replay,
@@ -688,7 +756,14 @@ where
     .map_err(|error| {
         AkitaError::InvalidInput(format!("compressed stage-2 replay failed: {error:?}"))
     })?;
-    let setup_prefix_opening =
-        verify_stage3::<F, E, T>(setup, transcript, &rs, &sumcheck_challenges, stage3)?;
+    drop(stage2_span);
+    let setup_prefix_opening = verify_stage3::<F, E, T>(
+        setup,
+        transcript,
+        &rs,
+        &sumcheck_challenges,
+        stage3,
+        prepared.level,
+    )?;
     Ok((sumcheck_challenges, setup_prefix_opening))
 }

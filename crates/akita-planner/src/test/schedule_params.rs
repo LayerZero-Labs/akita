@@ -55,7 +55,7 @@ fn setup_first_slice_pruning_uses_the_padded_direct_prefix() {
     use akita_types::{CommitmentSliceCount, SisModulusProfileId};
 
     let mut policy = policy_of::<OneHot>();
-    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayload;
+    policy.selection_policy = crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
     let params_for = |outer_slice_count| {
         let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,

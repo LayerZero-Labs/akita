@@ -795,6 +795,17 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
+                let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    TEST_D,
+                    3,
+                    &akita_challenges::SparseChallengeConfig::production_for_ring_dim(TEST_D)
+                        .expect("D=64 has a production challenge configuration"),
+                    1,
+                )
+                .expect("audited prefix A bound");
                 let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
                     SisTableKey {
                         policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -802,7 +813,7 @@ mod tests {
                         modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                         role: akita_types::SisMatrixRole::Inner,
                         ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
-                        coeff_linf_bound: 32_767,
+                        coeff_linf_bound: inner_bound,
                     },
                     1,
                 )

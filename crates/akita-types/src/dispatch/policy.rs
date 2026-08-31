@@ -373,17 +373,17 @@ macro_rules! __protocol_dispatch_policy {
         $crate::__apply_protocol_dispatch_policy! {
             [$($operation)*]
             Fp128: {
-                inner: [64, 128, 256, 512]
-                outer: [64, 128, 256]
-                opening: [64, 128, 256]
-                ntt: [16, 32, 64, 128, 256, 512]
-                compression: [8, 16]
-            }
-            Fp64: {
                 inner: [64, 128, 256, 512, 1024]
                 outer: [64, 128, 256]
                 opening: [64, 128, 256]
-                ntt: [32, 64, 128, 256, 512, 1024]
+                ntt: [16, 32, 64, 128, 256, 512, 1024]
+                compression: [8, 16]
+            }
+            Fp64: {
+                inner: [64, 128, 256, 512, 1024, 2048]
+                outer: [64, 128, 256]
+                opening: [64, 128, 256]
+                ntt: [32, 64, 128, 256, 512, 1024, 2048]
                 compression: [16, 32]
             }
             Fp32: {

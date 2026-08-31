@@ -568,8 +568,9 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy: SelectionPolicyId::MinEstimatedProofPayloadV2,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
+            recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
             ring_dimension_schedule_mode: RingDimensionScheduleMode::UniformDimension {

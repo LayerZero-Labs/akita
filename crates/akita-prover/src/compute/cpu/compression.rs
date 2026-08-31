@@ -1,3 +1,4 @@
+use super::compression_cache::CompressionNttDomains;
 use super::prepared::validate_digit_row_request;
 use super::CpuBackend;
 use crate::compute::backend::{CompressionComputeBackend, CompressionRowsProducts};
@@ -23,7 +24,7 @@ where
         let input_width = validate_compression_batch_shape(digit_vectors)?;
         let total_ring_elements = prepared.expanded.shared_matrix.num_field_elements() / D;
         validate_digit_row_request(1, input_width, total_ring_elements)?;
-        prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
+        prepared.with_compression_ntt::<D, _>(input_width, CompressionNttDomains::Both, |ntt| {
             let negacyclic = mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)?;
             let cyclic = digit_vectors
                 .iter()
@@ -35,5 +36,20 @@ where
                 .map(|(negacyclic, cyclic)| CompressionRowsProducts { negacyclic, cyclic })
                 .collect())
         })
+    }
+
+    fn compression_negacyclic_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<akita_algebra::CyclotomicRing<F, D>>>, AkitaError> {
+        let input_width = validate_compression_batch_shape(digit_vectors)?;
+        let total_ring_elements = prepared.expanded.shared_matrix.num_field_elements() / D;
+        validate_digit_row_request(1, input_width, total_ring_elements)?;
+        prepared.with_compression_ntt::<D, _>(
+            input_width,
+            CompressionNttDomains::Negacyclic,
+            |ntt| mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1),
+        )
     }
 }

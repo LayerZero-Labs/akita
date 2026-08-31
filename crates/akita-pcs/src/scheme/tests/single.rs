@@ -1,6 +1,81 @@
 use super::*;
 
 #[test]
+fn reduced_relation_catalog_roundtrip_reaches_production_verifier() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(|| {
+            const NUM_VARS: usize = 16;
+
+            let selection = Cfg::resolve_catalog_row_for_opening(
+                &OpeningClaimsLayout::new(NUM_VARS, 1).expect("singleton opening layout"),
+            )
+            .expect("shipped reduced-relation schedule");
+            let schedule = selection.schedule();
+            let first_reduced_index = schedule
+                .recursive_folds
+                .iter()
+                .position(|fold| fold.params.ring_relation_mode.is_reduced_evaluation())
+                .expect("fixture reduced cutover");
+            let reduced = &schedule.recursive_folds[first_reduced_index..];
+            assert!(
+                reduced.len() >= 2,
+                "fixture must execute more than one reduced recursive fold"
+            );
+            assert!(reduced
+                .iter()
+                .any(|fold| fold.params.payload_mode.is_compressed()));
+            assert!(reduced.iter().any(|fold| matches!(
+                fold.params.payload_mode,
+                akita_types::CommitmentPayloadMode::Raw
+            )));
+            assert!(schedule
+                .recursive_folds
+                .iter()
+                .skip_while(|fold| !fold.params.ring_relation_mode.is_reduced_evaluation())
+                .all(|fold| fold.params.ring_relation_mode.is_reduced_evaluation()));
+
+            let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
+                make_verify_fixture(NUM_VARS);
+            let commitments = [commitment];
+            let openings = [opening];
+            let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
+            Scheme::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut verifier_transcript,
+                verifier_claims(&opening_point, &openings, &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect("production verifier must replay the reduced-relation suffix");
+
+            let first_round = proof.recursive_folds[first_reduced_index]
+                .stage2
+                .sumcheck_proof
+                .round_polys
+                .first_mut()
+                .expect("reduced stage2 sumcheck round");
+            let coefficient = first_round
+                .coeffs_except_linear_term
+                .first_mut()
+                .expect("reduced stage2 sumcheck coefficient");
+            *coefficient += F::one();
+            let mut tampered_transcript = AkitaTranscript::<F>::new(b"test/prove");
+            Scheme::batched_verify(
+                &proof,
+                &verifier_setup,
+                &mut tampered_transcript,
+                verifier_claims(&opening_point, &openings, &commitments[0]),
+                BasisMode::Lagrange,
+            )
+            .expect_err("production verifier must reject a tampered reduced stage2 proof");
+        })
+        .expect("reduced-relation test thread")
+        .join()
+        .expect("reduced-relation test thread panicked");
+}
+
+#[test]
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout::<Cfg>(16);

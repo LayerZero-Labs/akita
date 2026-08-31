@@ -18,6 +18,26 @@ fn sample_layout_lp() -> CommittedGroupParams {
 }
 
 #[test]
+fn relation_mode_is_bound_immediately_after_payload_mode() {
+    let quotient = sample_params_only();
+    let mut reduced = quotient.clone();
+    reduced.ring_relation_mode = crate::RingRelationMode::ReducedEvaluation;
+
+    let quotient_descriptor = quotient.canonical_descriptor_bytes();
+    let reduced_descriptor = reduced.canonical_descriptor_bytes();
+    assert_eq!(quotient_descriptor[0], quotient.payload_mode.tag());
+    assert_eq!(
+        quotient_descriptor[1],
+        crate::RingRelationMode::QuotientLift.tag()
+    );
+    assert_eq!(
+        reduced_descriptor[1],
+        crate::RingRelationMode::ReducedEvaluation.tag()
+    );
+    assert_ne!(quotient_descriptor, reduced_descriptor);
+}
+
+#[test]
 fn distinct_semantic_depths_size_a_b_and_d_independently() {
     let mut params = sample_params_only();
     params.own_group_mut().profile.inner.digits.log_basis = 2;
@@ -59,8 +79,21 @@ fn laid_out_sample_lp() -> CommittedGroupParams {
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    const INNER_BOUND: u128 = 2;
     const OUTER_BOUND: u128 = 3;
+    let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
+        lp.inner().matrix.security_policy(),
+        lp.inner()
+            .matrix
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        lp.inner().matrix.sis_modulus_profile(),
+        lp.d_a(),
+        lp.open().digits.log_basis,
+        &lp.fold_challenge_config(),
+        lp.num_digits_fold(),
+    )
+    .expect("exact A-role test bound");
     lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner().matrix.security_policy(),
         lp.inner()
@@ -71,7 +104,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.inner().matrix.sis_modulus_profile(),
         lp.inner().matrix.output_rank(),
         lp.inner().matrix.input_width(),
-        INNER_BOUND,
+        inner_bound,
         lp.d_a(),
     );
     lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
@@ -144,19 +177,6 @@ fn fold_groups_reject_empty_and_misordered_topologies_without_unwinding() {
     let late_prefix =
         std::panic::catch_unwind(|| FoldGroups::try_from_vec(vec![ordinary, prefix, ordinary]));
     assert!(matches!(late_prefix, Ok(Err(AkitaError::InvalidSetup(_)))));
-}
-
-#[test]
-fn fold_nonce_accepts_only_the_global_attempt_range() {
-    let (params, opening_batch) = sample_multi_group_root_params();
-    let attempts = crate::FoldLinfProtocolBinding::CURRENT.max_grind_attempts;
-
-    params
-        .validate_fold_grind_nonce(&opening_batch, attempts - 1)
-        .expect("last in-range nonce");
-    assert!(params
-        .validate_fold_grind_nonce(&opening_batch, attempts)
-        .is_err());
 }
 
 #[test]

@@ -22,19 +22,18 @@ use akita_types::{
     CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
-#[cfg(test)]
-use akita_types::{
-    level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
-};
+#[cfg(all(test, feature = "catalog-gen"))]
+use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
 
 use crate::{InnerBasisSource, PlannerPolicy};
 
 mod candidate;
 mod objective;
 mod pareto;
+mod relation_transition;
 mod setup_score;
 mod suffix_dp;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
@@ -44,12 +43,24 @@ pub use akita_types::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_ab_commitment_candidate, derive_fold_candidates, derive_recursive_candidate_views,
     derive_terminal_candidates, recursive_split_search_domain, AbCommitmentCandidateRequest,
-    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveSetupPrefix,
+    FoldCandidatePolicy, PlannerOpeningCandidate, RecursiveCandidateRequest, RecursiveFoldWork,
     SetupPrefixSearchCache, SplitBoundPolicy,
 };
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(crate) use candidate::{
+    derive_unpruned_fold_candidates_for_oracle, derive_unpruned_terminal_candidates_for_oracle,
+};
 pub(crate) use objective::{select_complete_candidate, CompleteObjectiveBound};
+#[cfg(feature = "test-support")]
+pub use relation_transition::TestRelationModeFilter;
+pub(crate) use relation_transition::{
+    RelationCandidateTopology, RelationModeFilter, RelationSearchDomain, RelationTransition,
+    RelationTraversalOrder, RingRelationPhase,
+};
 pub(crate) use setup_score::{level_setup_field_elements, terminal_setup_field_elements};
-pub(crate) use suffix_dp::{derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use suffix_dp::{
+    derive_selected_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState, SuffixTopology,
+};
 
 pub(crate) fn root_inner_basis_source(
     honest_fold_policy: HonestFoldPolicySpec,
@@ -175,7 +186,7 @@ fn suffix_dimension_ceiling(
         .find(|&dimension| dimension <= role_ceiling)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
@@ -212,6 +223,7 @@ impl RingDimensionSearchDomain {
     }
 
     /// Construct the explicit singleton domain used by a uniform policy.
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
         Self::new([CommitmentRingDims::uniform(ring_dimension)])
     }
@@ -221,13 +233,13 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         akita_schedules::planner_support::validate_policy(policy)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 fn componentwise_dimensions_at_most(
     dimensions: CommitmentRingDims,
     ceiling: CommitmentRingDims,
@@ -315,10 +327,79 @@ impl CandidateFoldChain {
 #[derive(Clone, Debug)]
 pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<NonZeroUsize>,
-    pub(crate) total_bytes: usize,
+    pub(crate) cost: PackedProofCost,
     pub(crate) setup_field_elements: usize,
     pub(crate) folds: CandidateFoldChain,
     pub(crate) terminal: Arc<CandidateTerminalResponse>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackedProofCost {
+    payload_bytes: usize,
+    nonce_bits: usize,
+}
+
+impl PackedProofCost {
+    pub(crate) fn new(payload_bytes: usize, nonce_bits: usize) -> Result<Self, AkitaError> {
+        let cost = Self {
+            payload_bytes,
+            nonce_bits,
+        };
+        cost.checked_proof_bytes()
+            .ok_or_else(|| AkitaError::InvalidSetup("candidate proof size overflow".into()))?;
+        Ok(cost)
+    }
+
+    pub(crate) fn proof_bytes(self) -> usize {
+        self.checked_proof_bytes()
+            .expect("validated packed proof cost")
+    }
+
+    pub(crate) fn checked_prepend(
+        self,
+        payload_bytes: usize,
+        nonce_bits: usize,
+    ) -> Result<Self, AkitaError> {
+        Self::new(
+            self.payload_bytes
+                .checked_add(payload_bytes)
+                .ok_or_else(|| AkitaError::InvalidSetup("suffix proof payload overflow".into()))?,
+            self.nonce_bits.checked_add(nonce_bits).ok_or_else(|| {
+                AkitaError::InvalidSetup("candidate nonce bit length overflow".into())
+            })?,
+        )
+    }
+
+    #[cfg(all(test, feature = "catalog-gen"))]
+    pub(crate) const fn nonce_bits(self) -> usize {
+        self.nonce_bits
+    }
+
+    pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
+        (0..8).all(|parent_remainder| {
+            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
+                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
+                .is_some_and(|(left, right)| left <= right)
+        })
+    }
+
+    pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
+        (0..8).all(|parent_remainder| {
+            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
+                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
+                .is_some_and(|(left, right)| left < right)
+        })
+    }
+
+    fn checked_proof_bytes(self) -> Option<usize> {
+        self.checked_proof_bytes_with_parent_remainder(0)
+    }
+
+    fn checked_proof_bytes_with_parent_remainder(self, parent_remainder: usize) -> Option<usize> {
+        let nonce_bytes =
+            akita_error::checked::div_ceil(self.nonce_bits.checked_add(parent_remainder)?, 8)?;
+        self.payload_bytes.checked_add(nonce_bytes)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -339,8 +420,14 @@ impl SetupPrefixCapacity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CandidateMetrics {
     pub(crate) first_direct_setup_capacity: SetupPrefixCapacity,
-    pub(crate) proof_bytes: usize,
+    pub(crate) cost: PackedProofCost,
     pub(crate) setup_field_elements: usize,
+}
+
+impl CandidateMetrics {
+    pub(crate) fn proof_bytes(self) -> usize {
+        self.cost.proof_bytes()
+    }
 }
 
 impl ScheduleCandidate {
@@ -355,7 +442,7 @@ impl ScheduleCandidate {
                 .map_or(SetupPrefixCapacity::MAX, |natural_len| {
                     SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
-            proof_bytes: self.total_bytes,
+            cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
     }
@@ -412,30 +499,34 @@ pub(crate) type RingChallengeConfigFn<'a> =
 
 pub(crate) type LayoutCandidateScore = (usize, usize, usize, usize);
 
-/// For setup-primary planning, retain the smallest slice count that reaches
-/// the best local setup objective before witness sizing and suffix recursion.
+/// For setup-primary planning, retain every slice that reaches the best local
+/// setup objective before witness sizing and suffix recursion. Equal setup
+/// candidates can still differ in proof size or the complete descriptor.
 pub(crate) fn prune_locally_unprofitable_slices(
     policy: &PlannerPolicy,
     opening_layout: &OpeningClaimsLayout,
     candidates: Vec<CommittedGroupParams>,
 ) -> Result<Vec<CommittedGroupParams>, AkitaError> {
-    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayload
+    if policy.selection_policy == crate::SelectionPolicyId::MinEstimatedProofPayloadV2
         || candidates.len() <= 1
     {
         return Ok(candidates);
     }
-    let mut best: Option<((usize, usize), CommittedGroupParams)> = None;
+    let mut best_setup = None;
+    let mut retained = Vec::new();
     for params in candidates {
         let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
-        let score = (setup_score, params.outer_slice_count().get());
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _)| score < *best_score)
-        {
-            best = Some((score, params));
+        match best_setup.map(|best| setup_score.cmp(&best)) {
+            None | Some(std::cmp::Ordering::Less) => {
+                best_setup = Some(setup_score);
+                retained.clear();
+                retained.push(params);
+            }
+            Some(std::cmp::Ordering::Equal) => retained.push(params),
+            Some(std::cmp::Ordering::Greater) => {}
         }
     }
-    Ok(best.map(|(_, params)| vec![params]).unwrap_or_default())
+    Ok(retained)
 }
 
 /// Combine exact physical width, challenge work, chunk evaluator work,

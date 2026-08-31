@@ -9,10 +9,50 @@ use jolt_field::Zero;
 use std::collections::{BTreeSet, HashSet};
 
 #[test]
+fn setup_prefix_policy_wire_tag_tracks_policy_identity() {
+    let policy = SisSecurityPolicyId::Quantum128BitADPS16;
+    let mut wire = Vec::new();
+    serialize_sis_security_policy(policy, &mut wire).expect("serialize SIS security policy");
+    assert_eq!(wire, vec![1]);
+    assert_eq!(
+        deserialize_sis_security_policy(wire.as_slice()).expect("deserialize current policy"),
+        policy
+    );
+    assert!(deserialize_sis_security_policy(&[2u8][..]).is_err());
+}
+
+#[test]
 fn setup_prefix_domain_is_the_smallest_covering_power_of_two() {
-    validate_setup_prefix_domain(65, 128).expect("exact ragged prefix domain");
+    validate_setup_prefix_domain(65, 128).expect("canonical full prefix domain");
     validate_setup_prefix_domain(65, 256).expect_err("overpadded prefix domain");
     validate_setup_prefix_domain(0, 1).expect_err("empty prefix domain");
+}
+
+#[test]
+fn setup_prefix_profile_must_commit_every_ring_in_the_full_domain() {
+    let natural_len = 129;
+    let n_prefix = padded_setup_prefix_len(natural_len);
+    let mut level_params = prefix_eligible_level_params();
+    retarget_group_role_dims_wide(&mut level_params, 64, 64, 1024);
+    let mut prefix = setup_prefix_precommitted_params(&level_params, n_prefix)
+        .expect("full setup-prefix profile");
+    prefix
+        .profile
+        .validate_setup_prefix_geometry(natural_len)
+        .expect("full setup-prefix geometry");
+
+    let blocks = prefix.profile.blocks;
+    let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+    prefix.profile.blocks = crate::BlockGeometry::new(
+        omitted_tail_rings,
+        blocks.positions_per_block,
+        omitted_tail_rings.div_ceil(blocks.positions_per_block),
+    );
+    let error = prefix
+        .profile
+        .validate_setup_prefix_geometry(natural_len)
+        .expect_err("a setup-prefix profile cannot omit real tail rings");
+    assert!(error.to_string().contains("must commit all"));
 }
 
 fn sample_level_params() -> CommittedGroupParams {
@@ -290,6 +330,12 @@ fn retarget_group_role_dims(
     params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("production challenge");
+    let a_bound = *crate::sis::inner_coeff_linf_bounds(
+        params.inner().matrix.sis_modulus_profile(),
+        u32::try_from(inner_ring_dimension).expect("test ring dimension"),
+    )
+    .first()
+    .expect("retargeted exact A bounds");
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
         crate::InnerCommitMatrixParams::try_new_with_min_rank(
@@ -302,11 +348,17 @@ fn retarget_group_role_dims(
                 modulus_profile: inner.sis_modulus_profile(),
                 role: crate::sis::SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
-                coeff_linf_bound: 131_071,
+                coeff_linf_bound: a_bound,
             },
             inner.input_width(),
         )
         .expect("audited retargeted A matrix");
+    let inner_output_rank = params.inner().matrix.output_rank();
+    let projected_outer_width = inner_output_rank
+        .checked_mul(params.outer().digits.num_digits)
+        .and_then(|width| width.checked_mul(params.blocks().live_blocks))
+        .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
+        .expect("retargeted B width");
     let outer = params.outer().matrix;
     params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -317,7 +369,7 @@ fn retarget_group_role_dims(
             ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
             coeff_linf_bound: 3,
         },
-        outer.input_width() * (inner_ring_dimension / outer_ring_dimension),
+        projected_outer_width,
     )
     .expect("audited retargeted B matrix");
 }
@@ -332,20 +384,17 @@ fn retarget_group_role_dims_wide(
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix =
         crate::InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::SisTableKey {
-                policy: inner.security_policy(),
-                table_digest: inner
-                    .sis_table_key()
-                    .expect("L infinity test matrix")
-                    .table_digest,
-                modulus_profile: inner.sis_modulus_profile(),
-                role: crate::sis::SisMatrixRole::Inner,
-                ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
-                coeff_linf_bound: 131_071,
-            },
+            inner.sis_table_key().expect("L infinity test matrix"),
             inner.input_width().max(min_input_width),
         )
         .expect("wide audited A matrix");
+    let inner_output_rank = params.inner().matrix.output_rank();
+    let projected_outer_width = inner_output_rank
+        .checked_mul(params.outer().digits.num_digits)
+        .and_then(|width| width.checked_mul(params.blocks().live_blocks))
+        .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
+        .expect("wide retargeted B width")
+        .max(min_input_width);
     let outer = params.outer().matrix;
     params.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -356,7 +405,7 @@ fn retarget_group_role_dims_wide(
             ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
             coeff_linf_bound: 3,
         },
-        outer.input_width().max(min_input_width),
+        projected_outer_width,
     )
     .expect("wide audited B matrix");
 }

@@ -260,6 +260,17 @@ mod tests {
         .expect("generate setup");
         let decomposed =
             RingVec::from_coeffs_with_ring_dim(Vec::new(), PREFIX_D).expect("empty A-native hint");
+        let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            PREFIX_D,
+            3,
+            &akita_challenges::SparseChallengeConfig::production_for_ring_dim(PREFIX_D)
+                .expect("D=64 has a production challenge configuration"),
+            1,
+        )
+        .expect("audited prefix A bound");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -267,7 +278,7 @@ mod tests {
                 modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                 role: SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
-                coeff_linf_bound: 32_767,
+                coeff_linf_bound: inner_bound,
             },
             1,
         )

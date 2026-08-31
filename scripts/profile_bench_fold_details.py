@@ -572,6 +572,298 @@ def planned_terminal_work_value(terminal: dict[str, object]) -> str:
     return detail_block("Terminal fold", rows)
 
 
+GRINDING_COMPONENT_LABELS = {
+    "opening": "Opening",
+    "extension_opening": "Extension opening",
+    "fold_response": "Fold response",
+    "fold_challenge": "Fold challenge",
+    "ring_switch": "Ring switch",
+    "stage1": "Stage 1",
+    "physical_l2": "Physical L2",
+    "stage2": "Stage 2",
+    "stage3": "Stage 3",
+}
+
+GRINDING_QUERY_LABELS = {
+    "evaluation_batch": "evaluation batch",
+    "opening_point": "opening point",
+    "claim_batch": "claim batch",
+    "response_search": "bounded response search",
+    "challenge_root": "challenge root",
+    "challenge_coordinates": "challenge coordinates",
+    "alpha": "alpha",
+    "tau0_point": "tau0 point",
+    "tau1_point": "tau1 point",
+    "interstage_batch": "interstage batch",
+    "subclaim_batch": "subclaim batch",
+    "norm_merge": "norm merge",
+    "virtual_batch": "virtual batch",
+    "compression_binary": "compression binary",
+}
+
+LEGACY_FOLD_RESPONSE_NONCE_BITS = 12
+
+
+def grinding_run_key(run: dict[str, object]) -> tuple[object, ...]:
+    return tuple(
+        run.get(field)
+        for field in (
+            "level",
+            "component",
+            "query",
+            "protocol",
+            "stage",
+            "round_start",
+            "round_end",
+            "group",
+        )
+    )
+
+
+def grinding_query_label(run: dict[str, object]) -> str:
+    if run.get("query") == "sumcheck_round":
+        start = int(run.get("round_start", run.get("round", 0)))
+        end = int(run.get("round_end", start))
+        rounds = f"round {start}" if start == end else f"rounds {start} to {end}"
+        return f"sumcheck stage {run.get('stage', 0)}, {rounds}"
+    label = GRINDING_QUERY_LABELS.get(str(run.get("query")), str(run.get("query")))
+    if run.get("group") is not None:
+        label += f" group {run['group']}"
+    if run.get("stage") is not None:
+        label += f" stage {run['stage']}"
+    return label
+
+
+def aggregate_grinding_runs(
+    runs: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Combine consecutive runs that have identical storage and security terms."""
+    grouped: list[dict[str, object]] = []
+    identity_fields = (
+        "level",
+        "component",
+        "query",
+        "protocol",
+        "stage",
+        "group",
+        "kind",
+        "loss_factor",
+        "grind_bits",
+        "nonce_bits",
+    )
+    for run in runs:
+        if int(run["nonce_bits"]) == 0:
+            continue
+        current = dict(run)
+        current["round_start"] = run.get("round")
+        current["round_end"] = run.get("round")
+        current["run_count"] = 1
+        previous = grouped[-1] if grouped else None
+        same_identity = previous is not None and all(
+            previous.get(field) == current.get(field) for field in identity_fields
+        )
+        if same_identity and run.get("query") == "sumcheck_round":
+            previous_round = previous.get("round_end")
+            current_round = current.get("round_start")
+            same_identity = (
+                previous_round is not None
+                and current_round is not None
+                and int(current_round) == int(previous_round) + 1
+            )
+        if same_identity:
+            previous["round_end"] = current.get("round_end")
+            previous["run_count"] = int(previous["run_count"]) + 1
+            previous["multiplicity"] = int(previous["multiplicity"]) + int(
+                current["multiplicity"]
+            )
+            previous["run_nonce_bits"] = int(previous["run_nonce_bits"]) + int(
+                current["run_nonce_bits"]
+            )
+        else:
+            grouped.append(current)
+    return grouped
+
+
+def grinding_int_choice(current: object, baseline: object | None) -> str:
+    current_text = f"{int(current):,}"
+    baseline_text = f"{int(baseline):,}" if baseline is not None else None
+    return exact_choice(current_text, baseline_text)
+
+
+def legacy_fold_nonce_bytes(level: dict[str, object]) -> int | None:
+    present = level.get("present_byte_fields")
+    if isinstance(present, list) and "fold_grind_nonce_bytes" not in present:
+        return None
+    if "fold_grind_nonce_bytes" not in level:
+        return None
+    return int(level["fold_grind_nonce_bytes"])
+
+
+def legacy_grinding_storage(
+    proof_levels: list[dict[str, object]] | None,
+) -> tuple[int, int, int] | None:
+    if proof_levels is None:
+        return None
+    widths = [legacy_fold_nonce_bytes(level) for level in proof_levels]
+    stored_widths = [width for width in widths if width is not None and width > 0]
+    if not stored_widths:
+        return None
+    meaningful_bits = len(stored_widths) * LEGACY_FOLD_RESPONSE_NONCE_BITS
+    wire_bytes = sum(stored_widths)
+    return meaningful_bits, wire_bytes, wire_bytes * 8 - meaningful_bits
+
+
+def render_grinding_plan_details(
+    grinding_plan: dict[str, object] | None,
+    baseline_grinding_plan: dict[str, object] | None,
+    proof_levels: list[dict[str, object]],
+    baseline_proof_levels: list[dict[str, object]] | None,
+) -> None:
+    if grinding_plan is None:
+        return
+    current_runs_value = grinding_plan.get("runs")
+    current_runs = (
+        [run for run in current_runs_value if isinstance(run, dict)]
+        if isinstance(current_runs_value, list)
+        else []
+    )
+    baseline_runs_value = (
+        baseline_grinding_plan.get("runs") if baseline_grinding_plan is not None else None
+    )
+    baseline_runs = (
+        [run for run in baseline_runs_value if isinstance(run, dict)]
+        if isinstance(baseline_runs_value, list)
+        else []
+    )
+    displayed_runs = aggregate_grinding_runs(current_runs)
+    displayed_baseline_runs = aggregate_grinding_runs(baseline_runs)
+    baseline_by_key = {grinding_run_key(run): run for run in displayed_baseline_runs}
+    current_wire_bytes = int(grinding_plan["nonce_stream_bytes"])
+    if baseline_grinding_plan is not None:
+        baseline_wire_bytes = int(baseline_grinding_plan["nonce_stream_bytes"])
+        baseline_total_bits: int | None = int(baseline_grinding_plan["total_nonce_bits"])
+        baseline_padding_bits: int | None = int(baseline_grinding_plan["padding_bits"])
+    else:
+        legacy_storage = legacy_grinding_storage(baseline_proof_levels)
+        if legacy_storage is None:
+            baseline_total_bits = None
+            baseline_wire_bytes = None
+            baseline_padding_bits = None
+        else:
+            baseline_total_bits, baseline_wire_bytes, baseline_padding_bits = legacy_storage
+
+    print()
+    print("#### Transcript grinding bits")
+    print()
+    print("| Storage | Meaningful bits | Wire bytes | Unused wire bits | Plan queries |")
+    print("| --- | ---: | ---: | ---: | ---: |")
+    print(
+        "| Proof-global packed nonce stream | "
+        + grinding_int_choice(grinding_plan["total_nonce_bits"], baseline_total_bits)
+        + " | "
+        + grinding_int_choice(current_wire_bytes, baseline_wire_bytes)
+        + " | "
+        + grinding_int_choice(grinding_plan["padding_bits"], baseline_padding_bits)
+        + " | "
+        + grinding_int_choice(
+            grinding_plan["expanded_query_count"],
+            (
+                baseline_grinding_plan["expanded_query_count"]
+                if baseline_grinding_plan is not None
+                else None
+            ),
+        )
+        + " |"
+    )
+    print()
+    print(
+        "The public plan prices challenges against a nominal capacity of "
+        f"{int(grinding_plan['nominal_capacity_bits']):,} bits. The merge-base storage "
+        "value uses its legacy per-fold nonce fields when it did not emit a native plan."
+    )
+    print()
+    print("| Fold | Component | Query | Loss factor | Required zero bits | Stored bits/query | Count | Packed bits |")
+    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
+    levels = sorted({int(run["level"]) for run in displayed_runs})
+    baseline_proof = {
+        int(level["level"]): level for level in (baseline_proof_levels or [])
+    }
+    for level in levels:
+        fold_runs = [run for run in displayed_runs if int(run["level"]) == level]
+        for run in fold_runs:
+            baseline_run = baseline_by_key.get(grinding_run_key(run))
+            loss = "—" if int(run["loss_factor"]) == 0 else grinding_int_choice(
+                run["loss_factor"],
+                baseline_run.get("loss_factor") if baseline_run is not None else None,
+            )
+            target = "—" if run.get("kind") != "proof_of_work" else grinding_int_choice(
+                run["grind_bits"],
+                baseline_run.get("grind_bits") if baseline_run is not None else None,
+            )
+            component = GRINDING_COMPONENT_LABELS.get(
+                str(run.get("component")), str(run.get("component"))
+            )
+            print(
+                f"| L{level} | {component} | {grinding_query_label(run)} | {loss} | "
+                f"{target} | "
+                + grinding_int_choice(
+                    run["nonce_bits"],
+                    baseline_run.get("nonce_bits") if baseline_run is not None else None,
+                )
+                + " | "
+                + grinding_int_choice(
+                    run["multiplicity"],
+                    baseline_run.get("multiplicity") if baseline_run is not None else None,
+                )
+                + " | "
+                + grinding_int_choice(
+                    run["run_nonce_bits"],
+                    baseline_run.get("run_nonce_bits") if baseline_run is not None else None,
+                )
+                + " |"
+            )
+        fold_bits = sum(int(run["run_nonce_bits"]) for run in fold_runs)
+        if baseline_grinding_plan is not None:
+            baseline_fold_bits: int | None = sum(
+                int(run["run_nonce_bits"])
+                for run in baseline_runs
+                if int(run["level"]) == level
+            )
+        else:
+            baseline_level = baseline_proof.get(level)
+            baseline_fold_bytes = (
+                legacy_fold_nonce_bytes(baseline_level)
+                if baseline_level is not None
+                else None
+            )
+            baseline_fold_bits = (
+                LEGACY_FOLD_RESPONSE_NONCE_BITS
+                if baseline_fold_bytes is not None and baseline_fold_bytes > 0
+                else None
+            )
+        print(
+            f"| **L{level} subtotal** |  |  |  |  |  |  | "
+            f"**{grinding_int_choice(fold_bits, baseline_fold_bits)}** |"
+        )
+    print()
+    zero_width_runs = [run for run in current_runs if int(run["nonce_bits"]) == 0]
+    if zero_width_runs:
+        zero_width_queries = sum(int(run["multiplicity"]) for run in zero_width_runs)
+        entry_word = "entry" if len(zero_width_runs) == 1 else "entries"
+        print(
+            f"The table omits {zero_width_queries:,} plan queries across "
+            f"{len(zero_width_runs):,} {entry_word} because they require no nonce bits."
+        )
+        print()
+    print(
+        "Consecutive queries with identical parameters are grouped, and sumcheck rounds are "
+        "shown as ranges. Counts and packed bit totals remain exact. The proof rounds the "
+        "stream to bytes once, not per row or fold. Required zero bits are per proof of work "
+        "query. The 12 bit fold response is bounded search, not proof of work. For a legacy "
+        "merge base, unused bits measure each 12 bit response stored in a 32 bit field."
+    )
+
+
 def render_fold_details(
     planned_levels: list[dict[str, object]],
     proof_levels: list[dict[str, object]],
@@ -579,6 +871,8 @@ def render_fold_details(
     baseline_planned_levels: list[dict[str, object]] | None,
     baseline_proof_levels: list[dict[str, object]] | None,
     baseline_terminal_plan: dict[str, object] | None,
+    grinding_plan: dict[str, object] | None = None,
+    baseline_grinding_plan: dict[str, object] | None = None,
 ) -> None:
     planned = {int(level["level"]): level for level in planned_levels}
     proof = {int(level["level"]): level for level in proof_levels}
@@ -693,6 +987,12 @@ def render_fold_details(
         "sends the clear z, e, and t response shown in the terminal response section. "
         "Proof groups with zero bytes are omitted. The terminal response bytes are not "
         "part of the terminal fold byte total."
+    )
+    render_grinding_plan_details(
+        grinding_plan,
+        baseline_grinding_plan,
+        proof_levels,
+        baseline_proof_levels,
     )
     grind_rows = [
         level

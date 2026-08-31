@@ -299,24 +299,28 @@ impl<F: Field> RingRelationGroupWitness<F> {
 }
 
 /// Prover secret for the per-fold ring relation (never built on the verifier).
+pub(crate) enum RelationDQuotientWitness<F: Field> {
+    /// Quotient-lift mode retains the D-role quotient rows.
+    QuotientLift(RingVec<F>),
+    /// Reduced-evaluation mode has no D-role quotient rows.
+    ReducedEvaluation,
+}
+
 pub struct RingRelationWitness<F: Field> {
-    pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
     /// Level-owned D-role quotient rows retained after transcript-time `v` construction.
-    pub(crate) d_quotients: RingVec<F>,
+    pub(crate) d_quotients: RelationDQuotientWitness<F>,
     pub(crate) compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
 impl<F: Field> RingRelationWitness<F> {
     /// Construct from already-grouped witnesses.
     pub(crate) fn from_groups(
-        fold_grind_nonce: u32,
         groups: Vec<RingRelationGroupWitness<F>>,
-        d_quotients: RingVec<F>,
+        d_quotients: RelationDQuotientWitness<F>,
         compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
-            fold_grind_nonce,
             groups,
             d_quotients,
             compression,

@@ -2,16 +2,22 @@ use super::offloaded_witness_contracts;
 use std::collections::VecDeque;
 
 fn memo_key(level: usize, incoming_setup_prefix: Option<usize>) -> super::ScheduleMemoKey {
+    let topology = incoming_setup_prefix.map_or(
+        super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
+        |natural_len| super::SuffixTopology::SetupPrefixed { natural_len },
+    );
     super::ScheduleMemoKey {
         level,
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix,
         d_a: 64,
         d_b: 64,
         d_d: 64,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology,
     }
 }
 
@@ -31,6 +37,57 @@ fn suffix_memo_retains_every_completed_state_and_replaces_in_place() {
     assert_eq!(memo.len(), 2);
     assert!(memo.contains(&direct));
     assert!(memo.contains(&prefixed));
+}
+
+#[test]
+fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
+    use akita_types::RingRelationMode::{QuotientLift, ReducedEvaluation};
+
+    let prefix = super::RingRelationPhase::QuotientPrefix;
+    let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
+    let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
+    assert_eq!(
+        prefix
+            .transitions(1, direct_trace)
+            .unwrap()
+            .transitions()
+            .iter()
+            .map(|transition| transition.mode())
+            .collect::<Vec<_>>(),
+        vec![QuotientLift]
+    );
+    assert_eq!(
+        prefix
+            .transitions(2, direct_trace)
+            .unwrap()
+            .transitions()
+            .iter()
+            .map(|transition| transition.mode())
+            .collect::<Vec<_>>(),
+        vec![QuotientLift, ReducedEvaluation]
+    );
+    let reduced_transition = reduced
+        .transitions(2, direct_trace)
+        .unwrap()
+        .transition_for(akita_types::RingRelationMode::ReducedEvaluation)
+        .unwrap();
+    assert_eq!(reduced_transition.mode(), ReducedEvaluation);
+    assert_eq!(reduced_transition.next_phase(), reduced);
+    assert!(!reduced_transition.allows_setup_offload());
+    assert!(reduced
+        .transitions(
+            2,
+            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace,
+        )
+        .is_err());
+
+    let quotient_key = memo_key(2, None);
+    let mut reduced_key = quotient_key;
+    reduced_key.topology = super::SuffixTopology::Direct {
+        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        relation_phase: reduced,
+    };
+    assert_ne!(quotient_key, reduced_key);
 }
 
 #[test]
@@ -63,11 +120,11 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
 }
 
 #[test]
-fn parent_observable_key_ignores_unpriced_successor_opening_details() {
+fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
         .expect("D64 challenge");
-    let mut evaluation_trace = akita_types::CommittedGroupParams::params_only(
+    let mut shell = akita_types::CommittedGroupParams::params_only(
         akita_types::SisModulusProfileId::Q128OffsetA7F7,
         256,
         2,
@@ -76,22 +133,21 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         2,
         challenge,
     );
-    evaluation_trace.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    let mut packing = evaluation_trace.clone();
-    packing.own_group_mut().opening.opening_method =
-        akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-    packing.own_group_mut().opening.log_basis_open = 4;
-    packing.own_group_mut().opening.num_digits_open = 32;
+    shell.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    let evaluation_trace = shell.with_decomp(8, 64, 2, 2, 2).unwrap();
+    let mut wider_opening = shell.with_decomp(8, 128, 2, 2, 2).unwrap();
     assert_ne!(
         evaluation_trace.canonical_descriptor_bytes(),
-        packing.canonical_descriptor_bytes()
+        wider_opening.canonical_descriptor_bytes()
     );
-    assert_eq!(
-        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
-        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
-        "a parent prices only the successor outer payload and setup-prefix payload"
+    assert_ne!(
+        evaluation_trace.recursive_opening_num_vars().unwrap(),
+        wider_opening.recursive_opening_num_vars().unwrap()
+    );
+    assert_ne!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&wider_opening), None).unwrap(),
+        "a parent grinding edge prices the successor opening width"
     );
     assert_eq!(
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
@@ -105,7 +161,7 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             &evaluation_trace,
-            Some(&packing),
+            Some(&wider_opening),
             1024,
             512,
         )
@@ -113,8 +169,42 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         "successors in one parent-observable bucket must price identically"
     );
 
-    let outer = packing.outer().matrix;
-    packing.own_group_mut().profile.outer.matrix =
+    let mut reduced_successor = evaluation_trace.clone();
+    reduced_successor.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        reduced_successor.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        evaluation_trace.recursive_opening_num_vars().unwrap(),
+        reduced_successor.recursive_opening_num_vars().unwrap()
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&reduced_successor), None).unwrap(),
+        "relation details invisible to the parent must share one successor class"
+    );
+    let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
+    let grind_bits = |successor| {
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            &evaluation_trace,
+            512,
+            &layout,
+            akita_types::GrindingPlanSuccessor::Recursive(successor),
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            1,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        grind_bits(&evaluation_trace),
+        grind_bits(&reduced_successor),
+        "one parent-observable successor class must have one grinding price"
+    );
+
+    let outer = wider_opening.outer().matrix;
+    wider_opening.own_group_mut().profile.outer.matrix =
         akita_types::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
@@ -125,8 +215,8 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
             outer.ring_dimension(),
         );
     assert_ne!(
-        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
-        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&wider_opening), None).unwrap(),
         "changing the transmitted successor payload must change the parent key"
     );
 }
@@ -153,9 +243,11 @@ fn memo_key_discards_dimension_history_after_adaptive_cutoff() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
     let d64 = akita_types::CommitmentRingDims::uniform(64);
     let d256 = akita_types::CommitmentRingDims::uniform(256);
@@ -194,9 +286,11 @@ fn fp32_suffix_memo_key_retains_only_the_effective_transition_ceiling() {
         current_witness_len: 1024,
         current_lb: 3,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::RingRelationPhase::QuotientPrefix,
+        },
     };
 
     assert_eq!(

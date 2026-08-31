@@ -25,7 +25,10 @@ pub(crate) use geometry::SetupProjectionGroupGeometry;
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
 #[cfg(test)]
 pub(crate) use plan::validate_setup_inputs;
-pub use plan::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
+pub use plan::{
+    PreparedCoefficientFunctional, PreparedRelationAddress, SetupContributionGroupInputs,
+    SetupContributionPlan,
+};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///

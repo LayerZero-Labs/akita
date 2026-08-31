@@ -162,7 +162,7 @@ fn prepare_family_catalog(
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn catalog_identity_rejects_non_v1_protocol_epoch() {
+fn catalog_identity_rejects_noncurrent_protocol_epoch() {
     let mut catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
@@ -170,8 +170,29 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
         &policy_of::<fp128::Dense>(),
         fp128::Dense::ring_challenge_config,
     )
-    .expect_err("non-v1 protocol epoch must not validate");
+    .expect_err("noncurrent protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_catalog_identities_match_runtime_schema() {
+    for family in ALL_GENERATED_FAMILIES {
+        let catalog = (family.schedule_catalog)()
+            .unwrap_or_else(|| panic!("{} generated catalog is unavailable", family.module_name));
+        let expected = akita_schedules::expected_catalog_identity(
+            catalog.identity.family_name,
+            &(family.policy)(),
+            catalog.entries,
+            family.ring_challenge_config,
+        )
+        .expect("generated catalog identity");
+        assert_eq!(
+            catalog.identity, expected,
+            "{} generated identity must match the current protocol schema",
+            family.module_name
+        );
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -199,7 +220,7 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
         }
     }
 
-    for expected in [(1, 1), (2, 2), (4, 2), (2, 4), (2, 8), (8, 4), (8, 8)] {
+    for expected in [(1, 1), (2, 2), (4, 2), (4, 4), (2, 8), (4, 8), (8, 8)] {
         assert!(
             observed.contains(&expected),
             "generated schedules must retain S/W={expected:?}; observed {observed:?}"
@@ -260,7 +281,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_schedules::SelectionPolicyId::MinEstimatedProofPayload;
+        akita_schedules::SelectionPolicyId::MinEstimatedProofPayloadV2;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;
@@ -325,6 +346,10 @@ fn catalog_identity_binds_every_role_specific_execution_field() {
     };
     recursive_payload.recursive_folds = folds;
     assert_rejected(recursive_payload, "recursive payload mode");
+
+    let mut relation_mode = original;
+    relation_mode.root.core.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+    assert_rejected(relation_mode, "root ring relation mode");
 
     let mut terminal_payload = original;
     terminal_payload.terminal.z_payload_bytes += 1;

@@ -10,20 +10,20 @@ full downloadable artifact.
 
 ## Current statement matrix
 
-| Case | Variables | Polynomials | Setup path |
-| --- | ---: | ---: | --- |
-| `dense_fp32` | 26 | 1 | Direct |
-| `onehot_fp32` | 30 | 1 | Direct |
-| `dense_fp64` | 26 | 1 | Direct |
-| `onehot_fp64` | 30 | 1 | Direct |
-| `dense_fp128` | 28 | 1 | Direct |
-| `onehot_fp128` | 36 | 1 | Direct and recursive |
-| `onehot_fp128_multi_group` | 32 | 4 | Direct |
-| `onehot_fp128_multi_group_recursive` | 32 | 4 | Recursive |
-| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | Recursive |
-| `onehot_fp128_multi_chunk_w2r2` | 32 | 1 | Direct |
-| `onehot_fp128_multi_chunk_w4r2` | 32 | 1 | Direct |
-| `onehot_fp128_multi_chunk_w8r2` | 32 | 1 | Direct |
+| Case | Polynomial groups | Setup path |
+| --- | --- | --- |
+| `dense_fp32` | 1 at nv30 | Direct |
+| `onehot_fp32` | 1 at nv34 | Direct |
+| `dense_fp64` | 1 at nv29 | Direct |
+| `onehot_fp64` | 1 at nv35 | Direct |
+| `dense_fp128` | 1 at nv28 | Direct |
+| `onehot_fp128` | 1 at nv36 | Direct and recursive |
+| `onehot_fp128_multi_group` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Direct |
+| `onehot_fp128_multi_group_recursive` | 1 at nv16 + 1 at nv16 + 2 at nv34 | Recursive |
+| `onehot_fp128_multi_group_recursive_multi_chunk_w8r2` | 1 at nv16 + 1 at nv16 + 2 at nv32 | Recursive |
+| `onehot_fp128_multi_chunk_w2r2` | 1 at nv32 | Direct |
+| `onehot_fp128_multi_chunk_w4r2` | 1 at nv32 | Direct |
+| `onehot_fp128_multi_chunk_w8r2` | 1 at nv32 | Direct |
 
 The workflow splits these cases into narrow feature groups so each runner
 compiles only the schedule catalogs and profile modes it measures.
@@ -31,8 +31,7 @@ compiles only the schedule catalogs and profile modes it measures.
 ## What each statement means
 
 The dense cases commit to one arbitrary multilinear table and open it at one
-point. A 26 variable table has $2^{26}$ values. The fp128 dense case uses 28
-variables.
+point. The current fp32, fp64, and fp128 cases use 30, 29, and 28 variables.
 
 The one hot source places one selected value in every 256 entry chunk. The
 public statement still checks commitment and opening consistency. The source
@@ -40,7 +39,9 @@ representation changes prover work, not the meaning of the opening claim.
 
 The multi group cases contain four polynomials in three ordered groups. Two
 earlier groups each contain one 16 variable polynomial and use separate points.
-The final group contains two 32 variable polynomials that share one point.
+The final group contains two polynomials that share one point. It uses 34
+variables in the direct and standard recursive cases. The W8R2 case uses 32
+variables.
 
 Direct and recursive rows prove the same opening statement. The recursive setup
 row carries the large public setup contribution through a Stage 3 sumcheck.

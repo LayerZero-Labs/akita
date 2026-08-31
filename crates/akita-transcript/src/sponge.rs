@@ -217,28 +217,32 @@ where
         out
     }
 
-    /// Preview the final seed after a chain of hypothetical fold draws.
-    pub fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8> {
+    /// Squeeze one native transcript block.
+    pub fn squeeze_block(&mut self, _label: Label) -> [u8; SQUEEZE_CHUNK_LEN] {
+        match self.state_mut() {
+            TranscriptState::Prover(state) => state.verifier_message(),
+            TranscriptState::Verifier(state) => state.verifier_message(),
+        }
+    }
+
+    /// Preview the final 32-byte challenge after hypothetical absorbs.
+    pub fn preview_challenge_block(
+        &self,
+        absorb_payloads: &[&[u8]],
+    ) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
         let TranscriptState::Prover(state) = self
             .state
             .as_ref()
             .expect("AkitaTranscript must be instance-bound before use")
         else {
-            panic!("preview_fold_challenge_seed requires a prover transcript");
+            panic!("preview_challenge_block requires a prover transcript");
         };
         let mut sponge = state.duplex_sponge_state.clone();
-        let mut out = Vec::new();
+        let mut out = [0u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN];
         for &absorb in absorb_payloads {
             let framed = FramedBytes { bytes: absorb };
             sponge.absorb(framed.encode().as_ref());
-            out.clear();
-            out.reserve(crate::FOLD_CHALLENGE_SEED_LEN);
-            while out.len() < crate::FOLD_CHALLENGE_SEED_LEN {
-                let mut chunk = [0u8; SQUEEZE_CHUNK_LEN];
-                sponge.squeeze(chunk.as_mut());
-                let take = (crate::FOLD_CHALLENGE_SEED_LEN - out.len()).min(chunk.len());
-                out.extend_from_slice(&chunk[..take]);
-            }
+            sponge.squeeze(out.as_mut());
         }
         out
     }
@@ -249,10 +253,6 @@ where
     F: Field + CanonicalEncoding + CanonicalBytes + 'static,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
-    fn new(domain_label: &[u8]) -> Self {
-        Self::new_prover(domain_label, b"akita/default-instance")
-    }
-
     fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
         AkitaTranscript::bind_instance_bytes(self, instance_bytes);
     }
@@ -279,6 +279,20 @@ where
 
     fn challenge_bytes(&mut self, _label: &[u8], len: usize) -> Vec<u8> {
         self.squeeze_bytes(crate::label!("compat_squeeze_bytes"), len)
+    }
+
+    fn challenge_block(&mut self, _label: &[u8]) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        self.squeeze_block(crate::label!("compat_squeeze_block"))
+    }
+}
+
+impl<F, S> crate::TranscriptFactory<F> for AkitaTranscript<F, S>
+where
+    F: Field + CanonicalEncoding + CanonicalBytes + 'static,
+    S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self::new_prover(domain_label, b"akita/default-instance")
     }
 }
 
@@ -346,20 +360,28 @@ fn domain_separator_from_label<'a>(
         })
 }
 
-impl<F, S> crate::FoldChallengeSeedPreview for AkitaTranscript<F, S>
+impl<F, S> crate::TranscriptChallengePreview for AkitaTranscript<F, S>
 where
     F: Field + CanonicalEncoding + CanonicalBytes,
     S: Default + DuplexSpongeInterface<U = u8> + Send + 'static,
 {
-    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8> {
-        Self::preview_fold_challenge_seed(self, absorb_payloads)
+    fn preview_challenge_block(
+        &self,
+        absorb_payloads: &[&[u8]],
+    ) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        Self::preview_challenge_block(self, absorb_payloads)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        grinding_predicate_accepts, preview_grinding_predicate, search_grinding_nonce,
+        GRINDING_NONCE_SLACK_BITS,
+    };
     use jolt_field::{Prime128Offset275, Ring};
+    use std::num::NonZeroU8;
 
     type F = Prime128Offset275;
 
@@ -474,5 +496,77 @@ mod tests {
         expected.extend_from_slice(&8u64.to_le_bytes());
         expected.extend_from_slice(b"instance");
         assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn grinding_preview_live_and_verifier_replay_agree() {
+        let mut prover = AkitaTranscript::<F>::prover(b"grinding-test", b"instance");
+        let mut verifier = AkitaTranscript::<F>::verifier(b"grinding-test", b"instance");
+        prover.absorb_bytes(crate::label!("context"), b"fixed history");
+        verifier.absorb_bytes(crate::label!("context"), b"fixed history");
+
+        let grind_bits = 4;
+        let nonce_bits = grind_bits + GRINDING_NONCE_SLACK_BITS;
+        let nonce = search_grinding_nonce(&prover, grind_bits, nonce_bits).unwrap();
+        let preview = preview_grinding_predicate(&prover, grind_bits, nonce_bits, nonce).unwrap();
+        let live = Transcript::grinding_predicate(
+            &mut prover,
+            crate::labels::CHALLENGE_TAU0,
+            grind_bits,
+            nonce_bits,
+            nonce,
+        )
+        .unwrap();
+        let replay = Transcript::grinding_predicate(
+            &mut verifier,
+            crate::labels::CHALLENGE_TAU0,
+            grind_bits,
+            nonce_bits,
+            nonce,
+        )
+        .unwrap();
+
+        assert_eq!(preview, live);
+        assert_eq!(live, replay);
+        assert!(grinding_predicate_accepts(
+            &live,
+            NonZeroU8::new(grind_bits).unwrap()
+        ));
+
+        let prover_challenge =
+            prover.challenge_bytes(crate::labels::CHALLENGE_TAU0, SQUEEZE_CHUNK_LEN);
+        let verifier_challenge =
+            verifier.challenge_bytes(crate::labels::CHALLENGE_TAU0, SQUEEZE_CHUNK_LEN);
+        assert_eq!(prover_challenge, verifier_challenge);
+        assert_ne!(live.as_slice(), prover_challenge);
+    }
+
+    #[test]
+    fn grinding_preview_does_not_change_live_state() {
+        let mut previewed = AkitaTranscript::<F>::prover(b"grinding-test", b"instance");
+        let mut untouched = AkitaTranscript::<F>::prover(b"grinding-test", b"instance");
+        previewed.absorb_bytes(crate::label!("context"), b"fixed history");
+        untouched.absorb_bytes(crate::label!("context"), b"fixed history");
+
+        assert!(search_grinding_nonce(&previewed, 4, 11).is_some());
+        assert_eq!(
+            previewed.squeeze_bytes(crate::label!("next"), SQUEEZE_CHUNK_LEN),
+            untouched.squeeze_bytes(crate::label!("next"), SQUEEZE_CHUNK_LEN)
+        );
+    }
+
+    #[test]
+    fn zero_bit_grinding_is_a_transcript_no_op() {
+        let mut no_op = AkitaTranscript::<F>::prover(b"grinding-test", b"instance");
+        let mut untouched = AkitaTranscript::<F>::prover(b"grinding-test", b"instance");
+
+        assert_eq!(
+            Transcript::grinding_predicate(&mut no_op, crate::labels::CHALLENGE_TAU0, 0, 0, 0,),
+            None
+        );
+        assert_eq!(
+            no_op.squeeze_bytes(crate::label!("next"), SQUEEZE_CHUNK_LEN),
+            untouched.squeeze_bytes(crate::label!("next"), SQUEEZE_CHUNK_LEN)
+        );
     }
 }

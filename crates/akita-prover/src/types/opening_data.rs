@@ -503,7 +503,7 @@ mod tests {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                2,
+                1_484,
                 inner.ring_dimension(),
             );
         let outer = &pre.outer().matrix;

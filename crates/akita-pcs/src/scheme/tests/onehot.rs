@@ -504,7 +504,10 @@ where
             &opening_layout,
             &relation_geometry,
             root_commitment.witness_chunk.num_chunks,
-            akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
+            akita_types::RelationQuotientPlan::quotient_lift(
+                akita_types::r_decomp_levels::<OneHotF>(root_commitment.open().digits.log_basis),
+            )
+            .unwrap(),
         )
         .expect("group-by-chunk witness layout");
         assert_eq!(
@@ -867,6 +870,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
+    assert_eq!(
+        expected_shape.nonce_stream_bits,
+        actual_shape.nonce_stream_bits
+    );
     assert_eq!(
         expected_shape.root.opening_payload_coeffs,
         actual_shape.root.opening_payload_coeffs

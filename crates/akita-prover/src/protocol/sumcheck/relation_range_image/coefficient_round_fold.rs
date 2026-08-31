@@ -54,9 +54,7 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;
             let linear_index = lane * next_coeff_count + left;
-            let (t0, t1) = prover
-                .linear_terms
-                .pair_from_flat_index(linear_index, next_coeff_count);
+            let (t0, t1) = prover.linear_terms.pair_from_flat_index(linear_index);
             accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
         }
 
@@ -89,12 +87,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     pub(super) fn fuse_folded_coefficients_and_compute_next_round(
         &self,
         folded_witness: &[E],
+        weights: &RelationWeightFactorization<E>,
         next_alpha_factor: &[E],
         challenge: E,
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert!(self.current_coefficient_width() >= 2);
-        let old_coeff_count = self.common_alpha_factor.len();
+        let old_coeff_count = weights.common_alpha_factor().len();
         let next_coeff_count = old_coeff_count / 2;
         debug_assert_eq!(next_alpha_factor.len(), next_coeff_count);
         debug_assert_eq!(folded_witness.len(), self.live_lane_count * old_coeff_count);
@@ -113,7 +112,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map(|(lane, target)| {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = self.relation_lane_weights[lane];
+                let lane_weight = weights.relation_lane_weights()[lane];
                 if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(
                         self,
@@ -158,7 +157,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             for (lane, target) in output.chunks_mut(next_coeff_count).enumerate() {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
-                let lane_weight = self.relation_lane_weights[lane];
+                let lane_weight = weights.relation_lane_weights()[lane];
                 let round_terms = if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(
                         self,
