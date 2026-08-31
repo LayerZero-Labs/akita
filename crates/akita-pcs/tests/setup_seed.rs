@@ -16,7 +16,6 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use jolt_field::CanonicalBytes;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -28,6 +27,7 @@ use common::{
     dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
     run_on_large_stack, verify_input, F,
 };
+use jolt_field::CanonicalBytes;
 
 type Cfg = fp128::Dense;
 
