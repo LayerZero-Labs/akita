@@ -156,7 +156,8 @@ macro_rules! small_field_test {
                 for &final_nv in &[$($fnv),+] {
                     let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
                         final_nv.max(PRE_NV),
-                        2, AkitaSetupSeed::DEFAULT,
+                        2,
+                        AkitaSetupSeed::DEFAULT,
                     )
                     .expect("setup");
                     let prepared =
@@ -337,7 +338,8 @@ macro_rules! small_field_test {
                 for &final_nv in &[$($fnv),+] {
                     let setup = AkitaCommitmentScheme::<$cfg>::setup_prover(
                         final_nv.max(PRE_NV),
-                        2, AkitaSetupSeed::DEFAULT,
+                        2,
+                        AkitaSetupSeed::DEFAULT,
                     )
                     .expect("setup");
                     let prepared =
