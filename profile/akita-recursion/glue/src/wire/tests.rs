@@ -1,6 +1,7 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
+use akita_types::sis::sis_table_key_for_linf_bound;
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
     CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
@@ -26,18 +27,17 @@ fn blob_prefix() -> Vec<u8> {
 }
 
 fn prefix_commitment_params() -> GroupOpenPhaseParams {
-    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-        SisTableKey {
-            policy: DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            role: SisMatrixRole::Inner,
-            ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
-            coeff_linf_bound: 32_767,
-        },
-        1,
+    let inner_key = sis_table_key_for_linf_bound(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisMatrixRole::Inner,
+        u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+        13_356,
     )
-    .expect("audited prefix A matrix");
+    .expect("audited prefix A bound");
+    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, 1)
+        .expect("audited prefix A matrix");
     let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,

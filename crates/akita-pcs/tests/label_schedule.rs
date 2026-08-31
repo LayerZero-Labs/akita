@@ -41,9 +41,15 @@ fn schedule_is_replayable_with_akita_labels() {
     let mut verifier = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let prover_challenges = run_akita_schedule(&mut prover);
     assert_eq!(prover_challenges, run_akita_schedule(&mut verifier));
+    #[cfg(feature = "transcript-blake2b")]
     let expected = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../fixtures/jolt-field-cutover/transcript.txt"
+    ));
+    #[cfg(feature = "transcript-keccak")]
+    let expected = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/jolt-field-cutover/transcript-keccak.txt"
     ));
     let actual = [
         prover_challenges.0.to_u64_checked().unwrap(),

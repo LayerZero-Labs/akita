@@ -19,7 +19,7 @@
 //! This is the quotient-lift oracle. Reduced evaluation instead compiles the
 //! complete ordinary-plus-compression relation weight `p(address)` over the
 //! padded flat domain. The sumcheck engine folds either representation through
-//! [`RelationWeightOracle`] while the witness and structured-linear terms keep
+//! `RelationWeightOracle` while the witness and structured-linear terms keep
 //! the same coefficient/lane geometry.
 //!
 //! If
