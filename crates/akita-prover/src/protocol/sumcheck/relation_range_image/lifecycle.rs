@@ -43,8 +43,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             stage1_point,
             range_image_evaluation,
             b,
-            vec![E::zero(); coeff_count],
-            vec![E::zero(); lane_capacity],
+            RelationWeightOracle::QuotientFactored(RelationWeightFactorization::new(
+                vec![E::zero(); coeff_count],
+                vec![E::zero(); lane_capacity],
+            )?),
             live_lane_count,
             lane_bits,
             coefficient_bits,
@@ -64,8 +66,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
-        common_alpha_factor: Vec<E>,
-        relation_lane_weights: Vec<E>,
+        relation_weights: RelationWeightOracle<E>,
         live_lane_count: usize,
         lane_bits: usize,
         coefficient_bits: usize,
@@ -104,17 +105,38 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 actual: stage1_point.len(),
             });
         }
-        if common_alpha_factor.len() != coeff_count {
-            return Err(AkitaError::InvalidSize {
-                expected: coeff_count,
-                actual: common_alpha_factor.len(),
-            });
-        }
-        if relation_lane_weights.len() != lane_capacity {
-            return Err(AkitaError::InvalidSize {
-                expected: lane_capacity,
-                actual: relation_lane_weights.len(),
-            });
+        match &relation_weights {
+            RelationWeightOracle::QuotientFactored(factorization) => {
+                if factorization.common_alpha_factor().len() != coeff_count {
+                    return Err(AkitaError::InvalidSize {
+                        expected: coeff_count,
+                        actual: factorization.common_alpha_factor().len(),
+                    });
+                }
+                if factorization.relation_lane_weights().len() != lane_capacity {
+                    return Err(AkitaError::InvalidSize {
+                        expected: lane_capacity,
+                        actual: factorization.relation_lane_weights().len(),
+                    });
+                }
+            }
+            RelationWeightOracle::ReducedDense(dense) => {
+                let domain_len = lane_capacity.checked_mul(coeff_count).ok_or_else(|| {
+                    AkitaError::InvalidInput("stage-2 relation domain overflow".into())
+                })?;
+                if dense.evaluations().len() != domain_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: domain_len,
+                        actual: dense.evaluations().len(),
+                    });
+                }
+                if dense.live_len() != witness_len {
+                    return Err(AkitaError::InvalidSize {
+                        expected: witness_len,
+                        actual: dense.live_len(),
+                    });
+                }
+            }
         }
         linear_terms.validate_len(witness_len)?;
 
@@ -127,30 +149,26 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
-            let (ordinary_relation_sum, structured_relation_sum) = relation_lane_weights
-                .iter()
-                .take(live_lane_count)
-                .enumerate()
-                .fold(
-                    (E::zero(), E::zero()),
-                    |(ordinary, structured), (lane, &lane_weight)| {
-                        common_alpha_factor.iter().enumerate().fold(
-                            (ordinary, structured),
-                            |(ordinary, structured), (coefficient, &alpha)| {
-                                let w = w_evals_compact
-                                    .get(lane * coeff_count + coefficient)
-                                    .expect("debug relation witness index is in bounds");
-                                let witness = E::from_i64(i64::from(w));
-                                (
-                                    ordinary + witness * lane_weight * alpha,
-                                    structured
-                                        + witness
-                                            * linear_terms.get(lane, coefficient, coeff_count),
-                                )
-                            },
-                        )
-                    },
-                );
+            let (ordinary_relation_sum, structured_relation_sum) =
+                (0..witness_len).fold((E::zero(), E::zero()), |(ordinary, structured), index| {
+                    let lane = index / coeff_count;
+                    let coefficient = index % coeff_count;
+                    let w = w_evals_compact
+                        .get(index)
+                        .expect("debug relation witness index is in bounds");
+                    let witness = E::from_i64(i64::from(w));
+                    let relation_weight = match &relation_weights {
+                        RelationWeightOracle::QuotientFactored(factorization) => {
+                            factorization.common_alpha_factor()[coefficient]
+                                * factorization.relation_lane_weights()[lane]
+                        }
+                        RelationWeightOracle::ReducedDense(dense) => dense.evaluations()[index],
+                    };
+                    (
+                        ordinary + witness * relation_weight,
+                        structured + witness * linear_terms.get(lane, coefficient, coeff_count),
+                    )
+                });
             if ordinary_relation_sum + structured_relation_sum
                 != relation_claim + linear_opening_claim
             {
@@ -166,27 +184,65 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
             .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
         let input_claim =
             batching_coeff * range_image_evaluation + relation_linear_claim + additional_claim;
-        let use_two_round_prefix = can_use_stage2_two_round_prefix(coefficient_bits, b);
+        let relation_state = match relation_weights {
+            RelationWeightOracle::QuotientFactored(weights) => {
+                let prefix = if can_use_stage2_two_round_prefix(coefficient_bits, b) {
+                    let proof = build_stage2_bivariate_skip_proof_from_m_compact(
+                        w_evals_compact.view(),
+                        weights.common_alpha_factor(),
+                        weights.relation_lane_weights(),
+                        &linear_terms,
+                        stage1_point,
+                        b,
+                        live_lane_count,
+                        lane_bits,
+                        coefficient_bits,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "stage-2 compact prefix is unavailable for the validated geometry"
+                                .into(),
+                        )
+                    })?;
+                    let skip_state = Stage2BivariateSkipState::new(
+                        &proof,
+                        stage1_point,
+                        range_image_evaluation,
+                        relation_linear_claim,
+                        batching_coeff,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "stage-2 compact prefix claim recovery failed".into(),
+                        )
+                    })?;
+                    QuotientPrefixState::Deferred(DeferredCompactPrefix {
+                        skip_state,
+                        phase: DeferredCompactPrefixPhase::Round0,
+                    })
+                } else {
+                    QuotientPrefixState::Disabled
+                };
+                RelationRoundState::QuotientFactored { weights, prefix }
+            }
+            RelationWeightOracle::ReducedDense(weights) => {
+                RelationRoundState::ReducedDense { weights }
+            }
+        };
 
         Ok(Self {
             witness_state: WitnessState::CompactPrefix(w_evals_compact),
             b,
-            batching_coeff,
-            range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
-            common_alpha_factor,
-            relation_lane_weights,
+            relation_state,
             additional_relation_terms,
             linear_terms,
             live_lane_count,
             lane_bits,
             num_vars,
-            relation_linear_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            compact_prefix_stage1_point: use_two_round_prefix.then(|| stage1_point.to_vec()),
-            deferred_compact_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
@@ -212,13 +268,21 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     }
 
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
-        if self.common_alpha_factor.len() != 1 || self.relation_lane_weights.len() != 1 {
-            return Err(AkitaError::InvalidProof);
-        }
         let witness = self.final_w_eval();
         let virtual_claim = self.split_eq.current_scalar() * witness * (witness + E::one());
-        let ordinary_relation =
-            witness * self.common_alpha_factor[0] * self.relation_lane_weights[0];
+        let ordinary_relation = witness
+            * match &self.relation_state {
+                RelationRoundState::QuotientFactored { weights, .. } => {
+                    match (
+                        weights.common_alpha_factor(),
+                        weights.relation_lane_weights(),
+                    ) {
+                        ([alpha], [lane]) => *alpha * *lane,
+                        _ => return Err(AkitaError::InvalidProof),
+                    }
+                }
+                RelationRoundState::ReducedDense { weights } => weights.terminal_weight()?,
+            };
         let linear_claim = witness * self.linear_terms.final_value()?;
         let additional = self
             .additional_relation_terms
@@ -234,12 +298,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let first_challenge = if self.rounds_completed == 0 {
                     None
                 } else {
-                    Some(
-                        self.deferred_compact_prefix
-                            .as_ref()
-                            .and_then(|prefix| prefix.first_challenge)
-                            .expect("compact round 1 requires the first prefix challenge"),
-                    )
+                    self.deferred_compact_prefix()
+                        .and_then(|prefix| match prefix.phase {
+                            DeferredCompactPrefixPhase::Round0 => None,
+                            DeferredCompactPrefixPhase::Round1 { first_challenge } => {
+                                Some(first_challenge)
+                            }
+                        })
                 };
                 additional.round_polynomial_compact(compact_witness.view(), first_challenge)
             }
@@ -307,7 +372,13 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
 
     #[inline]
     pub(crate) fn can_use_deferred_compact_prefix(&self) -> bool {
-        self.compact_prefix_stage1_point.is_some()
+        matches!(
+            self.relation_state,
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Deferred(_),
+                ..
+            }
+        )
     }
 
     #[inline]
@@ -373,46 +444,27 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         combined
     }
 
-    pub(super) fn ensure_deferred_compact_prefix(&mut self) -> &mut TwoRoundCompactPrefix<E> {
-        if self.deferred_compact_prefix.is_none() {
-            let stage1_point = self
-                .compact_prefix_stage1_point
-                .clone()
-                .expect("two-round prefix requested without cached stage-1 challenges");
-            let coefficient_bits = self.num_vars - self.lane_bits;
-            let compact_witness = match &self.witness_state {
-                WitnessState::CompactPrefix(compact_witness) => compact_witness.view(),
-                WitnessState::FoldedSuffix(_) => {
-                    panic!("two-round prefix can only build from compact witness")
-                }
-            };
-            let proof = build_stage2_bivariate_skip_proof_from_m_compact(
-                compact_witness,
-                &self.common_alpha_factor,
-                &self.relation_lane_weights,
-                &self.linear_terms,
-                &stage1_point,
-                self.b,
-                self.live_lane_count,
-                self.lane_bits,
-                coefficient_bits,
-            )
-            .expect("two-round prefix should be available");
-            let skip_state = Stage2BivariateSkipState::new(
-                &proof,
-                &stage1_point,
-                self.range_image_evaluation,
-                self.relation_linear_claim,
-                self.batching_coeff,
-            )
-            .expect("valid bivariate-skip state");
-            self.deferred_compact_prefix = Some(TwoRoundCompactPrefix {
-                skip_state,
-                first_challenge: None,
-            });
+    pub(super) fn deferred_compact_prefix(&self) -> Option<&DeferredCompactPrefix<E>> {
+        match &self.relation_state {
+            RelationRoundState::QuotientFactored {
+                prefix: QuotientPrefixState::Deferred(prefix),
+                ..
+            } => Some(prefix),
+            _ => None,
         }
-        self.deferred_compact_prefix
-            .as_mut()
-            .expect("two-round prefix should be initialized")
+    }
+
+    pub(super) fn finish_deferred_compact_prefix(&mut self) {
+        match &mut self.relation_state {
+            RelationRoundState::QuotientFactored { prefix, .. } => {
+                *prefix = QuotientPrefixState::Disabled;
+            }
+            RelationRoundState::ReducedDense { .. } => {}
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn disable_deferred_compact_prefix(&mut self) {
+        self.finish_deferred_compact_prefix();
     }
 }

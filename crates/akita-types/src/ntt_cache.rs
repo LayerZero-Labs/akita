@@ -31,8 +31,8 @@ mod prepared_artifact;
 
 #[cfg(test)]
 use exact::ifma52_cache_enabled;
-pub use exact::ntt_cache_requires_i16_tail;
 use exact::{exact_cache_plan, ifma52_cache_enabled_for_ring_dimension, prepare_exact_ntt_cache};
+pub use exact::{ntt_cache_requires_exactness_tail, planned_exact_ntt_cache_bytes};
 pub(crate) use prepared_artifact::decode_riscv64_scalar_q128_cache;
 pub use prepared_artifact::{
     build_riscv64_scalar_q128_cache_artifact, prepared_verifier_ntt_cache_metadata,
@@ -311,16 +311,16 @@ fn dense_i8_exact_ifma52_is_profitable(
     let capacity = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from));
     !capacity.supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
         && capacity
-            .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+            .with_prime_modulus(q128_primes()[0].p as u128)
             .supports_modulus(width, ring_dimension, field_modulus, rhs_abs_bound)
 }
 
 /// Whether a dense signed-i8 commitment should use one exact AVX-512 IFMA52
 /// accumulation instead of bounded portable CRT chunks.
 ///
-/// This selects only q128 rows that need the 14-bit tail for a complete IFMA52
-/// accumulation. AVX2, NEON, scalar execution, and rows that fit the base
-/// IFMA52 product retain the chunked i8 kernel.
+/// This selects only q128 rows that need the 30-bit tail for a complete IFMA52
+/// accumulation. AVX2, NEON, scalar execution, and rows that fit the three
+/// base IFMA52 limbs retain the chunked i8 kernel.
 pub fn dense_i8_commit_prefers_exact_ifma52(
     field_modulus: u128,
     ring_dimension: usize,
@@ -415,9 +415,9 @@ impl<'a, const D: usize> PreparedNttTailPairView<'a, D> {
 
 #[doc(hidden)]
 #[derive(Debug)]
-pub struct PreparedIfma52I16Tail<const D: usize> {
-    negacyclic: Vec<CyclotomicCrtNtt<i16, 1, D>>,
-    params: CrtNttParamSet<i16, 1, D>,
+pub struct PreparedIfma52Tail<W: PrimeWidth, const D: usize> {
+    negacyclic: Vec<CyclotomicCrtNtt<W, 1, D>>,
+    params: CrtNttParamSet<W, 1, D>,
 }
 
 /// One prepared NTT cache over the field-selected CRT profile.
@@ -474,7 +474,7 @@ enum PreparedNttCacheRepr<const D: usize> {
     #[non_exhaustive]
     Q32Ifma52 {
         neg: Ifma52NttMatrix<1, D>,
-        tail: Option<PreparedIfma52I16Tail<D>>,
+        tail: Option<PreparedIfma52Tail<i16, D>>,
     },
     #[non_exhaustive]
     Q64 {
@@ -497,7 +497,7 @@ enum PreparedNttCacheRepr<const D: usize> {
     #[non_exhaustive]
     Q128Ifma52 {
         neg: Ifma52NttMatrix<3, D>,
-        tail: Option<PreparedIfma52I16Tail<D>>,
+        tail: Option<PreparedIfma52Tail<i32, D>>,
     },
 }
 
@@ -589,11 +589,11 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             } => validate!(neg, cyc, params, tail, *exact),
             Self::Q128Ifma52 { neg, tail } => {
                 if neg.is_empty()
-                    || neg.has_i16_tail() != tail.is_some()
+                    || neg.has_i32_tail() != tail.is_some()
                     || tail.as_ref().is_some_and(|tail| {
                         tail.negacyclic.is_empty()
                             || tail.negacyclic.len() > neg.len()
-                            || tail.params.primes != [I16_TAIL_PRIME]
+                            || tail.params.primes != [q128_primes()[0]]
                     })
                 {
                     return Err(AkitaError::InvalidSetup(
@@ -636,7 +636,7 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
             Self::Q128Ifma52 { neg, tail, .. } => {
                 neg.cache_bytes()
                     + tail.as_ref().map_or(0, |tail| {
-                        tail.negacyclic.len() * D * core::mem::size_of::<i16>()
+                        tail.negacyclic.len() * D * core::mem::size_of::<i32>()
                     })
             }
         }
@@ -670,9 +670,9 @@ impl<const D: usize> PreparedNttCacheRepr<D> {
         }
     }
 
-    /// Whether the exactness tail was materialized.
+    /// Whether an exactness tail was materialized.
     #[must_use]
-    const fn has_i16_tail(&self) -> bool {
+    const fn has_exactness_tail(&self) -> bool {
         match self {
             Self::I16TailPair { .. } => true,
             Self::Q32 { tail, .. } => tail.is_some(),
@@ -815,10 +815,10 @@ impl<const D: usize> PreparedNttCache<D> {
         self.0.has_negacyclic()
     }
 
-    /// Whether the exactness tail was materialized.
+    /// Whether an exactness tail was materialized.
     #[must_use]
-    pub const fn has_i16_tail(&self) -> bool {
-        self.0.has_i16_tail()
+    pub const fn has_exactness_tail(&self) -> bool {
+        self.0.has_exactness_tail()
     }
 
     /// Whether this exact cache uses the AVX-512IFMA residue representation.
@@ -1010,6 +1010,27 @@ pub fn prepare_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usiz
     )
 }
 
+/// Prepare the exact-prefix negacyclic-only cache used by reduced-evaluation
+/// compressed commitments.
+///
+/// This uses the compression CRT selector because compression-only ring
+/// degrees need not belong to the ordinary protocol NTT ladder.
+#[tracing::instrument(
+    skip_all,
+    name = "prepare_reduced_compression_ntt_cache",
+    fields(ring_d = D, rings = matrix.as_slice().len())
+)]
+pub fn prepare_reduced_compression_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    prepare_ntt_cache_with_tail_prefix(
+        matrix,
+        NttCacheMode::Negacyclic,
+        None,
+        select_compression_crt_ntt_params::<F, D>()?,
+    )
+}
+
 fn prepare_ntt_cache_with_tail_prefix<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
@@ -1186,7 +1207,7 @@ impl VerifierNttCache {
         if metadata.ring_dimension != D
             || !prepared.has_negacyclic()
             || prepared.has_cyclic()
-            || prepared.has_i16_tail() != (metadata.tail_prefix_len > 0)
+            || prepared.has_exactness_tail() != (metadata.tail_prefix_len > 0)
         {
             return Err(AkitaError::InvalidSetup(
                 "trusted prepared verifier cache has inconsistent geometry".into(),
@@ -1235,8 +1256,8 @@ impl VerifierNttCache {
                 matrix.ring_d
             )));
         }
-        let with_i16_tail = ntt_cache_requires_i16_tail::<F, D>(width, rhs_abs_bound)?;
-        if with_i16_tail != (tail_prefix_len > 0) {
+        let with_exactness_tail = ntt_cache_requires_exactness_tail::<F, D>(width, rhs_abs_bound)?;
+        if with_exactness_tail != (tail_prefix_len > 0) {
             return Err(AkitaError::InvalidSetup(
                 "verifier tail prefix disagrees with exactness requirement".into(),
             ));
@@ -1282,7 +1303,7 @@ impl VerifierNttCache {
             Some(tail_prefix_len),
             select_crt_ntt_params::<F, D>()?,
         )?);
-        if prepared.has_i16_tail() != (tail_prefix_len > 0) {
+        if prepared.has_exactness_tail() != (tail_prefix_len > 0) {
             return Err(AkitaError::InvalidSetup(
                 "prepared verifier NTT layout disagrees with exactness selection".into(),
             ));

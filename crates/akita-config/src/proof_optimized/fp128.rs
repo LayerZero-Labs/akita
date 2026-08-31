@@ -12,7 +12,7 @@ pub type Field = Prime128OffsetA7F7;
 pub struct Dense;
 
 impl Dense {
-    pub const A_RING_DIMENSIONS: [usize; 4] = [64, 128, 256, 512];
+    pub const A_RING_DIMENSIONS: [usize; 5] = [64, 128, 256, 512, 1024];
     pub const B_RING_DIMENSIONS: [usize; 2] = [64, 128];
     pub const D_RING_DIMENSIONS: [usize; 2] = [64, 128];
 }

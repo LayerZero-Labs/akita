@@ -9,6 +9,7 @@ pub mod zgsa_tables;
 pub use gsa::gsa_squared_norms;
 pub(crate) use lgsa::lgsa_stable_dimension;
 pub use lgsa::{lgsa_squared_norms, lgsa_summary, LgsaSummary};
+pub(crate) use profile::is_q_vector_length;
 pub use profile::ShapeProfile;
 pub use zgsa::zgsa_squared_norms;
 

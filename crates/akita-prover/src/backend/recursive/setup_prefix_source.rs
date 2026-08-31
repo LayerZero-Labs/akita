@@ -154,7 +154,8 @@ fn checked_setup_prefix_ring_count<const D: usize>(
     natural_len: usize,
     n_prefix: usize,
 ) -> Result<usize, AkitaError> {
-    if D == 0 || natural_len > n_prefix || !n_prefix.is_multiple_of(D) {
+    akita_types::validate_setup_prefix_domain(natural_len, n_prefix)?;
+    if D == 0 || !n_prefix.is_multiple_of(D) {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix length is incompatible with its ring layout".to_string(),
         ));
@@ -176,21 +177,9 @@ fn setup_prefix_fold_geometry<const D: usize>(
     source_ring_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let geometry = &slot.id.commitment_profile;
-    geometry.validate(
-        slot.id
-            .commitment_profile
-            .inner
-            .matrix
-            .sis_modulus_profile()
-            .field_bits(),
-    )?;
-    if slot.id.d_setup() != D
-        || geometry.group.num_polynomials() != 1
-        || geometry.blocks.live_ring_elements_per_claim != source_ring_len
-        || geometry.blocks.positions_per_block == 0
-        || geometry.blocks.live_blocks
-            != source_ring_len.div_ceil(geometry.blocks.positions_per_block)
-    {
+    geometry.validate(geometry.inner.matrix.sis_modulus_profile().field_bits())?;
+    geometry.validate_setup_prefix_geometry(slot.id.natural_len)?;
+    if slot.id.d_setup() != D || geometry.blocks.live_ring_elements_per_claim != source_ring_len {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix source disagrees with frozen block geometry".into(),
         ));
@@ -707,13 +696,17 @@ mod tests {
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
         let inner = &params.inner().matrix;
+        let inner_bound =
+            *akita_types::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
+                .first()
+                .expect("audited setup-prefix A bound");
         params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner.sis_table_key().unwrap().table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            inner_bound,
             D,
         );
         let outer = &params.outer().matrix;

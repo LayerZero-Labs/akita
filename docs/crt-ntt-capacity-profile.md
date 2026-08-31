@@ -26,9 +26,10 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | --- | --- | ---: | ---: | ---: | --- | ---: |
 | Q32-reference/4xi16 | comparison only | 4 | i16 | 2^32 - 99 | `15361, 13313, 12289, 11777` | 54.72 |
 | Q32/2xi32 | production | 2 | i32 | 2^32 - 99 | `1073692673, 1073668097` | 60.00 |
-| Q64/3xi32 | production | 3 | i32 | 2^64 - 59 | `1073692673, 1073668097, 1073707009` | 90.00 |
-| Q128/5xi32 | portable production | 5 | i32 | 2^128 - 2^32 + 22537 | `1073692673, 1073668097, 1073707009, 1073738753, 1073732609` | 150.00 |
-| Q128/3xu64-IFMA52 | AVX-512 exact cache | 3 | u64 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897` | 150.00 |
+| Q64/3xi32 | production | 3 | i32 | 2^64 - 59 | `1073692673, 1073668097, 1073655809` | 90.00 |
+| Q128/6xi32 | portable production | 6 | i32 | 2^128 - 2^32 + 22537 | `1073707009, 1073698817, 1073692673, 1073682433, 1073668097, 1073655809` | 180.00 |
+| Q128/3xu64-IFMA52 | AVX-512 base cache | 3 | u64 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897` | 150.00 |
+| Q128/3xu64+1xi32-IFMA52 | AVX-512 hybrid exact cache | 4 | 3xu64+1xi32 | 2^128 - 2^32 + 22537 | `1125899906826241, 1125899906629633, 1125899905744897, 1073707009` | 180.00 |
 
 ## Safe Widths
 
@@ -48,32 +49,46 @@ fallback for centered `z_pre` values; zero means one centered term does not fit.
 | Q64/3xi32 | 3 | i32 | 256 | 2,047 | 2,047 | 7 |
 | Q64/3xi32 | 3 | i32 | 512 | 1,023 | 1,023 | 3 |
 | Q64/3xi32 | 3 | i32 | 1024 | 511 | 511 | 1 |
-| Q128/5xi32 | 5 | i32 | 64 | 511 | 511 | 1 |
-| Q128/5xi32 | 5 | i32 | 128 | 255 | 255 | 0 |
-| Q128/5xi32 | 5 | i32 | 256 | 127 | 127 | 0 |
-| Q128/5xi32 | 5 | i32 | 512 | 63 | 63 | 0 |
+| Q64/3xi32 | 3 | i32 | 2048 | 255 | 255 | 0 |
+| Q128/6xi32 | 6 | i32 | 64 | 549,578,630,967 | 549,578,630,967 | 2,146,791,527 |
+| Q128/6xi32 | 6 | i32 | 128 | 274,789,315,483 | 274,789,315,483 | 1,073,395,763 |
+| Q128/6xi32 | 6 | i32 | 256 | 137,394,657,741 | 137,394,657,741 | 536,697,881 |
+| Q128/6xi32 | 6 | i32 | 512 | 68,697,328,870 | 68,697,328,870 | 268,348,940 |
+| Q128/6xi32 | 6 | i32 | 1024 | 34,348,664,435 | 34,348,664,435 | 134,174,470 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 64 | 511 | 511 | 1 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 128 | 255 | 255 | 0 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 256 | 127 | 127 | 0 |
 | Q128/3xu64-IFMA52 | 3 | u64 | 512 | 63 | 63 | 0 |
+| Q128/3xu64-IFMA52 | 3 | u64 | 1024 | 31 | 31 | 0 |
+| Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 64 | 549,737,987,960 | 549,737,987,960 | 2,147,414,015 |
+| Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 128 | 274,868,993,980 | 274,868,993,980 | 1,073,707,007 |
+| Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 256 | 137,434,496,990 | 137,434,496,990 | 536,853,503 |
+| Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 512 | 68,717,248,495 | 68,717,248,495 | 268,426,751 |
+| Q128/3xu64+1xi32-IFMA52 | 4 | 3xu64+1xi32 | 1024 | 34,358,624,247 | 34,358,624,247 | 134,213,375 |
 
 ## Q128 Balanced-Digit Capacity
 
-The base CRT products for portable and AVX-512 exact accumulation are both
-about 150 bits. Their mathematical thresholds are therefore almost the same.
-A row above the listed width needs the 14-bit tail prime `12289` if it is
-accumulated exactly in one pass.
+The portable and hybrid AVX-512 exact products are both about 180 bits.
+The hybrid retains three hot IFMA limbs and adds one 30-bit tail only for
+rows that exceed the roughly 150-bit IFMA base product.
 
 | Representation | D | log basis 3 | 4 | 5 | 6 | 7 | 8 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Q128/5xi32 | 64 | 16,381 | 8,190 | 4,095 | 2,047 | 1,023 | 511 |
-| Q128/5xi32 | 128 | 8,190 | 4,095 | 2,047 | 1,023 | 511 | 255 |
-| Q128/5xi32 | 256 | 4,095 | 2,047 | 1,023 | 511 | 255 | 127 |
-| Q128/5xi32 | 512 | 2,047 | 1,023 | 511 | 255 | 127 | 63 |
+| Q128/6xi32 | 64 | 17,586,516,190,962 | 8,793,258,095,481 | 4,396,629,047,740 | 2,198,314,523,870 | 1,099,157,261,935 | 549,578,630,967 |
+| Q128/6xi32 | 128 | 8,793,258,095,481 | 4,396,629,047,740 | 2,198,314,523,870 | 1,099,157,261,935 | 549,578,630,967 | 274,789,315,483 |
+| Q128/6xi32 | 256 | 4,396,629,047,740 | 2,198,314,523,870 | 1,099,157,261,935 | 549,578,630,967 | 274,789,315,483 | 137,394,657,741 |
+| Q128/6xi32 | 512 | 2,198,314,523,870 | 1,099,157,261,935 | 549,578,630,967 | 274,789,315,483 | 137,394,657,741 | 68,697,328,870 |
+| Q128/6xi32 | 1024 | 1,099,157,261,935 | 549,578,630,967 | 274,789,315,483 | 137,394,657,741 | 68,697,328,870 | 34,348,664,435 |
 | Q128/3xu64-IFMA52 | 64 | 16,383 | 8,191 | 4,095 | 2,047 | 1,023 | 511 |
 | Q128/3xu64-IFMA52 | 128 | 8,191 | 4,095 | 2,047 | 1,023 | 511 | 255 |
 | Q128/3xu64-IFMA52 | 256 | 4,095 | 2,047 | 1,023 | 511 | 255 | 127 |
 | Q128/3xu64-IFMA52 | 512 | 2,047 | 1,023 | 511 | 255 | 127 | 63 |
+| Q128/3xu64-IFMA52 | 1024 | 1,023 | 511 | 255 | 127 | 63 | 31 |
+| Q128/3xu64+1xi32-IFMA52 | 64 | 17,591,615,614,720 | 8,795,807,807,360 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 |
+| Q128/3xu64+1xi32-IFMA52 | 128 | 8,795,807,807,360 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 |
+| Q128/3xu64+1xi32-IFMA52 | 256 | 4,397,903,903,680 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 | 137,434,496,990 |
+| Q128/3xu64+1xi32-IFMA52 | 512 | 2,198,951,951,840 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 | 137,434,496,990 | 68,717,248,495 |
+| Q128/3xu64+1xi32-IFMA52 | 1024 | 1,099,475,975,920 | 549,737,987,960 | 274,868,993,980 | 137,434,496,990 | 68,717,248,495 | 34,358,624,247 |
 
 ## Dense q128 Commitment Dispatch
 
@@ -83,10 +98,11 @@ materializing an exact cache for digits that already fit in i8.
 
 For balanced digits with log basis 1 through 8:
 
-- Scalar, AVX2, and NEON backends use the portable five-prime chunked i8
+- Scalar, AVX2, and NEON backends use the portable six-prime chunked i8
   accumulation.
 - An AVX-512IFMA backend uses one exact accumulation for a q128 row when the
-  three-prime IFMA product is too small but the product with 12289 fits.
+  three-prime IFMA product is too small but the product with the 30-bit
+  tail prime 1073707009 fits.
 - All other rows stay chunked. Each chunk reconstructs before the next chunk,
   so the complete row does not need the tail prime.
 - The block-parallel kernel still exposes independent blocks to Rayon when the
@@ -95,40 +111,6 @@ For balanced digits with log basis 1 through 8:
 Log bases 9 through 16 require exact i16 digits on every backend because i8
 cannot represent those balanced digits. The tail is still added only when the
 exact capacity check requires it.
-
-### Production root shapes
-
-| Variables | D | Log basis | Live blocks | Complete row width | Portable aligned chunk | Chunks |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 26 | 256 | 7 | 256 | 4,864 | 247 | 20 |
-| 28 | 512 | 7 | 512 | 9,728 | 114 | 86 |
-| 30 | 512 | 7 | 1,024 | 19,456 | 114 | 171 |
-
-All three complete rows exceed the base capacity and fit after adding 12289.
-They therefore use exact IFMA52 accumulation on eligible AVX-512 hosts and the
-listed bounded chunks on scalar, AVX2, and NEON hosts.
-
-### Measurement evidence
-
-Measurements were collected on 2026-08-21 from the PR 430 optimization branch.
-The measurements use the same production q128 schedule before and after the
-candidate exact-tail dispatch. Each current AVX-512 result is the median of
-three interleaved samples after one warmup.
-
-| Backend and workload | Chunked i8 commit | Exact commit | Change |
-| --- | ---: | ---: | ---: |
-| Apple NEON, q128 nv26 | 1.163 s | 2.489 s | 114% slower |
-| Zen 5 AVX-512IFMA, q128 nv26 | 1.296 s | 1.052 s | 18.8% faster |
-| Zen 5 AVX-512IFMA, q128 nv28 | 5.158 s | 3.562 s | 30.9% faster |
-| Zen 5 AVX-512IFMA, q128 nv30 | 20.173 s | 14.359 s | 28.8% faster |
-| Zen 5 AVX2, q128 nv26 to nv30 | baseline | candidate | 29% to 32% faster |
-| Hosted 32-thread AVX2, q128 nv28 | baseline | candidate | 16.8% slower |
-
-On the AVX-512 run, exact accumulation increased setup by 0.051 s, 0.101 s,
-and 0.239 s at nv26, nv28, and nv30. Prepared-cache bytes increased by 29% to
-32%, while peak RSS increased by 1.6% to 5.5%. The durable policy therefore
-selects this trade only from AVX-512IFMA capability and the exact capacity
-bound. It does not dispatch on a host name or a particular variable count.
 
 ## Q32 Experiment
 

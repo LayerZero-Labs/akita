@@ -60,7 +60,7 @@ where
         + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
@@ -68,7 +68,7 @@ where
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_batch)?;
+    let opening_method = root_params.uniform_opening_method(&opening_batch)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -87,6 +87,7 @@ where
         claims,
         false,
         transcript,
+        0,
         || validate_packing_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
         basis,
@@ -141,7 +142,7 @@ where
         + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
@@ -159,7 +160,7 @@ where
     let stack = stacks.prove_stack_at_level(0);
     let root_params = &scheduled.params;
     let opening_layout = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_layout)?;
+    let opening_method = root_params.uniform_opening_method(&opening_layout)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }

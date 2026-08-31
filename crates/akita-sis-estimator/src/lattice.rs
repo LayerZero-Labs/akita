@@ -4,7 +4,7 @@ use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
 
 use crate::{
-    config::{EstimateConfig, ShapeModel},
+    config::{EstimateConfig, OptimizerConfig, SearchMode, ShapeModel},
     cost::{CostValue, EstimateTag, LatticeCost, LogCost},
     error::{EstimatorError, Result},
     math::{erf, log2_positive, sis_trivially_easy},
@@ -13,10 +13,12 @@ use crate::{
     reduction::{
         log2_bkz_cost, log2_to_cost_value, short_vectors_for, validate_infinity_reduction,
     },
-    simulator::{infinity_shape_profile, lgsa_summary, validate_infinity_shape, LgsaSummary},
+    simulator::{
+        infinity_shape_profile, is_q_vector_length, lgsa_summary, validate_infinity_shape,
+        LgsaSummary,
+    },
 };
 
-const Q_VECTOR_TOLERANCE: f64 = 1e-8;
 const UNIT_VECTOR_TOLERANCE: f64 = 1e-8;
 const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
 // Pinned lattice-estimator computes the sieve floor as Sage RR(1e-100), which
@@ -24,10 +26,9 @@ const MIN_SIEVE_LOG2: f64 = -100.0 * std::f64::consts::LOG2_10;
 const SAGE_RR_MAX_LOG2: f64 = 1024.0;
 // The compact summary is numerically equivalent for the observables consumed
 // by the infinity probability path (see the simulator parity test). Keeping
-// dense sorting below this threshold prevents medium-width rows from spending
-// minutes sorting thousands of profile entries per optimizer probe.
+// dense sorting below this threshold preserves lattice-estimator rounding for
+// parity fixtures while avoiding wide-profile allocations.
 const MAX_DENSE_PROFILE_DIM: u64 = 1_000;
-
 /// Cached numeric values reused across optimizer probes for one modulus.
 #[derive(Clone, Copy, Debug)]
 struct EvalScratch {
@@ -58,11 +59,20 @@ pub fn cost_infinity_fixed(
             reason: "SIS trivially easy: length_bound must be below (q - 1) / 2".to_string(),
         });
     }
-    let m = params.m.ok_or(EstimatorError::InvalidParameter {
-        field: "m",
-        reason: "fixed infinity cost requires an explicit column count m".to_string(),
-    })?;
-    let lattice_dimension = config.lattice_dimension.unwrap_or(m);
+    let (lattice_dimension, zeta_stop) = infinity_lattice_domain(params, config)?;
+    let lattice_estimator_parity_search = matches!(
+        config.optimizer,
+        OptimizerConfig::OptimizeZeta {
+            zeta: SearchMode::PythonLocalMinimum,
+            ..
+        }
+    );
+    if zeta >= zeta_stop && !lattice_estimator_parity_search {
+        return Err(EstimatorError::InvalidParameter {
+            field: "zeta",
+            reason: "zeta must leave an effective lattice dimension greater than n".to_string(),
+        });
+    }
     let effective_dimension =
         lattice_dimension
             .checked_sub(zeta)
@@ -70,6 +80,7 @@ pub fn cost_infinity_fixed(
                 field: "zeta",
                 reason: "zeta must not exceed the lattice dimension".to_string(),
             })?;
+    let uses_small_box = infinity_uses_small_box(params, effective_dimension)?;
     if effective_dimension < u64::from(beta) {
         return Ok(proven_above_target_cost(
             params,
@@ -84,14 +95,23 @@ pub fn cost_infinity_fixed(
     let short = short_vectors_for(config.red_cost_model, beta, reduction_dimension)?;
     let bkz_log2 = log2_bkz_cost(config.red_cost_model, beta, reduction_dimension)?;
 
+    let compact_lgsa_search = matches!(
+        config.optimizer,
+        OptimizerConfig::OptimizeZeta {
+            zeta: SearchMode::Exhaustive
+                | SearchMode::ExhaustiveParallel
+                | SearchMode::ProvenPruned,
+            ..
+        }
+    );
     let log_trial_prob = if config.red_shape_model == ShapeModel::Lgsa
-        && effective_dimension > MAX_DENSE_PROFILE_DIM
+        && (compact_lgsa_search || effective_dimension > MAX_DENSE_PROFILE_DIM)
     {
         let summary = lgsa_summary(effective_dimension, identity_vectors, &params.q, beta)?;
         infinity_log_trial_probability_lgsa_summary(
             scratch.log_q,
             length_bound,
-            lattice_dimension,
+            uses_small_box,
             &summary,
             short.rho,
             short.sieve_dim,
@@ -116,7 +136,7 @@ pub fn cost_infinity_fixed(
         infinity_log_trial_probability(
             scratch.log_q,
             length_bound,
-            lattice_dimension,
+            uses_small_box,
             effective_dimension,
             profile.squared_norms(),
             short.rho,
@@ -161,6 +181,87 @@ pub fn cost_infinity_fixed(
     })
 }
 
+/// Return the lattice dimension and exclusive valid zeta bound.
+///
+/// The q-ary SIS embedding has `d - n` identity vectors. An effective
+/// dimension at or below `n` is not a tall SIS lattice and cannot be priced by
+/// this attack model. The returned zeta interval is therefore
+/// `0..lattice_dimension - n`.
+pub(crate) fn infinity_lattice_domain(
+    params: &SisParameters,
+    config: &EstimateConfig,
+) -> Result<(u64, u64)> {
+    let m = params.m.ok_or(EstimatorError::InvalidParameter {
+        field: "m",
+        reason: "infinity lattice estimation requires an explicit column count m".to_string(),
+    })?;
+    let lattice_dimension = config.lattice_dimension.unwrap_or(m);
+    if lattice_dimension > m {
+        return Err(EstimatorError::InvalidParameter {
+            field: "lattice_dimension",
+            reason: "lattice dimension must not exceed m".to_string(),
+        });
+    }
+    let zeta_stop = lattice_dimension
+        .checked_sub(u64::from(params.n))
+        .filter(|stop| *stop > 0)
+        .ok_or(EstimatorError::InvalidParameter {
+            field: "lattice_dimension",
+            reason: "infinity lattice estimation requires lattice_dimension > n".to_string(),
+        })?;
+    Ok((lattice_dimension, zeta_stop))
+}
+
+/// Return whether the reduced infinity-norm instance uses the small-box
+/// probability formula.
+pub(crate) fn infinity_uses_small_box(
+    params: &SisParameters,
+    effective_dimension: u64,
+) -> Result<bool> {
+    let log_dimension = log2_positive(effective_dimension as f64);
+    let log_q_squared = 2.0 * crate::math::log2_biguint(&params.q);
+    Ok(match &params.length_bound {
+        Bound::Integer(bound) => {
+            let log_lhs = log_dimension + 2.0 * crate::math::log2_biguint(bound);
+            log_comparison(log_lhs, log_q_squared).unwrap_or_else(|| {
+                BigUint::from(effective_dimension) * bound * bound <= &params.q * &params.q
+            })
+        }
+        Bound::Rational {
+            numerator,
+            denominator,
+        } => {
+            let log_lhs = log_dimension + 2.0 * crate::math::log2_biguint(numerator);
+            let log_rhs = log_q_squared + 2.0 * crate::math::log2_biguint(denominator);
+            log_comparison(log_lhs, log_rhs).unwrap_or_else(|| {
+                BigUint::from(effective_dimension) * numerator * numerator
+                    <= &params.q * &params.q * denominator * denominator
+            })
+        }
+        Bound::SqrtInteger(radicand) => {
+            let log_lhs = log_dimension + crate::math::log2_biguint(radicand);
+            log_comparison(log_lhs, log_q_squared).unwrap_or_else(|| {
+                BigUint::from(effective_dimension) * radicand <= &params.q * &params.q
+            })
+        }
+        Bound::Float(bound) => {
+            (effective_dimension as f64).sqrt() * bound
+                <= 2.0_f64.powf(crate::math::log2_biguint(&params.q))
+        }
+    })
+}
+
+fn log_comparison(log_lhs: f64, log_rhs: f64) -> Option<bool> {
+    const EXACT_FALLBACK_WINDOW: f64 = 1e-8;
+    if log_lhs < log_rhs - EXACT_FALLBACK_WINDOW {
+        Some(true)
+    } else if log_lhs > log_rhs + EXACT_FALLBACK_WINDOW {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 fn validate_infinity_profile(config: &EstimateConfig) -> Result<()> {
     validate_infinity_reduction(config.red_cost_model)?;
     validate_infinity_shape(config.red_shape_model)
@@ -189,14 +290,16 @@ fn length_bound_as_f64(bound: &Bound) -> Result<f64> {
 fn infinity_log_trial_probability(
     log_q: f64,
     length_bound: f64,
-    lattice_dimension: u64,
+    uses_small_box: bool,
     effective_dimension: u64,
     profile: &[f64],
     rho: f64,
     sieve_dim: u32,
 ) -> Result<f64> {
     let d_ = effective_dimension as f64;
-    if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
+    // The probability experiment runs after zeta coordinates have been
+    // projected away, so its small-box condition uses the active dimension.
+    if uses_small_box {
         let log2_sigma =
             log2_positive(rho) + 0.5 * log2_positive(profile[0]) - 0.5 * log2_positive(d_);
         let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
@@ -209,13 +312,13 @@ fn infinity_log_trial_probability(
 fn infinity_log_trial_probability_lgsa_summary(
     log_q: f64,
     length_bound: f64,
-    lattice_dimension: u64,
+    uses_small_box: bool,
     summary: &LgsaSummary,
     rho: f64,
     sieve_dim: u32,
 ) -> Result<f64> {
     let d_ = summary.effective_dimension as f64;
-    if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
+    if uses_small_box {
         let log2_sigma = log2_positive(rho) + summary.first_log2_norm - 0.5 * log2_positive(d_);
         let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
         Ok(d_ * log2_erf_from_log2_arg(log2_erf_arg))
@@ -255,12 +358,7 @@ fn dilithium_log_trial_probability(
     sieve_dim: u32,
 ) -> Result<f64> {
     let q_f = 2.0_f64.powf(log_q);
-    let r0 = profile[0];
-    let idx_start = if (r0.sqrt() - q_f).abs() < Q_VECTOR_TOLERANCE {
-        profile.iter().position(|value| *value < r0).unwrap_or(0)
-    } else {
-        0
-    };
+    let idx_start = q_vector_prefix_len(profile, q_f);
     let idx_end = profile
         .iter()
         .rposition(|value| value.sqrt() > 1.0 + UNIT_VECTOR_TOLERANCE)
@@ -271,6 +369,15 @@ fn dilithium_log_trial_probability(
     let mut log_trial_prob = log2_erf_from_log2_arg(log2_erf_arg) * gaussian_coords;
     log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
     Ok(log_trial_prob)
+}
+
+fn q_vector_prefix_len(profile: &[f64], q: f64) -> usize {
+    let r0 = profile[0];
+    if is_q_vector_length(r0.sqrt(), q) {
+        profile.iter().position(|value| *value < r0).unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -415,11 +522,137 @@ mod tests {
     }
 
     #[test]
+    fn infinity_domain_rejects_non_tall_and_oversized_dimensions() {
+        let square = SisParameters::try_new(
+            64,
+            akita_q32(),
+            Some(64),
+            Bound::from_u64(15),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        assert!(matches!(
+            cost_infinity_fixed(40, &square, 0, &sample_config()),
+            Err(EstimatorError::InvalidParameter {
+                field: "lattice_dimension",
+                ..
+            })
+        ));
+
+        let tall = SisParameters::try_new(
+            64,
+            akita_q32(),
+            Some(128),
+            Bound::from_u64(15),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        assert!(matches!(
+            cost_infinity_fixed(
+                40,
+                &tall,
+                0,
+                &EstimateConfig {
+                    lattice_dimension: Some(129),
+                    ..sample_config()
+                }
+            ),
+            Err(EstimatorError::InvalidParameter {
+                field: "lattice_dimension",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn infinity_domain_rejects_zeta_that_removes_tallness() {
+        let params = SisParameters::try_new(
+            64,
+            akita_q32(),
+            Some(128),
+            Bound::from_u64(15),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        let strict_config = EstimateConfig {
+            optimizer: OptimizerConfig::OptimizeZeta {
+                beta: SearchMode::Exhaustive,
+                zeta: SearchMode::Exhaustive,
+            },
+            ..sample_config()
+        };
+        assert!(cost_infinity_fixed(40, &params, 63, &strict_config).is_ok());
+        assert!(matches!(
+            cost_infinity_fixed(40, &params, 64, &strict_config),
+            Err(EstimatorError::InvalidParameter { field: "zeta", .. })
+        ));
+    }
+
+    #[test]
+    fn probability_regime_uses_dimension_remaining_after_zeta() {
+        let original_dimension = 65_537_u64;
+        let zeta = 57_345_u64;
+        let effective_dimension = original_dimension - zeta;
+        let length_bound = (1_u64 << 24) - 1;
+        let q = akita_q32();
+        let q_f = q.to_f64().unwrap();
+
+        assert!((original_dimension as f64).sqrt() * length_bound as f64 > q_f);
+        assert!((effective_dimension as f64).sqrt() * length_bound as f64 <= q_f);
+
+        let params = SisParameters::try_new(
+            1_024,
+            q,
+            Some(original_dimension),
+            Bound::from_u64(length_bound),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+        let config = EstimateConfig {
+            red_cost_model: ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
+            },
+            red_shape_model: ShapeModel::Lgsa,
+            ..EstimateConfig::default()
+        };
+        let cost = cost_infinity_fixed(343, &params, zeta, &config).unwrap();
+
+        assert_eq!(cost.d, effective_dimension);
+        assert!((cost.rop.log2().unwrap() - 118.916_112_523_987).abs() < 1e-9);
+    }
+
+    #[test]
+    fn small_box_comparison_is_exact_at_integer_boundary() {
+        let params = SisParameters::try_new(
+            1,
+            BigUint::from(1_u8) << 32,
+            Some(65_537),
+            Bound::from_u64(1_u64 << 24),
+            SisNorm::Infinity,
+        )
+        .unwrap();
+
+        assert!(infinity_uses_small_box(&params, 65_536).unwrap());
+        assert!(!infinity_uses_small_box(&params, 65_537).unwrap());
+    }
+
+    #[test]
     fn log2_erf_stays_finite_for_tiny_arguments() {
         let log2_arg = -1_000.0;
         let log2_erf = log2_erf_from_log2_arg(log2_arg);
         assert!(log2_erf.is_finite());
         assert!(log2_erf < -999.0);
         assert!(log2_erf > -1_001.0);
+    }
+
+    #[test]
+    fn reconstructed_q64_prefix_uses_scale_aware_detection() {
+        let q = 2.0_f64.powi(64);
+        let reconstructed_q = q + 28_672.0;
+        let r0 = reconstructed_q * reconstructed_q;
+        let profile = [r0, r0, (q - 2.0_f64.powi(40)).powi(2), 4.0];
+
+        assert_eq!(q_vector_prefix_len(&profile, q), 2);
+        assert!(!is_q_vector_length(profile[2].sqrt(), q));
     }
 }

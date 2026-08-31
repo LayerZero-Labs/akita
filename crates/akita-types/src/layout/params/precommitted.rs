@@ -35,6 +35,12 @@ pub enum OpeningFamily<Trace, Packing> {
 }
 
 impl OpeningMethod {
+    /// Whether this method uses extension-opening reduction for the field tower.
+    #[must_use]
+    pub const fn requires_extension_opening_reduction(self, extension_degree: usize) -> bool {
+        matches!(self, Self::EvaluationTrace) && extension_degree > 1
+    }
+
     pub(crate) fn append_descriptor_bytes(self, bytes: &mut Vec<u8>) {
         match self {
             Self::EvaluationTrace => bytes.push(0),
@@ -281,16 +287,7 @@ impl GroupOpenPhaseParams {
     ) -> Result<Self, AkitaError> {
         if let Some(natural_len) = setup_natural_len {
             layout.validate(policy.decomposition.field_bits())?;
-            let d_a = layout.inner.matrix.ring_dimension();
-            let n_prefix = 1usize
-                .checked_shl(layout.group.num_vars() as u32)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
-            crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
-            if natural_len.div_ceil(d_a) != layout.blocks.live_ring_elements_per_claim {
-                return Err(AkitaError::InvalidSetup(
-                    "setup-prefix natural length disagrees with its frozen commitment".into(),
-                ));
-            }
+            layout.validate_setup_prefix_geometry(natural_len)?;
         } else {
             layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
         }
@@ -404,6 +401,9 @@ impl GroupOpenPhaseParams {
     pub fn validate(&self) -> Result<(), AkitaError> {
         let field_bits = self.profile.inner.matrix.sis_modulus_profile().field_bits();
         self.profile.validate(field_bits)?;
+        if let Some(natural_len) = self.setup_natural_len {
+            self.profile.validate_setup_prefix_geometry(natural_len)?;
+        }
         if self.opening.fold_challenge_config.weight() != 0 {
             let challenge_dimension = match self.opening.opening_method {
                 OpeningMethod::EvaluationTrace => self.profile.inner.matrix.ring_dimension(),

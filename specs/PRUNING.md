@@ -79,23 +79,33 @@ The root live set is deliberately small and is synchronized with
 `book/src/foundations/spec-index.md` and `scripts/check-spec-references.sh`:
 
 1. `akita-compute-backend-metal.md`
-2. `dyadic-chunk-partition.md`
-3. `flat-public-matrix-and-exact-ntt-cache.md`
-4. `fold-linf-rejection.md`
-5. `heterogeneous-group-source-contracts.md`
-6. `large-digit-ntt-infrastructure.md`
-7. `packed-sumcheck.md`
-8. `role-native-projected-digit-layout.md`
-9. `runtime-ring-cutover.md`
-10. `selective-l2-fold-security-sizing.md`
-11. `setup-offloading-planner.md`
-12. `sis-quantum128-scalar-n-table.md`
-13. `structured-e-term.md`
-14. `subring-coefficient-packing.md`
+2. `certified-planner-architecture.md`
+3. `quotient-free-tail-ring-relations.md`
+4. `quotient-free-tail-ring-relations-implementation.md`
+5. `dyadic-chunk-partition.md`
+6. `flat-public-matrix-and-exact-ntt-cache.md`
+7. `fold-linf-rejection.md`
+8. `heterogeneous-group-source-contracts.md`
+9. `large-digit-ntt-infrastructure.md`
+10. `packed-sumcheck.md`
+11. `role-native-projected-digit-layout.md`
+12. `runtime-ring-cutover.md`
+13. `selective-l2-fold-security-sizing.md`
+14. `setup-offloading-planner.md`
+15. `sis-quantum128-scalar-n-table.md`
+16. `structured-e-term.md`
+17. `subring-coefficient-packing.md`
+18. `transcript-grinding.md`
 
-All 14 live specifications must pass the default dead-symbol scan. A record
+All 18 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
+
+The planner architecture owns two supporting files under
+`specs/certified-planner/`: `pruning-proofs.md` and `aerie-workload.md`. They
+inherit the root specification's lifecycle and do not count as separate live
+specifications. The default dead-symbol scan includes them because their
+contracts are normative while the parent is live.
 
 ## Cadence
 

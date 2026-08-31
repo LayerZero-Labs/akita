@@ -26,7 +26,7 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
     E: Field + AkitaSerialize,
-    S: FnMut(&mut T) -> E,
+    S: FnMut(&mut T) -> Result<E, AkitaError>,
 {
     transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
     proof.verify::<F, T, _>(

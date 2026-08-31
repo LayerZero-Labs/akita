@@ -206,7 +206,7 @@ pub fn emit_witness_r_planes<const D: usize>(
     if layout.r_rows().iter().any(|row| {
         row.geometry().polynomial_modulus_dimension() != D
             || row.geometry().coordinate_plane_count() != 1
-    }) || quotient_depth != layout.quotient_depth()
+    }) || Some(quotient_depth) != layout.quotient_depth()
     {
         return Err(AkitaError::InvalidSetup(
             "witness R source shape is malformed".into(),

@@ -24,9 +24,10 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_prover::{NttExecutionRequirements, NttOperationCluster};
 use akita_types::{
-    setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, FoldSchedule, NttCacheKey, NttTransformDomain, OpeningMethod,
-    PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
+    centered_quotient_requires_i16_tail, setup_matrix_capacity_for_schedule,
+    verifier_setup_matrix_capacity_for_schedule, AkitaScheduleLookupKey, FoldSchedule,
+    InnerCommitMatrixParams, NttCacheKey, NttTransformDomain, OpeningMethod, PolynomialGroupLayout,
+    SetupContributionMode, SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -68,10 +69,10 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     assert_eq!(setup_for_two.num_field_elements, 32_768);
     assert_eq!(setup_for_four.num_field_elements, 8_388_608);
     assert_eq!(prover.num_field_elements, 8_388_608);
-    assert_eq!(verifier.num_field_elements, 3_432_448);
+    assert_eq!(verifier.num_field_elements, 4_194_304);
     assert_eq!(
         incoming_prefixes,
-        [Some(8_388_608), None, None, None, None, None]
+        [Some(5_652_608), None, None, None, None, None]
     );
     // Exactly one fold carries a setup prefix, and it carries the length the
     // committed catalog states. These values deliberately pin the shipped row:
@@ -104,7 +105,7 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
 }
 
 #[test]
-fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
+fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
     let key = w8r2_profiling_key();
     let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key)
         .expect("W8R2 schedule")
@@ -122,7 +123,7 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
             witness_a.output_rank(),
             witness_a.input_width(),
         ),
-        (64, 5, 2_048),
+        (256, 2, 1_024),
     );
     assert_eq!(
         (
@@ -130,14 +131,14 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
             prefix_a.output_rank(),
             prefix_a.input_width(),
         ),
-        (64, 6, 4_096),
+        (256, 2, 704),
     );
 
     let witness_tail =
-        NttCacheKey::from_matrix_shape(64, 5, 2_048, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(256, 2, 1_024, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 witness tail key");
     let prefix_tail =
-        NttCacheKey::from_matrix_shape(64, 6, 4_096, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(256, 2, 704, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 prefix tail key");
     let requirements =
         NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
@@ -148,13 +149,41 @@ fn w8r2_ntt_requirements_cover_the_distributed_prefix_a_tail() {
                 && entry.key == expected
         })
     };
-    assert!(
-        !has_tail(witness_tail),
-        "the smaller recursive-witness bound must remain on the base CRT profile"
+    let expects_tail =
+        |matrix: &InnerCommitMatrixParams, log_basis: u32, num_digits_fold: usize| {
+            let (negative, positive) =
+                akita_types::sis::balanced_digit_representable_bounds(log_basis, num_digits_fold);
+            let rhs_abs_bound = u64::try_from(
+                negative
+                    .max(positive)
+                    .checked_mul(first_recursive.witness_chunk.num_chunks as u128)
+                    .expect("W8 aggregated fold bound"),
+            )
+            .expect("W8 aggregated fold bound fits u64");
+            centered_quotient_requires_i16_tail(
+                matrix.sis_modulus_profile(),
+                matrix.ring_dimension(),
+                rhs_abs_bound,
+            )
+            .expect("W8 tail decision")
+        };
+    assert_eq!(
+        has_tail(witness_tail),
+        expects_tail(
+            witness_a,
+            first_recursive.open().digits.log_basis,
+            first_recursive.num_digits_fold(),
+        ),
+        "recursive-witness prewarm must match its aggregated W8 bound"
     );
-    assert!(
+    assert_eq!(
         has_tail(prefix_tail),
-        "the incoming prefix must inherit the consuming W8 chunk count"
+        expects_tail(
+            prefix_a,
+            prefix.opening.log_basis_open,
+            prefix.opening.num_digits_fold,
+        ),
+        "incoming-prefix prewarm must inherit the consuming W8 chunk count"
     );
 }
 
@@ -187,24 +216,20 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             challenge_subring_dimension,
         )
         .expect("valid coefficient-packing geometry");
-        let expected_d_a = if level == 0 { 256 } else { 64 };
         assert_eq!(
             params.d_a(),
-            expected_d_a,
+            256,
             "level {level} must preserve its exact A-ring dimension"
         );
         assert_eq!(
             challenge_subring_dimension, 64,
             "level {level} must use the 64-coefficient challenge subring"
         );
-        let expected_packing_factor = if level == 0 { 4 } else { 1 };
-        assert_eq!(geometry.packing_factor(), expected_packing_factor);
-        if level == 0 {
-            assert!(
-                geometry.packing_factor() > 1,
-                "the root must use reduced-width coefficient packing"
-            );
-        }
+        assert_eq!(geometry.packing_factor(), 4);
+        assert!(
+            geometry.packing_factor() > 1,
+            "level {level} must use reduced-width coefficient packing"
+        );
     }
     assert_eq!(
         schedule.root.params.precommitted_groups().len(),

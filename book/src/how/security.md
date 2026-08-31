@@ -21,18 +21,46 @@ where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. The beta search checks values
-from 40 through the capped Euclidean baseline and stops once the monotone
-ADPS16 lower bound exceeds the best complete candidate. For each visited beta,
-the LGSA profile transition proves that the checked zeta endpoints cover the
-full zeta domain. A lookup for an unsupported policy, exact modulus profile,
-role, or scalar cell fails closed.
+above-target lower bound of at least 128 bits. The decision threshold is an
+explicit estimator configuration value supplied by the policy profile. The
+beta search checks values from 40 through the capped Euclidean baseline and
+stops once the monotone ADPS16 lower bound exceeds the best complete candidate.
+It also returns a classified above-target result once both the best visited
+attack and the lower bound for all unvisited beta values exceed 128 bits. For
+`B > 1`, the global infinity estimate includes the Euclidean baseline
+explicitly because `L2 <= B` implies `L-infinity <= B`; the baseline is
+therefore an attack, not only a search cap. The diagnostic compression cells
+with `B = 1` are the production instance of the `B <= 1` edge case, where this
+model has no defined Euclidean-dimension optimization. They do not substitute
+another bound: they omit that attack and sweep through the estimator's full
+supported beta range. For each visited beta,
+the optimizer exhausts every valid effective dimension before the LGSA profile
+stabilizes, checks both endpoints of the stable unit-vector tail, and checks
+both sides of any probability-regime transition inside that tail. The full
+valid tall-lattice domain is `0 <= zeta < d - n`. Fixed and exhaustive estimates
+reject an effective dimension `d - zeta <= n` instead of pricing a non-tall
+q-ary embedding. Width generation starts at the first tall ring width
+`width = rank + 1`. Narrower widths inherit a cutoff only when that tall
+instance is certified; if it already fails, the row emits cutoff zero and
+runtime must choose a higher rank. A lookup for an unsupported policy, exact
+modulus profile, role, or scalar cell fails closed.
 
 The checked-in policy table may use `local-minimum` only to discover a candidate
 boundary. Every emitted boundary and its immediate rejected successor are
 certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
+
+The estimator hardening described above changes the acceptance model. The
+checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
+and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+table digest, and dependent catalog identities bind the corrected semantics. The q32
+Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128 uses
+`2^44 - 1`. Within those guards, A is keyed by the exact protocol collision
+`4 * ||c||_1 * (2^t - 1)` for reachable opening-basis/digit-depth products
+`t <= 33` and dimension-compatible challenge families. It does not round an A
+collision up to a generic power-of-two bucket. B and D retain their exact
+gadget-anchor rounding.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These
@@ -92,6 +120,29 @@ estimator at verification time.
 The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
+
+The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
+previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
+independently optimized diagnostic over 6,240 generated rows. Its reusable
+quantum walks assume exponential sieve storage and writable coherent QRAQM;
+zero accepted ADPS16 rows fell below the corresponding 124-bit review line.
+The idealized model therefore remains documented sensitivity evidence rather
+than a production constraint.
+
+LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
+BKZ forgets its canonical q-vectors. On representative widened q64 and q128
+rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
+determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
+ZGSA compatibility path caps its paired smoothing steps at the smaller of the
+q-vector and identity-vector zones, preserving the lattice determinant even
+when q-vectors are the majority.
+
+Infinity-norm probabilities are priced on the coordinates that remain after
+the attacker's `zeta` projection. In particular, the small-box condition uses
+`sqrt(d - zeta) * B <= q`. Using the original dimension can select the wrong
+probability formula and overstate security; this active-dimension rule is
+regression tested, and integer production bounds use an exact boundary
+comparison. Requests for the unimplemented high-precision backend fail closed.
 
 The complete decision, assumptions, claim language, certificates, and
 implementation acceptance criteria live in
@@ -195,6 +246,39 @@ is another random-oracle query, so the Fiat-Shamir reduction charges it through
 the adversary's total query budget. See
 [Polynomial commitments and binding](../foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
+## Reduced ring-relation soundness
+
+Quotient lifting and reduced evaluation enforce the same native-ring
+relations through different witness geometries. For one physical row of native
+dimension $d$, reduced evaluation forms the residual
+
+$$
+Z(X)
+=
+\left(\sum_c A_c(X)W_c(X)-Y(X)\right)
+\bmod (X^d+1).
+$$
+
+The protocol checks $Z(\alpha)$ at the existing ring-switch challenge
+$\alpha$. If the row relation is false, $Z$ is a nonzero polynomial of degree
+less than $d$, so random evaluation over the extension challenge field has the
+usual Schwartz--Zippel bound. The existing $\tau_1$ challenge batches the
+canonically ordered physical rows after each has been reduced in its own native
+ring dimension.
+
+The schedule, witness layout, relation mode, public statement, commitments,
+and outgoing witness are bound before $\alpha$ is sampled. Consequently the
+prover cannot choose the relation realization or its witness after seeing the
+evaluation point. `RingRelationMode` is part of the instance descriptor and
+effective schedule digest, not a proof field.
+
+Reduced evaluation never divides by $\alpha^d+1$. An evaluation point that is
+a root of the cyclotomic modulus therefore needs no special rejection: the
+signed-wrap residue recurrence and terminal verifier kernel remain defined.
+Removing quotient spans also does not change the A-role SIS binding argument,
+the digit-range proof, or the scheduled `L∞`/`L2` response cap. It only removes
+coordinates that existed to witness polynomial divisibility.
+
 ## Subring coefficient packing
 
 For the coefficient layout, the three ring domains, and the exact reason the
@@ -208,31 +292,36 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
-Packing challenge generation divides the canonical claim and block order into
-fixed batches of 128 challenges. Each batch uses a SHAKE256 stream derived from
-the transcript seed, a packing batch domain, and the batch index. The prover
-and verifier therefore get the same challenge order for every worker count.
-Evaluation trace challenge generation keeps its existing single stream.
+Both opening methods squeeze one dedicated 32-byte root per commitment group.
+They then derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose
+input is exactly that root followed by the claim-major coordinate index as a
+little-endian `u64`. The fixed widths make this encoding unambiguous. The
+coordinate streams do not mutate the live transcript. Sequential and parallel
+samplers therefore return the same ordered vector, and one coordinate can be
+forked without changing any other coordinate.
 
 The production primes satisfy the fixed LS18 congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-The implementation derives the complete claim and block challenge vector from
-one transcript seed. A fork of that query generally changes the whole vector,
-so it does not directly provide the coordinatewise forks used by the original
-extraction sketch. The security proof remains open. It must either prove a
-full-vector extraction theorem for the implemented distribution, including the
-matrix-invertibility probability and forking loss, or the challenge derivation
-must change to support coordinatewise forks.
+For CWSS extraction, fix the transcript prefix, group root, shared fold-response
+nonce, and all coordinate-oracle answers except one. Reprogramming coordinate
+`j` gives two accepting transcripts whose challenge difference is zero outside
+`j`. The production LS18 condition makes every nonzero sparse-challenge
+difference a unit, so subtracting the accepted relations isolates that opening.
+The extractor uses the central accepting vector and one such fork for every
+claim-major coordinate. The random-oracle reduction charges all root and
+coordinate queries, including the jointly searched fold nonce. It does not
+assume that two arbitrary full-vector forks are enough.
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
-conditional polynomial-check error is `(2s-1)/|E|`. This root bound does not
-close the extraction gap. See the active
+conditional polynomial-check error is `(2s-1)/|E|`. This term is added to the
+existing CWSS, random-oracle forking, sum-check, collision, and MSIS terms. See
+the active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
-for the open acceptance criteria.
+for the complete accounting.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

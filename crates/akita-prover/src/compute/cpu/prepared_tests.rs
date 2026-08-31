@@ -245,6 +245,26 @@ fn planned_cache_bytes_match_max_joined_resident_state() {
 }
 
 #[test]
+fn planned_exact_cache_bytes_use_the_selected_representation() {
+    let prepared = prepared();
+    let key = NttCacheKey {
+        ring_d: D,
+        num_ring_elements: 2,
+        domain: NttTransformDomain::ExactNegacyclicI16 {
+            width: 2,
+            rhs_abs_bound: 1 << 15,
+        },
+    };
+    let planned = prepared
+        .planned_shared_ntt_cache_bytes([key])
+        .expect("planned exact bytes");
+    let selected = akita_types::planned_exact_ntt_cache_bytes::<F, D>(2, 2, 1 << 15)
+        .expect("selected representation bytes");
+
+    assert_eq!(planned, selected);
+}
+
+#[test]
 fn concurrent_prefix_growth_retains_only_the_maximum() {
     let prepared = prepared();
     std::thread::scope(|scope| {

@@ -82,6 +82,11 @@ pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
 /// Challenge for γ-batching ordered group-local evaluation claims.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
+/// Absorb one canonical transcript proof-of-work payload.
+pub const ABSORB_TRANSCRIPT_GRINDING: &[u8] = b"ak/a/g";
+/// Squeeze one 32-byte transcript proof-of-work predicate.
+pub const CHALLENGE_GRINDING_PREDICATE: &[u8] = b"ak/c/g";
+
 /// Binds the outgoing witness state of an intermediate fold. Ordinary recursive
 /// edges absorb the outer Ajtai commitment `u = B * decompose(t)`; the final
 /// edge into a suffix terminal absorbs that terminal witness's canonical inner
@@ -133,6 +138,8 @@ pub const ALL_LABELS: &[&[u8]] = &[
     CHALLENGE_WITNESS_FOLD,
     ABSORB_EVAL_OPENINGS_FIELD,
     CHALLENGE_EVAL_BATCH,
+    ABSORB_TRANSCRIPT_GRINDING,
+    CHALLENGE_GRINDING_PREDICATE,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_TERMINAL_E_HAT,
     ABSORB_TERMINAL_W_REMAINDER,
@@ -143,4 +150,15 @@ pub const ALL_LABELS: &[&[u8]] = &[
 /// Return all Akita-core transcript labels.
 pub fn all_labels() -> &'static [&'static [u8]] {
     ALL_LABELS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grinding_labels_are_registered() {
+        assert!(ALL_LABELS.contains(&ABSORB_TRANSCRIPT_GRINDING));
+        assert!(ALL_LABELS.contains(&CHALLENGE_GRINDING_PREDICATE));
+    }
 }

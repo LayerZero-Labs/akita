@@ -1,7 +1,21 @@
 use super::*;
 
+pub(super) enum Stage2Compression<E: Field> {
+    Raw,
+    QuotientLift {
+        weights: akita_types::CompressionRelationWeights<E>,
+        support: akita_types::NegativeBinarySupport,
+        binary_batching: E,
+    },
+    ReducedEvaluation {
+        support: akita_types::NegativeBinarySupport,
+        binary_batching: E,
+    },
+}
+
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
+    level: u32,
     rs: &mut RingSwitchOutput<E>,
     lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
@@ -9,7 +23,7 @@ pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -39,7 +53,7 @@ where
     )?;
     let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
     let (stage1_proof, stage1_point) =
-        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref())?;
+        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref(), level)?;
     let range_image_evaluation = stage1_proof.range_image_evaluation;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
@@ -94,7 +108,7 @@ pub(super) fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
-    binary_batching: Option<E>,
+    compression: Stage2Compression<E>,
     physical_l2: Option<PhysicalL2ProverReplay<E>>,
     linear_terms: PreparedProverLinearTerms<E>,
     trace_opening_claim: E,
@@ -103,7 +117,7 @@ pub(super) fn prove_stage2<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -119,30 +133,31 @@ where
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
     }
-    let (common_alpha_factor, relation_lane_weights) = rs
-        .relation_weight_factorization
-        .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = geometry.relation_coefficient_block_len();
-    if common_alpha_factor.len() != expected_factor_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "common alpha factor has length {}, expected {expected_factor_len}",
-            common_alpha_factor.len(),
-        )));
-    }
+    let relation_weights = rs.relation_weights;
     let domain_len = domain.domain_len();
-    let mut linear_weights = Vec::new();
-    let mut binary_intervals = Vec::new();
-    if let Some(weights) = rs.compression_relation_weights {
-        if weights.physical_field_len() != domain_len {
-            return Err(AkitaError::InvalidSetup(
-                "compression relation domain disagrees with Stage 2".into(),
-            ));
+    let (mut linear_weights, binary_intervals, binary_batching) = match compression {
+        Stage2Compression::Raw => (Vec::new(), Vec::new(), E::zero()),
+        Stage2Compression::QuotientLift {
+            weights,
+            support,
+            binary_batching,
+        } => {
+            if weights.physical_field_len() != domain_len {
+                return Err(AkitaError::InvalidSetup(
+                    "compression relation domain disagrees with Stage 2".into(),
+                ));
+            }
+            (
+                weights.into_sparse_entries()?,
+                support.intervals().to_vec(),
+                binary_batching,
+            )
         }
-        linear_weights = weights.into_sparse_entries()?;
-        binary_intervals = NegativeBinarySupport::new(plan.witness_layout(), domain_len)?
-            .intervals()
-            .to_vec();
-    }
+        Stage2Compression::ReducedEvaluation {
+            support,
+            binary_batching,
+        } => (Vec::new(), support.intervals().to_vec(), binary_batching),
+    };
     let physical_l2_claim = physical_l2.as_ref().map_or_else(E::zero, |norm| norm.claim);
     if let Some(norm) = &physical_l2 {
         let families = norm.plan.virtualization_families(&norm.batching)?;
@@ -163,7 +178,7 @@ where
                 linear_weights,
                 &binary_intervals,
                 stage1_point,
-                binary_batching.unwrap_or_else(E::zero),
+                binary_batching,
             )
         })
         .transpose()?;
@@ -177,8 +192,7 @@ where
         stage1_point,
         range_image_evaluation,
         plan.digit_range_plan().basis(),
-        common_alpha_factor,
-        relation_lane_weights,
+        relation_weights,
         live_relation_lane_count,
         relation_lane_variable_count,
         relation_coefficient_variable_count,
@@ -192,9 +206,22 @@ where
             "stage-2 prover initialization failed at fold level {level}: {err}"
         ))
     })?;
+    let level = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let mut round = 0u32;
     let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::Stage2,
+                level,
+                0,
+                round,
+            )?;
+            round = round
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("Stage 2 round overflow".into()))?;
+            Ok(challenge)
         })?;
     if final_claim != stage2_prover.expected_final_claim()? {
         return Err(AkitaError::InvalidInput(
@@ -227,7 +254,7 @@ where
         + AkitaSerialize
         + jolt_field::Unreduced
         + jolt_field::MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
@@ -253,8 +280,21 @@ where
                     transcript,
                 )?
             };
+            let level = u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+            let mut round = 0u32;
             let output = stage3_prover.prove::<T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage3,
+                    level,
+                    0,
+                    round,
+                )?;
+                round = round
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("Stage 3 round overflow".into()))?;
+                Ok(challenge)
             })?;
             Ok(Some(Stage3ProveOutput {
                 proof: SetupSumcheckProof {

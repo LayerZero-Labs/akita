@@ -25,6 +25,17 @@ use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring, Zero};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
+/// Artifacts retained from a successful single-group roundtrip so focused
+/// protocol tests can mutate the exact proof that was already produced.
+pub(super) struct SingleGroupRoundtrip<Cfg: CommitmentConfig> {
+    pub(super) proof: AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
+    pub(super) verifier_setup: akita_types::AkitaVerifierSetup<Cfg::Field>,
+    pub(super) selection: akita_types::OpeningScheduleSelection,
+    pub(super) commitment: akita_types::CommittedGroup<Cfg::Field>,
+    pub(super) point: Vec<Cfg::ExtField>,
+    pub(super) expected: Cfg::ExtField,
+}
+
 /// Single committed group, no precommits: commit `poly`, prove its opening at
 /// `point`, round-trip the proof through serialization, and verify `expected`.
 pub(super) fn single_group_roundtrip<Cfg>(
@@ -34,7 +45,8 @@ pub(super) fn single_group_roundtrip<Cfg>(
     expected: Cfg::ExtField,
     label: &[u8],
     what: &str,
-) where
+) -> SingleGroupRoundtrip<Cfg>
+where
     Cfg: CommitmentConfig,
     Cfg::Field: CanonicalEncoding
         + CanonicalBytes
@@ -115,7 +127,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     .expect("deserialize");
 
     let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-        point,
+        point.clone(),
         vec![expected],
         &commitment,
     )
@@ -130,6 +142,15 @@ pub(super) fn single_group_roundtrip<Cfg>(
         BasisMode::Lagrange,
     )
     .unwrap_or_else(|e| panic!("{what} nv={nv}: {e:?}"));
+
+    SingleGroupRoundtrip {
+        proof: decoded,
+        verifier_setup,
+        selection,
+        commitment,
+        point,
+        expected,
+    }
 }
 
 /// Shared tail of the two-group (precommit + final) cells: serialize the

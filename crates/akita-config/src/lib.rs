@@ -93,6 +93,7 @@ pub mod setup_prefix_slots;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
 pub use proof_optimized::{
@@ -103,6 +104,7 @@ pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use transcript_binding::bind_transcript_instance_descriptor;
+pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
 /// Derive the runtime schedule policy from a preset.
 ///
@@ -118,6 +120,11 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+        recursive_setup_search_policy: if recursive_setup_planning {
+            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+        } else {
+            akita_schedules::RecursiveSetupSearchPolicy::Exhaustive
+        },
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
@@ -889,6 +896,46 @@ mod fp128_policy_tests {
         });
         assert!(
             error.to_string().contains("setup-prefix geometry"),
+            "unexpected setup-prefix error: {error}"
+        );
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
+        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+
+        let row = (14..=50)
+            .find_map(|num_vars| {
+                let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
+                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                row.schedule()
+                    .recursive_folds
+                    .iter()
+                    .any(|fold| fold.params.setup_prefix().is_some())
+                    .then_some(row)
+            })
+            .expect("generated row with a setup prefix");
+        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+            let step = schedule
+                .recursive_folds
+                .iter_mut()
+                .find(|fold| fold.params.setup_prefix().is_some())
+                .expect("recursive setup-prefix fold");
+            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+            let blocks = prefix.profile.blocks;
+            let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+            prefix.profile.blocks = akita_types::BlockGeometry::new(
+                omitted_tail_rings,
+                blocks.positions_per_block,
+                omitted_tail_rings.div_ceil(blocks.positions_per_block),
+            );
+            step.params
+                .set_setup_prefix(Some(prefix))
+                .expect("valid prefix topology");
+        });
+        assert!(
+            error.to_string().contains("must commit all"),
             "unexpected setup-prefix error: {error}"
         );
     }

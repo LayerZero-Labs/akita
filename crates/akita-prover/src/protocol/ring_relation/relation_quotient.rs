@@ -12,6 +12,21 @@ use akita_types::{
     CommittedGroupParams, OpeningFamily, RelationRowGeometry, RingRelationGroupOpening, RingVec,
 };
 
+#[cfg(test)]
+std::thread_local! {
+    static MULTI_GROUP_QUOTIENT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_multi_group_quotient_calls() {
+    MULTI_GROUP_QUOTIENT_CALLS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn multi_group_quotient_calls() -> usize {
+    MULTI_GROUP_QUOTIENT_CALLS.get()
+}
+
 #[inline]
 fn accumulate_small_signed<F: Field + Ring>(dst: &mut F, value: F, coeff: i64) {
     match coeff {
@@ -352,6 +367,9 @@ where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     B: RuntimeRingSwitchProveBackend<F>,
 {
+    #[cfg(test)]
+    MULTI_GROUP_QUOTIENT_CALLS.with(|calls| calls.set(calls.get() + 1));
+
     lp.validate_opening_batch(opening_batch)?;
     if groups.len() != opening_batch.num_groups()
         || group_openings.len() != opening_batch.num_groups()
@@ -712,11 +730,7 @@ where
         }
         let ring_dim = geometry.polynomial_modulus_dimension();
         let compression = compression.ok_or(AkitaError::InvalidProof)?;
-        let quotient = compression
-            .source(source)?
-            .quotients
-            .get(map_index)
-            .ok_or(AkitaError::InvalidProof)?;
+        let quotient = compression.source(source)?.quotient(map_index)?;
         if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
             return Err(AkitaError::InvalidSize {
                 expected: ring_dim,

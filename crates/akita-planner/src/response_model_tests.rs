@@ -56,6 +56,40 @@ fn next_source_moment_prices_packing_e_and_r_but_keeps_ambient_t() {
 }
 
 #[test]
+fn reduced_evaluation_source_moment_omits_only_quotient_rows() {
+    let opening = OpeningClaimsLayout::new(0, 1).expect("opening batch");
+    let source = SourceMomentEstimate::new(1 << 16).expect("source moment");
+    for payload_mode in [
+        akita_types::CommitmentPayloadMode::Raw,
+        akita_types::CommitmentPayloadMode::Compressed,
+    ] {
+        let mut lifted = response_geometry_params(akita_types::OpeningMethod::EvaluationTrace);
+        lifted.payload_mode = payload_mode;
+        lifted.ring_relation_mode = akita_types::RingRelationMode::QuotientLift;
+        let mut reduced = lifted.clone();
+        reduced.ring_relation_mode = akita_types::RingRelationMode::ReducedEvaluation;
+
+        let lifted_moment =
+            next_source_moment(&lifted, &opening, &[source], 128, 2).expect("lifted moment");
+        let reduced_moment =
+            next_source_moment(&reduced, &opening, &[source], 128, 2).expect("reduced moment");
+
+        assert!(lifted_moment.components[R_COMPONENT].mean_l2_sq > 0);
+        assert_eq!(
+            reduced_moment.components[R_COMPONENT],
+            SourceMomentComponent::default()
+        );
+        for component in [Z_COMPONENT, E_COMPONENT, T_COMPONENT, COMPRESSION_COMPONENT] {
+            assert_eq!(
+                reduced_moment.components[component],
+                lifted_moment.components[component]
+            );
+        }
+        assert!(reduced_moment.mean_l2_sq() < lifted_moment.mean_l2_sq());
+    }
+}
+
+#[test]
 fn field_plane_moments_include_the_residual_top_plane() {
     let energy = field_digit_energy(1_000_000, 64, 6, 11).unwrap();
     let expected = 1_000_000.0 * (10.0 * 341.5 + 21.5);

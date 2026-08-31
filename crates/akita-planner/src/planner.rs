@@ -24,6 +24,12 @@ use crate::schedule_params::{
 };
 use crate::PlannerPolicy;
 
+#[cfg(all(test, feature = "catalog-gen"))]
+#[path = "test/root_candidates.rs"]
+mod root_candidates;
+#[cfg(all(test, feature = "catalog-gen"))]
+pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
+
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
 
 fn materialize_precommitted_group_for_open_basis(
@@ -480,6 +486,7 @@ fn root_final_group_level_params_candidate(
         groups,
         open_commit_matrix,
         akita_types::CommitmentPayloadMode::Compressed,
+        akita_types::RingRelationMode::QuotientLift,
         akita_types::CommittedSourceEncoding::for_producer(
             ctx.opening.method(),
             policy.claim_ext_degree,
@@ -503,6 +510,49 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::RelationTraversalOrder::Canonical,
+        super::schedule_params::RelationModeFilter::All,
+    )
+}
+
+/// Build a schedule under a test-only relation-mode restriction.
+#[cfg(feature = "test-support")]
+pub fn find_schedule_for_test_relation_mode(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    relation_mode_filter: super::schedule_params::TestRelationModeFilter,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_in_relation_order(
+        key,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
+        policy,
+        ring_challenge_config,
+        super::schedule_params::RelationTraversalOrder::Canonical,
+        relation_mode_filter.into(),
+    )
+}
+
+/// Canonical schedule search with an internal traversal-order seam used to
+/// prove that candidate enumeration does not affect selection.
+pub(crate) fn find_schedule_in_relation_order(
+    key: &AkitaScheduleLookupKey,
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    relation_traversal_order: super::schedule_params::RelationTraversalOrder,
+    relation_mode_filter: super::schedule_params::RelationModeFilter,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     let diagnostics = crate::diagnostics::active();
     let diagnostics = diagnostics.as_deref();
     akita_schedules::planner_support::validate_policy(policy)?;
@@ -519,7 +569,7 @@ pub fn find_schedule(
         policy
     };
     let setup_field_budget = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
     {
         active_policy.setup_field_budget
     } else {
@@ -545,6 +595,8 @@ pub fn find_schedule(
         root_honest_fold_policy: Some(final_honest_fold_policy),
         precommitted_honest_fold_policies,
         level_zero_is_root: true,
+        relation_traversal_order,
+        relation_mode_filter,
     };
     let dimension_ceiling = super::schedule_params::initial_dimension_ceiling(active_policy)?;
     let initial_state = SuffixState {
@@ -552,9 +604,11 @@ pub fn find_schedule(
         current_witness_len: root_input_witness_len,
         current_lb: 0,
         source_moment: None,
-        incoming_setup_prefix: None,
         dimension_ceiling,
-        payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+        topology: super::schedule_params::SuffixTopology::Direct {
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
+            relation_phase: super::schedule_params::RingRelationPhase::QuotientPrefix,
+        },
     };
     let mut memo = ScheduleMemo::new();
     let suffix_started = diagnostics.map(|_| Instant::now());
@@ -566,10 +620,10 @@ pub fn find_schedule(
     }
     let suffix = suffix?;
     let best = match active_policy.selection_policy {
-        crate::SelectionPolicyId::MinEstimatedProofPayload => {
+        crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => {
             select_complete_candidate(active_policy, suffix.payload_candidates(), diagnostics)?
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
     };
@@ -593,7 +647,7 @@ pub fn find_schedule(
         )));
     };
     let first_direct_setup_field_len = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayload
+        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
     {
         Some(
             best.first_direct_setup_field_len
@@ -609,25 +663,35 @@ pub fn find_schedule(
     };
     if let Some(diagnostics) = diagnostics {
         let metrics = best.metrics();
+        let folds = best.folds.to_vec();
+        let root_output_witness_len = folds
+            .first()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("selected schedule is missing its root fold".into())
+            })?
+            .output_witness_len;
         diagnostics.record_selected(
             active_policy.selection_policy,
-            metrics.proof_bytes,
+            metrics.proof_bytes(),
             metrics.setup_field_elements,
             metrics.first_direct_setup_capacity.field_elements(),
-            best.folds
-                .to_vec()
+            root_output_witness_len,
+            folds
                 .iter()
-                .map(|fold| fold.params.role_dims())
+                .map(|fold| crate::diagnostics::SelectedFoldDiagnostics {
+                    dimensions: fold.params.role_dims(),
+                    relation_mode: fold.params.ring_relation_mode,
+                })
                 .collect(),
         );
     }
     let materialization_started = diagnostics.map(|_| Instant::now());
     let root_layout = key.opening_layout()?;
     let planned = materialize_candidate_schedule(
-        best.total_bytes,
+        best.cost.proof_bytes(),
         best.setup_field_elements,
         first_direct_setup_field_len,
-        active_policy.selection_policy,
+        active_policy,
         &root_layout,
         best.folds.to_vec(),
         best.terminal.as_ref().clone(),

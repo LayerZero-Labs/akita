@@ -29,11 +29,12 @@ fn audited_commit_params(
     let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
-        2,
+        3,
         1,
         1,
         1,
-        SparseChallengeConfig::pm1_only(1),
+        SparseChallengeConfig::production_for_ring_dim(D)
+            .expect("D=64 has a production challenge configuration"),
     );
     params.own_group_mut().profile.outer_slice_count = slice_count;
     params = params
@@ -274,15 +275,15 @@ fn commit_b_input_len_rejects_overflow() {
 }
 
 /// Inner digit depth that actually represents an `Fp32` coefficient at
-/// `log_basis_inner = 2`.
+/// `log_basis_inner = 3`.
 ///
-/// The fixture used to declare a single base-4 digit, which cannot represent a
+/// The fixture used to declare a single base-8 digit, which cannot represent a
 /// 32-bit field element at all: the commitment silently truncated, and the test
 /// only passed because the production and reference paths truncated identically.
 /// The commit path now rejects a source outside its scheduled digit envelope, so
 /// the fixture states a depth consistent with the coefficients it commits.
 fn slice_fixture_num_digits_inner() -> usize {
-    akita_types::sis::compute_num_digits_field_width(32, 2)
+    akita_types::sis::compute_num_digits_field_width(32, 3)
 }
 
 fn commitment_params_for_slice_count(
@@ -393,6 +394,7 @@ fn commit_unsliced_reference(
             id: (),
             plan: compression_plan.clone(),
             coefficients: source.into_coeffs(),
+            relation_mode: akita_types::RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -411,11 +413,12 @@ fn commit_unsliced_reference(
         .into_iter()
         .map(|(rows, _)| rows)
         .collect::<Vec<_>>();
+    let quotients = output.relation.into_quotient_lift()?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
         D,
         inner_rows,
         &output.witness,
-        &output.quotients,
+        &quotients,
     )?;
     Ok(((Commitment::new(payload), hint), compression_plan))
 }

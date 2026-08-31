@@ -295,15 +295,16 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
     let (layout, policy, challenge, num_digits_fold) = precommit_admission_fixture();
     let mut low_a = layout;
     let inner = low_a.inner.matrix;
-    let lower_a_bound = crate::sis::COEFF_LINF_BUCKETS
-        .iter()
-        .copied()
-        .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
-        .expect("lower supported A bound");
+    let inner_key = inner.sis_table_key().expect("L infinity test matrix");
+    let lower_a_bound =
+        crate::sis::inner_coeff_linf_bounds(inner_key.modulus_profile, inner_key.ring_dimension)
+            .into_iter()
+            .rfind(|&bound| bound < inner.coeff_linf_bound().expect("L infinity test matrix"))
+            .expect("lower supported A bound");
     low_a.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
             coeff_linf_bound: lower_a_bound,
-            ..inner.sis_table_key().expect("L infinity test matrix")
+            ..inner_key
         },
         inner.input_width(),
     )
@@ -321,7 +322,7 @@ fn precommit_admission_rejects_insufficient_a_and_b_bounds() {
 
     let mut low_b = layout;
     let outer = low_b.outer.matrix;
-    let lower_b_bound = crate::sis::COEFF_LINF_BUCKETS
+    let lower_b_bound = crate::sis::GADGET_COEFF_LINF_ANCHORS
         .iter()
         .copied()
         .rfind(|&bound| bound < outer.coeff_linf_bound())
@@ -352,7 +353,22 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = lp.preceding_group_mut_for_test(0).unwrap();
+    precommitted.opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
     let inner = &precommitted.profile.inner.matrix;
+    let inner_bound = crate::sis::rounded_up_role_a_inf_norm(
+        inner.security_policy(),
+        inner
+            .sis_table_key()
+            .expect("L infinity test matrix")
+            .table_digest,
+        inner.sis_modulus_profile(),
+        128,
+        precommitted.opening.log_basis_open,
+        &precommitted.opening.fold_challenge_config,
+        precommitted.opening.num_digits_fold,
+    )
+    .expect("D128 exact A bound");
     precommitted.profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner
@@ -362,7 +378,7 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound().expect("L infinity test matrix"),
+        inner_bound,
         128,
     );
     let outer = &precommitted.profile.outer.matrix;
@@ -375,9 +391,6 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         outer.coeff_linf_bound(),
         outer.ring_dimension(),
     );
-    precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
-
     assert_eq!(lp.d_a(), 64, "the final group remains native at A=64");
     assert_eq!(
         lp.group_role_dims(&batch, 0)
@@ -393,7 +406,10 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
         &batch,
         &relation_geometry,
         lp.witness_chunk.num_chunks,
-        crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.open().digits.log_basis),
+        crate::RelationQuotientPlan::quotient_lift(crate::r_decomp_levels::<Prime128OffsetA7F7>(
+            lp.open().digits.log_basis,
+        ))
+        .unwrap(),
     )
     .expect("witness layout");
     assert_eq!(
@@ -451,7 +467,7 @@ fn address_oracle_group_params(
     let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         d_a,
-        2,
+        3,
         3,
         2,
         3,
@@ -558,8 +574,14 @@ fn relation_geometry_supports_mixed_root_opening_methods() {
     assert_eq!(precommitted.physical_coefficient_width(), 128);
     assert_eq!(geometry.relation_coefficient_block_len().unwrap(), 64);
 
-    let layout =
-        WitnessLayout::new(&lp, &batch, &geometry, 2, 2).expect("mixed-method witness layout");
+    let layout = WitnessLayout::new(
+        &lp,
+        &batch,
+        &geometry,
+        2,
+        crate::RelationQuotientPlan::quotient_lift(2).unwrap(),
+    )
+    .expect("mixed-method witness layout");
     assert_eq!(
         layout
             .unit(final_group, 0)
@@ -604,9 +626,14 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
             let relation_geometry =
                 crate::RelationWitnessGeometry::for_evaluation_trace_execution(&lp, &batch)
                     .expect("relation geometry");
-            let layout =
-                WitnessLayout::new(&lp, &batch, &relation_geometry, num_chunks, quotient_depth)
-                    .expect("compact witness layout");
+            let layout = WitnessLayout::new(
+                &lp,
+                &batch,
+                &relation_geometry,
+                num_chunks,
+                crate::RelationQuotientPlan::quotient_lift(quotient_depth).unwrap(),
+            )
+            .expect("compact witness layout");
             let mut cursor = 0usize;
             let mut unit_position = 0usize;
             for chunk in 0..num_chunks {
@@ -750,7 +777,10 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
             }
             let relation_layout = relation_geometry.rhs_layout();
-            assert_eq!(layout.r_range().start, cursor);
+            let row_families = relation_layout
+                .row_families()
+                .expect("canonical row families");
+            assert_eq!(layout.tail_range().start, cursor);
             let mut expected_r_dims = Vec::new();
             for &group_index in &group_order {
                 let params = lp.group_params(&batch, group_index).expect("group params");
@@ -829,6 +859,22 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 let layer = &layout.compression_layers()[map_index];
                 assert_eq!(layer.map_index(), map_index);
                 assert_eq!(layer.f_spans().len(), group_order.len());
+                let canonical_f_quotient_rows = row_families
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(row_index, row)| match row {
+                        crate::RelationRowFamily::CompressionF {
+                            group_index,
+                            map_index: row_map_index,
+                            ..
+                        } if *row_map_index == map_index => Some((*group_index, row_index)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    layer.f_quotient_rows(),
+                    Some(canonical_f_quotient_rows.as_slice())
+                );
                 for (relation_group_index, &group_index) in group_order.iter().enumerate() {
                     let (planned_group_index, plan) = relation_layout
                         .group_compression_plan(relation_group_index)
@@ -854,7 +900,10 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 );
                 cursor += h_map.padded_digit_count();
                 assert_eq!(support_interval.end, cursor);
-                for &(group_index, row_index) in layer.f_quotient_rows() {
+                for &(group_index, row_index) in layer
+                    .f_quotient_rows()
+                    .expect("quotient-lift compression rows")
+                {
                     assert!(group_order.contains(&group_index));
                     let row = &layout.r_rows()[row_index];
                     assert_eq!(
@@ -864,7 +913,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     );
                     cursor = row.range().end;
                 }
-                let h_row = &layout.r_rows()[layer.h_quotient_row()];
+                let h_row = &layout.r_rows()[layer.h_quotient_row().expect("quotient-lift H row")];
                 assert_eq!(
                     h_row.range(),
                     cursor..cursor + quotient_depth * h_row.geometry().physical_coefficient_width()
@@ -878,7 +927,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     .contains(&suffix_alignment));
             }
             cursor = layout.live_coeff_len();
-            assert_eq!(layout.r_range().end, cursor);
+            assert_eq!(layout.tail_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
                 lp.output_witness_len::<Prime128OffsetA7F7>(&batch, 1)

@@ -360,7 +360,13 @@ impl FoldSchedule {
                 "root fold payload must be compressed".into(),
             ));
         }
+        if root_commitment.ring_relation_mode != crate::RingRelationMode::QuotientLift {
+            return Err(AkitaError::InvalidSetup(
+                "nonterminal level 0 requires quotient-lift ring relations".into(),
+            ));
+        }
         let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
+        let mut reduced_relation_suffix = false;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             step.params.validate_group_topology()?;
             if !step.params.precommitted_groups().is_empty() {
@@ -370,6 +376,34 @@ impl FoldSchedule {
             }
             step.params.validate_commitment_request(index + 1, 1)?;
             let consumes_setup_prefix = step.params.setup_prefix().is_some();
+            let absolute_level = index + 1;
+            match step.params.ring_relation_mode {
+                crate::RingRelationMode::QuotientLift => {
+                    if reduced_relation_suffix {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} cannot resume quotient-lift ring relations after the reduced-evaluation suffix"
+                        )));
+                    }
+                }
+                crate::RingRelationMode::ReducedEvaluation => {
+                    if absolute_level < 2 {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} requires quotient-lift ring relations"
+                        )));
+                    }
+                    if !matches!(step.params.opening_method(), OpeningMethod::EvaluationTrace) {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} reduced-evaluation ring relations require evaluation-trace opening"
+                        )));
+                    }
+                    if consumes_setup_prefix {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "nonterminal level {absolute_level} reduced-evaluation ring relations cannot consume a setup prefix"
+                        )));
+                    }
+                    reduced_relation_suffix = true;
+                }
+            }
             if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
@@ -425,28 +459,11 @@ impl FoldSchedule {
                 ));
             }
             if let Some(prefix) = &step.params.setup_prefix() {
-                prefix.validate()?;
-                prefix.profile.outer_slice_count.validate_for_commitment(
-                    0,
-                    crate::CommitmentPayloadMode::Compressed,
-                    prefix.profile.blocks.live_blocks,
-                )?;
-                let n_prefix = prefix.n_prefix()?;
-                let natural_len = prefix.setup_natural_len.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "incoming setup prefix carries no active support length".to_string(),
-                    )
-                })?;
-                crate::validate_setup_prefix_domain(natural_len, n_prefix).map_err(|_| {
+                prefix.validate().map_err(|error| {
                     AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
+                        "recursive fold {index} setup-prefix geometry is invalid: {error}"
                     ))
                 })?;
-                if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
-                    )));
-                }
             }
             let successor_len = self
                 .recursive_folds
@@ -784,6 +801,8 @@ fn validate_stage2_successor_capacity(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
+    /// Exact proof-level packed nonce-stream bytes.
+    pub nonce_stream_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
@@ -825,6 +844,7 @@ impl FoldScheduleEstimate {
     pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
         self.estimated_direct_proof_payload_bytes()?
             .checked_add(self.estimated_stage3_payload_bytes()?)
+            .and_then(|value| value.checked_add(self.nonce_stream_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

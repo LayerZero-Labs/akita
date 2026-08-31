@@ -47,6 +47,8 @@
 #![cfg(feature = "schedules-default")]
 
 mod common;
+#[path = "small_field_drivers/reduced_eor.rs"]
+mod reduced_eor;
 mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
@@ -97,7 +99,7 @@ macro_rules! small_field_test {
     // ------------------------------------------------------------------
     // dense — single-group, non-precommitted
     // ------------------------------------------------------------------
-    ($(#[$attr:meta])* dense; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]) => {
+    ($(#[$attr:meta])* dense; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+] $(; check=$check:path)?) => {
         $(#[$attr])*
         #[test]
         fn $name() {
@@ -121,7 +123,7 @@ macro_rules! small_field_test {
                         .map(|i| weights[i] * <$se>::lift_base(evals[i]))
                         .fold(<$se>::from_u64(0), |a, b| a + b);
 
-                    single_group_roundtrip::<$cfg>(
+                    let roundtrip = single_group_roundtrip::<$cfg>(
                         nv,
                         &akita_prover::MultilinearPolynomial::dense(poly),
                         point,
@@ -129,6 +131,8 @@ macro_rules! small_field_test {
                         label,
                         stringify!($name),
                     );
+                    $($check(&roundtrip, label, stringify!($name));)?
+                    drop(roundtrip);
                 }
             });
         }
@@ -478,7 +482,7 @@ macro_rules! small_field_test {
 // ----------------------------------------------------------------------------
 
 // fp32 × Dense × direct              catalog: single(20,1)
-small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::ExtensionField; nvs=[20]);
+small_field_test!(dense; fp32_dense; fp32::Dense; fp32::Field; fp32::ExtensionField; nvs=[20]; check=reduced_eor::assert_fp32_dense);
 // fp32 × Dense × precommitted        catalog: final=(20,1) <- pre=[(20,1)]
 //
 // pre_nv=20 rather than 14: an independent precommit commits with its own row

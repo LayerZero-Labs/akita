@@ -1,3 +1,5 @@
+#[cfg(feature = "catalog-gen")]
+use super::recursive::RecursiveRelationCandidate;
 use super::recursive::{
     recursive_candidate_order_key, recursive_split_lower_bound, recursive_split_search_domain,
     RecursiveSplitLowerBoundInput,
@@ -178,25 +180,26 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
             source_moment: Some(
                 crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
             ),
+            relation_traversal_order: RelationTraversalOrder::Canonical,
         },
-        RecursiveSetupPrefix::None,
+        RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
         FoldCandidatePolicy::Best,
     )
     .expect("modeled late-fold candidates");
     let linf = candidates
         .iter()
-        .filter(|(params, _)| {
+        .filter(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
         .count();
     let l2 = candidates
         .iter()
-        .filter(|(params, _)| {
+        .filter(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -205,12 +208,12 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
     assert!(l2 > 0);
     let l2_block_index_bits = candidates
         .iter()
-        .filter_map(|(params, _)| {
+        .filter_map(|(candidate, _)| {
             matches!(
-                params.inner().matrix.security_route(),
+                candidate.params.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
-            .then_some(params.block_index_bits())
+            .then_some(candidate.params.block_index_bits())
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(l2_block_index_bits.len(), 1);
@@ -243,15 +246,17 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
         log_basis_open: 3,
         fold_level: 1,
         source_moment: Some(crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap()),
+        relation_traversal_order: RelationTraversalOrder::Canonical,
     };
     let candidates = derive_fold_candidates(
         request,
-        RecursiveSetupPrefix::None,
+        RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
         FoldCandidatePolicy::Best,
     )
     .expect("packing candidates");
     assert!(!candidates.is_empty());
-    for (params, next_witness_len) in &candidates {
+    for (candidate, next_witness_len) in &candidates {
+        let params = &candidate.params;
         assert_eq!(
             params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
@@ -295,15 +300,13 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     let mut prefix_cache = SetupPrefixSearchCache::default();
     let with_prefix = derive_fold_candidates(
         request,
-        RecursiveSetupPrefix::Search {
-            cache: &mut prefix_cache,
-            natural_len: 1 << 14,
-        },
+        RecursiveFoldWork::setup_prefixed(&mut prefix_cache, 1 << 14),
         FoldCandidatePolicy::Best,
     )
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
-    for (params, next_witness_len) in with_prefix {
+    for (candidate, next_witness_len) in with_prefix {
+        let params = candidate.params;
         let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
             prefix.opening.opening_method,
@@ -408,6 +411,7 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 source_moment: Some(
                     crate::response_model::SourceMomentEstimate::new(1_000_000).unwrap(),
                 ),
+                relation_traversal_order: RelationTraversalOrder::Canonical,
             };
             let split_bounds = if without_bounds {
                 SplitBoundPolicy::DisabledForOracle
@@ -416,14 +420,14 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
             };
             derive_fold_candidates(
                 request,
-                RecursiveSetupPrefix::None,
+                RecursiveFoldWork::direct(RelationSearchDomain::QuotientOnly),
                 FoldCandidatePolicy::Frontier(split_bounds),
             )
         };
-        let canonical = |candidates: Vec<(CommittedGroupParams, usize)>| {
+        let canonical = |candidates: Vec<(RecursiveRelationCandidate, usize)>| {
             candidates
                 .into_iter()
-                .map(|(params, next)| (params.canonical_descriptor_bytes(), next))
+                .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
                 .collect::<std::collections::BTreeSet<_>>()
         };
         let exhaustive = canonical(derive(true).expect("bounds-disabled frontier"));
@@ -731,6 +735,42 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
                 challenge_subring_dimension: 64,
             }
     }));
+
+    let natural_len = (1 << 14) - 513;
+    let n_prefix = akita_types::padded_setup_prefix_len(natural_len);
+    let full_prefix_groups = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix,
+            ..request(trace)
+        },
+    )
+    .unwrap();
+    assert!(!full_prefix_groups.is_empty());
+    for group in full_prefix_groups {
+        assert_eq!(
+            group.profile.blocks.live_ring_elements_per_claim
+                * group.profile.inner.matrix.ring_dimension(),
+            n_prefix
+        );
+        assert_eq!(
+            group.profile.blocks.live_blocks * group.profile.blocks.positions_per_block,
+            group.profile.blocks.live_ring_elements_per_claim
+        );
+        akita_types::scheduled_setup_prefix(natural_len, group)
+            .validate()
+            .expect("full setup prefix covers its complete power-of-two domain");
+    }
+
+    let error = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix: natural_len,
+            ..request(trace)
+        },
+    )
+    .expect_err("a natural length is not a setup-prefix commitment domain");
+    assert!(error.to_string().contains("nonzero power of two"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -824,208 +864,8 @@ fn setup_prefix_frontier_excludes_unsupported_compression_sources() {
     }
 }
 
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
+#[path = "schedule_params_candidate/compression_source.rs"]
+mod compression_source;
 
-    struct FixedFoldPolicy;
-
-    impl HonestFoldPolicy for FixedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(2)
-        }
-    }
-
-    let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
-    let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &challenge,
-            challenge_dimension: dimensions.d_a(),
-            dimensions,
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count,
-            witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
-            log_basis_open: 3,
-            width_s,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .unwrap()
-    };
-
-    for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
-        assert!(
-            candidate(CommitmentRingDims::uniform(64), outer_slice_count, 8).is_some(),
-            "shared A/B request should admit S={}",
-            outer_slice_count.get(),
-        );
-    }
-
-    assert!(candidate(
-        CommitmentRingDims::uniform(128),
-        akita_types::CommitmentSliceCount::FOUR,
-        8,
-    )
-    .is_some());
-    assert!(candidate(
-        CommitmentRingDims::uniform(128),
-        akita_types::CommitmentSliceCount::EIGHT,
-        8,
-    )
-    .is_none());
-
-    assert!(
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &challenge,
-            challenge_dimension: 64,
-            dimensions: CommitmentRingDims::uniform(64),
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            witness_norms: FoldWitnessNorms::bounded(3, 64),
-            log_basis_open: 3,
-            width_s: usize::MAX,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .is_err()
-    );
-
-    struct OversizedFoldPolicy;
-
-    impl HonestFoldPolicy for OversizedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(1 << 20)
-        }
-    }
-
-    assert!(
-        derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-            policy: &policy,
-            fold_policy: &OversizedFoldPolicy,
-            ring_challenge_cfg: &challenge,
-            challenge_dimension: 64,
-            dimensions: CommitmentRingDims::uniform(64),
-            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
-            num_claims: 1,
-
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 8,
-            num_live_blocks: 8,
-
-            num_chunks: 1,
-            outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-            witness_norms: FoldWitnessNorms::bounded(3, 64),
-            log_basis_open: 3,
-            width_s: 8,
-            num_digits_outer: 2,
-            modeled_linf_cap: None,
-        })
-        .unwrap()
-        .is_none()
-    );
-}
-
-#[cfg(feature = "catalog-gen")]
-#[test]
-fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
-    use akita_config::{policy_of, proof_optimized::fp128::OneHot};
-
-    struct FixedFoldPolicy;
-
-    impl HonestFoldPolicy for FixedFoldPolicy {
-        fn num_digits_fold(&self, _query: HonestFoldSizingQuery<'_>) -> Result<usize, AkitaError> {
-            Ok(2)
-        }
-    }
-
-    let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
-    let dimensions = CommitmentRingDims::uniform(256);
-    let num_claims = 1;
-    let width_s = 8;
-    let mut raw_candidate = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
-        policy: &policy,
-        fold_policy: &FixedFoldPolicy,
-        ring_challenge_cfg: &challenge,
-        challenge_dimension: dimensions.d_a(),
-        dimensions,
-        payload_mode: akita_types::CommitmentPayloadMode::Raw,
-        num_claims,
-
-        num_live_ring_elements_per_claim: 64,
-        num_positions_per_block: 8,
-        num_live_blocks: 8,
-
-        num_chunks: 1,
-        outer_slice_count: akita_types::CommitmentSliceCount::ONE,
-        witness_norms: FoldWitnessNorms::bounded(3, dimensions.d_a()),
-        log_basis_open: 3,
-        width_s,
-        num_digits_outer: 2,
-        modeled_linf_cap: None,
-    })
-    .unwrap()
-    .expect("raw candidate has certified minimum A/B ranks");
-    let outer = raw_candidate.outer_commit_matrix;
-    let field_bytes = outer.sis_modulus_profile().field_bits().div_ceil(8) as usize;
-    let over_cap_rank =
-        akita_types::MAX_COMPRESSION_INPUT_BYTES.div_ceil(dimensions.d_b() * field_bytes) + 1;
-    raw_candidate.outer_commit_matrix = OuterCommitMatrixParams::try_new(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        over_cap_rank.max(outer.output_rank()),
-        outer.input_width(),
-        outer.coeff_linf_bound(),
-        outer.ring_dimension(),
-    )
-    .expect("larger-than-minimum rank remains SIS certified");
-
-    let mut params = CommittedGroupParams::params_only(
-        policy.sis_modulus_profile,
-        dimensions.d_a(),
-        3,
-        raw_candidate.inner_commit_matrix.output_rank(),
-        raw_candidate.outer_commit_matrix.output_rank(),
-        1,
-        challenge,
-    )
-    .with_decomp(width_s, width_s * 8, 1, 2, 2)
-    .unwrap();
-    params.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    params.own_group_mut().profile.inner.matrix = raw_candidate.inner_commit_matrix;
-    params.own_group_mut().profile.outer.matrix = raw_candidate.outer_commit_matrix;
-    params.own_group_mut().profile.group = PolynomialGroupLayout::singleton(14);
-    params.own_group_mut().opening.num_digits_fold = raw_candidate.num_digits_fold;
-    assert!(params.compression_sources_supported().unwrap());
-    params
-        .validate_commitment_request(2, num_claims)
-        .expect("raw S1 geometry does not execute compression");
-
-    let mut compressed = params;
-    compressed.payload_mode = akita_types::CommitmentPayloadMode::Compressed;
-    assert!(!compressed.compression_sources_supported().unwrap());
-    assert!(compressed
-        .validate_commitment_request(2, num_claims)
-        .is_err());
-}
+#[path = "schedule_params_candidate/shared_ab.rs"]
+mod shared_ab;

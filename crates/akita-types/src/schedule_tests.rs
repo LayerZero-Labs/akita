@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -22,14 +23,15 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
+use crate::GrindingPlan;
 use crate::{
     canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
     sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
     CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingVec, SisModulusProfileId,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof, TerminalResponse,
-    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingRelationMode, RingVec,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
@@ -44,11 +46,12 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
+#[path = "schedule_tests/relation_mode.rs"]
+mod relation_mode;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
 type F = Prime128OffsetA7F7;
-// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
-const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+const TEST_TERMINAL_A_BOUND: u128 = 104_244;
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
     committed_params_with_geometry(ring_dimension, 4, 4)
 }
@@ -65,7 +68,8 @@ fn committed_params_with_geometry(
         2,
         2,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            .expect("production test challenge"),
     )
     .with_decomp(
         num_positions_per_block,
@@ -75,6 +79,7 @@ fn committed_params_with_geometry(
         2,
     )
     .expect("schedule validation params");
+    let a_bound = execution_admission::exact_test_a_bound(&params);
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::try_new(
         inner.security_policy(),
@@ -85,7 +90,7 @@ fn committed_params_with_geometry(
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        TEST_TERMINAL_A_BUCKET,
+        a_bound,
         inner.ring_dimension(),
     )
     .expect("audited schedule A matrix");
@@ -311,7 +316,8 @@ fn base_field_proof_shape_rejects_mixed_opening_families() {
     ])
     .expect("grouped opening layout");
 
-    let error = canonical_proof_shape(&schedule, &layout, 1)
+    let grinding_plan = GrindingPlan::new(Vec::new(), 1).expect("empty grinding plan");
+    let error = canonical_proof_shape(&schedule, &layout, 1, &grinding_plan)
         .expect_err("base-field proof shape must reject mixed opening families");
     assert!(
         matches!(
@@ -559,6 +565,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     group_params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
+    let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = &group_params.inner().matrix;
     group_params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::new_unchecked(
@@ -570,7 +577,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            a_bound,
             inner.ring_dimension(),
         );
     let outer = &group_params.outer().matrix;
@@ -666,7 +673,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            TEST_TERMINAL_A_BUCKET,
+            TEST_TERMINAL_A_BOUND,
             inner.ring_dimension(),
         );
     let expected_inner = committed.inner().matrix;
@@ -789,7 +796,6 @@ fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
         opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-        fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -877,7 +883,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                TEST_TERMINAL_A_BUCKET,
+                TEST_TERMINAL_A_BOUND,
                 inner.ring_dimension(),
             );
 
@@ -886,21 +892,17 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
             terminal_response,
-            0,
         );
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level: a direct terminal level
-        // carries only the `fold_grind_nonce` (plus any extension-opening
-        // reduction, absent from this fixture), matching the planner's
-        // terminal-direct accounting.
+        // it from the serialized terminal level. The proof-level packed nonce
+        // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            crate::FOLD_GRIND_NONCE_BYTES,
-            serialized_without_witness,
+            0, serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
         );
@@ -954,7 +956,6 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 .unwrap()
                 .terminal_coefficients()
             ]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -1063,7 +1064,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
             modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
             role: crate::sis::SisMatrixRole::Inner,
             ring_dimension: 64,
-            coeff_linf_bound: 32_767,
+            coeff_linf_bound: TEST_TERMINAL_A_BOUND,
         },
         16,
     )

@@ -239,8 +239,12 @@ pub const fn compression_ring_dimensions(profile: SisModulusProfileId) -> [usize
     }
 }
 
-fn profile_field_bits(profile: SisModulusProfileId) -> usize {
+const fn profile_field_bits(profile: SisModulusProfileId) -> usize {
     profile.field_bits() as usize
+}
+
+const fn profile_field_bytes(profile: SisModulusProfileId) -> usize {
+    profile_field_bits(profile).div_ceil(8)
 }
 
 /// One checked rank-one negative-binary compression map.
@@ -692,6 +696,20 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
+                CompressionChainPlan::for_complete_source(profile, plan.source_coefficients())
+                    .unwrap(),
+                plan,
+                "a warm canonical lookup must preserve the exact plan",
+            );
+            let adjacent_source = plan.source_coefficients() - 1;
+            let adjacent =
+                CompressionChainPlan::for_complete_source(profile, adjacent_source).unwrap();
+            assert_eq!(
+                CompressionChainPlan::for_complete_source(profile, adjacent_source).unwrap(),
+                adjacent,
+                "an adjacent warm lookup must preserve its own exact cache entry",
+            );
+            assert_eq!(
                 plan.maps()
                     .iter()
                     .map(|map| map.ring_dimension())
@@ -701,6 +719,16 @@ mod tests {
             assert_eq!(plan.policy(), COMPRESSION_POLICY);
             assert_eq!(plan.source_bytes(), MAX_COMPRESSION_INPUT_BYTES);
             assert_eq!(plan.terminal_coefficients() * field_bytes, 128);
+            assert_eq!(
+                plan,
+                CompressionChainPlan::new(
+                    profile,
+                    plan.source_coefficients(),
+                    [plan.maps()[0], plan.maps()[1]],
+                )
+                .unwrap(),
+                "canonical derivation must match checked reconstruction",
+            );
             assert_eq!(
                 plan.max_setup_field_elements().unwrap(),
                 plan.maps()[0].padded_digit_count()

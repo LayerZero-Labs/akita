@@ -123,9 +123,14 @@ dead_patterns=(
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 # Synced with specs/PRUNING.md and book/src/foundations/spec-index.md. CI scans
-# only these live design records unless --all.
+# these live design records and their normative supporting files unless --all.
 live_specs=(
   specs/akita-compute-backend-metal.md
+  specs/certified-planner-architecture.md
+  specs/certified-planner/aerie-workload.md
+  specs/certified-planner/pruning-proofs.md
+  specs/quotient-free-tail-ring-relations.md
+  specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
@@ -139,6 +144,7 @@ live_specs=(
   specs/sis-quantum128-scalar-n-table.md
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md
+  specs/transcript-grinding.md
 )
 
 missing_live=()

@@ -26,6 +26,14 @@
 > conversion here counts it twice. The active spec owns this correction and
 > the optional L2 route.
 
+> **Active correction (2026-08-25).** The coefficient-L∞ route must price the
+> exact difference of two verifier-accepted recompositions. Balanced digits
+> represent an asymmetric interval, so its diameter is `negative_reach +
+> positive_reach = b^δ_fold - 1`, not twice the negative reach. Consequently
+> the digit-certified A-role price is `4·ω·(b^δ_fold - 1)`. The symmetric
+> `8·ω·Z` formula remains correct only when `Z` is a raw symmetric bound on
+> each individual response, such as a terminal response cap.
+
 ## Correction (2026-06-03): committed-fold A-role reprice
 
 ### What was still wrong
@@ -73,25 +81,26 @@ envelope** the stage-1 range check actually certifies:
 β^resp = num_claims · num_live_blocks · min(||c||_inf·||s||_1, ||c||_1·||s||_inf)
        = fold_witness_beta(...)
 δ_fold = num_digits_fold(..., honest cap = min(β_inf, t*))
-z_verifier = balanced_digit_abs_max(log_basis, δ_fold)
+delta_z_cert = balanced_digit_interval_diameter(log_basis, δ_fold)
+             = 2^(log_basis · δ_fold) - 1
 
-collision_A_inf = 8 · ω · z_verifier · ν
+collision_A_inf = 4 · ω · delta_z_cert
 collision_A     = ceil_supported_linf_bound(collision_A_inf)
-                  (ADPS16 coefficient-L∞ SIS table)
+                  (exact A-role target in the ADPS16 coefficient-L∞ SIS table)
 ```
 
 `fold_witness_beta` still names the fold-response kernel bound; MSIS pricing uses
-`z_verifier`, not raw `β_inf`, because the verifier accepts only balanced
-`δ_fold`-digit coefficients.
+`delta_z_cert`, not raw `β_inf`, because binding compares two responses whose
+balanced `δ_fold`-digit coefficients lie in the verifier-certified interval.
 
 This is implemented in
 [`crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
 (with fold-linf cap sizing in
 [`fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)):
 `rounded_up_role_a_inf_norm` prices the
-`8·ω·balanced_digit_abs_max·ν` coefficient-`L∞` envelope into the audited
-A-role collision bucket; each call site then derives the level's secure A-role
-rank from that bucket via `min_secure_rank`. Both thread `num_claims` and
+`4·ω·balanced_digit_interval_diameter` coefficient-`L∞` envelope into the audited
+A-role collision target; each call site then derives the level's secure A-role
+rank from that target via `min_secure_rank`. Both thread `num_claims` and
 `ring_subfield_norm_bound` from each call site (the planner DP in
 `schedule_params.rs`, the runtime expansion, and the verifier-reachable layout
 derivation in `layout/sis_derivation.rs`). The A-role price and `δ_fold` now
@@ -207,10 +216,11 @@ needs `||z||_1`. Two independent facts close that door:
    `||·||_1 / ||·||_inf` ratio, so the outer `min` is a no-op: there is no
    `ω`-factor to recover, with or without an L1 range check.
 
-So the shipped `8·ω·balanced_digit_abs_max(δ_fold)·ν` bound is already the
-tight one for the one-hot case; replacing the outer `||c||_1` with `||c||_inf` would
+So the outer `||c||_1` factor remains necessary for the one-hot case, while
+the response factor is the exact certified interval diameter. Replacing the
+outer `||c||_1` with `||c||_inf` would
 under-price the coefficient-`L∞` collision by a factor of `ω` and select SIS
-ranks below the configured floor. No code change: the conservative `||c||_1` outer factor is also the correct one. The
+ranks below the configured floor. The
 one-hot A-rank therefore cannot be lowered by this route; any further one-hot
 proof-size win has to come from the fold / digit side (already optimized via the
 `min` and the digit envelope), not from the binding collision.

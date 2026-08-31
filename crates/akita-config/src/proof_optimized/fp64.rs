@@ -8,7 +8,7 @@ pub type Field = Prime64Offset59;
 pub type ExtensionField = Ext2<Field>;
 
 const SUFFIX_RING_DIMENSIONS: &[usize] = &[64];
-const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024];
+const A_RING_DIMENSIONS: &[usize] = &[64, 128, 256, 512, 1024, 2048];
 const B_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const D_RING_DIMENSIONS: &[usize] = &[64, 128, 256];
 const ADAPTIVE_RING_DIMENSION_MODE: akita_schedules::RingDimensionScheduleMode =

@@ -537,6 +537,9 @@ mod committed_group_tests {
     type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
+        let a_bound = *crate::sis::inner_coeff_linf_bounds(SisModulusProfileId::Q32Offset99, 64)
+            .first()
+            .expect("D64 exact A bounds");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             crate::SisTableKey {
                 policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
@@ -544,7 +547,7 @@ mod committed_group_tests {
                 modulus_profile: SisModulusProfileId::Q32Offset99,
                 role: SisMatrixRole::Inner,
                 ring_dimension: 64,
-                coeff_linf_bound: 131_071,
+                coeff_linf_bound: a_bound,
             },
             32,
         )

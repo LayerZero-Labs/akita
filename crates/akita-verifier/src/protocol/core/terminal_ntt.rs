@@ -3,7 +3,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
 use akita_types::{
-    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
+    dispatch_for_field, ntt_cache_requires_exactness_tail, AkitaVerifierSetup, FoldSchedule,
 };
 use jolt_field::{CanonicalEncoding, Field};
 
@@ -24,7 +24,7 @@ pub(super) fn warm_for_schedule<
         F,
         requirement.ring_dimension,
         |D| {
-            let tail_prefix_len = if ntt_cache_requires_i16_tail::<F, D>(
+            let tail_prefix_len = if ntt_cache_requires_exactness_tail::<F, D>(
                 requirement.width,
                 TERMINAL_I16_ABS_BOUND,
             )? {
@@ -76,7 +76,7 @@ where
     let slot = {
         let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
         let tail_prefix_len =
-            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)? {
+            if ntt_cache_requires_exactness_tail::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)? {
                 prepared_prefix_len
             } else {
                 0
@@ -99,9 +99,8 @@ mod tests {
     use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
     use akita_types::{
-        prepare_ntt_cache, select_crt_ntt_params, AkitaExpandedSetup, AkitaScheduleLookupKey,
-        AkitaSetupDescriptor, FlatMatrix, NttCacheMode, PolynomialGroupLayout,
-        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+        prepare_ntt_cache, AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor,
+        FlatMatrix, NttCacheMode, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
     };
     use jolt_field::Ring;
     use jolt_field::{Prime128Offset275 as F, Prime32Offset99 as F32, Prime64Offset59 as F64};
@@ -203,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_i16_tail_path_materializes_exactly_one_small_prime() {
+    fn terminal_i16_path_materializes_the_selected_exact_profile() {
         let matrix = matrix();
         let setup = verifier_setup(&matrix);
         let centered = (0..5)
@@ -217,17 +216,17 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        assert!(
-            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_ABS_BOUND)
-                .expect("tail capability")
-        );
+        let needs_tail =
+            ntt_cache_requires_exactness_tail::<F, D>(centered.len(), TERMINAL_I16_ABS_BOUND)
+                .expect("tail capability");
         assert_eq!(
             centered_rows(&setup, 2, &centered, 10).expect("mixed i16 terminal matvec"),
             expected(&matrix, &centered_rings(&centered))
         );
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            q128_base_cache_bytes(10) + 10 * D * core::mem::size_of::<i16>()
+            q128_base_cache_bytes(10)
+                + usize::from(needs_tail) * 10 * D * core::mem::size_of::<i32>()
         );
     }
 
@@ -267,8 +266,9 @@ mod tests {
         )
         .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
-        let needs_tail = ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
-            .expect("q32 terminal capability");
+        let needs_tail =
+            ntt_cache_requires_exactness_tail::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
+                .expect("q32 terminal capability");
         let actual = centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
         let centered_rhs = rhs
             .iter()
@@ -404,31 +404,25 @@ mod tests {
     #[test]
     fn exact_capabilities_do_not_alias_cache_entries() {
         let setup = verifier_setup(&matrix());
-        let ProtocolCrtNttParams::Q128(params) =
-            select_crt_ntt_params::<F, D>().expect("Q128 params")
-        else {
-            panic!("Q128 field must select Q128 params");
-        };
-        let safe_width = params
-            .crt_capacity()
-            .max_safe_width::<F, D>(1 << (TERMINAL_I16_LOG_BASIS - 1))
-            .expect("base profile supports a terminal width");
-        assert!(safe_width < 4);
+        let initial_needs_tail =
+            ntt_cache_requires_exactness_tail::<F, D>(4, TERMINAL_I16_ABS_BOUND)
+                .expect("initial exactness requirement");
+        let initial_tail_len = usize::from(initial_needs_tail) * 4;
 
         let initial_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
-            .expect("tail prefix");
-        assert!(initial_tail.has_i16_tail());
+            .prepared_verifier_ntt_prefix::<D>(4, initial_tail_len, 4, TERMINAL_I16_ABS_BOUND)
+            .expect("initial exact prefix");
+        assert_eq!(initial_tail.has_exactness_tail(), initial_needs_tail);
 
         let combined = setup
-            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_ABS_BOUND)
+            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, TERMINAL_I16_ABS_BOUND)
             .expect("larger base-only prefix");
-        assert!(!combined.has_i16_tail());
+        assert!(!combined.has_exactness_tail());
         assert!(!Arc::ptr_eq(&initial_tail, &combined));
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("separate bytes"),
             q128_base_cache_bytes(4)
-                + 4 * D * core::mem::size_of::<i16>()
+                + initial_tail_len * D * core::mem::size_of::<i32>()
                 + q128_base_cache_bytes(10)
         );
         let other_basis = setup
@@ -437,8 +431,8 @@ mod tests {
         assert!(!Arc::ptr_eq(&combined, &other_basis));
 
         let reused_tail = setup
-            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_ABS_BOUND)
-            .expect("reused tail prefix");
+            .prepared_verifier_ntt_prefix::<D>(4, initial_tail_len, 4, TERMINAL_I16_ABS_BOUND)
+            .expect("reused exact prefix");
         assert!(Arc::ptr_eq(&initial_tail, &reused_tail));
     }
 }

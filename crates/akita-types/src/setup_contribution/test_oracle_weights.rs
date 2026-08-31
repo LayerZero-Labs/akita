@@ -31,7 +31,16 @@ pub(crate) struct RoleLaneSpec<'a, E> {
     /// α-weighted lanes carried by one physical column (`d_role / base`).
     pub role_lanes: usize,
     /// `role_lane_alpha[l] = α^{base_ring_dim · l}`, length `role_lanes`.
-    pub role_lane_alpha: &'a [E],
+    pub weighting: RoleLaneWeighting<'a, E>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RoleLaneWeighting<'a, E> {
+    /// Lifted evaluation sums low lanes with their native alpha powers.
+    Lifted(&'a [E]),
+    /// Reduced evaluation removes the low role-lane coordinates; the supplied
+    /// equality window is already the remaining high point.
+    ReducedHigh,
 }
 
 impl<E: Field> RoleLaneSpec<'_, E> {
@@ -58,11 +67,28 @@ fn canonical_lane_weight<E: Field>(
         ));
     }
     let mut weight = E::zero();
-    for (lane, &alpha) in spec.role_lane_alpha.iter().enumerate() {
-        let index = first_lane
-            .checked_add(lane)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
-        weight += eq_window.eval(index) * alpha;
+    match spec.weighting {
+        RoleLaneWeighting::Lifted(role_lane_alpha) => {
+            if role_lane_alpha.len() != spec.role_lanes {
+                return Err(AkitaError::InvalidSetup(
+                    "relation lane oracle has malformed lifted weights".into(),
+                ));
+            }
+            for (lane, &alpha) in role_lane_alpha.iter().enumerate() {
+                let index = first_lane.checked_add(lane).ok_or_else(|| {
+                    AkitaError::InvalidSetup("relation lane address overflow".into())
+                })?;
+                weight += eq_window.eval(index) * alpha;
+            }
+        }
+        RoleLaneWeighting::ReducedHigh => {
+            if !first_lane.is_multiple_of(spec.role_lanes) {
+                return Err(AkitaError::InvalidSetup(
+                    "reduced relation lane address is not role aligned".into(),
+                ));
+            }
+            weight = eq_window.eval(first_lane / spec.role_lanes);
+        }
     }
     Ok(weight)
 }

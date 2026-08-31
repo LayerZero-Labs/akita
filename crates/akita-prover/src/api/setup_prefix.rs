@@ -39,14 +39,20 @@ where
     F: Field + CanonicalEncoding,
     B: DigitRowsComputeBackend<F> + for<'a> RootCommitKernel<DenseView<'a, F, D>, F, D>,
 {
-    if natural_len == 0 || natural_len > n_prefix {
+    commitment_profile.validate(
+        commitment_profile
+            .inner
+            .matrix
+            .sis_modulus_profile()
+            .field_bits(),
+    )?;
+    commitment_profile.validate_setup_prefix_geometry(natural_len)?;
+    let committed_n_prefix = 1usize
+        .checked_shl(commitment_profile.group.num_vars() as u32)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
+    if committed_n_prefix != n_prefix || !n_prefix.is_multiple_of(D) {
         return Err(AkitaError::InvalidSetup(
-            "setup prefix natural length must be in 1..=n_prefix".to_string(),
-        ));
-    }
-    if !n_prefix.is_multiple_of(D) || !n_prefix.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix length must be a power-of-two multiple of D".to_string(),
+            "requested setup prefix does not match the full committed domain".to_string(),
         ));
     }
     let full_prefix_ring_slots = n_prefix / D;
@@ -152,6 +158,7 @@ where
             id: (),
             plan,
             coefficients: raw_commitment.into_coeffs(),
+            relation_mode: akita_types::RingRelationMode::QuotientLift,
         }],
     )?;
     let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
@@ -164,10 +171,11 @@ where
         .ring_dimension();
     let commitment_payload =
         RingVec::from_coeffs_with_ring_dim(output.terminal.into_coefficients(), terminal_ring_dim)?;
+    let quotients = output.relation.into_quotient_lift()?;
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,
-        &output.quotients,
+        &quotients,
     )?;
     let id = SetupPrefixSlotId {
         natural_len,
@@ -234,14 +242,20 @@ mod tests {
                 .expect("production challenge"),
         )
         .with_decomp(
+            1,
             4,
-            3,
             akita_types::sis::compute_num_digits_field_width(128, 3),
             2,
             2,
         )
         .expect("level params");
         let inner = params.inner().matrix;
+        let coeff_linf_bound = *akita_types::sis::inner_coeff_linf_bounds(
+            inner.sis_modulus_profile(),
+            u32::try_from(ring_dimension).expect("ring dimension"),
+        )
+        .first()
+        .expect("audited setup-prefix A bound");
         params.own_group_mut().profile.inner.matrix =
             InnerCommitMatrixParams::try_new_with_min_rank(
                 SisTableKey {
@@ -253,7 +267,7 @@ mod tests {
                     modulus_profile: inner.sis_modulus_profile(),
                     role: akita_types::sis::SisMatrixRole::Inner,
                     ring_dimension: u32::try_from(ring_dimension).expect("ring dimension"),
-                    coeff_linf_bound: 131_071,
+                    coeff_linf_bound,
                 },
                 inner.input_width(),
             )
@@ -356,23 +370,7 @@ mod tests {
 
     #[test]
     fn commit_setup_prefix_requires_full_prefix_shared_setup() {
-        let level_params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            64,
-            3,
-            2,
-            3,
-            2,
-            SparseChallengeConfig::pm1_only(3),
-        )
-        .with_decomp(
-            16,
-            256,
-            akita_types::sis::compute_num_digits_field_width(128, 3),
-            2,
-            2,
-        )
-        .expect("level params");
+        let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
             .blocks()
             .live_blocks
@@ -405,7 +403,10 @@ mod tests {
             natural_len,
         )
         .expect_err("full-prefix source must be resident");
-        assert!(error.to_string().contains("shared matrix capacity"));
+        assert!(
+            error.to_string().contains("shared matrix capacity"),
+            "unexpected error: {error}"
+        );
     }
 
     fn assert_commit_setup_prefix_populates_singleton_slot<const D: usize>() {
@@ -446,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
+    fn commit_setup_prefix_rejects_unaudited_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
             .blocks()
@@ -478,7 +479,10 @@ mod tests {
             n_prefix,
             n_prefix,
         )
-        .expect_err("ordinary outer D32 must reject");
-        assert!(error.to_string().contains("unsupported ring dimension 32"));
+        .expect_err("unaudited outer D32 must reject");
+        assert!(
+            error.to_string().contains("no audited SIS table key"),
+            "unexpected error: {error}"
+        );
     }
 }

@@ -370,6 +370,7 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     match root_dimension {
         256 => run_dense_mode::<256, Cfg>("dense_fp128", &title, nv),
         512 => run_dense_mode::<512, Cfg>("dense_fp128", &title, nv),
+        1024 => run_dense_mode::<1024, Cfg>("dense_fp128", &title, nv),
         dimension => panic!("dense_fp128 profile does not compile ring dimension D={dimension}"),
     }
 }

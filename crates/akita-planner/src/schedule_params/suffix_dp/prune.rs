@@ -1,35 +1,21 @@
 use akita_error::AkitaError;
-use akita_types::{active_setup_field_len, CommittedGroupParams, OpeningClaimsLayout};
+use akita_types::{active_setup_field_len, OpeningClaimsLayout};
 
-use crate::schedule_params::level_setup_field_elements;
-use crate::schedule_params::pareto;
+use crate::schedule_params::{level_setup_field_elements, pareto};
 
-type LevelCandidate = (
-    CommittedGroupParams,
-    usize,
-    usize,
-    Option<crate::response_model::SourceMomentEstimate>,
-);
-
-type LevelFrontierEntry = (
-    [usize; 6],
-    Vec<u8>,
-    CommittedGroupParams,
-    usize,
-    usize,
-    Option<crate::response_model::SourceMomentEstimate>,
-);
+type LevelFrontierEntry = ([usize; 6], Vec<u8>, super::PlannedFoldCandidate);
 
 pub(super) fn level_candidates(
     opening_layout: &OpeningClaimsLayout,
-    candidates: Vec<LevelCandidate>,
-) -> Result<Vec<LevelCandidate>, AkitaError> {
+    candidates: Vec<super::PlannedFoldCandidate>,
+) -> Result<Vec<super::PlannedFoldCandidate>, AkitaError> {
     let mut frontier: Vec<LevelFrontierEntry> = Vec::new();
-    for (params, next_witness_len, eor_bytes, next_source_moment) in candidates {
+    for candidate in candidates {
+        let params = &candidate.params;
         let outer_payload_coeffs = params.outer_payload_geometry()?.transmitted_coefficients();
         let coords = [
-            akita_types::padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?),
-            level_setup_field_elements(&params)?,
+            akita_types::padded_setup_prefix_len(active_setup_field_len(params, opening_layout)?),
+            level_setup_field_elements(params)?,
             outer_payload_coeffs,
             params
                 .outer()
@@ -43,46 +29,32 @@ pub(super) fn level_candidates(
                 .output_rank()
                 .checked_mul(params.role_dims().d_d())
                 .ok_or_else(|| AkitaError::InvalidSetup("D output dimension overflow".into()))?,
-            eor_bytes,
+            candidate.opening_reduction_bytes,
         ];
         let descriptor = params.canonical_descriptor_bytes();
         pareto::insert(
             &mut frontier,
-            (
-                coords,
-                descriptor,
-                params,
-                next_witness_len,
-                eor_bytes,
-                next_source_moment,
-            ),
-            |(best, best_descriptor, best_params, best_next_witness_len, _, best_source_moment),
-             (
-                candidate,
-                candidate_descriptor,
-                candidate_params,
-                candidate_next_witness_len,
-                _,
-                candidate_source_moment,
-            )| {
-                best_params.payload_mode == candidate_params.payload_mode
-                    && best_params.role_dims() == candidate_params.role_dims()
+            (coords, descriptor, candidate),
+            |(best, best_descriptor, best_candidate),
+             (candidate, candidate_descriptor, candidate_entry)| {
+                best_candidate.params.payload_mode == candidate_entry.params.payload_mode
+                    && best_candidate.params.ring_relation_mode
+                        == candidate_entry.params.ring_relation_mode
+                    && best_candidate.params.role_dims() == candidate_entry.params.role_dims()
                     && matches!(
-                        best_params.opening_method(),
+                        best_candidate.params.opening_method(),
                         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
                     ) == matches!(
-                        candidate_params.opening_method(),
+                        candidate_entry.params.opening_method(),
                         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
                     )
-                    // This PR emits one L2 split and norm-proof shape per DP
-                    // state. Keep Linf and L2 frontiers separate because these
-                    // coordinates do not price the L2 norm payload.
-                    && std::mem::discriminant(&best_params.inner().matrix.security_route())
-                        == std::mem::discriminant(
-                            &candidate_params.inner().matrix.security_route(),
-                        )
-                    && best_next_witness_len == candidate_next_witness_len
-                    && best_source_moment == candidate_source_moment
+                    && std::mem::discriminant(
+                        &best_candidate.params.inner().matrix.security_route(),
+                    ) == std::mem::discriminant(
+                        &candidate_entry.params.inner().matrix.security_route(),
+                    )
+                    && best_candidate.next_witness_len == candidate_entry.next_witness_len
+                    && best_candidate.next_source_moment == candidate_entry.next_source_moment
                     && pareto::canonical_dominates(
                         best,
                         best_descriptor,
@@ -94,10 +66,6 @@ pub(super) fn level_candidates(
     }
     Ok(frontier
         .into_iter()
-        .map(
-            |(_, _, params, next_witness_len, eor_bytes, next_source_moment)| {
-                (params, next_witness_len, eor_bytes, next_source_moment)
-            },
-        )
+        .map(|(_, _, candidate)| candidate)
         .collect())
 }

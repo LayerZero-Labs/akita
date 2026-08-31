@@ -3,14 +3,11 @@
 //! [`FoldWitnessLinfCapConfig`] supplies the proved tail-bound inputs used to
 //! size digit depth from `min(β_inf, t*)`.
 //! A-role MSIS pricing is separate: it uses
-//! [`super::decomposition_digits::balanced_digit_abs_max`] at the
+//! [`super::decomposition_digits::balanced_digit_interval_diameter`] at the
 //! resulting `δ_fold` depth (see [`super::norm_bound::rounded_up_role_a_inf_norm`]).
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-
-/// Maximum Fiat-Shamir probes per committed fold level.
-pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
 
 /// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
 /// sizing for `t*` (`specs/fold-linf-rejection.md`).

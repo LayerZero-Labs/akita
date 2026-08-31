@@ -30,28 +30,29 @@ PROFILES = [
         "role": "production",
         "q_label": "2^64 - 59",
         "q": 2**64 - 59,
-        "primes": [1073692673, 1073668097, 1073707009],
+        "primes": [1073692673, 1073668097, 1073655809],
         "limb": "i32",
-        "ring_dims": [64, 128, 256, 512, 1024],
+        "ring_dims": [64, 128, 256, 512, 1024, 2048],
     },
     {
-        "name": "Q128/5xi32",
+        "name": "Q128/6xi32",
         "role": "portable production",
         "q_label": "2^128 - 2^32 + 22537",
         "q": 2**128 - 2**32 + 22537,
         "primes": [
-            1073692673,
-            1073668097,
             1073707009,
-            1073738753,
-            1073732609,
+            1073698817,
+            1073692673,
+            1073682433,
+            1073668097,
+            1073655809,
         ],
         "limb": "i32",
-        "ring_dims": [64, 128, 256, 512],
+        "ring_dims": [64, 128, 256, 512, 1024],
     },
     {
         "name": "Q128/3xu64-IFMA52",
-        "role": "AVX-512 exact cache",
+        "role": "AVX-512 base cache",
         "q_label": "2^128 - 2^32 + 22537",
         "q": 2**128 - 2**32 + 22537,
         "primes": [
@@ -60,7 +61,21 @@ PROFILES = [
             1125899905744897,
         ],
         "limb": "u64",
-        "ring_dims": [64, 128, 256, 512],
+        "ring_dims": [64, 128, 256, 512, 1024],
+    },
+    {
+        "name": "Q128/3xu64+1xi32-IFMA52",
+        "role": "AVX-512 hybrid exact cache",
+        "q_label": "2^128 - 2^32 + 22537",
+        "q": 2**128 - 2**32 + 22537,
+        "primes": [
+            1125899906826241,
+            1125899906629633,
+            1125899905744897,
+            1073707009,
+        ],
+        "limb": "3xu64+1xi32",
+        "ring_dims": [64, 128, 256, 512, 1024],
     },
 ]
 
@@ -73,7 +88,7 @@ ROLES = [
 RUST_PRIME_CONST_BY_PROFILE = {
     "Q32/2xi32": ("tables.rs", "Q32_PRIMES"),
     "Q64/3xi32": ("tables.rs", "Q64_PRIMES"),
-    "Q128/5xi32": ("tables.rs", "I32_RAW_PRIMES"),
+    "Q128/6xi32": ("tables.rs", "I32_RAW_PRIMES"),
     "Q128/3xu64-IFMA52": ("ifma52.rs", "IFMA52_PRIMES"),
 }
 
@@ -201,17 +216,20 @@ def main() -> int:
     print()
     print("## Q128 Balanced-Digit Capacity")
     print()
-    print("The base CRT products for portable and AVX-512 exact accumulation are both")
-    print("about 150 bits. Their mathematical thresholds are therefore almost the same.")
-    print("A row above the listed width needs the 14-bit tail prime `12289` if it is")
-    print("accumulated exactly in one pass.")
+    print("The portable and hybrid AVX-512 exact products are both about 180 bits.")
+    print("The hybrid retains three hot IFMA limbs and adds one 30-bit tail only for")
+    print("rows that exceed the roughly 150-bit IFMA base product.")
     print()
     print("| Representation | D | log basis 3 | 4 | 5 | 6 | 7 | 8 |")
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    for profile_name in ["Q128/5xi32", "Q128/3xu64-IFMA52"]:
+    for profile_name in [
+        "Q128/6xi32",
+        "Q128/3xu64-IFMA52",
+        "Q128/3xu64+1xi32-IFMA52",
+    ]:
         profile = next(item for item in PROFILES if item["name"] == profile_name)
         crt_product = product(profile["primes"])
-        for ring_dim in [64, 128, 256, 512]:
+        for ring_dim in profile["ring_dims"]:
             widths = [
                 fmt_count(safe_width(profile["q"], crt_product, ring_dim, 1 << (log_basis - 1)))
                 for log_basis in range(3, 9)
@@ -226,10 +244,11 @@ def main() -> int:
     print()
     print("For balanced digits with log basis 1 through 8:")
     print()
-    print("- Scalar, AVX2, and NEON backends use the portable five-prime chunked i8")
+    print("- Scalar, AVX2, and NEON backends use the portable six-prime chunked i8")
     print("  accumulation.")
     print("- An AVX-512IFMA backend uses one exact accumulation for a q128 row when the")
-    print("  three-prime IFMA product is too small but the product with 12289 fits.")
+    print("  three-prime IFMA product is too small but the product with the 30-bit")
+    print("  tail prime 1073707009 fits.")
     print("- All other rows stay chunked. Each chunk reconstructs before the next chunk,")
     print("  so the complete row does not need the tail prime.")
     print("- The block-parallel kernel still exposes independent blocks to Rayon when the")
@@ -238,40 +257,6 @@ def main() -> int:
     print("Log bases 9 through 16 require exact i16 digits on every backend because i8")
     print("cannot represent those balanced digits. The tail is still added only when the")
     print("exact capacity check requires it.")
-    print()
-    print("### Production root shapes")
-    print()
-    print("| Variables | D | Log basis | Live blocks | Complete row width | Portable aligned chunk | Chunks |")
-    print("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-    print("| 26 | 256 | 7 | 256 | 4,864 | 247 | 20 |")
-    print("| 28 | 512 | 7 | 512 | 9,728 | 114 | 86 |")
-    print("| 30 | 512 | 7 | 1,024 | 19,456 | 114 | 171 |")
-    print()
-    print("All three complete rows exceed the base capacity and fit after adding 12289.")
-    print("They therefore use exact IFMA52 accumulation on eligible AVX-512 hosts and the")
-    print("listed bounded chunks on scalar, AVX2, and NEON hosts.")
-    print()
-    print("### Measurement evidence")
-    print()
-    print("Measurements were collected on 2026-08-21 from the PR 430 optimization branch.")
-    print("The measurements use the same production q128 schedule before and after the")
-    print("candidate exact-tail dispatch. Each current AVX-512 result is the median of")
-    print("three interleaved samples after one warmup.")
-    print()
-    print("| Backend and workload | Chunked i8 commit | Exact commit | Change |")
-    print("| --- | ---: | ---: | ---: |")
-    print("| Apple NEON, q128 nv26 | 1.163 s | 2.489 s | 114% slower |")
-    print("| Zen 5 AVX-512IFMA, q128 nv26 | 1.296 s | 1.052 s | 18.8% faster |")
-    print("| Zen 5 AVX-512IFMA, q128 nv28 | 5.158 s | 3.562 s | 30.9% faster |")
-    print("| Zen 5 AVX-512IFMA, q128 nv30 | 20.173 s | 14.359 s | 28.8% faster |")
-    print("| Zen 5 AVX2, q128 nv26 to nv30 | baseline | candidate | 29% to 32% faster |")
-    print("| Hosted 32-thread AVX2, q128 nv28 | baseline | candidate | 16.8% slower |")
-    print()
-    print("On the AVX-512 run, exact accumulation increased setup by 0.051 s, 0.101 s,")
-    print("and 0.239 s at nv26, nv28, and nv30. Prepared-cache bytes increased by 29% to")
-    print("32%, while peak RSS increased by 1.6% to 5.5%. The durable policy therefore")
-    print("selects this trade only from AVX-512IFMA capability and the exact capacity")
-    print("bound. It does not dispatch on a host name or a particular variable count.")
     print()
     print("## Q32 Experiment")
     print()

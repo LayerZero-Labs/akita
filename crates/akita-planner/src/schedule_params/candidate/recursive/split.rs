@@ -4,7 +4,7 @@ impl SplitBoundPolicy {
     pub(super) fn is_enabled(self) -> bool {
         match self {
             Self::Enabled => true,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "catalog-gen"))]
             Self::DisabledForOracle => false,
         }
     }
