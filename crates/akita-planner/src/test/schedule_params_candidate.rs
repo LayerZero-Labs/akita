@@ -72,6 +72,71 @@ fn grouped_level_params() -> CommittedGroupParams {
     params
 }
 
+#[cfg(feature = "catalog-gen")]
+fn audited_grouped_level_params() -> CommittedGroupParams {
+    use akita_types::{
+        InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
+    };
+
+    let params = grouped_level_params();
+    let key = |role| {
+        akita_types::sis::sis_table_key_for_linf_bound(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_types::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            role,
+            64,
+            1,
+        )
+        .expect("synthetic matrix has an audited SIS bucket")
+    };
+    let groups = params
+        .groups()
+        .iter()
+        .cloned()
+        .map(|mut group| {
+            group.opening.fold_challenge_config =
+                SparseChallengeConfig::production_for_ring_dim(64)
+                    .expect("production synthetic challenge");
+            group.profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+                key(SisMatrixRole::Inner),
+                group.profile.inner.matrix.input_width(),
+            )
+            .expect("audited synthetic A matrix");
+            let outer_width = akita_types::CommitmentSliceGeometry::try_new(
+                group.profile.outer_slice_count,
+                group.profile.blocks.live_blocks,
+                1,
+                group.profile.inner.matrix.output_rank(),
+                group.profile.outer.digits.num_digits,
+                group.profile.inner.matrix.ring_dimension(),
+                group.profile.outer.matrix.ring_dimension(),
+            )
+            .expect("synthetic B geometry")
+            .physical_input_width();
+            group.profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+                key(SisMatrixRole::Outer),
+                outer_width,
+            )
+            .expect("audited synthetic B matrix");
+            group
+        })
+        .collect();
+    let open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+        key(SisMatrixRole::Open),
+        params.open().matrix.input_width(),
+    )
+    .expect("audited synthetic D matrix");
+    CommittedGroupParams::try_new(
+        groups,
+        open_matrix,
+        params.payload_mode,
+        params.source_encoding,
+        params.witness_chunk,
+    )
+    .expect("audited grouped params")
+}
+
 #[test]
 fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
@@ -748,7 +813,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
 
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
-    let mut params = grouped_level_params();
+    let mut params = audited_grouped_level_params();
     let prefix_params = *params
         .precommitted_groups()
         .last()
@@ -759,7 +824,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
             prefix_params,
         )))
         .expect("valid setup-prefix topology");
-    let output_witness_len = 1 << 4;
+    let output_witness_len = 1 << 6;
     let final_group = PolynomialGroupLayout::singleton(4);
     let opening_layout = params
         .opening_layout_for_final_group(final_group)
