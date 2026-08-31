@@ -133,6 +133,137 @@ particular:
 Reviewers MUST use the metric, source context, tests, performance role, and PR
 delta together.
 
+### Historical lineage and intended contexts
+
+These measures come from different research and engineering traditions. They
+are not independent estimates of one universal property called “complexity,”
+and agreement among them is not a proof of poor quality.
+
+| Measure | Origin and original concern | Useful interpretation here |
+|---|---|---|
+| Physical lines | Industrial size limits predate modern static analysis. McCabe's 1976 paper explicitly contrasted its control-flow measure with rules such as IBM's 50-line and TRW's two-page module limits. | Ownership and review-surface prompt |
+| Cyclomatic complexity | Thomas McCabe's 1976 graph-theoretic measure counted a basis of linearly independent paths through a program control-flow graph. | Decision structure and minimum basis-path test burden |
+| Halstead difficulty | Maurice Halstead's 1977 *Elements of Software Science* derived a family of lexical measures from distinct and total operators and operands. | Operator/operand density within one pinned lexical model |
+| Test coverage | Structural coverage criteria measure which specified program elements a test suite exercises. Coverage has many forms, including statement, branch, condition, and path coverage. | Evidence of test exposure, not proof that assertions are effective |
+| CRAP | Alberto Savoia and Bob Evans introduced the Change Risk Analysis and Predictions metric in 2007; the later name is Change Risk Anti-Patterns. It combines cyclomatic complexity with coverage. | Prioritization of complicated, weakly exercised functions |
+| Cognitive complexity | SonarSource introduced Cognitive Complexity in December 2016 and published the governing technical report in 2017 to distinguish understandability from testability. | Relative difficulty of following nested and nonlinear control flow |
+
+#### Cyclomatic complexity: paths, modularization, and testing
+
+[McCabe's original paper](https://doi.org/10.1109/TSE.1976.233837) asked how
+to divide programs into modules that remain testable and maintainable. It
+replaced total path count, which can be infinite in the presence of loops,
+with the dimension of a basis set of control-flow paths. The paper connected
+that number to basis-path testing and stressed that testing the basis does not
+prove correctness. The relationship was later developed into the
+[NIST structured-testing methodology](https://www.nist.gov/publications/structured-testing-testing-methodology-using-cyclomatic-complexity-metric).
+
+McCabe reported an operational upper bound of 10, but called it “reasonable,
+but not magical” and allowed exceptions for large selection statements. That
+history explains the familiar 10-point rule and also why it must not be copied
+without context. Modern languages add short-circuit expressions, pattern
+matches, error propagation, closures, and macro-generated control flow that
+different analyzers count differently.
+
+For Akita, cyclomatic complexity is therefore a testability and decomposition
+signal. It is not a literal count of all executable paths, a defect
+probability, or a universal module-size law.
+
+#### Halstead difficulty: lexical software science
+
+[Halstead's 1977 book](https://books.google.com/books?id=rRIpAQAAMAAJ)
+attempted to build quantitative “software science” from a program's operator
+and operand vocabulary. Difficulty is one member of that larger family,
+alongside vocabulary, length, volume, effort, and other derived values. Its
+historical ambition was broader than the narrow use in this specification.
+
+Difficulty depends on what a tool calls an operator or operand and on the
+lexical span it assigns to a function. Rust traits, qualified paths, generic
+bounds, closures, macros, and overloaded operators make those choices
+material. The value is neither computational complexity in the asymptotic
+sense nor a direct measure of mathematical sophistication. Halstead did not
+establish 80 as a universal difficulty limit; the 40, 80, and 100 bands in
+this specification are local review bands that require calibration.
+
+#### Cognitive complexity: an understandability heuristic
+
+SonarSource introduced the metric in a
+[2016 explanation](https://www.sonarsource.com/blog/cognitive-complexity-because-testability-understandability/),
+then documented its rules in
+[G. Ann Campbell's technical report](https://www.sonarsource.com/docs/CognitiveComplexity.pdf)
+and a [2018 overview](https://doi.org/10.1145/3194164.3194186). Its central
+choice is to charge structures that interrupt linear reading and to add a
+nesting penalty, while leaving ordinary well-named calls free. This is a
+designed heuristic, not a graph invariant.
+
+A 2020 meta-analysis of about 24,000 evaluations of 427 snippets found that
+the measure correlated positively with comprehension time and subjective
+understandability ratings, but reported mixed results for comprehension
+correctness and physiological measures
+([paper](https://doi.org/10.1145/3382494.3410636),
+[replication package](https://doi.org/10.5281/zenodo.3949828)). The appropriate
+claim is therefore narrow: a pinned implementation can help locate code whose
+control flow may be harder to follow. Different “cognitive complexity”
+implementations MUST NOT be treated as one interchangeable scale.
+
+#### Coverage and CRAP: exposure and change triage
+
+Coverage belongs to the older family of structural test-adequacy criteria.
+The current ISO/IEC/IEEE testing vocabulary defines coverage as the degree to
+which specified coverage items have been exercised; those items can be
+statements, branches, states, or other structures
+([ISO/IEC/IEEE 29119-1:2022](https://www.iso.org/obp/ui/#iso:std:iso-iec-ieee:29119:-1:ed-2:v1:en)).
+The denominator and test profile are therefore part of the measurement, not
+incidental tool settings.
+
+Coverage can demonstrate absence of test execution: uncovered code was not
+executed by that test profile. It cannot demonstrate the quality of inputs or
+assertions. In a 2014 study of 31,000 generated suites for five large Java
+systems, coverage had only low-to-moderate correlation with mutation-based
+effectiveness after controlling for suite size; the authors cautioned against
+using a fixed coverage value as a quality target
+([paper](https://doi.org/10.1145/2568225.2568271)). This does not make coverage
+useless. It defines its role as an exposure diagnostic rather than a proof of
+correctness.
+
+Savoia and Evans's CRAP metric joined that exposure signal to McCabe's path
+signal. Savoia's
+[2011 retrospective](https://testing.googleblog.com/2011/02/this-code-is-crap.html)
+records its 2007 origin and acknowledges that the formula does not include
+higher-order design concerns such as cohesion and coupling. The often-cited
+CRAP threshold of 30 is a practical convention, not a mathematical boundary.
+This specification does not adopt 25, 30, or any other CRAP value as an
+initial hard gate.
+
+#### Measurement theory: why this specification uses several signals
+
+Later software-metrics research made the limitations of single-number policy
+explicit. Weyuker's
+[1988 evaluation](https://doi.org/10.1109/32.6178) compared statement count,
+cyclomatic number, Halstead effort, and data-flow measures against proposed
+properties; no examined measure possessed all of them. Kaner and Bond's
+[2004 construct-validity framework](https://kaner.com/pdfs/metrics2004.pdf)
+argued that a metric must be validated against the attribute it claims to
+measure and warned that poorly understood targets distort behavior.
+
+Akita consequently uses a small dashboard rather than a synthetic quality
+number:
+
+- cyclomatic complexity prompts questions about decisions and test paths;
+- cognitive complexity prompts questions about nesting and reading order;
+- Halstead difficulty prompts questions about lexical and arithmetic density;
+- physical lines prompt questions about ownership and review surface;
+- coverage reports observed execution under a named test profile; and
+- CRAP orders candidates where path complexity and missing exposure coincide.
+
+The grades below are Akita policy proposals, not constants inherited from the
+literature. Green cyclomatic complexity ending at 10 acknowledges McCabe's
+historical practice. The yellow, red, and critical bands are shaped by the
+prototype Akita distribution and reviewer intent. The cognitive and Halstead
+bands are likewise local calibration hypotheses. Any transition from
+advisory reporting to enforcement requires the explicit Phase 2 policy change
+defined below.
+
 ## Intent
 
 ### Goal
@@ -667,3 +798,32 @@ Recommended implementation slices:
 - `specs/PRUNING.md` — live-spec lifecycle and archive policy.
 - PR #445 prototype complexity evidence at
   `b09d69bfdab4c5ffc689bcb6b32327c9f5e7f622`.
+- Thomas J. McCabe, [“A Complexity Measure”](https://doi.org/10.1109/TSE.1976.233837),
+  *IEEE Transactions on Software Engineering*, 1976.
+- Maurice H. Halstead,
+  [*Elements of Software Science*](https://books.google.com/books?id=rRIpAQAAMAAJ),
+  Elsevier, 1977.
+- Elaine J. Weyuker,
+  [“Evaluating Software Complexity Measures”](https://doi.org/10.1109/32.6178),
+  *IEEE Transactions on Software Engineering*, 1988.
+- Dolores R. Wallace, Arthur H. Watson, and Thomas J. McCabe,
+  [*Structured Testing: A Testing Methodology Using the Cyclomatic Complexity Metric*](https://www.nist.gov/publications/structured-testing-testing-methodology-using-cyclomatic-complexity-metric),
+  NIST Special Publication 500-235, 1996.
+- Cem Kaner and Walter P. Bond,
+  [“Software Engineering Metrics: What Do They Measure and How Do We Know?”](https://kaner.com/pdfs/metrics2004.pdf),
+  METRICS 2004.
+- Alberto Savoia,
+  [“This Code is CRAP”](https://testing.googleblog.com/2011/02/this-code-is-crap.html),
+  Google Testing Blog, 2011 retrospective on the 2007 metric.
+- G. Ann Campbell,
+  [“Cognitive Complexity, Because Testability != Understandability”](https://www.sonarsource.com/blog/cognitive-complexity-because-testability-understandability/),
+  SonarSource, 2016.
+- G. Ann Campbell,
+  [“Cognitive Complexity: An Overview and Evaluation”](https://doi.org/10.1145/3194164.3194186),
+  TechDebt 2018.
+- Laura Inozemtseva and Reid Holmes,
+  [“Coverage Is Not Strongly Correlated with Test Suite Effectiveness”](https://doi.org/10.1145/2568225.2568271),
+  ICSE 2014.
+- Marvin Muñoz Barón, Marvin Wyrich, and Stefan Wagner,
+  [“An Empirical Validation of Cognitive Complexity as a Measure of Source Code Understandability”](https://doi.org/10.1145/3382494.3410636),
+  ESEM 2020; [replication package](https://doi.org/10.5281/zenodo.3949828).
