@@ -53,7 +53,7 @@ rewritten to make a score smaller.
 | Comparison | Absolute grade plus base-to-head delta |
 | Primary metrics | Cyclomatic, cognitive, Halstead difficulty, physical lines |
 | Composite metric | CRAP, when compatible function coverage is available |
-| File policy | Keep the existing 1,500-line hard cap; add 500- and 1,000-line review signals |
+| File policy | Keep the existing 1,500-line hard cap during migration; retain 500 as an advisory signal; adopt 1,000 as the long-term hard-cap target |
 | Generated code | Report separately; never mix into handwritten-code percentiles |
 | Tests and examples | Report separately; do not use them to grade production structure |
 | Arithmetic kernels | Permit documented exceptions backed by focused tests and benchmarks |
@@ -89,7 +89,10 @@ The same audit found 128 of 472 strictly classified production files above 500
 physical lines. Across all 737 Rust files, 184 exceeded 500 lines, 21 exceeded
 1,000, and none exceeded the existing 1,500-line cap. A 500-line hard cap would
 therefore reject roughly one quarter of the current tree. It is useful as a
-review prompt, not as an immediate build failure.
+review prompt, not as an immediate build failure. A 1,000-line cap has a much
+smaller migration cohort and is the long-term target: the current repository
+checker at `1bb646b4d5afff46cf3cebb29ce9f44b1677f4f2` identifies 21 tracked,
+non-generated Rust files above it.
 
 Coverage joined to 5,909 of the 6,118 named production functions in the
 prototype run. The resulting CRAP distribution had median 2, p95 21.30, and
@@ -298,6 +301,10 @@ semantics or encouraging shallow abstraction.
     formulas, or single-use indirection.
 11. Any blocking threshold or exception MUST be reviewable in the repository;
     it MUST NOT depend on an unversioned service default.
+12. The repository MUST retain its current 1,500-line Rust file cap while the
+    1,000-line migration baseline is reduced. Lowering the default hard cap to
+    1,000 requires a separate reviewed policy change after new growth is
+    prevented and remaining exceptions are explicit.
 
 ### Non-goals
 
@@ -380,6 +387,13 @@ logical-statement counts when the analyzer provides them.
 File size is an ownership prompt. Function size is a review aid. Neither is a
 substitute for a responsibility analysis.
 
+The long-term repository hard-cap target is 1,000 physical lines for every
+tracked, non-generated Rust file in the scope of
+`scripts/check-rust-file-lines.sh`. The existing 1,500-line cap remains active
+during migration. Generated Rust recognized by the existing checker remains
+outside this cap; changing that classification requires a separate policy
+decision.
+
 ### CRAP
 
 For cyclomatic complexity `C` and compatible function coverage fraction `p`,
@@ -443,8 +457,13 @@ File-size signals are:
 | Physical lines | Signal |
 |---:|---|
 | 500 or more | Advisory ownership review |
-| 1,000 or more | Strong decomposition review |
-| More than 1,500 | Existing hard failure |
+| More than 1,000 | Long-term cap violation; during migration, require no growth and a decomposition plan or reviewed exception |
+| More than 1,500 | Current hard failure during migration |
+
+The migration SHOULD use the existing exact-path baseline mechanism. A file
+above 1,000 lines MUST NOT grow beyond its recorded baseline, and its entry
+MUST be removed once it reaches 1,000 lines or fewer. New non-generated Rust
+files MUST NOT enter the baseline after the 1,000-line ratchet is approved.
 
 An eventual ratchet SHOULD focus on new critical functions and material
 regressions in changed functions. It SHOULD NOT fail a PR solely because an
@@ -481,7 +500,9 @@ Before CI integration:
    parser-error baseline with file and span inventory.
 4. Check in file-classification rules and fixtures.
 5. Generate a baseline from a named main or stack SHA.
-6. Review representative green, yellow, red, and critical functions as a team.
+6. Generate the exact 1,000-line migration inventory for tracked,
+   non-generated Rust files.
+7. Review representative green, yellow, red, and critical functions as a team.
 
 No threshold blocks a PR in this phase.
 
@@ -503,6 +524,8 @@ It MUST NOT post every unchanged hotspot on every PR.
 Phase 1 runs for a calibration period selected during spec approval. The team
 records false positives, parser defects, unstable identities, platform
 differences, and cases where the grade correctly exposed an ownership problem.
+The existing 1,500-line hard gate remains unchanged in this phase, while the
+1,000-line inventory is reported and must not grow.
 
 ### Phase 2: changed-code ratchet
 
@@ -513,7 +536,9 @@ After a separate reviewed policy change, CI MAY fail when a PR:
 - materially worsens an existing critical function without reducing another
   dimension or documenting why the change is necessary;
 - hides complexity through a thin wrapper or duplicate implementation; or
-- introduces an unaccounted parser error.
+- introduces an unaccounted parser error;
+- adds a tracked, non-generated Rust file above 1,000 physical lines; or
+- grows a file already recorded in the 1,000-line migration baseline.
 
 The exact delta considered material MUST be chosen from calibration evidence.
 This specification deliberately does not guess it before Phase 1 data exists.
@@ -532,6 +557,11 @@ Refactoring proceeds in small behavior-preserving slices. Each slice SHOULD:
 The first campaign SHOULD address orchestration and state-transition hotspots.
 Arithmetic kernels follow only when the team agrees that structural change is
 worth the performance and audit cost.
+
+The same phase SHOULD reduce the 1,000-line migration baseline through
+cohesive module extraction. Once every remaining over-target file has either
+been reduced or granted an explicit structural exception, a separate policy PR
+SHOULD lower the default hard cap from 1,500 to 1,000.
 
 ## Architecture
 
@@ -672,6 +702,8 @@ abstraction would harm performance or constant-factor auditability.
 - [ ] CRAP output states its coverage profile, completeness, and join quality.
 - [ ] Maintainers record false positives and exception candidates during the
       calibration period.
+- [ ] The 1,000-line migration inventory is checked in, new files cannot enter
+      it, and existing entries cannot grow.
 
 #### Refactoring
 
@@ -686,6 +718,10 @@ abstraction would harm performance or constant-factor auditability.
       lower-variance measurement such as retired instructions when available.
 - [ ] No refactor introduces a thin wrapper, duplicate formula, or parallel
       source of truth solely to improve a metric.
+- [ ] File decompositions reduce the 1,000-line migration baseline without
+      splitting cohesive ownership or creating pass-through module slop.
+- [ ] A separate reviewed policy change lowers the default file cap to 1,000
+      only after migration and exception criteria are satisfied.
 
 ### Testing strategy
 
@@ -746,7 +782,9 @@ code from inherently high-path code without exposing both inputs.
 
 Rejected. File length is easy to reproduce but weakly connected to local
 control-flow difficulty. Akita already has a 1,500-line hard cap. Advisory 500-
-and 1,000-line signals are sufficient for ownership review.
+line reporting remains useful for ownership review, and 1,000 lines is the
+long-term hard-cap target. The staged migration avoids pretending that file
+length alone identifies the correct module boundary.
 
 ### Require a universal zero-exception policy
 
@@ -787,8 +825,10 @@ Recommended implementation slices:
 5. Run the agreed calibration period.
 6. Approve or revise grades, material deltas, and exception policy.
 7. Refactor orchestration and state-transition hotspots in small stacked PRs.
-8. Evaluate arithmetic-kernel exceptions with differential tests and benchmarks.
-9. Propose the changed-code ratchet as a separate reviewed policy change.
+8. Reduce the 1,000-line file baseline through cohesive module extractions.
+9. Evaluate arithmetic-kernel exceptions with differential tests and benchmarks.
+10. Propose the changed-code and 1,000-line hard-cap ratchets as separately
+    reviewed policy changes.
 
 ## References
 
