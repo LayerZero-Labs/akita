@@ -18,7 +18,7 @@ policy and the checker use the same live set in
 | [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | implemented | Defines current source-free group and fold-admission rules. |
 | [`large-digit-ntt-infrastructure`](../../../specs/large-digit-ntt-infrastructure.md) | implemented | Load-bearing large-digit NTT and terminal verification contract. |
 | [`packed-sumcheck`](../../../specs/packed-sumcheck.md) | approved | Approved packed EOR and sum-check implementation; earlier Stage 1 and Stage 2 prerequisite gates are complete. |
-| [`prover-runtime`](../../../specs/prover-runtime/README.md) | proposed | Proposes a Fiat–Shamir-epoch runtime, opaque retained state, and a breaking commitment-first migration. |
+| [`prover-backend`](../../../specs/prover-backend/README.md) | proposed | Defines prover backend calls, backend-owned state, and a breaking commitment-first migration. |
 | [`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md) | implemented | Normative witness and verifier layout source. |
 | [`runtime-ring-cutover`](../../../specs/runtime-ring-cutover.md) | implemented | Normative runtime ring contract cited by the architecture chapter. |
 | [`selective-l2-fold-security-sizing`](../../../specs/selective-l2-fold-security-sizing.md) | implemented | Current security sizing source; deferred alternatives remain recorded. |

@@ -132,12 +132,13 @@ live_specs=(
   specs/heterogeneous-group-source-contracts.md
   specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
-  specs/prover-runtime/README.md
-  specs/prover-runtime/architecture.md
-  specs/prover-runtime/commitment-cutover.md
-  specs/prover-runtime/current-state.md
-  specs/prover-runtime/roadmap.md
-  specs/prover-runtime/transcript-epochs.md
+  specs/prover-backend/README.md
+  specs/prover-backend/architecture.md
+  specs/prover-backend/commitment-replacement.md
+  specs/prover-backend/commitment-implementation-order.md
+  specs/prover-backend/current-state.md
+  specs/prover-backend/roadmap.md
+  specs/prover-backend/transcript-steps.md
   specs/role-native-projected-digit-layout.md
   specs/runtime-ring-cutover.md
   specs/selective-l2-fold-security-sizing.md

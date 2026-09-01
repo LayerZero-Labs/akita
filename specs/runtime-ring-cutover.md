@@ -29,10 +29,10 @@ API boundary.
 > Public setup is now specified as a dimension-free field stream and NTT state
 > as exact backend-derived prefixes.
 
-> **Related proposed runtime:**
-> [`prover-runtime/README.md`](prover-runtime/README.md) preserves this spec's
-> schedule-owned runtime-dimension contract while proposing a new semantic
-> prover-backend boundary. Const-generic ring arithmetic remains permissible
+> **Related prover backend proposal:**
+> [`prover-backend/README.md`](prover-backend/README.md) preserves this spec's
+> schedule-owned runtime-dimension contract while proposing a new
+> prover backend boundary. Const-generic ring arithmetic remains permissible
 > below that boundary. This implemented spec remains authoritative until an
 > implementation PR updates any affected backend surfaces.
 

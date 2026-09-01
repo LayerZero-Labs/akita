@@ -1,24 +1,24 @@
-# Commitment backend cutover
+# Commitment backend replacement
 
 | Field | Value |
 |---|---|
 | Package | [`README.md`](README.md) |
 | Status | proposed |
-| Role | first implementation slice |
+| Role | normative commitment-replacement contract |
 
 ## Decision
 
-Akita MUST replace its fragment-level commitment backend surface with one
-semantic commitment epoch. The epoch MUST include source admission, inner
+Akita MUST replace its fragment-level commitment interface with one commitment
+call. The call MUST include source validation, inner
 commitment, outer decomposition and commitment, and the complete commitment
-compression chain.
+compression steps.
 
 Compression is inside this boundary because no Fiat–Shamir challenge separates
 it from the rest of commitment. The protocol owns the checked compression plan
-and the final `CommittedGroup` encoding. The runtime owns every intermediate
+and the final `CommittedGroup` encoding. The backend owns every intermediate
 representation and all private state retained for opening.
 
-This cutover is intentionally breaking. It does not preserve
+This replacement is intentionally breaking. It does not preserve
 `AkitaCommitmentHint`, the four-cluster stack, or the existing public backend
 trait hierarchy.
 
@@ -51,30 +51,31 @@ local optimization, not the final boundary.
 The replacement path is:
 
 ```text
-protocol-owned ValidatedCommitGroupPlan + source provider
+protocol-owned CheckedCommitmentPlan + source provider
   │
-  └─ one semantic commitment epoch
+  └─ one backend call
        ├─ arbitrary backend-private intermediates
-       ├─ canonical CommittedGroup message
-       └─ opaque StateHandle<CommittedGroupState>
+       ├─ CommittedGroup protocol message
+       └─ BackendStateRef<CommitmentState>
 ```
 
-## Semantic request
+## Backend input
 
 The request MUST be produced from the same schedule, geometry, source-class,
 magnitude, and setup-identity checks used by the verifier-facing protocol. It
 MUST NOT duplicate unchecked dimensions for backend convenience.
 
-The exact Rust decomposition is implementation work, but the semantic shape is:
+The exact Rust decomposition is implementation work, but the input is
+conceptually:
 
 ```rust,ignore
-pub struct ValidatedCommitGroupPlan<F> {
+pub struct CheckedCommitmentPlan<F> {
     pub group_id: GroupId,
     pub public_geometry: CommitmentGeometry,
     pub inner: InnerCommitmentPlan<F>,
     pub outer: OuterCommitmentPlan<F>,
     pub compression: CompressionChainPlan<F>,
-    pub source_contract: ValidatedSourceContract,
+    pub source_contract: CheckedSourceContract,
 }
 
 pub trait CommitmentSource<F> {
@@ -84,105 +85,107 @@ pub trait CommitmentSource<F> {
 }
 ```
 
-`CommitmentSource` is an ingress contract, not retained state. Dense,
+`CommitmentSource` describes how the backend reads the input; it does not
+prescribe the private state saved for later. Dense,
 multilinear, one-hot, packed-trace, sparse-unit, and setup-prefix
 adapters MAY retain their specialized traversal APIs beneath this boundary. A
-runtime MAY upload, stream, borrow, or directly traverse the source. It MUST
+backend MAY upload, stream, borrow, or directly traverse the source. It MUST
 not require that the source representation become its opening-state
 representation.
 
-The validated plan is protocol configuration. Backend tiling, device choice,
-stream size, cache policy, thread count, and recomputation policy are runtime
+The checked plan is protocol configuration. Backend tiling, device choice,
+stream size, cache policy, thread count, and recomputation policy are backend
 configuration and MUST NOT affect public commitment bytes.
 
-## Semantic result
+## Backend output
 
-The ordinary result contains exactly two categories:
+The ordinary result contains exactly two things:
 
 ```rust,ignore
-pub struct CommittedArtifact<F> {
-    message: CommittedGroup<F>,
-    state: StateHandle<CommittedGroupState>,
-    binding: CommitmentArtifactBinding,
+pub struct CommittedGroupWithState<F> {
+    public_commitment: CommittedGroup<F>,
+    state_ref: BackendStateRef<CommitmentState>,
+    // Private backend metadata binds these fields to the checked plan and setup.
 }
 ```
 
-`message` is the canonical value consumed by proof construction, serialization,
-and transcript encoding. `state` is a capability to backend-owned private data.
+`public_commitment` is the exact value consumed by proof construction,
+serialization, and transcript encoding. `state_ref` names private data owned by
+the backend.
 
-The state handle MUST:
+The state reference MUST:
 
-- identify its state owner, state domain, slot, generation, and semantic kind;
-- be opaque to protocol code;
+- identify its backend instance, optional prover session, slot, generation, and
+  state kind;
+- not expose stored state to protocol code;
 - have no field, ring, polynomial, collection, serialization, equality, or
   `Default` bound;
-- fail deterministically when stale, consumed, used with the wrong owner, or
-  used in the wrong state domain;
-- support explicit shared borrowing only where the runtime declares the state
+- fail deterministically when stale, consumed, or used with the wrong backend
+  instance or prover session;
+- support explicit shared borrowing only where the backend declares the state
   immutable and shareable.
 
-`CommittedArtifact` MUST have no public constructor and no API that accepts a
-replacement message or handle. The runtime constructs it atomically and binds
-the canonical commitment, group ID, checked plan identity, setup identity,
-state owner, and state generation. Opening and checkpoint operations consume or
-borrow the artifact as a unit and MUST reject a binding mismatch before
-transcript initialization or mutation. Protocol code may borrow `message` for
+`CommittedGroupWithState` MUST have no public constructor and no API that accepts a
+replacement message or reference. The backend constructs it as one value and
+links the public commitment, group ID, checked plan, setup identity, backend,
+and state generation. Opening and checkpoint operations consume or borrow the
+committed group with state as a unit and MUST reject a mismatch before transcript
+initialization or mutation. Protocol code may borrow `public_commitment` for
 serialization and absorption; it cannot pair that message with another
-same-kind state handle.
+same-kind state reference.
 
-The binding is operational metadata and MUST NOT affect proof or transcript
-bytes. It MAY be a canonical digest plus runtime-authenticated state record or
-another construction with equivalent swap resistance and deterministic
-validation.
+The private binding metadata MUST NOT affect proof or transcript bytes. It MAY
+be a digest plus a backend-validated state record or another construction that
+deterministically rejects swapped components. It is not a separate public type.
 
-The handle MUST NOT provide `inner_rows`, `into_rows`, compression-witness, or
-quotient accessors. A CPU runtime MAY store the exact current hint fields
+The reference MUST NOT provide `inner_rows`, `into_rows`, compression-witness, or
+quotient accessors. A CPU backend MAY store the exact current hint fields
 internally during the first migration; that private choice is not a contract.
 
 ## Distinct recursive next-witness messages
 
 Current recursive and suffix paths read the final inner row from
-`AkitaCommitmentHint` and absorb it. That row is not retained-state metadata; it
+`AkitaCommitmentHint` and absorb it. That row is not saved-state metadata; it
 is a prover message.
 
-It does not belong to the pretranscript `CommittedGroup` operation defined in
-this file. Ordinary recursive `commit_w` produces an `OuterPayload`, while
-terminal `commit_terminal_w` has only an inner plan and produces terminal inner
-state; neither is a full inner/outer/compression-to-`CommittedGroup` call. They
-belong to the later `NextWitnessBinding` epoch in
-[`transcript-epochs.md`](transcript-epochs.md).
+It does not belong to the `CommittedGroup` operation, which occurs before the
+transcript starts. Ordinary recursive `commit_w` produces an `OuterPayload`,
+while terminal `commit_terminal_w` has only an inner plan and produces terminal
+`t_fields`; neither is a complete inner/outer/compression-to-`CommittedGroup`
+call. They belong to the later next-witness-binding step in
+[`transcript-steps.md`](transcript-steps.md).
 
-The cutover MUST introduce a validated canonical message type, provisionally:
+The replacement MUST introduce a validated protocol message type, provisionally:
 
 ```rust,ignore
-pub struct TerminalInnerStateMessage<F> {
-    t_state: RingVec<F>,
+pub struct TerminalTFieldsMessage<F> {
+    t_fields: RingVec<F>,
 }
 ```
 
-That later epoch returns this value explicitly in its message bundle. The
+That later step returns this value explicitly as a protocol message. The
 driver validates and absorbs it using the same encoding used by the verifier.
-No transcript-relevant value may be recovered by inspecting a state handle.
+No transcript-relevant value may be recovered by inspecting a state reference.
 
 This message wraps exactly one A-native `RingVec<F>` from the terminal inner
 plan. Construction MUST validate its ring dimension and coefficient length
 against `TerminalFoldParams` and the scheduled terminal-response
 `t_field_elems`. Transcript encoding is
-`raw_field_segment_bytes(&t_state)`: canonical field coefficients in order,
+`raw_field_segment_bytes(&t_fields)`: canonical field coefficients in order,
 with no collection length prefix. The identical byte string is absorbed under
 `ABSORB_NEXT_LEVEL_WITNESS_BINDING` and later `ABSORB_COMMITMENT`, and the
 verifier requires it to equal
 `raw_field_segment_bytes(&terminal_response.t_fields)`. The wrapper has no
 public unchecked constructor.
 
-## CPU reference implementation
+## CPU backend
 
-The first implementation SHOULD preserve the current algorithms and move their
-composition behind the epoch:
+The first implementation SHOULD preserve the current algorithms and compose
+them behind one call:
 
 1. while ingesting or traversing the source, enforce the checked source-class
    and accepted-interval contract rather than trusting declared metadata; a
-   resident source handle may instead carry a runtime-validated binding to that
+   stored source reference may instead carry a backend-validated record of that
    exact contract;
 2. run the current source-specialized inner commitment;
 3. validate and decompose inner rows;
@@ -191,14 +194,14 @@ composition behind the epoch:
 6. build and validate `CommittedGroup`;
 7. retain whatever source, rows, transforms, digit blocks, stages, or quotients
    the CPU opening path chooses;
-8. return the public message and opaque handle.
+8. return the public message and state reference.
 
-`compute/compression.rs` is suitable as a bounded-memory CPU reference
-executor. It SHOULD be internalized rather than deleted merely because the
+`compute/compression.rs` is suitable for the bounded-memory CPU backend.
+It SHOULD be internalized rather than deleted merely because the
 public boundary moves. The same applies to dense, one-hot, packed-trace, and
-runtime-ring-dimension kernels.
+dynamic-ring-dimension kernels.
 
-The CPU epoch MUST preserve the reference executor's measurable scratch bound.
+The CPU path MUST preserve the current implementation's measurable scratch bound.
 `MAX_COMPRESSION_RHS_BATCH` remains `8` initially. For each report:
 
 ```text
@@ -226,30 +229,29 @@ cargo test -p akita-prover --release --no-default-features \
 End-to-end host RSS is recorded, not given a speculative hard regression
 threshold, with the canonical command in
 `book/src/usage/profiling.md`. Every implementation PR MUST publish base/head
-commit-phase time, peak RSS, the two report terms above, retained-state bytes,
-and semantic call/transfer counts for at least `onehot_fp128` at 32 variables
+commit-phase time, peak RSS, the two report terms above, backend-state bytes,
+and backend call/transfer counts for at least `onehot_fp128` at 32 variables
 or explain why the profile cannot run on the test host.
 
 ## Downstream opening conversion
 
-Commitment is not complete as an abstraction cutover while protocol code can
-still pair arbitrary polynomials with arbitrary hints. Replace parallel
-`{polynomials, commitment_hints}` inputs with committed artifacts bound when
-commitment succeeds.
+The replacement is incomplete while protocol code can still pair arbitrary
+polynomials with arbitrary hints. Replace parallel
+`{polynomials, commitment_hints}` inputs with `CommittedGroupWithState` values
+created when commitment succeeds.
 
-The next opening-side semantic epoch MUST consume committed artifacts as bound
-message/state/plan/setup units and
-return only:
+The next opening call MUST consume each `CommittedGroupWithState` as one linked
+public commitment/state/plan/setup value and return only:
 
-- the next canonical opening or relation message bundle; and
-- a new opaque state handle for later epochs.
+- the next opening or relation protocol messages; and
+- a new state reference for later steps.
 
-The runtime, not the protocol driver, decides whether to reuse retained rows,
+The backend, not the protocol driver, decides whether to reuse retained rows,
 reuse uploaded source state, derive `t_hat`, reconstruct B images, materialize
 compression witnesses, or recompute from the source.
 
 During the migration, a private CPU state implementation may expose typed
-borrows to private CPU form executors. It MUST NOT recreate a public generic
+borrows to private CPU operations. It MUST NOT recreate a public generic
 hint API.
 
 ## Persistence and setup-prefix commitments
@@ -262,23 +264,23 @@ Persistence MUST be explicit:
 ```rust,ignore
 fn export_commitment_checkpoint(
     &mut self,
-    artifact: &CommittedArtifact<F>,
+    commitment: &CommittedGroupWithState<F>,
     policy: CheckpointPolicy,
-) -> Result<CommitmentCheckpoint, BackendError>;
+) -> Result<CommitmentCheckpoint, ProverBackendError>;
 
 fn import_commitment_checkpoint(
     &mut self,
     checkpoint: &CommitmentCheckpoint,
-) -> Result<CommittedArtifact<F>, BackendError>;
+) -> Result<CommittedGroupWithState<F>, ProverBackendError>;
 ```
 
-### Canonical checkpoint envelope
+### Checkpoint file format
 
-Phase 3 MUST use one Akita-owned envelope even when its payload is
-backend-specific. Version 1 has the following canonical field order:
+Phase 3 MUST use one Akita-owned file format even when its payload is
+backend-specific. Version 1 has the following field order:
 
 1. four literal content-tag bytes `AKCP`;
-2. envelope schema version as an Akita-serialized `u64`, initially `1`;
+2. file-format version as an Akita-serialized `u64`, initially `1`;
 3. Akita protocol-format version as a `u64`;
 4. portability tag as one byte: `0` for protocol-portable and `1` for
    backend-specific;
@@ -303,99 +305,100 @@ enforce all of:
   descriptor;
 - the exact or maximum commitment length derived from the checked plan;
 - a format-declared payload bound derived from that plan; and
-- a versioned runtime `MAX_CHECKPOINT_PAYLOAD_BYTES` absolute cap selected
+- a versioned backend `MAX_CHECKPOINT_PAYLOAD_BYTES` absolute cap selected
   before reading untrusted data.
 
 The implementation PR MUST choose and test the numeric caps. It MUST use the
 checked sizing primitives in `akita_error::checked`; it MUST NOT allocate first
 and validate later or rely only on the generic `Vec` decoder cap. Each portable
 payload format MUST separately specify its canonical internal field order and
-validation. A backend-specific payload may be opaque to Akita, but its selected
-runtime must validate it fully before publishing a live artifact.
+validation. Akita need not understand a backend-specific payload, but its selected
+backend must validate it fully before publishing a live
+`CommittedGroupWithState`.
 
 The checkpoint format MUST be versioned and bound to the public commitment,
 setup identity, schedule identity, and protocol format version. A checkpoint
 MAY be:
 
 - a protocol-defined portable representation;
-- an explicitly tagged backend-specific representation; or
-- a recipe that asks the runtime to recompute from an available source.
+- an explicitly tagged backend-specific representation.
 
-Unsupported import MUST fail before transcript initialization or select an
-explicit recomputation path. Ordinary live handles MUST NOT become serializable
-to satisfy this use case.
+Recomputation from a retained source is a separate planned fallback, not a
+checkpoint. Unsupported import MUST fail before transcript initialization or
+the proof plan MUST select that recomputation path. Ordinary live references
+MUST NOT become serializable to satisfy this use case.
 
-The cutover creates a new versioned setup-prefix registry namespace and MUST NOT
-read the legacy serialized-hint registry. On a missing, legacy, truncated,
+The replacement creates a new versioned setup-prefix registry namespace and
+MUST NOT read the legacy serialized-hint registry. On a missing, legacy, truncated,
 unknown-version, corrupt, or mismatched setup-prefix checkpoint, `akita-setup`
 reconstructs the required slot from the public setup source through the same
-semantic commitment operation, validates the resulting public commitment
-against the verifier registry, and atomically writes the new envelope. If no
+commitment call, validates the resulting public commitment against the verifier
+registry, and atomically writes the new checkpoint. If no
 authoritative source is available for an ordinary user commitment, import
 returns a typed incompatibility error instead of guessing or accepting a loose
-message/handle pair. The public-matrix cache is outside this namespace and is
+message/reference pair. The public-matrix cache is outside this namespace and is
 not rewritten merely because the commitment checkpoint schema changes.
 
-## Ownership planning
+## Backend plan
 
-Commitment and the first opening consumer form a stateful chain. A runtime MUST
-plan that chain before the transcript starts.
+Commitment and the first opening call use the same private state. The proof
+planner MUST decide where that state stays before the transcript starts.
 
 The planner MUST choose one of:
 
-1. the same owner executes both epochs;
-2. the commitment owner exports and the opening owner imports a supported
-   checkpoint or transfer object;
-3. the opening owner recomputes from an explicitly retained source; or
+1. the same backend executes both calls;
+2. the commitment backend exports and the opening backend imports a supported
+   checkpoint or transfer value;
+3. the opening backend recomputes from an explicitly saved source; or
 4. planning fails.
 
 It MUST NOT silently read back a CPU hint because independently selected
-cluster implementations happen to expect it. Backend fallback is therefore a
-chain decision, not a per-method retry.
+cluster implementations happen to expect it. Fallback is therefore planned
+for the whole commitment-to-opening flow, not decided per method.
 
 ## Public API direction
 
 The intended call site is conceptually:
 
 ```rust,ignore
-let runtime = AkitaProverRuntime::prepare(setup, runtime_config)?;
-let committed = runtime.commit(source, group_plan)?;
-let proof = akita_protocol::prove_with_runtime(
-    &runtime,
+let backend = AkitaProverBackend::prepare(setup, backend_config)?;
+let committed = backend.commit(source, group_plan)?;
+let proof = akita_protocol::prove_with_backend(
+    &backend,
     transcript,
     statement,
     [&committed],
 )?;
 ```
 
-`prove_with_runtime` is the protocol-driver facade: it owns the transcript and
-invokes transcript-free runtime epochs. It is not a method on the runtime
+`prove_with_backend` is the protocol-driver entry point: it owns the transcript and
+invokes transcript-free backend calls. It is not a method on the backend
 layer.
 
-The exact ownership split between a long-lived state store and a proof-scoped
-session remains an implementation choice with one constraint: a committed
-artifact may outlive one proof, while transient fold and sum-check state should
-normally be proof-scoped. The API MUST make that lifetime distinction explicit.
+The backend state store owns commitment state that may outlive one proof. A
+prover session borrows that state and owns transient fold and sum-check state
+for one proof. The exact Rust containment may vary, but this lifetime split is
+required.
 
 ## Deletion and evolution map
 
-| Current surface | Cutover action |
+| Current surface | Replacement action |
 |---|---|
-| `GroupContext` | evolve into or compile into a validated commit-group plan |
-| `CommitOutput` | replace with canonical message plus opaque state handle |
+| `GroupContext` | evolve into or compile into a checked commitment plan |
+| `CommitOutput` | replace with protocol message plus state reference |
 | `AkitaCommitmentHint` | delete as a public/live type after consumers migrate |
 | hint serialization | replace with explicit checkpoint export/import |
-| `ProverOpeningData` parallel polynomial/hint vectors | replace with bound committed artifacts |
+| `ProverOpeningData` parallel polynomial/hint vectors | replace with bound `CommittedGroupWithState` values |
 | `RingRelationGroupWitness::hint` and hint accessors | delete |
-| `RootCommitSource` and specialized views | preserve initially as ingress/reference internals |
-| `RootCommitKernel` and primitive compute traits | internalize as CPU forms where useful |
+| `RootCommitSource` and specialized views | preserve initially as input/reference internals |
+| `RootCommitKernel` and primitive compute traits | keep useful algorithms as private CPU operations |
 | `CompressionChainPlan` and checked formulas | preserve as protocol-owned plan data |
-| `compute/compression.rs` | preserve as CPU reference composition, internalize |
-| `Runtime*Backend*` bundles and macro | delete after semantic runtime routing lands |
-| `ProverComputeStack`, `LevelProveStacks`, `TieredProveStacks` | replace with owner-aware epoch planning |
-| delegating cluster wrappers | delete rather than forward to the new runtime |
-| protocol cache-release hooks | move to runtime policy and observability |
-| `akita-pcs` re-exports of internal backend fragments | delete at public API cutover |
+| `compute/compression.rs` | preserve as private CPU composition |
+| `Runtime*Backend*` bundles and macro | delete after the new backend routing lands |
+| `ProverComputeStack`, `LevelProveStacks`, `TieredProveStacks` | replace with a plan that keeps each state value on a named backend |
+| delegating cluster wrappers | delete rather than forward to the new backend |
+| protocol cache-release hooks | move to backend policy and observability |
+| `akita-pcs` re-exports of internal backend fragments | delete when replacing the public API |
 
 No compatibility aliases or pass-through adapters should remain after the
 corresponding caller has migrated.
@@ -419,51 +422,52 @@ compile-time removal check so a new accessor reader cannot land unnoticed.
 
 The commitment slice is complete only when all of the following pass:
 
-- representative public commitment bytes match the pinned CPU implementation;
+- representative public commitment bytes match the pinned CPU backend;
 - full proof bytes and transcript-event traces match for unchanged protocol
   configuration;
-- a counting remote test double observes one semantic commitment call per
+- a fake remote backend that counts calls observes one commitment call per
   committed group, independent of compression-map count;
 - no inner row, B image, digit plane, compression stage, quotient, or source
-  polynomial appears in the semantic result type;
+  polynomial appears in the backend output type;
 - a non-CPU fake backend retains a representation that cannot be converted to
-  `RingVec` and still completes the next opening epoch;
-- wrong-owner, stale-generation, cross-domain, and wrong-kind handles are
+  `RingVec` and still completes the next opening call;
+- wrong-backend, stale-generation, wrong-session, and wrong-kind references are
   rejected deterministically;
 - malformed backend messages are rejected before transcript absorption;
-- the CPU implementation remains bounded-memory for compression;
+- the CPU backend remains bounded-memory for compression;
 - setup-prefix checkpoints round-trip through explicit export/import;
 - unsupported checkpoint imports fail before transcript mutation;
-- checkpoint goldens fix the version-1 envelope bytes, and negative tests cover
+- checkpoint goldens fix the version-1 file bytes, and negative tests cover
   every tag/version, descriptor cap, payload cap, truncation, trailing byte,
   identity/geometry mismatch, and legacy-registry regeneration path;
 - dense, one-hot, packed-trace, sparse-unit, and setup-prefix source
   adapters remain differentially tested;
-- runtime scheduling and resource configuration do not change proof bytes.
+- backend scheduling and resource configuration do not change proof bytes.
 
-The RPC assertion is about the semantic boundary. A local runtime MAY schedule
-many device kernels internally, and a distributed runtime MAY use an internal
+The RPC assertion is about the backend boundary. A local backend MAY schedule
+many device kernels internally, and a distributed backend MAY use an internal
 streaming protocol. Neither is visible to the Akita driver.
 
 ## Implementation sequence
 
 1. Pin commitment bytes, proof bytes, transcript events, and call counts for
    representative schedules and source classes.
-2. Add owner IDs, typed state handles, and the long-lived commitment state
+2. Add backend IDs, typed state references, and the long-lived commitment state
    store without exposing payload access.
-3. Compile existing commitment inputs into `ValidatedCommitGroupPlan`.
-4. Implement the full CPU commitment epoch by composing existing algorithms
+3. Compile existing commitment inputs into `CheckedCommitmentPlan`.
+4. Implement the full CPU commitment call by composing existing algorithms
    behind one call.
 5. Add one intentionally non-CPU-shaped fake backend and enforce the one-call
    contract.
 6. Route every `CommittedGroup` entry point, including setup-prefix and Jolt
-   source adapters, through the epoch.
+   source adapters, through the commitment call.
 7. Introduce explicit next-witness message types where current recursive code
-   reads a hint field for absorption; implement their separate epoch in the
+   reads a hint field for absorption; implement their separate step in the
    later transcript-boundary phase.
-8. Convert the first opening/relation consumers to handles.
+8. Convert the first opening/relation consumers to
+   `CommittedGroupWithState`.
 9. Add checkpoint export/import and migrate setup-prefix persistence.
-10. Delete `AkitaCommitmentHint`, old public capability bundles, cluster
+10. Delete `AkitaCommitmentHint`, old public support bundles, cluster
     forwarding wrappers, and obsolete serialized formats once the last reader
     is gone.
 
@@ -474,29 +478,29 @@ surface and MUST NOT add a second permanent abstraction.
 ## Failure modes to avoid
 
 - Stopping at outer commitment and calling compression a later backend.
-- Returning a new opaque wrapper that still exposes or serializes CPU rows.
+- Returning a new wrapper that still exposes or serializes CPU rows.
 - Giving the backend the transcript so it can hide multiple RPCs internally.
 - Allowing message validation only after transcript absorption.
 - Keeping the old stack through compatibility wrappers.
-- Treating `Clone` on a handle as harmless without defining shared-state
+- Treating `Clone` on a reference as harmless without defining shared-state
   semantics.
 - Making every live state portable to solve setup-prefix persistence.
-- Planning commitment and opening owners independently.
+- Planning commitment and opening backends independently.
 - Requiring a second backend to implement Akita-specific leaf traits before it
-  can implement the semantic commitment epoch.
+  can implement the commitment call.
 
 ## Open implementation questions
 
 These questions do not change the boundary decision:
 
-- whether long-lived commitment handles use explicit reference counting or
+- whether long-lived commitment references use explicit reference counting or
   store-issued proof borrows;
-- whether the first runtime dispatch is an object-safe trait, an enum, or a
+- whether the first backend dispatch is an object-safe trait, an enum, or a
   private vtable;
-- whether portable checkpoints are always available or only the CPU runtime
+- whether portable checkpoints are always available or only the CPU backend
   initially provides them;
-- whether source ingress is pull-based, push-based, or selected per source;
-- which existing primitive traits remain useful as private CPU form traits.
+- whether source input is pull-based, push-based, or selected per source;
+- which existing primitive traits remain useful for private CPU operations.
 
-Each choice should be evaluated with both the CPU reference path and an
+Each choice should be evaluated with both the CPU backend and an
 RPC-counting, representation-independent test backend.
