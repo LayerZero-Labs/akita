@@ -14,11 +14,13 @@ use jolt_field::{One, Prime128Offset275, Ring, Zero};
 type F = Prime128Offset275;
 
 fn new_transcript() -> AkitaTranscript<F> {
-    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+    <AkitaTranscript<F> as akita_transcript::TranscriptFactory<F>>::new(
+        tr_labels::DOMAIN_AKITA_PROTOCOL,
+    )
 }
 
-fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
-    tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
+fn sample_round(tr: &mut AkitaTranscript<F>) -> Result<F, AkitaError> {
+    Ok(tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND))
 }
 
 struct ToyEqFactoredInstance {

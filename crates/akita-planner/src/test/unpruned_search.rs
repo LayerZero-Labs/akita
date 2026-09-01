@@ -139,9 +139,9 @@ fn enumerate_suffixes(
                                 source_moment,
                             )?
                         {
-                            let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-                                .checked_add(terminal_eor_bytes)
-                                .ok_or_else(|| {
+                            let direct_bytes = terminal_eor_bytes;
+                            let payload_bytes =
+                                direct_bytes.checked_add(terminal_bytes).ok_or_else(|| {
                                     AkitaError::InvalidSetup(
                                         "unpruned traversal terminal proof size overflow".into(),
                                     )
@@ -154,14 +154,7 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                total_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
-                                    || {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal terminal proof size overflow"
-                                                .into(),
-                                        )
-                                    },
-                                )?,
+                                cost: PackedProofCost::new(payload_bytes, 0)?,
                                 setup_field_elements: terminal_setup_field_elements(
                                     &terminal.params,
                                 )?,
@@ -215,18 +208,22 @@ fn enumerate_suffixes(
                         )?
                         .iter()
                         {
-                            let child_is_terminal = child.folds.is_empty();
+                            let opening_layout = suffix_opening_layout(input_witness_len, None)?;
+                            let successor_d = child
+                                .folds
+                                .first()
+                                .map_or(child.terminal.params.d_a(), |fold| fold.params.d_a());
                             let direct_bytes = level_proof_bytes(
                                 field_bits,
                                 challenge_field_bits,
                                 &params,
+                                params.relation_address_geometry(
+                                    &opening_layout,
+                                    policy.claim_ext_degree,
+                                    successor_d,
+                                    output_witness_len,
+                                )?,
                                 child.first_fold_params(),
-                                output_witness_len,
-                                Some(if child_is_terminal {
-                                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                                } else {
-                                    akita_types::NextWitnessBindingPolicy::OuterPayload
-                                }),
                             )?
                             .checked_add(opening_reduction_bytes)
                             .ok_or_else(|| {
@@ -241,6 +238,7 @@ fn enumerate_suffixes(
                                 estimated_direct_payload_bytes: direct_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
+                            let cost = child.cost.checked_prepend(direct_bytes, 0)?;
                             schedules.push(ScheduleCandidate {
                                 first_direct_setup_field_len: std::num::NonZeroUsize::new(
                                     akita_types::active_setup_field_len(
@@ -248,13 +246,7 @@ fn enumerate_suffixes(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                total_bytes: direct_bytes
-                                    .checked_add(child.total_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
+                                cost,
                                 setup_field_elements: level_setup_field_elements(&params)?
                                     .max(child.setup_field_elements),
                                 folds,
@@ -368,18 +360,21 @@ pub(super) fn find_schedule(
                                     "unpruned root setup field length must be nonzero".into(),
                                 )
                             })?;
-                            let child_is_terminal = suffix.folds.is_empty();
+                            let successor_d = suffix
+                                .folds
+                                .first()
+                                .map_or(suffix.terminal.params.d_a(), |fold| fold.params.d_a());
                             let root_bytes = level_proof_bytes(
                                 field_bits,
                                 policy.challenge_field_bits()?,
                                 &root_params,
+                                root_params.relation_address_geometry(
+                                    &opening_layout,
+                                    policy.claim_ext_degree,
+                                    successor_d,
+                                    output_witness_len,
+                                )?,
                                 suffix.first_fold_params(),
-                                output_witness_len,
-                                Some(if child_is_terminal {
-                                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                                } else {
-                                    akita_types::NextWitnessBindingPolicy::OuterPayload
-                                }),
                             )?;
                             let folds = suffix.folds.prepend(CandidateFoldStep {
                                 params: Arc::new(root_params.clone()),
@@ -388,20 +383,24 @@ pub(super) fn find_schedule(
                                 estimated_direct_payload_bytes: root_bytes,
                                 estimated_stage3_payload_bytes: 0,
                             });
-                            complete.push(ScheduleCandidate {
+                            let payload_cost = suffix.cost.checked_prepend(root_bytes, 0)?;
+                            let mut candidate = ScheduleCandidate {
                                 first_direct_setup_field_len: Some(first_direct_setup_field_len),
-                                total_bytes: root_bytes
-                                    .checked_add(suffix.total_bytes)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup(
-                                            "unpruned traversal proof size overflow".into(),
-                                        )
-                                    })?,
+                                cost: payload_cost,
                                 setup_field_elements: level_setup_field_elements(&root_params)?
                                     .max(suffix.setup_field_elements),
                                 folds,
                                 terminal: Arc::clone(&suffix.terminal),
-                            });
+                            };
+                            let nonce_bits =
+                                akita_schedules::planner_support::candidate_grinding_nonce_bits(
+                                    policy,
+                                    &schedule_key.opening_layout()?,
+                                    &candidate.folds.to_vec(),
+                                    candidate.terminal.as_ref(),
+                                )?;
+                            candidate.cost = candidate.cost.with_nonce_bits(nonce_bits)?;
+                            complete.push(candidate);
                         }
                     }
                 }
@@ -424,10 +423,10 @@ pub(super) fn find_schedule(
             None
         };
     materialize_candidate_schedule(
-        selected.total_bytes,
+        selected.cost.proof_bytes(),
         selected.setup_field_elements,
         cached_first_direct_setup_field_len,
-        policy.selection_policy,
+        policy,
         &schedule_key.opening_layout()?,
         selected.folds.to_vec(),
         selected.terminal.as_ref().clone(),

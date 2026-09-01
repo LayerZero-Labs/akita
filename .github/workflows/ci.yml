@@ -307,7 +307,7 @@ jobs:
       (needs.expensive-paths.outputs.run == 'true' &&
        needs.expensive-paths.outputs.approved == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       max-parallel: 2
       matrix:
@@ -324,6 +324,26 @@ jobs:
           --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
           --
           --test-threads=1
+      # The structural challenge audit only runs under `logging-transcript`, so
+      # the protocol suites must also be exercised with it enabled. Without this
+      # step the audit is only ever checked against the two hardening targets at
+      # a single opening shape.
+      - name: Run protocol suites under the challenge audit
+        run: >-
+          cargo test --release -p akita-pcs
+          --test protocol_soundness
+          --test fold_linf
+          --test stage1_roundtrip
+          --test transcript
+          --test label_schedule
+          --no-default-features
+          --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
+      - name: Audit the grinding plan across akita-types shapes
+        run: >-
+          cargo test --release -p akita-types
+          --features logging-transcript
 
   test-timing:
     name: Test timing
