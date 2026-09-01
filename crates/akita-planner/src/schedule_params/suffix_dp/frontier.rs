@@ -21,6 +21,7 @@ impl Projection {
 
 pub(super) fn consider_child_suffixes<'a>(
     edge: &super::ChildEdge<'_>,
+    successor_class: &ParentObservableKey,
     child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
     incoming_setup_prefix: Option<usize>,
     projections: &[Projection],
@@ -30,15 +31,18 @@ pub(super) fn consider_child_suffixes<'a>(
     let Some(first) = child_candidates.next() else {
         return Ok(());
     };
+    if first_parent_visible_cost(edge.policy, first)? != *successor_class {
+        return Err(AkitaError::InvalidSetup(
+            "suffix frontier candidate disagrees with its parent-observable class".into(),
+        ));
+    }
+    // `SuffixResult` partitions candidates by every successor coordinate a
+    // parent can observe. Price the edge and grinding plan once for that class;
+    // rebuilding them for descriptor-distinct members is redundant.
     let edge_price = child_edge_price(edge, first)?;
-    let first_edge_nonce_bits = edge.grinding_nonce_bits(first)?;
+    let edge_nonce_bits = edge.grinding_nonce_bits(first)?;
     let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
     for suffix in std::iter::once(first).chain(child_candidates) {
-        let edge_nonce_bits = if same_grinding_successor(first, suffix) {
-            first_edge_nonce_bits
-        } else {
-            edge.grinding_nonce_bits(suffix)?
-        };
         let Some(candidate) = child_choice(edge, edge_price, edge_nonce_bits, suffix)? else {
             continue;
         };
@@ -58,14 +62,6 @@ pub(super) fn consider_child_suffixes<'a>(
         )?;
     }
     Ok(())
-}
-
-fn same_grinding_successor(left: &ScheduleCandidate, right: &ScheduleCandidate) -> bool {
-    match (left.folds.first(), right.folds.first()) {
-        (Some(left), Some(right)) => left.params == right.params,
-        (None, None) => left.terminal.params == right.terminal.params,
-        _ => false,
-    }
 }
 
 fn parent_visible_cost(

@@ -535,18 +535,20 @@ fn price_level_candidate_with_children(
         setup_field_budget: ctx.setup_field_budget,
     };
     if let Some(direct_child) = children.direct {
-        for candidates in direct_child.payload_only.values() {
+        for (successor_class, candidates) in &direct_child.payload_only {
             consider_child_suffixes(
                 &direct_edge,
+                successor_class,
                 candidates,
                 state.incoming_setup_prefix,
                 direct_projections,
                 &mut frontiers.projected,
             )?;
         }
-        for choices in direct_child.setup_and_payload.values() {
+        for (successor_class, choices) in &direct_child.setup_and_payload {
             consider_child_suffixes(
                 &direct_edge,
+                successor_class,
                 choices.payload_candidates(),
                 state.incoming_setup_prefix,
                 direct_projections,
@@ -559,9 +561,10 @@ fn price_level_candidate_with_children(
             offloaded: true,
             ..direct_edge
         };
-        for choices in offloaded_child.setup_and_payload.values() {
+        for (successor_class, choices) in &offloaded_child.setup_and_payload {
             consider_child_suffixes(
                 &offloaded_edge,
+                successor_class,
                 choices.setup_candidates(),
                 state.incoming_setup_prefix,
                 SETUP_PROJECTION,
@@ -569,6 +572,7 @@ fn price_level_candidate_with_children(
             )?;
             consider_child_suffixes(
                 &offloaded_edge,
+                successor_class,
                 choices.payload_candidates(),
                 state.incoming_setup_prefix,
                 PAYLOAD_PROJECTION,

@@ -4,6 +4,7 @@ use super::ajtai_key::{SisMatrixRole, SisModulusProfileId};
 use super::norm_bound::role_a_collision_inf_norm_for_response_difference;
 use crate::dispatch::{protocol_dispatch_tier_for_sis_profile, role_ring_dimensions_for_tier};
 use crate::RingRole;
+use std::sync::OnceLock;
 
 /// One reachable role coverage cell used by generation and runtime checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -122,9 +123,33 @@ fn inner_bound_supported(
     ring_dimension: u32,
     coeff_linf_bound: u128,
 ) -> bool {
-    inner_coeff_linf_bounds(modulus_profile, ring_dimension)
-        .binary_search(&coeff_linf_bound)
-        .is_ok()
+    cached_inner_coeff_linf_bounds(modulus_profile, ring_dimension)
+        .is_some_and(|bounds| bounds.binary_search(&coeff_linf_bound).is_ok())
+}
+
+const INNER_RING_DIMENSION_COUNT: usize =
+    akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS.len();
+static Q32_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+static Q64_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+static Q128_INNER_COEFF_LINF_BOUNDS: [OnceLock<Vec<u128>>; INNER_RING_DIMENSION_COUNT] =
+    [const { OnceLock::new() }; INNER_RING_DIMENSION_COUNT];
+
+fn cached_inner_coeff_linf_bounds(
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: u32,
+) -> Option<&'static [u128]> {
+    let ring_dimension_usize = usize::try_from(ring_dimension).ok()?;
+    let index = akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+        .iter()
+        .position(|&dimension| dimension == ring_dimension_usize)?;
+    let cache = match modulus_profile {
+        SisModulusProfileId::Q32Offset99 => &Q32_INNER_COEFF_LINF_BOUNDS[index],
+        SisModulusProfileId::Q64Offset59 => &Q64_INNER_COEFF_LINF_BOUNDS[index],
+        SisModulusProfileId::Q128OffsetA7F7 => &Q128_INNER_COEFF_LINF_BOUNDS[index],
+    };
+    Some(cache.get_or_init(|| derive_inner_coeff_linf_bounds(modulus_profile, ring_dimension)))
 }
 
 /// Enumerate the exact A-role collision bounds for one supported profile and
@@ -135,6 +160,16 @@ fn inner_bound_supported(
 /// coefficient-bound catalog exists.
 #[must_use]
 pub fn inner_coeff_linf_bounds(
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: u32,
+) -> Vec<u128> {
+    if let Some(bounds) = cached_inner_coeff_linf_bounds(modulus_profile, ring_dimension) {
+        return bounds.to_vec();
+    }
+    derive_inner_coeff_linf_bounds(modulus_profile, ring_dimension)
+}
+
+fn derive_inner_coeff_linf_bounds(
     modulus_profile: SisModulusProfileId,
     ring_dimension: u32,
 ) -> Vec<u128> {
