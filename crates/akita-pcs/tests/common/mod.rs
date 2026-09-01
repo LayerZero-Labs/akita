@@ -478,11 +478,11 @@ fn verifier_setup_with_alternate_full_prefix(
         &original[natural_len..n_prefix]
     );
 
-    let seed = setup.expanded.seed().clone();
-    let setup_seed = seed.setup_seed.clone();
+    let descriptor = setup.expanded.descriptor().clone();
+    let setup_seed = descriptor.setup_seed.clone();
     let altered_expanded = Arc::new(
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
+            descriptor,
             FlatMatrix::from_flat_data(altered),
         ),
     );

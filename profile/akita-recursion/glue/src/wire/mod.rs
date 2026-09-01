@@ -173,7 +173,7 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
             .expanded
-            .seed
+            .descriptor
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
             SerializationError::InvalidData(
@@ -235,7 +235,7 @@ where
             self.commitment.serialized_size(BLOB_COMPRESS),
             self.verifier_setup
                 .expanded
-                .seed
+                .descriptor
                 .serialized_size(BLOB_COMPRESS),
         ])
         .ok_or_else(|| {
