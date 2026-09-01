@@ -32,6 +32,20 @@ inner `t` and the `consistency | A` relation. The root may be that predecessor;
 there is no separate fallback proof form, final outer `u`, or terminal B/D
 block to validate.
 
+Transcript replay is also shape-bounded. Before decoding the headerless proof,
+the verifier derives the canonical `GrindingPlan` and successor-aware fold
+geometry from the validated public schedule and opening layout. That one
+geometry determines each sumcheck round count, recursive opening layout, proof
+shape, and packed nonce-stream width. The decoder validates the stream byte
+bound and final padding before allocation; replay rejects a wrong site or query
+kind, truncation, incomplete consumption, and an out-of-range nonce.
+
+Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
+group root has a fixed 32-byte boundary, coordinate indices are checked before
+conversion, and buffered fixed-width reads use bounded copies rather than
+panicking slice conversions. A refill boundary changes neither the byte stream
+nor the challenge law.
+
 ## Rules
 
 1. Do not add verifier-reachable `panic!`, `assert!`, `assert_eq!`, `expect`, `unwrap`, `unreachable!`, unchecked indexing/slicing, overflow-prone shape arithmetic, or unbounded allocation unless an earlier verifier boundary has clearly validated the invariant.

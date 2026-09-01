@@ -166,9 +166,10 @@ impl XofCursor {
     #[inline]
     fn next_u32(&mut self) -> u32 {
         if self.pos + 4 <= self.len {
-            let val = u32::from_le_bytes(self.buf[self.pos..self.pos + 4].try_into().unwrap());
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&self.buf[self.pos..self.pos + 4]);
             self.pos += 4;
-            val
+            u32::from_le_bytes(bytes)
         } else {
             let mut tmp = [0u8; 4];
             for b in &mut tmp {
@@ -266,5 +267,26 @@ mod tests {
         reused.fill_bytes(&mut reused_bytes);
         fresh.fill_bytes(&mut fresh_bytes);
         assert_eq!(reused_bytes, fresh_bytes);
+    }
+
+    #[test]
+    fn next_u32_preserves_stream_bytes_across_a_refill_boundary() {
+        let prefix = IndexedXofPrefix::new(&[0x3cu8; GROUP_ROOT_LEN]).unwrap();
+        let mut expected_cursor = XofCursor::from_indexed_prefix(&prefix, 17);
+        let mut expected = [0u8; XOF_BUFFER_SIZE + 4];
+        expected_cursor.fill_bytes(&mut expected);
+
+        let mut cursor = XofCursor::from_indexed_prefix(&prefix, 17);
+        let mut prefix_bytes = [0u8; XOF_BUFFER_SIZE - 2];
+        cursor.fill_bytes(&mut prefix_bytes);
+        assert_eq!(prefix_bytes, expected[..XOF_BUFFER_SIZE - 2]);
+        assert_eq!(
+            cursor.next_u32(),
+            u32::from_le_bytes(
+                expected[XOF_BUFFER_SIZE - 2..XOF_BUFFER_SIZE + 2]
+                    .try_into()
+                    .unwrap()
+            )
+        );
     }
 }

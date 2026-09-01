@@ -30,7 +30,7 @@ pub(super) fn consider_child_suffixes<'a>(
     let Some(first) = child_candidates.next() else {
         return Ok(());
     };
-    let edge_price = child_edge_price(edge, first.first_fold_params())?;
+    let edge_price = child_edge_price(edge, first)?;
     let first_edge_nonce_bits = edge.grinding_nonce_bits(first)?;
     let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
     for suffix in std::iter::once(first).chain(child_candidates) {

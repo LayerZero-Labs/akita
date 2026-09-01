@@ -4,20 +4,10 @@ use crate::narrowing::{usize_to_u32, usize_to_u64};
 use crate::{
     multilinear_point_loss_factor, nominal_challenge_capacity_bits,
     polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
-    CommittedGroupParams, DigitRangePlan, FoldSchedule, GrindingPlan, GrindingRun, GrindingSite,
-    OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
+    CommittedGroupParams, DigitRangePlan, FoldSchedule, FoldSuccessor, GrindingPlan, GrindingRun,
+    GrindingSite, OpeningClaimsLayout, PolynomialGroupLayout, SumcheckProtocol,
 };
 use akita_error::AkitaError;
-
-/// Successor shape consumed by one nonterminal fold.
-///
-/// This is the derivation's own notion of "what comes after this level", shared
-/// by whole-schedule derivation and by planner edge pricing.
-#[derive(Clone, Copy)]
-pub enum GrindingPlanSuccessor<'a> {
-    Recursive(&'a CommittedGroupParams),
-    Terminal(&'a crate::TerminalFoldParams),
-}
 
 /// Challenge capacity shared by every plan-derivation entry point.
 ///
@@ -73,7 +63,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
     params: &CommittedGroupParams,
     output_witness_len: usize,
     layout: &OpeningClaimsLayout,
-    successor: GrindingPlanSuccessor<'_>,
+    successor: FoldSuccessor<'_>,
     modulus_bits: u32,
     extension_degree: usize,
     level: u32,
@@ -90,7 +80,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
         layout,
         successor,
     )?;
-    if let GrindingPlanSuccessor::Terminal(terminal) = successor {
+    if let FoldSuccessor::Terminal(terminal) = successor {
         append_terminal(
             &mut runs,
             capacity,
@@ -122,20 +112,24 @@ fn derive_transcript_grinding_plan(
         &schedule.root.params,
         schedule.root.output_witness_len,
         root_layout,
-        schedule.recursive_folds.first().map_or(
-            GrindingPlanSuccessor::Terminal(&schedule.terminal),
-            |step| GrindingPlanSuccessor::Recursive(&step.params),
-        ),
+        schedule
+            .recursive_folds
+            .first()
+            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+                FoldSuccessor::Recursive(&step.params)
+            }),
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         let layout = fold
             .params
             .opening_layout_for_final_group(PolynomialGroupLayout::singleton(predecessor_rounds))?;
-        let successor = schedule.recursive_folds.get(index + 1).map_or(
-            GrindingPlanSuccessor::Terminal(&schedule.terminal),
-            |step| GrindingPlanSuccessor::Recursive(&step.params),
-        );
+        let successor = schedule
+            .recursive_folds
+            .get(index + 1)
+            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+                FoldSuccessor::Recursive(&step.params)
+            });
         predecessor_rounds = append_nonterminal(
             &mut runs,
             capacity,
@@ -171,7 +165,7 @@ fn append_nonterminal(
     params: &CommittedGroupParams,
     output_witness_len: usize,
     layout: &OpeningClaimsLayout,
-    successor: GrindingPlanSuccessor<'_>,
+    successor: FoldSuccessor<'_>,
 ) -> Result<usize, AkitaError> {
     let opening_method = params.uniform_opening_method(layout)?;
     if opening_method.requires_extension_opening_reduction(extension_degree) {
@@ -202,14 +196,8 @@ fn append_nonterminal(
         capacity,
     )?);
 
-    let (successor_d, successor_opening_vars) = match successor {
-        GrindingPlanSuccessor::Recursive(successor) => {
-            (successor.d_a(), successor.recursive_opening_num_vars()?)
-        }
-        GrindingPlanSuccessor::Terminal(terminal) => {
-            (terminal.d_a(), terminal.recursive_opening_num_vars()?)
-        }
-    };
+    let successor_d = successor.ring_dimension();
+    let successor_opening_vars = successor.recursive_opening_num_vars()?;
     let tau0_width = params
         .relation_address_geometry(layout, extension_degree, successor_d, output_witness_len)?
         .relation_point_variable_count();
@@ -306,7 +294,7 @@ fn append_nonterminal(
     for round in 0..rounds {
         append_sumcheck(runs, capacity, SumcheckProtocol::Stage2, level, 0, round, 3)?;
     }
-    if let GrindingPlanSuccessor::Recursive(successor) = successor {
+    if let FoldSuccessor::Recursive(successor) = successor {
         if let Some(prefix) = successor.setup_prefix() {
             for round in 0..prefix.profile.group.num_vars() {
                 append_sumcheck(runs, capacity, SumcheckProtocol::Stage3, level, 0, round, 2)?;
@@ -466,7 +454,7 @@ mod tests {
             &current,
             output_witness_len,
             &layout,
-            GrindingPlanSuccessor::Recursive(&successor),
+            FoldSuccessor::Recursive(&successor),
         )
         .expect("nonterminal grinding runs");
         assert_eq!(rounds, expected_rounds);

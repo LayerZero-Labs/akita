@@ -233,7 +233,7 @@ where
     let selection = statement.selection();
     let claims = statement.into_claims();
     claims
-        .validate(setup.expanded.seed())
+        .validate(setup.expanded.descriptor())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims
         .committed_layout()

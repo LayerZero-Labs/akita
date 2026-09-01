@@ -46,6 +46,8 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
+#[path = "schedule_tests/proof_shapes.rs"]
+mod proof_shapes;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
 type F = Prime128OffsetA7F7;
@@ -291,40 +293,6 @@ fn append_recursive_fold(schedule: &mut FoldSchedule) {
         .output_witness_len;
     schedule.terminal.input_witness_len = step.output_witness_len;
     schedule.recursive_folds.push(step);
-}
-
-#[test]
-fn base_field_proof_shape_rejects_mixed_opening_families() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    let precommitted_group = PolynomialGroupLayout::singleton(8);
-    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
-    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("production challenge family");
-    schedule
-        .root
-        .params
-        .insert_precommitted_group(precommitted)
-        .expect("mixed-family precommit");
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        precommitted_group,
-        schedule.root.params.final_group().profile.group,
-    ])
-    .expect("grouped opening layout");
-
-    let grinding_plan = GrindingPlan::new(Vec::new(), 1).expect("empty grinding plan");
-    let error = canonical_proof_shape(&schedule, &layout, 1, &grinding_plan)
-        .expect_err("base-field proof shape must reject mixed opening families");
-    assert!(
-        matches!(
-            &error,
-            AkitaError::InvalidSetup(message)
-                if message.contains("cannot mix opening-method families")
-        ),
-        "unexpected mixed-family error: {error:?}"
-    );
 }
 
 #[test]
@@ -835,14 +803,21 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
+        let opening_layout =
+            OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
                 level_proof_bytes(
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -942,6 +917,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
+        let opening_layout = OpeningClaimsLayout::new(rounds, 1).unwrap();
         let b = 1usize << log_basis;
         let level_proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -975,9 +951,14 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),

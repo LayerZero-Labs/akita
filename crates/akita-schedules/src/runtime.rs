@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
-    FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
+    FoldSchedule, FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
     TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
     MAX_I8_LOG_BASIS,
@@ -561,9 +561,12 @@ pub fn candidate_grinding_nonce_bits(
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
 pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
-    successor: Option<&CommittedGroupParams>,
+    successor: FoldSuccessor<'_>,
 ) -> Result<usize, AkitaError> {
-    let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
+    let Some(prefix) = (match successor {
+        FoldSuccessor::Recursive(params) => params.setup_prefix(),
+        FoldSuccessor::Terminal(_) => None,
+    }) else {
         return Ok(usize::default());
     };
     let n_prefix = prefix.n_prefix()?;
@@ -584,33 +587,33 @@ pub fn stage3_payload_bytes_for_successor(
 pub fn nonterminal_level_payload_bytes(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
-    successor: Option<&CommittedGroupParams>,
-    input_witness_len: usize,
+    opening_layout: &OpeningClaimsLayout,
+    successor: FoldSuccessor<'_>,
     output_witness_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let challenge_field_bits = policy.challenge_field_bits()?;
+    let next_outer_payload = match successor {
+        FoldSuccessor::Recursive(params) => Some(params),
+        FoldSuccessor::Terminal(_) => None,
+    };
+    let relation_geometry = params.relation_address_geometry(
+        opening_layout,
+        policy.claim_ext_degree,
+        successor.ring_dimension(),
+        output_witness_len,
+    )?;
     let direct = akita_types::level_proof_bytes(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
-        successor,
-        output_witness_len,
-        Some(if successor.is_some() {
-            akita_types::NextWitnessBindingPolicy::OuterPayload
-        } else {
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState
-        }),
+        relation_geometry,
+        next_outer_payload,
     )?;
     let eor = if matches!(
         params.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
     ) {
-        let final_group = PolynomialGroupLayout::singleton(
-            akita_types::padded_boolean_opening_vars(input_witness_len)?,
-        );
-        let opening_shape = params
-            .opening_layout_for_final_group(final_group)?
-            .aggregate_polynomial_group_layout()?;
+        let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         akita_types::extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
@@ -647,43 +650,56 @@ pub fn expanded_schedule_proof_payload_bytes(
         .checked_add(1)
         .ok_or_else(|| AkitaError::InvalidSetup("fold level count overflow".into()))?;
     let mut total = 0usize;
+    let mut predecessor_rounds = None;
     for level in 0..nonterminal_levels {
-        let (params, input_witness_len, output_witness_len) = if level == 0 {
-            (
-                &schedule.root.params,
-                schedule.root.input_witness_len,
-                schedule.root.output_witness_len,
-            )
+        let (params, output_witness_len) = if level == 0 {
+            (&schedule.root.params, schedule.root.output_witness_len)
         } else {
             let fold = schedule.recursive_folds.get(level - 1).ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive fold index is out of range".into())
             })?;
-            (
-                &fold.params,
-                fold.input_witness_len,
-                fold.output_witness_len,
-            )
+            (&fold.params, fold.output_witness_len)
         };
-        let successor = schedule.recursive_folds.get(level).map(|fold| &fold.params);
+        let opening_layout = match predecessor_rounds {
+            None => key.opening_layout()?,
+            Some(rounds) => {
+                params.opening_layout_for_final_group(PolynomialGroupLayout::singleton(rounds))?
+            }
+        };
+        let successor = schedule.recursive_folds.get(level).map_or_else(
+            || FoldSuccessor::Terminal(&schedule.terminal),
+            |fold| FoldSuccessor::Recursive(&fold.params),
+        );
         let (direct, stage3) = nonterminal_level_payload_bytes(
             policy,
             params,
+            &opening_layout,
             successor,
-            input_witness_len,
             output_witness_len,
         )?;
+        predecessor_rounds = Some(
+            params
+                .relation_address_geometry(
+                    &opening_layout,
+                    policy.claim_ext_degree,
+                    successor.ring_dimension(),
+                    output_witness_len,
+                )?
+                .relation_point_variable_count(),
+        );
         total = total
             .checked_add(direct)
             .and_then(|value| value.checked_add(stage3))
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }
 
+    let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
+    })?;
     let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
-        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-            schedule.terminal.input_witness_len,
-        )?),
+        PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
     let terminal_response = akita_types::terminal_response_planner_bytes(
         field_bits,

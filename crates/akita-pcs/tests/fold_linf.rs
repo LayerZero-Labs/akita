@@ -257,7 +257,7 @@ fn packed_proof_of_work_nonce_matches_public_predicate() {
             assert!(
                 matches!(result, Err(AkitaError::InvalidProof))
                     || matches!(result, Err(AkitaError::InvalidInput(ref message)) if message.contains("InvalidProof")),
-                "publicly rejected nonce must fail at the verifier predicate: {result:?}"
+                "publicly rejected nonce must fail at the verifier predicate"
             );
             return;
         }
