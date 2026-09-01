@@ -9,9 +9,10 @@
 ## Decision
 
 Akita MUST replace its fragment-level commitment interface with one commitment
-call. The call MUST include source validation, inner
-commitment, outer decomposition and commitment, and the complete commitment
-compression steps.
+call. The call MUST ensure that its source satisfies the checked plan and then
+perform inner commitment, outer decomposition and commitment, and the complete
+commitment compression steps. Establishing the source condition is not a
+separate protocol operation and need not be a separate pass over the source.
 
 Compression is inside this boundary because no Fiat–Shamir challenge separates
 it from the rest of commitment. The protocol owns the checked compression plan
@@ -61,9 +62,13 @@ protocol-owned CheckedCommitmentPlan + source provider
 
 ## Backend input
 
-The request MUST be produced from the same schedule, geometry, source-class,
-magnitude, and setup-identity checks used by the verifier-facing protocol. It
-MUST NOT duplicate unchecked dimensions for backend convenience.
+The request MUST be produced from the same schedule, geometry, and setup
+identity used by the verifier-facing protocol, plus the source class and
+magnitude declarations used by planner sizing. The latter are producer
+obligations; the verifier does not inspect the committed source or trust this
+admission result. The request carries the required source class and accepted
+coefficient interval, but does not certify that one particular source satisfies
+them. It MUST NOT duplicate unchecked dimensions for backend convenience.
 
 The exact Rust decomposition is implementation work, but the input is
 conceptually:
@@ -75,7 +80,7 @@ pub struct CheckedCommitmentPlan<F> {
     pub inner: InnerCommitmentPlan<F>,
     pub outer: OuterCommitmentPlan<F>,
     pub compression: CompressionChainPlan<F>,
-    pub source_contract: CheckedSourceContract,
+    pub source_contract: CommittedSourceContract,
 }
 
 pub trait CommitmentSource<F> {
@@ -96,6 +101,25 @@ representation.
 The checked plan is protocol configuration. Backend tiling, device choice,
 stream size, cache policy, thread count, and recomputation policy are backend
 configuration and MUST NOT affect public commitment bytes.
+
+The source requirement constrains the producer result, not the implementation strategy.
+The backend MAY rely on a source invariant, reuse a conservative guarantee from
+prior backend work, establish the condition while ingesting or decomposing the
+source, or scan arbitrary raw coefficients as a fallback. A prior guarantee is
+sufficient only when it is bound to the exact source identity and generation
+and implies all three parts of the current requirement:
+
+1. when the plan requires `UnitOneHot`, the source has unit one-hot structure at
+   the exact scheduled chunk size;
+2. every coefficient is representable by the scheduled balanced digits, so no
+   high part is discarded; and
+3. every coefficient satisfies the possibly tighter bound used to price the
+   schedule.
+
+The two magnitude conditions use the plan's decomposition-centering convention
+and the canonical `CommittedSourceContract::accepted_bounds` calculation.
+Satisfying representability alone is insufficient because rounded digit depth
+can represent values wider than the declared source bound.
 
 ## Backend output
 
@@ -183,10 +207,9 @@ public unchecked constructor.
 The first implementation SHOULD preserve the current algorithms and compose
 them behind one call:
 
-1. while ingesting or traversing the source, enforce the checked source-class
-   and accepted-interval contract rather than trusting declared metadata; a
-   stored source reference may instead carry a backend-validated record of that
-   exact contract;
+1. establish that the source satisfies the plan by construction, a reusable
+   backend-owned guarantee, work fused with an existing source traversal, or a
+   fallback scan for arbitrary raw coefficients;
 2. run the current source-specialized inner commitment;
 3. validate and decompose inner rows;
 4. construct the outer commitment;
@@ -195,6 +218,13 @@ them behind one call:
 7. retain whatever source, rows, transforms, digit blocks, stages, or quotients
    the CPU opening path chooses;
 8. return the public message and state reference.
+
+The current dense coefficient scan is an acceptable fallback for the first CPU
+backend. It is not part of the cross-backend contract. If dense decomposition
+or source construction already traverses the same coefficients, the CPU backend
+SHOULD compute and retain a conservative bound during that work instead of
+performing another full pass. A GPU backend may reduce the bound during upload
+or decomposition and keep the resulting guarantee with its stored source.
 
 `compute/compression.rs` is suitable for the bounded-memory CPU backend.
 It SHOULD be internalized rather than deleted merely because the

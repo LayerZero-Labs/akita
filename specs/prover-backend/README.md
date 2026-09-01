@@ -112,22 +112,27 @@ them.
    values, digits, transforms, device buffers, remote object identifiers,
    recomputation recipes, or other state as long as its later operations are
    internally consistent.
-5. **Persistence is explicit.** Portable checkpoints are separate from live
+5. **Producer requirements do not prescribe validation passes.** The checked
+   plan states the source class and coefficient interval used by planner sizing.
+   A backend may establish them by construction, prior backend work, fused
+   processing, or a fallback scan. It must not repeat a coefficient traversal
+   when a reusable backend-owned guarantee already implies the plan.
+6. **Persistence is explicit.** Portable checkpoints are separate from live
    backend state. Requiring disk persistence must not force every backend to use
    the checkpoint representation while proving.
-6. **Backend changes are planned.** Mixed backends must not silently move,
+7. **Backend changes are planned.** Mixed backends must not silently move,
    serialize, or recompute state. A transfer, checkpoint, or recomputation path
    must be selected before it is needed.
-7. **Protocol messages are backend-invariant.** For fixed public inputs,
+8. **Protocol messages are backend-invariant.** For fixed public inputs,
    witness, protocol configuration, and prover entropy, backend choice and
    backend configuration must not change proof or transcript bytes.
-8. **Reusable operations stay private.** A backend may implement a small set of
+9. **Reusable operations stay private.** A backend may implement a small set of
    internal operations and may also implement a complete backend call. It
    should not have to reimplement every Akita or Jolt protocol relation.
-9. **The CPU backend defines the expected result.** Optimized call
+10. **The CPU backend defines the expected result.** Optimized call
    implementations must be checked against the CPU backend using the same
    checked protocol plans.
-10. **Unsupported execution is decided early.** Missing backend support or
+11. **Unsupported execution is decided early.** Missing backend support or
     state-transfer failures must surface during planning or before the next
     message is absorbed. Mid-proof silent fallback is prohibited.
 
@@ -175,6 +180,9 @@ This design covers:
 - [ ] The target permits one backend to retain commitment state across proofs
       and one prover session to reuse backend-stored state across opening and later
       Akita or Jolt work.
+- [ ] The target permits a source produced by prior backend work to satisfy a
+      commitment plan from a reusable class-and-bound guarantee without
+      coefficient readback or rescanning.
 - [ ] CPU and remote/mock backend tests can prove exact byte
       equality and maximum control-round-trip counts.
 - [ ] The roadmap names gates that must pass before Jolt alignment and before

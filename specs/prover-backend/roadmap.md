@@ -121,6 +121,8 @@ only the single-API final state may merge. It SHOULD:
 - add one checked full-commitment plan;
 - implement one CPU commitment call covering inner, outer, and all
   compression maps;
+- keep source-condition handling inside that call, with both a raw dense
+  fallback and a prior-state path that does not rescan coefficients;
 - route the ordinary production commitment entry point through it;
 - replace parallel public hints and sources with `CommittedGroupWithState`;
 - carry that value through the first relation/opening consumer;
@@ -467,6 +469,8 @@ Every implementation PR MUST answer:
    to host polynomials?
 9. Are malformed messages rejected before absorption?
 10. Does backend tuning leave protocol bytes unchanged?
+11. Does source handling reuse a valid backend-owned guarantee instead of
+    requiring coefficient readback or a duplicate traversal?
 
 An implementation that only moves an old field behind a wrapper does not pass
 these gates.
@@ -482,6 +486,7 @@ these gates.
 | persistence re-freezes CPU layout | separate live state from explicit versioned checkpoint support |
 | message validation diverges from verifier | derive plans and encodings from the same protocol types |
 | CPU path loses specialized source performance | retain source adapters and optimized private CPU operations |
+| source checks become a mandatory extra pass | treat the source condition as a result requirement; reuse construction or prior-kernel guarantees and fuse checks with existing traversals |
 | shared crate extracted too early | require two protocol consumers with the same tested behavior |
 | nested Jolt/Akita backend merges transcripts | share state only; keep protocol drivers and transcripts separate |
 | old abstraction survives indefinitely | pair each migration with named deletions and track surface counts |

@@ -323,6 +323,48 @@ polynomial per member for the host to combine.
 The source representation and the representation saved by the backend are
 separate choices.
 
+The checked commitment plan defines what the source must satisfy: its source
+class and accepted centered-coefficient interval. This is a producer-admission
+requirement derived from planner sizing, not a verifier check and not a required
+"check coefficient range" operation. The complete commitment call MUST NOT
+return a public commitment for a source that does not satisfy the plan, but the
+protocol driver MUST NOT prescribe how the backend establishes that fact.
+
+```mermaid
+flowchart LR
+    CP[Checked commitment plan<br/>required class and coefficient interval] --> CC
+    SI[Source input or stored source reference] --> CC
+
+    subgraph PB[Prover backend]
+        CC[Complete commitment call]
+        BC[Known by source construction] -.-> CC
+        PG[Guaranteed by prior backend work] -.-> CC
+        FC[Established while ingesting or decomposing] -.-> CC
+        FS[Fallback validation] -.-> CC
+    end
+
+    CC --> PM[CommittedGroup protocol message]
+    CC --> SR[Commitment state reference]
+```
+
+The four dotted mechanisms are backend-private alternatives, not request fields
+or sequential stages. A backend MAY use any of them, or another equivalent
+method.
+
+A reusable guarantee satisfies a plan only when all of the following hold:
+
+1. the guarantee is bound to the exact stored source identity and generation;
+2. for a `UnitOneHot` plan, it proves unit one-hot structure at the plan's exact
+   chunk size; a `BalancedSignedDigit` plan adds no structural restriction; and
+3. it bounds the source's negative and positive coefficient reach under the
+   plan's decomposition-centering convention within
+   `CommittedSourceContract::accepted_bounds`.
+
+The coefficient guarantee MAY be conservative. It need not record that the
+source previously passed that exact plan: a stronger guarantee may imply a
+weaker plan. If a guarantee uses another coefficient interpretation or
+centering convention, the backend MUST prove the conversion before reusing it.
+
 The backend MUST support both:
 
 - a host source provider used by the CPU backend or streamed
@@ -334,12 +376,21 @@ Jolt witness-plane structure. They MUST terminate at the backend input
 boundary. A backend interface MUST NOT require every application source type
 and every ring dimension to appear in a public supertrait ladder.
 
-The backend MUST enforce the checked source-class and accepted-interval
-contract while it ingests or traverses source values; host-declared metadata is
-not authoritative. A stored source reference MAY skip rescanning only when its
-backend-owned link proves that the same source has already passed the exact
-contract. Checking source values MUST NOT require a host pre-scan followed by a
-duplicate remote upload.
+For a source known by construction, such as one-hot positions, the construction
+invariant is sufficient when it implies the plan. Stored bounded digits also
+need recorded negative and positive reaches that fit the plan's accepted
+interval. A stored source reference MAY carry guarantees established by earlier
+kernels, imports, or source construction. A backend MAY also establish the
+condition while it performs work that already reads the source, such as upload,
+decomposition, or inner commitment. Any source without a sufficient
+construction invariant, stored guarantee, or fused check needs fallback
+validation.
+
+Host-declared metadata alone is not evidence that arbitrary raw values satisfy
+the plan. Conversely, the driver MUST NOT ask a backend-owned source to expose
+coefficients merely to repeat a condition already guaranteed by backend state.
+No conforming interface may require a host pre-scan followed by a duplicate
+remote upload or device traversal.
 
 The one-request-and-response requirement counts synchronization between the
 driver and backend. A large source MAY be streamed in chunks during the same

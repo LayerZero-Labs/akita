@@ -85,9 +85,19 @@ The checked request MUST contain or bind:
 - the complete commitment compression plan;
 - the terminal protocol-message geometry.
 
-Move all checks that can fail without reading source coefficients into this
-function. Keep coefficient checks in source input, because a declaration
-alone cannot prove the source satisfies its interval.
+Move all plan-only checks that can fail without examining a particular source
+into this function. The plan records the required source class and coefficient
+interval; it does not claim that a particular source was scanned or checked.
+The complete commitment call remains responsible for returning no public
+message unless its source satisfies that requirement.
+
+The current host-side source-class preflight and
+`RootCommitSource::committed_centered_reach` preflight MAY remain as temporary
+CPU fallbacks during C1. Neither MUST become part of the final cross-backend
+call contract. C2 moves both structural-class and coefficient-interval handling
+behind the complete commitment boundary, where a backend can use construction
+invariants, guarantees from prior kernels, fused traversal, or fallback
+validation.
 
 Differential tests MUST feed the old execution body and the new CPU
 implementation from the same checked request. Delete duplicated sizing or plan
@@ -98,7 +108,8 @@ Exit gate:
 
 - there is one source of truth for every A/B/compression dimension;
 - malformed requests fail before arithmetic;
-- source values are still checked before any public message is returned;
+- an out-of-contract source cannot produce a public commitment message;
+- the checked plan does not require or expose a coefficient scan result;
 - no proof or commitment byte changes.
 
 ## Stage C2: build an end-to-end prototype through the first consumer
@@ -163,6 +174,19 @@ Provide two implementations:
 The fake transport records control calls and bytes. Calling a local Rust
 function that returns the current hint and then inserting it into a map does
 not satisfy this stage.
+
+The prototype MUST exercise at least two ways to establish the source
+condition:
+
+1. arbitrary dense input that uses a scan or a check fused with decomposition;
+2. a source reference produced by prior backend work whose stored guarantee
+   implies the plan without another coefficient traversal.
+
+The second case MUST fail if the guarantee is stale, belongs to another source,
+uses an incompatible coefficient interpretation, or does not imply the plan's
+structural class and accepted bounds under the plan's centering convention. The
+test need not require an exact-plan identity match: a stronger compatible
+guarantee may satisfy a weaker plan.
 
 Exit gate:
 
@@ -396,7 +420,8 @@ Pause the replacement and revise the specification if any experiment shows that:
 - a verifier-visible value must be recovered by inspecting private prover state;
 - an intervening Fiat–Shamir squeeze exists inside the proposed commitment
   call;
-- source values cannot be checked without prescribing private prover state;
+- establishing the source condition requires the protocol API to prescribe or
+  expose private prover state;
 - one-hot, packed-trace, or sparse traversal must expand to a dense host
   representation at input;
 - the first private-state consumer requires an implicit backend transfer;

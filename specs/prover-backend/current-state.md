@@ -81,6 +81,18 @@ host materialization inside one protocol operation. PR #457 proposes fusing
 inner commitment, decomposition, and outer commitment, but still stops before
 compression and returns the host rows required by the current hint.
 
+The current source-value path also calls
+`RootCommitSource::committed_centered_reach` before commitment arithmetic. Dense
+sources answer with a complete coefficient scan; one-hot and already-bounded
+digit sources answer from their representation invariants. This is a safe
+fallback for the current CPU-shaped API, but it is not the desired backend
+contract. A future backend may already know a conservative bound from a prior
+kernel, may establish it while uploading or decomposing, or may store no
+host-readable coefficients at all. The producer requirement is that the source
+satisfies the checked plan, not that every backend perform this preflight. The
+verifier continues to enforce its response bounds; it does not inspect or trust
+the producer's source-admission mechanism.
+
 There is no Fiat–Shamir squeeze between outer commitment and commitment
 compression. The uncompressed outer result is not the public message. It is an
 implementation intermediate and should not define the public backend
