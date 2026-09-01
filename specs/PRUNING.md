@@ -85,15 +85,17 @@ The root live set is deliberately small and is synchronized with
 5. `heterogeneous-group-source-contracts.md`
 6. `large-digit-ntt-infrastructure.md`
 7. `packed-sumcheck.md`
-8. `role-native-projected-digit-layout.md`
-9. `runtime-ring-cutover.md`
-10. `selective-l2-fold-security-sizing.md`
-11. `setup-offloading-planner.md`
-12. `sis-quantum128-scalar-n-table.md`
-13. `structured-e-term.md`
-14. `subring-coefficient-packing.md`
+8. `prover-runtime/` (one design record in six package files)
+9. `role-native-projected-digit-layout.md`
+10. `runtime-ring-cutover.md`
+11. `selective-l2-fold-security-sizing.md`
+12. `setup-offloading-planner.md`
+13. `sis-quantum128-scalar-n-table.md`
+14. `structured-e-term.md`
+15. `subring-coefficient-packing.md`
 
-All 14 live specifications must pass the default dead-symbol scan. A record
+All 15 live specifications, including every file in the prover-runtime package,
+must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 
@@ -209,8 +211,9 @@ replaced by the Book or newer live specifications:
 - `recursive-mixed-ring-dimension-performance.md`
 
 The historical CPU-heavy Metal cutover was archived separately from the active
-Metal-track spec. The root now contains the 14 live records listed above, plus
-policy and support files.
+Metal-track spec. Before the prover-runtime proposal, the root contained the 14
+pre-existing live records listed above, plus policy and support files. The
+prover-runtime directory is one additional packaged design record.
 
 ### Root policy and support files
 
