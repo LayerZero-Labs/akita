@@ -25,8 +25,8 @@ use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_prover::{NttExecutionRequirements, NttOperationCluster};
 use akita_types::{
     setup_matrix_capacity_for_schedule, verifier_setup_matrix_capacity_for_schedule,
-    AkitaScheduleLookupKey, FoldSchedule, NttCacheKey, NttTransformDomain, OpeningMethod,
-    PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
+    AkitaScheduleLookupKey, CompressionChainPlan, FoldSchedule, NttCacheKey, NttTransformDomain,
+    OpeningMethod, PolynomialGroupLayout, SetupContributionMode, SubringCoefficientPackingGeometry,
 };
 use common::*;
 
@@ -93,12 +93,20 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
     // under the base config. Provisioning must cover exactly that, so derive
     // the expectation from the same primitive commit-time admission uses.
     let frozen_precommit = key.precommitteds[0];
-    let precommit_footprint = akita_types::commit_only_setup_field_elements(
-        &frozen_precommit.inner.matrix,
-        &frozen_precommit.outer.matrix,
-        frozen_precommit.outer_slice_count,
+    let compression = CompressionChainPlan::for_complete_source(
+        frozen_precommit.outer.matrix.sis_modulus_profile(),
+        frozen_precommit
+            .outer_slice_count
+            .complete_source_coefficients(
+                frozen_precommit.outer.matrix.output_rank(),
+                frozen_precommit.outer.matrix.ring_dimension(),
+            )
+            .expect("complete frozen precommit source"),
     )
-    .expect("frozen precommit footprint");
+    .expect("frozen precommit compression");
+    let precommit_footprint =
+        akita_types::commit_only_setup_field_elements(&frozen_precommit, &compression)
+            .expect("frozen precommit footprint");
     assert_eq!(setup_for_two.num_field_elements, precommit_footprint);
     assert_eq!(setup_for_four.num_field_elements, prover.num_field_elements);
 }

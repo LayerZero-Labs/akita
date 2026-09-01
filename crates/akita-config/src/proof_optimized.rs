@@ -8,8 +8,8 @@ use akita_error::AkitaError;
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    SetupMatrixCapacity,
+    CommittedGroupParams, CompressionChainPlan, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupMatrixCapacity,
 };
 use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use std::any::TypeId;
@@ -197,10 +197,16 @@ fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
                 if profile.group.num_vars() <= max_num_vars
                     && profile.group.num_polynomials() <= max_num_batched_polys
                 {
+                    let compression = CompressionChainPlan::for_complete_source(
+                        profile.outer.matrix.sis_modulus_profile(),
+                        profile.outer_slice_count.complete_source_coefficients(
+                            profile.outer.matrix.output_rank(),
+                            profile.outer.matrix.ring_dimension(),
+                        )?,
+                    )?;
                     scan.observe(akita_types::commit_only_setup_field_elements(
-                        &profile.inner.matrix,
-                        &profile.outer.matrix,
-                        profile.outer_slice_count,
+                        &profile,
+                        &compression,
                     )?);
                 }
             }

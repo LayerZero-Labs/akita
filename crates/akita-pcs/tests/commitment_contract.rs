@@ -226,6 +226,21 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let contract_stack = UniformProverStack::uniform(&contract_backend, &prepared, expanded)
         .expect("contract stack");
 
+    let other_setup =
+        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS + 1, 1, setup_envelope)
+            .expect("other setup");
+    let wrong_setup_error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
+        std::slice::from_ref(&contract),
+        other_setup.expanded.as_ref(),
+        &contract_stack,
+        GroupContext::explicit(&params.own_group().profile),
+    )
+    .expect_err("commitment backend context from another setup must reject");
+    assert!(matches!(wrong_setup_error, AkitaError::InvalidSetup(_)));
+    assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 0);
+    assert_eq!(OUTER_KERNEL_CALLS.load(Ordering::Relaxed), 0);
+    assert_eq!(COMPRESSION_KERNEL_CALLS.load(Ordering::Relaxed), 0);
+
     let contract_output = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
@@ -275,16 +290,16 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         "current commitment crosses the compression capability once per map"
     );
 
-    // This is the baseline the semantic commitment epoch must replace. One
-    // logical protocol message currently crosses three backend capability
+    // This is the baseline the complete commitment backend call must replace.
+    // One logical protocol message currently crosses three backend capability
     // families, and compression crosses its capability once per physical map.
-    // Keep the exact counts visible so the cutover test can demonstrate one
-    // semantic invocation without pretending that fewer local function calls
+    // Keep the exact counts visible so the replacement test can demonstrate
+    // one backend request and response without pretending that fewer local calls
     // are themselves the goal.
     let current_physical_calls = COMMIT_KERNEL_CALLS.load(Ordering::Relaxed)
         + OUTER_KERNEL_CALLS.load(Ordering::Relaxed)
         + COMPRESSION_KERNEL_CALLS.load(Ordering::Relaxed);
-    assert!(current_physical_calls >= 3);
+    assert_eq!(current_physical_calls, 2 + compression_maps);
 
     let mut malformed_profile = params.own_group().profile;
     malformed_profile.inner.digits.num_digits += 1;
@@ -298,4 +313,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
     assert_eq!(OUTER_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        COMPRESSION_KERNEL_CALLS.load(Ordering::Relaxed),
+        compression_maps
+    );
 }

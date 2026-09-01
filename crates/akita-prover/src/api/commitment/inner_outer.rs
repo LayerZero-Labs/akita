@@ -13,6 +13,8 @@ use akita_types::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, Field};
 
+use super::CheckedCommitmentPlan;
+
 #[tracing::instrument(skip_all, name = "validate_commit_inner_shape")]
 pub(crate) fn validate_commit_inner_shape<F, const D: usize>(
     inner: &CommitInnerWitness<F>,
@@ -125,7 +127,7 @@ where
 pub(super) fn compute_inner_outer_commitment<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    profile: GroupCommitPhaseParams,
+    plan: &CheckedCommitmentPlan,
 ) -> Result<(Vec<RingVec<F>>, RingVec<F>), AkitaError>
 where
     F: Field + CanonicalEncoding,
@@ -134,24 +136,20 @@ where
 {
     let backend = ctx.backend();
     let prepared = ctx.prepared();
-    let slice_geometry = profile.derive_slice_geometry()?;
+    let profile = plan.profile();
     let dims = CommitmentRingDims {
         inner: profile.inner.matrix.ring_dimension(),
         outer: profile.outer.matrix.ring_dimension(),
         opening: profile.outer.matrix.ring_dimension(),
     };
-    let plan = CommitInnerPlan {
-        n_a: profile.inner.matrix.output_rank(),
-        num_positions_per_block: profile.blocks.positions_per_block,
-        num_digits_inner: profile.inner.digits.num_digits,
-        log_basis_inner: profile.inner.digits.log_basis,
-    };
+    let inner_plan = CommitInnerPlan::from_profile(profile);
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
         dims.d_a(),
         |D_A| {
-            let inners = compute_inner_commitment::<F, _, _, D_A>(backend, prepared, polys, plan)?;
+            let inners =
+                compute_inner_commitment::<F, _, _, D_A>(backend, prepared, polys, inner_plan)?;
             dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Outer),
                 F,
@@ -160,8 +158,8 @@ where
                     backend,
                     prepared,
                     inners,
-                    &profile,
-                    &slice_geometry,
+                    profile,
+                    plan.slice_geometry(),
                 )
             )
         }

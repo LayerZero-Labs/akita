@@ -4,9 +4,9 @@ use akita_error::AkitaError;
 
 use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
-    CommitmentSliceCount, CommittedGroupParams, CompressionChainPlan, FoldSchedule,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
-    SetupPrefixSlotId, SisModulusProfileId, TerminalFoldParams,
+    CommittedGroupParams, CompressionChainPlan, FoldSchedule, GroupCommitPhaseParams,
+    OpeningClaimsLayout, SetupMatrixCapacity, SetupPrefixSlotId, SisModulusProfileId,
+    TerminalFoldParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -164,39 +164,47 @@ pub fn accumulate_matrix_field_elements_for_level(
 ///
 /// Setup sizing and commit-time admission both price an independent
 /// commitment from this one definition, so provisioning can never fall short
-/// of what admission demands. `outer_slice_count` expands only the logical B
-/// image compressed by F; the physical B matrix remains stored once.
+/// of what admission demands. `compression` describes the complete logical B
+/// image while the physical B matrix remains stored once.
 ///
 /// # Errors
 ///
-/// Returns [`AkitaError::InvalidSetup`] when any footprint product overflows.
+/// Returns [`AkitaError::InvalidSetup`] when a footprint product overflows or
+/// the compression plan disagrees with the profile's modulus or source shape.
 pub fn commit_only_setup_field_elements(
-    inner_commit_matrix: &InnerCommitMatrixParams,
-    outer_commit_matrix: &OuterCommitMatrixParams,
-    outer_slice_count: CommitmentSliceCount,
+    profile: &GroupCommitPhaseParams,
+    compression: &CompressionChainPlan,
 ) -> Result<usize, AkitaError> {
+    if compression.modulus_profile() != profile.outer.matrix.sis_modulus_profile() {
+        return Err(AkitaError::InvalidSetup(
+            "commit compression plan disagrees with the outer matrix modulus profile".into(),
+        ));
+    }
+    let expected_source_coefficients = profile.outer_slice_count.complete_source_coefficients(
+        profile.outer.matrix.output_rank(),
+        profile.outer.matrix.ring_dimension(),
+    )?;
+    if compression.source_coefficients() != expected_source_coefficients {
+        return Err(AkitaError::InvalidSetup(
+            "commit compression plan disagrees with the complete outer image".into(),
+        ));
+    }
     let mut max_field_elements = 0;
     include_matrix_field_elements(
         &mut max_field_elements,
-        inner_commit_matrix.output_rank(),
-        inner_commit_matrix.input_width(),
-        inner_commit_matrix.ring_dimension(),
+        profile.inner.matrix.output_rank(),
+        profile.inner.matrix.input_width(),
+        profile.inner.matrix.ring_dimension(),
         "commit inner setup",
     )?;
     include_matrix_field_elements(
         &mut max_field_elements,
-        outer_commit_matrix.output_rank(),
-        outer_commit_matrix.input_width(),
-        outer_commit_matrix.ring_dimension(),
+        profile.outer.matrix.output_rank(),
+        profile.outer.matrix.input_width(),
+        profile.outer.matrix.ring_dimension(),
         "commit outer setup",
     )?;
-    include_compression_setup(
-        &mut max_field_elements,
-        outer_commit_matrix.sis_modulus_profile(),
-        outer_slice_count.logical_output_rows(outer_commit_matrix.output_rank())?,
-        outer_commit_matrix.ring_dimension(),
-        "commit outer compression setup",
-    )?;
+    max_field_elements = max_field_elements.max(compression.max_setup_field_elements()?);
     Ok(max_field_elements)
 }
 
@@ -323,7 +331,7 @@ fn include_matrix_field_elements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SisModulusProfileId;
+    use crate::{CommitmentSliceCount, SisModulusProfileId};
     use akita_challenges::SparseChallengeConfig;
 
     #[test]
@@ -340,7 +348,7 @@ mod tests {
         params.own_group_mut().profile.outer_slice_count = CommitmentSliceCount::FOUR;
         let params = params.with_decomp(1, 4, 1, 1, 1).expect("params");
 
-        let expected_compression = CompressionChainPlan::for_complete_source(
+        let sliced_compression = CompressionChainPlan::for_complete_source(
             params.outer().matrix.sis_modulus_profile(),
             params
                 .outer_slice_count()
@@ -350,21 +358,31 @@ mod tests {
                 )
                 .expect("complete sliced B source"),
         )
-        .expect("sliced compression")
-        .max_setup_field_elements()
-        .expect("sliced compression setup");
-        let sliced = commit_only_setup_field_elements(
-            &params.inner().matrix,
-            &params.outer().matrix,
-            params.outer_slice_count(),
+        .expect("sliced compression");
+        let expected_compression = sliced_compression
+            .max_setup_field_elements()
+            .expect("sliced compression setup");
+        let unsliced_compression = CompressionChainPlan::for_complete_source(
+            params.outer().matrix.sis_modulus_profile(),
+            CommitmentSliceCount::ONE
+                .complete_source_coefficients(
+                    params.outer().matrix.output_rank(),
+                    params.outer().matrix.ring_dimension(),
+                )
+                .expect("complete unsliced B source"),
         )
-        .expect("sliced commit envelope");
-        let unsliced = commit_only_setup_field_elements(
-            &params.inner().matrix,
-            &params.outer().matrix,
-            CommitmentSliceCount::ONE,
-        )
-        .expect("unsliced commit envelope");
+        .expect("unsliced compression");
+        assert!(matches!(
+            commit_only_setup_field_elements(&params.own_group().profile, &unsliced_compression),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        let sliced =
+            commit_only_setup_field_elements(&params.own_group().profile, &sliced_compression)
+                .expect("sliced commit envelope");
+        let mut unsliced_profile = params.own_group().profile;
+        unsliced_profile.outer_slice_count = crate::CommitmentSliceCount::ONE;
+        let unsliced = commit_only_setup_field_elements(&unsliced_profile, &unsliced_compression)
+            .expect("unsliced commit envelope");
 
         assert_eq!(sliced, expected_compression);
         assert!(sliced > unsliced);

@@ -13,9 +13,10 @@ use akita_error::AkitaError;
 use akita_types::sis::CommittedSourceContract;
 use akita_types::{
     dispatch_for_field, validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint,
-    AkitaExpandedSetup, AkitaScheduleLookupKey, Commitment, CommitmentRingDims, CommittedGroup,
-    CommittedGroupParams, CompressionChainPlan, FpExtEncoding, GadgetDigits,
-    GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupDescriptor, Commitment,
+    CommitmentRingDims, CommitmentSliceGeometry, CommittedGroup, CommittedGroupParams,
+    CompressionChainPlan, FpExtEncoding, GadgetDigits, GroupCommitPhaseParams,
+    PrecommittedGroupProfiles,
 };
 use jolt_field::{CanonicalEncoding, Field, Ring, Unreduced};
 
@@ -115,31 +116,98 @@ pub struct CommitOutput<F: Field> {
 
 /// Backend-independent, fully checked plan for one complete root commitment.
 ///
-/// Keeping the compression chain beside the A/B profile is the first executable
-/// proof that compression can be planned before commitment arithmetic and
-/// therefore belongs to the same semantic operation. Runtime-private tiling and
-/// retained representations are deliberately absent.
+/// The plan covers every step needed to produce the public commitment,
+/// including compression. Backend tuning and retained prover state are private
+/// implementation details and are deliberately absent.
 #[derive(Debug, Clone)]
-struct ValidatedCommitGroupPlan {
+pub(super) struct CheckedCommitmentPlan {
+    setup_descriptor: AkitaSetupDescriptor,
+    source_contract: CommittedSourceContract,
     profile: GroupCommitPhaseParams,
+    slice_geometry: CommitmentSliceGeometry,
     compression: CompressionChainPlan,
 }
 
-fn commitment_compression_plan(
-    profile: &GroupCommitPhaseParams,
-) -> Result<CompressionChainPlan, AkitaError> {
-    let source_coefficients = profile.outer_slice_count.complete_source_coefficients(
-        profile.outer.matrix.output_rank(),
-        profile.outer.matrix.ring_dimension(),
-    )?;
-    CompressionChainPlan::for_complete_source(
-        profile.outer.matrix.sis_table_key().modulus_profile,
-        source_coefficients,
-    )
+impl CheckedCommitmentPlan {
+    fn new<F>(
+        profile: GroupCommitPhaseParams,
+        expanded: &AkitaExpandedSetup<F>,
+        source_contract: CommittedSourceContract,
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+    {
+        let field_modulus = akita_types::field_modulus::<F>()?;
+        if !profile
+            .inner
+            .matrix
+            .sis_modulus_profile()
+            .matches_modulus(field_modulus)
+            || !profile
+                .outer
+                .matrix
+                .sis_modulus_profile()
+                .matches_modulus(field_modulus)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "commitment matrix modulus profile does not match the field".into(),
+            ));
+        }
+        profile
+            .validate_frozen_precommit(profile.inner.matrix.sis_modulus_profile().field_bits())?;
+        let slice_geometry = profile.derive_slice_geometry()?;
+        let source_coefficients =
+            slice_geometry.complete_source_coefficients(profile.outer.matrix.output_rank())?;
+        let compression = CompressionChainPlan::for_complete_source(
+            profile.outer.matrix.sis_table_key().modulus_profile,
+            source_coefficients,
+        )?;
+        validate_commitment_geometry::<F>(&profile, &compression, expanded)?;
+        Ok(Self {
+            setup_descriptor: expanded.seed().clone(),
+            source_contract,
+            slice_geometry,
+            compression,
+            profile,
+        })
+    }
+
+    fn ensure_backend_setup<F, B>(
+        &self,
+        ctx: &crate::compute::OperationCtx<'_, F, B>,
+    ) -> Result<(), AkitaError>
+    where
+        F: Field + CanonicalEncoding,
+        B: crate::compute::ComputeBackendSetup<F>,
+    {
+        if ctx.backend().prepared_expanded_setup(ctx.prepared()).seed() != &self.setup_descriptor {
+            return Err(AkitaError::InvalidSetup(
+                "commitment backend context belongs to a different setup".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) const fn profile(&self) -> &GroupCommitPhaseParams {
+        &self.profile
+    }
+
+    const fn source_contract(&self) -> CommittedSourceContract {
+        self.source_contract
+    }
+
+    pub(super) fn slice_geometry(&self) -> &CommitmentSliceGeometry {
+        &self.slice_geometry
+    }
+
+    fn compression(&self) -> &CompressionChainPlan {
+        &self.compression
+    }
 }
 
 fn validate_commitment_geometry<F>(
     profile: &GroupCommitPhaseParams,
+    compression: &CompressionChainPlan,
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
@@ -183,11 +251,7 @@ where
         )));
     }
 
-    let required = akita_types::commit_only_setup_field_elements(
-        &profile.inner.matrix,
-        &profile.outer.matrix,
-        profile.outer_slice_count,
-    )?;
+    let required = akita_types::commit_only_setup_field_elements(profile, compression)?;
     let available = setup.shared_matrix.num_field_elements();
     if required > available {
         return Err(AkitaError::InvalidSetup(format!(
@@ -217,7 +281,15 @@ where
             "commit params require nonzero A/B digit depths".to_string(),
         ));
     }
-    validate_commitment_geometry::<F>(&params.own_group().profile, setup)?;
+    let profile = &params.own_group().profile;
+    let slice_geometry = profile.derive_slice_geometry()?;
+    let source_coefficients =
+        slice_geometry.complete_source_coefficients(profile.outer.matrix.output_rank())?;
+    let compression = CompressionChainPlan::for_complete_source(
+        profile.outer.matrix.sis_modulus_profile(),
+        source_coefficients,
+    )?;
+    validate_commitment_geometry::<F>(profile, &compression, setup)?;
 
     // D/opening geometry is level-only: standalone commitment profiles freeze
     // only the A/B matrices used to materialize the commitment.
@@ -386,16 +458,16 @@ where
     Ok(())
 }
 
-/// Resolve the frozen commit params of one root commitment and admit its sources.
-fn compile_commit_group_plan<Cfg, P>(
+/// Compile the complete checked plan for one root commitment from source metadata.
+fn compile_commitment_plan<Cfg, P>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     context: GroupContext<'_>,
-) -> Result<ValidatedCommitGroupPlan, AkitaError>
+) -> Result<CheckedCommitmentPlan, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding,
-    P: RuntimeCommitSource<Cfg::Field>,
+    P: RootPolyMeta<Cfg::Field>,
 {
     let polynomial_group_layout =
         resolve_polynomial_group_layout::<Cfg::Field, P>(polys, expanded)?;
@@ -435,38 +507,33 @@ where
             scheduled_row.profiles().final_group
         };
 
-    // The commit params fully determine the A/B commitment, so this is the
-    // complete commit-time gate. D/opening geometry and source encoding are not
-    // part of the commit params: they are validated wherever the opening
-    // schedule consumes them, never at commit time.
-    commit_params.validate_frozen_precommit(
-        commit_params
-            .inner
-            .matrix
-            .sis_modulus_profile()
-            .field_bits(),
-    )?;
-    validate_commitment_geometry::<Cfg::Field>(&commit_params, expanded)?;
+    let source_contract = Cfg::committed_source_contract()?;
+    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, source_contract)?;
+    CheckedCommitmentPlan::new(commit_params, expanded, source_contract)
+}
 
-    // Both admission gates read the `Cfg` declaration rather than commitment
-    // geometry, so they run here instead of inside the commit kernel.
-    let contract = Cfg::committed_source_contract()?;
-    ensure_sources_match_declared_class::<Cfg::Field, P>(polys, contract)?;
+/// Admit source coefficient values against a checked plan.
+fn admit_commitment_coefficients<F, P>(
+    polys: &[P],
+    plan: &CheckedCommitmentPlan,
+) -> Result<(), AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    P: RuntimeCommitSource<F>,
+{
+    let contract = plan.source_contract();
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        Cfg::Field,
-        commit_params.inner.matrix.ring_dimension(),
-        |D_A| ensure_sources_fit_accepted_interval::<Cfg::Field, P, D_A>(
+        F,
+        plan.profile().inner.matrix.ring_dimension(),
+        |D_A| ensure_sources_fit_accepted_interval::<F, P, D_A>(
             polys,
-            commit_params.inner.digits,
+            plan.profile().inner.digits,
             contract,
         )
     )?;
 
-    Ok(ValidatedCommitGroupPlan {
-        compression: commitment_compression_plan(&commit_params)?,
-        profile: commit_params,
-    })
+    Ok(())
 }
 
 /// Commit one homogeneous polynomial group in its complete parameter context.
@@ -493,27 +560,25 @@ where
     P: RuntimeCommitSource<Cfg::Field>,
     B: RuntimeCommitBackendFor<Cfg::Field, P>,
 {
-    let ValidatedCommitGroupPlan {
-        profile: commit_params,
-        compression,
-    } = compile_commit_group_plan::<Cfg, P>(polys, expanded, context)?;
+    let plan = compile_commitment_plan::<Cfg, P>(polys, expanded, context)?;
     let ctx = stack.commit();
-    let (inner_rows, uncompressed_commitment) =
-        compute_inner_outer_commitment(polys, ctx, commit_params)?;
+    plan.ensure_backend_setup(ctx)?;
+    admit_commitment_coefficients::<Cfg::Field, P>(polys, &plan)?;
+    let (inner_rows, uncompressed_commitment) = compute_inner_outer_commitment(polys, ctx, &plan)?;
     let CommitmentCompressionOutput {
         payload,
         witness,
         quotients,
-    } = compute_commitment_compression(ctx, compression, uncompressed_commitment)?;
+    } = compute_commitment_compression(ctx, &plan, uncompressed_commitment)?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
-        commit_params.inner.matrix.ring_dimension(),
+        plan.profile().inner.matrix.ring_dimension(),
         inner_rows,
         &witness,
         &quotients,
     )?;
 
     Ok(CommitOutput {
-        committed_group: CommittedGroup::new(commit_params, Commitment::new(payload)),
+        committed_group: CommittedGroup::new(*plan.profile(), Commitment::new(payload)),
         hint,
     })
 }

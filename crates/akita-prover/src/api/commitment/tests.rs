@@ -170,12 +170,20 @@ fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
         d_key.coeff_linf_bound,
         D,
     );
-    let commit_only_fields = akita_types::commit_only_setup_field_elements(
-        &params.inner().matrix,
-        &params.outer().matrix,
-        params.outer_slice_count(),
+    let profile = &params.own_group().profile;
+    let compression = CompressionChainPlan::for_complete_source(
+        profile.outer.matrix.sis_modulus_profile(),
+        profile
+            .outer_slice_count
+            .complete_source_coefficients(
+                profile.outer.matrix.output_rank(),
+                profile.outer.matrix.ring_dimension(),
+            )
+            .expect("complete B source"),
     )
     .unwrap();
+    let commit_only_fields =
+        akita_types::commit_only_setup_field_elements(profile, &compression).unwrap();
     let expanded = AkitaProverSetup::<F>::generate_with_capacity(
         5,
         1,
@@ -425,14 +433,19 @@ fn commit_fixture_with_profile(
     ctx: &OperationCtx<'_, F, CpuBackend>,
     profile: GroupCommitPhaseParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError> {
-    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, profile)?;
+    let plan = CheckedCommitmentPlan::new(
+        profile,
+        ctx.backend().prepared_expanded_setup(ctx.prepared()),
+        <akita_config::proof_optimized::fp64::Dense as CommitmentConfig>::committed_source_contract()?,
+    )?;
+    let (inner_rows, source) = compute_inner_outer_commitment(polys, ctx, &plan)?;
     let CommitmentCompressionOutput {
         payload,
         witness,
         quotients,
-    } = compute_commitment_compression(ctx, commitment_compression_plan(&profile)?, source)?;
+    } = compute_commitment_compression(ctx, &plan, source)?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
-        profile.inner.matrix.ring_dimension(),
+        plan.profile().inner.matrix.ring_dimension(),
         inner_rows,
         &witness,
         &quotients,
