@@ -53,6 +53,7 @@ class Artifact:
 class ProfileBaselines:
     main_sha: str
     previous_sha: str
+    warnings: tuple[str, ...] = ()
 
 
 def repository_parts(repository: str) -> tuple[str, str]:
@@ -251,9 +252,7 @@ def profile_baselines_for_comment(
 ) -> ProfileBaselines:
     """Authenticate fork-produced baseline identity metadata before rendering."""
 
-    validate_input_files(
-        (metadata_path, main_summary_path, previous_summary_path), max_input_bytes
-    )
+    validate_input_files((metadata_path,), max_input_bytes)
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -263,95 +262,101 @@ def profile_baselines_for_comment(
     if SHA_RE.fullmatch(head_sha) is None or SHA_RE.fullmatch(base_sha) is None:
         raise PolicyError("benchmark baseline resolution requires full commit IDs")
 
+    warnings: list[str] = []
     main_sha = ""
     if main_summary_path.exists():
-        claimed_main_sha = str(metadata.get("main_baseline_sha") or "")
-        comparison = client.compare_commits(owner, repo, base_sha, head_sha)
-        merge_base = comparison.get("merge_base_commit")
-        trusted_main_sha = ""
-        if isinstance(merge_base, dict):
-            trusted_main_sha = str(merge_base.get("sha") or "")
-        if SHA_RE.fullmatch(trusted_main_sha) is None:
-            raise PolicyError("GitHub comparison did not return a full merge-base commit ID")
-        if claimed_main_sha != trusted_main_sha:
-            raise PolicyError("fork artifact claimed the wrong merge-base commit")
-        main_sha = trusted_main_sha
+        try:
+            validate_input_files((main_summary_path,), max_input_bytes)
+            claimed_main_sha = str(metadata.get("main_baseline_sha") or "")
+            comparison = client.compare_commits(owner, repo, base_sha, head_sha)
+            merge_base = comparison.get("merge_base_commit")
+            trusted_main_sha = ""
+            if isinstance(merge_base, dict):
+                trusted_main_sha = str(merge_base.get("sha") or "")
+            if SHA_RE.fullmatch(trusted_main_sha) is None:
+                raise PolicyError(
+                    "GitHub comparison did not return a full merge-base commit ID"
+                )
+            if claimed_main_sha != trusted_main_sha:
+                raise PolicyError("fork artifact claimed the wrong merge-base commit")
+            main_sha = trusted_main_sha
+        except (PolicyError, RuntimeError, OSError, ValueError) as error:
+            warnings.append(f"merge-base benchmark rejected: {error}")
 
     previous_sha = ""
     if previous_summary_path.exists():
         try:
+            validate_input_files((previous_summary_path,), max_input_bytes)
             previous_run_id = int(metadata.get("previous_run_id") or 0)
-        except (TypeError, ValueError) as error:
-            raise PolicyError("previous benchmark run ID is invalid") from error
-        claimed_previous_sha = str(metadata.get("previous_baseline_sha") or "")
-        if previous_run_id <= 0 or SHA_RE.fullmatch(claimed_previous_sha) is None:
-            raise PolicyError("previous benchmark identity is incomplete")
-        if claimed_previous_sha == head_sha:
-            raise PolicyError("previous benchmark commit equals the current PR head")
+            claimed_previous_sha = str(metadata.get("previous_baseline_sha") or "")
+            if previous_run_id <= 0 or SHA_RE.fullmatch(claimed_previous_sha) is None:
+                raise PolicyError("previous benchmark identity is incomplete")
+            if claimed_previous_sha == head_sha:
+                raise PolicyError("previous benchmark commit equals the current PR head")
 
-        current_run = client.get_workflow_run(owner, repo, current_run_id)
-        previous_run = client.get_workflow_run(owner, repo, previous_run_id)
-        try:
+            current_run = client.get_workflow_run(owner, repo, current_run_id)
+            previous_run = client.get_workflow_run(owner, repo, previous_run_id)
             current_number = int(current_run.get("run_number") or 0)
             previous_number = int(previous_run.get("run_number") or 0)
             current_workflow_id = int(current_run.get("workflow_id") or 0)
             previous_workflow_id = int(previous_run.get("workflow_id") or 0)
-        except (TypeError, ValueError) as error:
-            raise PolicyError("benchmark workflow run identity is invalid") from error
-        if (
-            current_run.get("name") != workflow_name
-            or current_run.get("event") != "pull_request"
-            or str(current_run.get("head_sha") or "") != head_sha
-            or not run_matches_pr_identity(
-                current_run, head_repository, head_branch, pr_number
-            )
-        ):
-            raise PolicyError("current benchmark run does not match the resolved PR")
-        if (
-            current_number <= 0
-            or previous_number <= 0
-            or previous_number >= current_number
-            or current_workflow_id <= 0
-            or previous_workflow_id != current_workflow_id
-        ):
-            raise PolicyError("benchmark baseline is not an earlier workflow run")
-        if previous_run.get("name") != workflow_name:
-            raise PolicyError("previous benchmark run belongs to another workflow")
-        if previous_run.get("event") != "pull_request":
-            raise PolicyError("previous benchmark run was not triggered by a pull request")
-        if (
-            previous_run.get("status") != "completed"
-            or previous_run.get("conclusion") not in {"success", "failure"}
-        ):
-            raise PolicyError("previous benchmark run is not a completed reportable run")
-        if str(previous_run.get("head_sha") or "") != claimed_previous_sha:
-            raise PolicyError("fork artifact claimed the wrong previous-run commit")
-        if not run_matches_pr_identity(
-            previous_run, head_repository, head_branch, pr_number
-        ):
-            raise PolicyError("previous benchmark run belongs to another fork or PR")
-        comparison = client.compare_commits(
-            owner, repo, claimed_previous_sha, head_sha
-        )
-        merge_base = comparison.get("merge_base_commit")
-        previous_merge_base = (
-            str(merge_base.get("sha") or "") if isinstance(merge_base, dict) else ""
-        )
-        if previous_merge_base != claimed_previous_sha:
-            raise PolicyError("previous benchmark commit is not an ancestor of this PR head")
-        if artifact_for_run(
-            client,
-            owner,
-            repo,
-            previous_run_id,
-            artifact_name,
-            max_artifact_bytes,
-            claimed_previous_sha,
-        ) is None:
-            raise PolicyError("previous benchmark run has no matching bounded artifact")
-        previous_sha = claimed_previous_sha
+            if (
+                current_run.get("name") != workflow_name
+                or current_run.get("event") != "pull_request"
+                or str(current_run.get("head_sha") or "") != head_sha
+                or not run_matches_pr_identity(
+                    current_run, head_repository, head_branch, pr_number
+                )
+            ):
+                raise PolicyError("current benchmark run does not match the resolved PR")
+            if (
+                current_number <= 0
+                or previous_number <= 0
+                or previous_number >= current_number
+                or current_workflow_id <= 0
+                or previous_workflow_id != current_workflow_id
+            ):
+                raise PolicyError("benchmark baseline is not an earlier workflow run")
+            if previous_run.get("name") != workflow_name:
+                raise PolicyError("previous benchmark run belongs to another workflow")
+            if previous_run.get("event") != "pull_request":
+                raise PolicyError(
+                    "previous benchmark run was not triggered by a pull request"
+                )
+            if (
+                previous_run.get("status") != "completed"
+                or previous_run.get("conclusion") not in {"success", "failure"}
+            ):
+                raise PolicyError(
+                    "previous benchmark run is not a completed reportable run"
+                )
+            if str(previous_run.get("head_sha") or "") != claimed_previous_sha:
+                raise PolicyError("fork artifact claimed the wrong previous-run commit")
+            if not run_matches_pr_identity(
+                previous_run, head_repository, head_branch, pr_number
+            ):
+                raise PolicyError("previous benchmark run belongs to another fork or PR")
+            if artifact_for_run(
+                client,
+                owner,
+                repo,
+                previous_run_id,
+                artifact_name,
+                max_artifact_bytes,
+                claimed_previous_sha,
+            ) is None:
+                raise PolicyError(
+                    "previous benchmark run has no matching bounded artifact"
+                )
+            previous_sha = claimed_previous_sha
+        except (PolicyError, RuntimeError, OSError, ValueError) as error:
+            warnings.append(f"previous PR benchmark rejected: {error}")
 
-    return ProfileBaselines(main_sha=main_sha, previous_sha=previous_sha)
+    return ProfileBaselines(
+        main_sha=main_sha,
+        previous_sha=previous_sha,
+        warnings=tuple(warnings),
+    )
 
 
 class GitHubApi:
@@ -748,6 +753,8 @@ def resolve_profile_baselines_command(args: argparse.Namespace) -> int:
             "main-sha": baselines.main_sha,
             "previous-sha": baselines.previous_sha,
         }
+        for warning in baselines.warnings:
+            _warning(warning)
     except (
         KeyError,
         PolicyError,

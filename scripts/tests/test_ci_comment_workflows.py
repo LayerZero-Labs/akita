@@ -283,19 +283,14 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
             main_sha,
             previous_repository=HEAD_REPOSITORY,
             previous_branch="feature",
-            previous_ancestor=True,
             artifact_size=5_000_000,
         ):
             self.main_sha = main_sha
             self.previous_repository = previous_repository
             self.previous_branch = previous_branch
-            self.previous_ancestor = previous_ancestor
             self.artifact_size = artifact_size
 
-        def compare_commits(self, _owner, _repo, base_sha, _head_sha):
-            if base_sha == ProfileBaselineIdentityTests.PREVIOUS_SHA:
-                merge_base = base_sha if self.previous_ancestor else "f" * 40
-                return {"merge_base_commit": {"sha": merge_base}}
+        def compare_commits(self, _owner, _repo, _base_sha, _head_sha):
             return {"merge_base_commit": {"sha": self.main_sha}}
 
         def get_workflow_run(self, _owner, _repo, run_id):
@@ -386,27 +381,30 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
         self.assertEqual(baselines.main_sha, self.MAIN_SHA)
         self.assertEqual(baselines.previous_sha, self.PREVIOUS_SHA)
 
-    def test_rejects_forged_merge_base_or_cross_fork_previous_run(self) -> None:
-        with self.assertRaisesRegex(PolicyError, "wrong merge-base"):
-            self.resolve(
-                self.Client(main_sha=self.MAIN_SHA),
-                self.metadata(main_baseline_sha="e" * 40),
-            )
-        with self.assertRaisesRegex(PolicyError, "another fork or PR"):
-            self.resolve(
-                self.Client(main_sha=self.MAIN_SHA, previous_repository="other/akita"),
-                self.metadata(),
-            )
-        with self.assertRaisesRegex(PolicyError, "another fork or PR"):
-            self.resolve(
-                self.Client(main_sha=self.MAIN_SHA, previous_branch="other"),
-                self.metadata(),
-            )
-        with self.assertRaisesRegex(PolicyError, "not an ancestor"):
-            self.resolve(
-                self.Client(main_sha=self.MAIN_SHA, previous_ancestor=False),
-                self.metadata(),
-            )
+    def test_rejects_each_bad_baseline_without_dropping_the_other(self) -> None:
+        forged_main = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA),
+            self.metadata(main_baseline_sha="e" * 40),
+        )
+        self.assertEqual(forged_main.main_sha, "")
+        self.assertEqual(forged_main.previous_sha, self.PREVIOUS_SHA)
+        self.assertRegex(forged_main.warnings[0], "wrong merge-base")
+
+        wrong_fork = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA, previous_repository="other/akita"),
+            self.metadata(),
+        )
+        self.assertEqual(wrong_fork.main_sha, self.MAIN_SHA)
+        self.assertEqual(wrong_fork.previous_sha, "")
+        self.assertRegex(wrong_fork.warnings[0], "another fork or PR")
+
+        wrong_branch = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA, previous_branch="other"),
+            self.metadata(),
+        )
+        self.assertEqual(wrong_branch.main_sha, self.MAIN_SHA)
+        self.assertEqual(wrong_branch.previous_sha, "")
+        self.assertRegex(wrong_branch.warnings[0], "another fork or PR")
 
     def test_previous_archive_uses_archive_not_input_limit(self) -> None:
         baselines = self.resolve(
@@ -414,11 +412,13 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
             self.metadata(),
         )
         self.assertEqual(baselines.previous_sha, self.PREVIOUS_SHA)
-        with self.assertRaisesRegex(PolicyError, "limit is 5000000"):
-            self.resolve(
-                self.Client(main_sha=self.MAIN_SHA, artifact_size=5_000_001),
-                self.metadata(),
-            )
+        oversized = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA, artifact_size=5_000_001),
+            self.metadata(),
+        )
+        self.assertEqual(oversized.main_sha, self.MAIN_SHA)
+        self.assertEqual(oversized.previous_sha, "")
+        self.assertRegex(oversized.warnings[0], "limit is 5000000")
 
 
 class WorkflowWiringTests(unittest.TestCase):
