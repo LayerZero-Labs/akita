@@ -107,7 +107,9 @@ Anything unclassified blocks the next phase.
 
 ## Phase 1: full commitment epoch
 
-This phase implements [`commitment-cutover.md`](commitment-cutover.md).
+This phase implements [`commitment-cutover.md`](commitment-cutover.md) in the
+falsifiable order defined by
+[`commitment-implementation-slices.md`](commitment-implementation-slices.md).
 
 ### Minimum coherent PR
 

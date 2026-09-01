@@ -44,7 +44,10 @@ Read the files in this order:
    maps Akita's protocol messages to semantic runtime operations.
 4. [`commitment-cutover.md`](commitment-cutover.md) specifies the first
    implementation cut, including the surfaces to remove or evolve.
-5. [`roadmap.md`](roadmap.md) orders the remaining Akita work, the later Jolt
+5. [`commitment-implementation-slices.md`](commitment-implementation-slices.md)
+   gives the falsifiable implementation order and the deletion-based exit gate
+   for the commitment cutover.
+6. [`roadmap.md`](roadmap.md) orders the remaining Akita work, the later Jolt
    alignment, and the eventual common-runtime extraction.
 
 The files form one design record. `architecture.md`, `transcript-epochs.md`,
