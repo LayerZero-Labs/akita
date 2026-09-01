@@ -106,6 +106,7 @@ Details: [`book/src/usage/feature-flags.md`](book/src/usage/feature-flags.md).
 | Crate map and dependency graph | [`docs/crate-graph.md`](docs/crate-graph.md), [`book/src/how/architecture.md`](book/src/how/architecture.md) |
 | Core API types | [`book/src/how/architecture.md`](book/src/how/architecture.md#core-types) |
 | CI test timing | [`docs/ci-test-timing.md`](docs/ci-test-timing.md) |
+| Privileged CI PR comments | [`docs/ci-pr-comment-reporters.md`](docs/ci-pr-comment-reporters.md) |
 | Profiling harness | [`book/src/usage/profiling.md`](book/src/usage/profiling.md) |
 | Transcript hardening | [`book/src/how/transcript.md`](book/src/how/transcript.md) |
 | Offline SIS table regen | `cargo run -p akita-sis-estimator --release --features parallel --example infinity_width_table -- --format rust-split --profile local-minimum` |

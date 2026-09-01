@@ -1,6 +1,8 @@
 # CI test timing
 
 Design spec: [`specs/archive/2026-Q3/ci-test-timing.md`](../specs/archive/2026-Q3/ci-test-timing.md).
+Privileged comment publication uses the shared
+[`workflow_run` reporter trust model](ci-pr-comment-reporters.md).
 
 Every PR gets an upserted timing comment (marker `<!-- akita-ci-test-timing -->`) showing run wall time vs a main baseline and per-test outliers from the nextest JUnit output.
 

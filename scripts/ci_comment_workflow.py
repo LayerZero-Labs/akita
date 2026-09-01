@@ -5,6 +5,9 @@ The pull-request workflows that produce artifacts are untrusted.  The two
 workflow_run reporters checkout this module from the default branch and use it
 to resolve the destination PR, bound artifact and file sizes, revalidate the PR
 head immediately before writing, and upsert the final comment.
+
+The complete trust model, state transitions, and failure semantics live in
+docs/ci-pr-comment-reporters.md.
 """
 
 from __future__ import annotations

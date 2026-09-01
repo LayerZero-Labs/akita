@@ -1,5 +1,7 @@
 name: Akita CI Test Timing Comment
 
+# Trust model and failure semantics: docs/ci-pr-comment-reporters.md
+
 on:
   workflow_run:
     workflows: ["CI"]
