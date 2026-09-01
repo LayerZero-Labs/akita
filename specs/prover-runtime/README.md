@@ -5,7 +5,7 @@
 | Author(s) | Quang Dao |
 | Created | 2026-09-01 |
 | Status | proposed |
-| PR | This PR |
+| PR | #461 |
 | Supersedes | The unmerged backend-boundary proposal in PR #457 |
 | Superseded-by | |
 | Book-chapter | |
