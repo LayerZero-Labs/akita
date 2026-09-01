@@ -1,3 +1,4 @@
+import json
 import pathlib
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from scripts.ci_comment_workflow import (
     PolicyError,
     ResolvedPullRequest,
     artifact_for_run,
+    profile_baselines_for_comment,
     resolve_workflow_run_pr,
     run_matches_pr_identity,
     validate_comment_file,
@@ -241,6 +243,115 @@ class IdentityTests(unittest.TestCase):
         )
 
 
+class ProfileBaselineIdentityTests(unittest.TestCase):
+    MAIN_SHA = "b" * 40
+    PREVIOUS_SHA = "c" * 40
+
+    class Client:
+        def __init__(self, *, main_sha, previous_repository=HEAD_REPOSITORY):
+            self.main_sha = main_sha
+            self.previous_repository = previous_repository
+
+        def compare_commits(self, _owner, _repo, _base_sha, _head_sha):
+            return {"merge_base_commit": {"sha": self.main_sha}}
+
+        def get_workflow_run(self, _owner, _repo, run_id):
+            if run_id == 200:
+                return {
+                    "id": 200,
+                    "run_number": 20,
+                    "workflow_id": 1,
+                    "name": "Akita Profile Benchmarks",
+                    "event": "pull_request",
+                    "head_sha": HEAD_SHA,
+                    "head_repository": {"full_name": HEAD_REPOSITORY},
+                    "pull_requests": [{"number": 459}],
+                }
+            return {
+                "id": 100,
+                "run_number": 10,
+                "workflow_id": 1,
+                "name": "Akita Profile Benchmarks",
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": ProfileBaselineIdentityTests.PREVIOUS_SHA,
+                "head_repository": {"full_name": self.previous_repository},
+                "pull_requests": [{"number": 459}],
+            }
+
+        def list_run_artifacts(self, _owner, _repo, _run_id):
+            return [
+                {
+                    "id": 123,
+                    "name": "profile-bench-data",
+                    "size_in_bytes": 100,
+                    "expired": False,
+                    "workflow_run": {
+                        "head_sha": ProfileBaselineIdentityTests.PREVIOUS_SHA
+                    },
+                }
+            ]
+
+    def paths(self, metadata):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = pathlib.Path(temp.name)
+        metadata_path = root / "baseline-metadata.json"
+        main_summary = root / "main.json"
+        previous_summary = root / "previous.json"
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+        main_summary.write_text("{}", encoding="utf-8")
+        previous_summary.write_text("{}", encoding="utf-8")
+        return metadata_path, main_summary, previous_summary
+
+    def resolve(self, client, metadata):
+        metadata_path, main_summary, previous_summary = self.paths(metadata)
+        return profile_baselines_for_comment(
+            client,
+            "LayerZero-Labs",
+            "akita",
+            metadata_path=metadata_path,
+            main_summary_path=main_summary,
+            previous_summary_path=previous_summary,
+            current_run_id=200,
+            workflow_name="Akita Profile Benchmarks",
+            artifact_name="profile-bench-data",
+            head_sha=HEAD_SHA,
+            head_repository=HEAD_REPOSITORY,
+            pr_number=459,
+            base_sha="d" * 40,
+            max_bytes=2_000_000,
+        )
+
+    def metadata(self, **overrides):
+        value = {
+            "schema_version": 1,
+            "main_baseline_sha": self.MAIN_SHA,
+            "previous_baseline_sha": self.PREVIOUS_SHA,
+            "previous_run_id": "100",
+        }
+        value.update(overrides)
+        return value
+
+    def test_authenticates_both_baseline_commit_identities(self) -> None:
+        baselines = self.resolve(self.Client(main_sha=self.MAIN_SHA), self.metadata())
+        self.assertEqual(baselines.main_sha, self.MAIN_SHA)
+        self.assertEqual(baselines.previous_sha, self.PREVIOUS_SHA)
+
+    def test_rejects_forged_merge_base_or_cross_fork_previous_run(self) -> None:
+        with self.assertRaisesRegex(PolicyError, "wrong merge-base"):
+            self.resolve(
+                self.Client(main_sha=self.MAIN_SHA),
+                self.metadata(main_baseline_sha="e" * 40),
+            )
+        with self.assertRaisesRegex(PolicyError, "another fork or PR"):
+            self.resolve(
+                self.Client(main_sha=self.MAIN_SHA, previous_repository="other/akita"),
+                self.metadata(),
+            )
+
+
 class WorkflowWiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -286,9 +397,21 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_profile_parent_packages_structured_data_without_write_scope(self) -> None:
         self.assertIn("main-baseline/summary.json", self.profile_parent)
         self.assertIn("previous-baseline/summary.json", self.profile_parent)
+        self.assertIn("baseline-metadata.json", self.profile_parent)
         self.assertIn("run.head_repository?.full_name?.toLowerCase()", self.profile_parent)
         self.assertNotIn("issues: write", self.profile_parent)
         self.assertNotIn("pull-requests: write", self.profile_parent)
+
+    def test_profile_reporter_authenticates_and_renders_baseline_identities(self) -> None:
+        profile = self.workflows["profile benchmark"]
+        self.assertIn("resolve-profile-baselines", profile)
+        self.assertIn("steps.baselines.outputs.main-sha", profile)
+        self.assertIn("steps.baselines.outputs.previous-sha", profile)
+        self.assertIn("- Prior PR run:", profile)
+        self.assertLess(
+            profile.index("resolve-profile-baselines"),
+            profile.index("scripts/profile_bench_report.py render"),
+        )
 
     def test_expensive_jobs_have_path_timeout_and_fanout_limits(self) -> None:
         self.assertIn("paths:", self.profile_parent)

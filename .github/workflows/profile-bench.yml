@@ -528,6 +528,7 @@ jobs:
           AKITA_BENCH_MAIN_BASELINE_SHA: ${{ github.event_name == 'pull_request' && env.AKITA_BENCH_MERGE_BASE_SHA || '' }}
           AKITA_BENCH_PREVIOUS_BASELINE_LABEL: ${{ steps.bench-baselines.outputs.previous-label }}
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.bench-baselines.outputs.previous-sha }}
+          AKITA_BENCH_PREVIOUS_BASELINE_RUN_ID: ${{ steps.bench-baselines.outputs.previous-run-id }}
           # 'success' only if every bench leg passed; drives the warning banner.
           BENCH_RESULT: ${{ needs.bench.result }}
         run: |
@@ -543,6 +544,16 @@ jobs:
             cp "$AKITA_BENCH_PREVIOUS_RUN_DIR/summary.json" \
               "$AKITA_BENCH_ARTIFACT_DIR/previous-baseline/summary.json"
           fi
+          jq -n \
+            --arg main_baseline_sha "$AKITA_BENCH_MAIN_BASELINE_SHA" \
+            --arg previous_baseline_sha "$AKITA_BENCH_PREVIOUS_BASELINE_SHA" \
+            --arg previous_run_id "$AKITA_BENCH_PREVIOUS_BASELINE_RUN_ID" \
+            '{
+              schema_version: 1,
+              main_baseline_sha: $main_baseline_sha,
+              previous_baseline_sha: $previous_baseline_sha,
+              previous_run_id: $previous_run_id
+            }' > "$AKITA_BENCH_ARTIFACT_DIR/baseline-metadata.json"
           python3 scripts/profile_bench_report.py render \
             "$summary_path" \
             --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \

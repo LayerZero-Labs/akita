@@ -47,6 +47,12 @@ class Artifact:
     size_in_bytes: int
 
 
+@dataclass(frozen=True)
+class ProfileBaselines:
+    main_sha: str
+    previous_sha: str
+
+
 def repository_parts(repository: str) -> tuple[str, str]:
     if REPOSITORY_RE.fullmatch(repository) is None:
         raise PolicyError(f"invalid repository identity: {repository!r}")
@@ -216,6 +222,113 @@ def run_matches_pr_identity(
     return True
 
 
+def profile_baselines_for_comment(
+    client: "GitHubApi",
+    owner: str,
+    repo: str,
+    *,
+    metadata_path: pathlib.Path,
+    main_summary_path: pathlib.Path,
+    previous_summary_path: pathlib.Path,
+    current_run_id: int,
+    workflow_name: str,
+    artifact_name: str,
+    head_sha: str,
+    head_repository: str,
+    pr_number: int,
+    base_sha: str,
+    max_bytes: int,
+) -> ProfileBaselines:
+    """Authenticate fork-produced baseline identity metadata before rendering."""
+
+    validate_input_files(
+        (metadata_path, main_summary_path, previous_summary_path), max_bytes
+    )
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PolicyError("benchmark baseline metadata is missing or invalid") from error
+    if not isinstance(metadata, dict) or metadata.get("schema_version") != 1:
+        raise PolicyError("benchmark baseline metadata has an unsupported schema")
+    if SHA_RE.fullmatch(head_sha) is None or SHA_RE.fullmatch(base_sha) is None:
+        raise PolicyError("benchmark baseline resolution requires full commit IDs")
+
+    main_sha = ""
+    if main_summary_path.exists():
+        claimed_main_sha = str(metadata.get("main_baseline_sha") or "")
+        comparison = client.compare_commits(owner, repo, base_sha, head_sha)
+        merge_base = comparison.get("merge_base_commit")
+        trusted_main_sha = ""
+        if isinstance(merge_base, dict):
+            trusted_main_sha = str(merge_base.get("sha") or "")
+        if SHA_RE.fullmatch(trusted_main_sha) is None:
+            raise PolicyError("GitHub comparison did not return a full merge-base commit ID")
+        if claimed_main_sha != trusted_main_sha:
+            raise PolicyError("fork artifact claimed the wrong merge-base commit")
+        main_sha = trusted_main_sha
+
+    previous_sha = ""
+    if previous_summary_path.exists():
+        try:
+            previous_run_id = int(metadata.get("previous_run_id") or 0)
+        except (TypeError, ValueError) as error:
+            raise PolicyError("previous benchmark run ID is invalid") from error
+        claimed_previous_sha = str(metadata.get("previous_baseline_sha") or "")
+        if previous_run_id <= 0 or SHA_RE.fullmatch(claimed_previous_sha) is None:
+            raise PolicyError("previous benchmark identity is incomplete")
+
+        current_run = client.get_workflow_run(owner, repo, current_run_id)
+        previous_run = client.get_workflow_run(owner, repo, previous_run_id)
+        try:
+            current_number = int(current_run.get("run_number") or 0)
+            previous_number = int(previous_run.get("run_number") or 0)
+            current_workflow_id = int(current_run.get("workflow_id") or 0)
+            previous_workflow_id = int(previous_run.get("workflow_id") or 0)
+        except (TypeError, ValueError) as error:
+            raise PolicyError("benchmark workflow run identity is invalid") from error
+        if (
+            current_run.get("name") != workflow_name
+            or current_run.get("event") != "pull_request"
+            or str(current_run.get("head_sha") or "") != head_sha
+            or not run_matches_pr_identity(current_run, head_repository, pr_number)
+        ):
+            raise PolicyError("current benchmark run does not match the resolved PR")
+        if (
+            current_number <= 0
+            or previous_number <= 0
+            or previous_number >= current_number
+            or current_workflow_id <= 0
+            or previous_workflow_id != current_workflow_id
+        ):
+            raise PolicyError("benchmark baseline is not an earlier workflow run")
+        if previous_run.get("name") != workflow_name:
+            raise PolicyError("previous benchmark run belongs to another workflow")
+        if previous_run.get("event") != "pull_request":
+            raise PolicyError("previous benchmark run was not triggered by a pull request")
+        if (
+            previous_run.get("status") != "completed"
+            or previous_run.get("conclusion") not in {"success", "failure"}
+        ):
+            raise PolicyError("previous benchmark run is not a completed reportable run")
+        if str(previous_run.get("head_sha") or "") != claimed_previous_sha:
+            raise PolicyError("fork artifact claimed the wrong previous-run commit")
+        if not run_matches_pr_identity(previous_run, head_repository, pr_number):
+            raise PolicyError("previous benchmark run belongs to another fork or PR")
+        if artifact_for_run(
+            client,
+            owner,
+            repo,
+            previous_run_id,
+            artifact_name,
+            max_bytes,
+            claimed_previous_sha,
+        ) is None:
+            raise PolicyError("previous benchmark run has no matching bounded artifact")
+        previous_sha = claimed_previous_sha
+
+    return ProfileBaselines(main_sha=main_sha, previous_sha=previous_sha)
+
+
 class GitHubApi:
     def __init__(self, token: str, api_url: str = "https://api.github.com") -> None:
         if not token:
@@ -333,6 +446,26 @@ class GitHubApi:
             raise RuntimeError("GitHub workflow-runs response was not a run list")
         return [value for value in result["workflow_runs"] if isinstance(value, dict)]
 
+    def get_workflow_run(
+        self, owner: str, repo: str, run_id: int
+    ) -> dict[str, object]:
+        result = self.request("GET", f"/repos/{owner}/{repo}/actions/runs/{run_id}")
+        if not isinstance(result, dict):
+            raise RuntimeError("GitHub workflow-run response was not an object")
+        return result
+
+    def compare_commits(
+        self, owner: str, repo: str, base_sha: str, head_sha: str
+    ) -> dict[str, object]:
+        if SHA_RE.fullmatch(base_sha) is None or SHA_RE.fullmatch(head_sha) is None:
+            raise PolicyError("commit comparison requires full commit IDs")
+        result = self.request(
+            "GET", f"/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("GitHub comparison response was not an object")
+        return result
+
 
 def artifact_for_run(
     client: GitHubApi,
@@ -396,6 +529,7 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
         "head-branch": "",
         "head-repository": "",
         "base-repository": "",
+        "base-sha": "",
     }
     try:
         repository = os.environ["GITHUB_REPOSITORY"]
@@ -406,6 +540,12 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
             repository,
             lambda head: client.list_open_pulls(owner, repo, head),
         )
+        pull_request = client.get_pull(owner, repo, resolved.number)
+        validate_pr_head(pull_request, resolved)
+        base = pull_request.get("base")
+        base_sha = str(base.get("sha") or "") if isinstance(base, dict) else ""
+        if SHA_RE.fullmatch(base_sha) is None:
+            raise PolicyError("resolved PR base SHA is not a full commit ID")
     except (KeyError, PolicyError, RuntimeError, OSError, json.JSONDecodeError) as error:
         _warning(f"Could not resolve workflow run to one PR: {error}")
         _write_outputs(empty)
@@ -417,6 +557,7 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
             "head-branch": resolved.head_branch,
             "head-repository": resolved.head_repository,
             "base-repository": resolved.base_repository,
+            "base-sha": base_sha,
         }
     )
     print(f"Resolved workflow run to PR #{resolved.number} at {resolved.head_sha}.")
@@ -539,6 +680,43 @@ def check_files_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def resolve_profile_baselines_command(args: argparse.Namespace) -> int:
+    outputs = {"main-sha": "", "previous-sha": ""}
+    try:
+        owner, repo = repository_parts(os.environ["GITHUB_REPOSITORY"])
+        baselines = profile_baselines_for_comment(
+            _github_client(),
+            owner,
+            repo,
+            metadata_path=pathlib.Path(args.metadata),
+            main_summary_path=pathlib.Path(args.main_summary),
+            previous_summary_path=pathlib.Path(args.previous_summary),
+            current_run_id=args.current_run_id,
+            workflow_name=args.workflow_name,
+            artifact_name=args.artifact_name,
+            head_sha=args.head_sha,
+            head_repository=args.head_repository,
+            pr_number=args.pr_number,
+            base_sha=args.base_sha,
+            max_bytes=args.max_bytes,
+        )
+        outputs = {
+            "main-sha": baselines.main_sha,
+            "previous-sha": baselines.previous_sha,
+        }
+    except (
+        KeyError,
+        PolicyError,
+        RuntimeError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        _warning(f"Benchmark baseline identities rejected: {error}")
+    _write_outputs(outputs)
+    return 0
+
+
 def upsert_comment_command(args: argparse.Namespace) -> int:
     expected = ResolvedPullRequest(
         number=args.pr_number,
@@ -604,6 +782,19 @@ def parse_args() -> argparse.Namespace:
     files.add_argument("--max-bytes", type=int, required=True)
     files.add_argument("paths", nargs="+")
 
+    profile_baselines = subparsers.add_parser("resolve-profile-baselines")
+    profile_baselines.add_argument("--metadata", required=True)
+    profile_baselines.add_argument("--main-summary", required=True)
+    profile_baselines.add_argument("--previous-summary", required=True)
+    profile_baselines.add_argument("--current-run-id", type=int, required=True)
+    profile_baselines.add_argument("--workflow-name", required=True)
+    profile_baselines.add_argument("--artifact-name", required=True)
+    profile_baselines.add_argument("--head-sha", required=True)
+    profile_baselines.add_argument("--head-repository", required=True)
+    profile_baselines.add_argument("--pr-number", type=int, required=True)
+    profile_baselines.add_argument("--base-sha", required=True)
+    profile_baselines.add_argument("--max-bytes", type=int, required=True)
+
     upsert = subparsers.add_parser("upsert-comment")
     upsert.add_argument("--pr-number", type=int, required=True)
     upsert.add_argument("--head-sha", required=True)
@@ -623,6 +814,7 @@ def main() -> int:
         "resolve-artifact": resolve_artifact_command,
         "select-timing-baselines": select_timing_baselines_command,
         "check-files": check_files_command,
+        "resolve-profile-baselines": resolve_profile_baselines_command,
         "upsert-comment": upsert_comment_command,
     }
     return commands[args.command](args)
