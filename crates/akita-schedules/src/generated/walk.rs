@@ -196,15 +196,34 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let mut folds = Vec::with_capacity(expanded.len());
     let mut total_bytes = 0usize;
+    let mut predecessor_rounds = None;
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
-        let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
+        let opening_layout = match predecessor_rounds {
+            None => key.opening_layout()?,
+            Some(rounds) => {
+                lp.opening_layout_for_final_group(PolynomialGroupLayout::singleton(rounds))?
+            }
+        };
+        let successor = expanded.get(fold_level + 1).map_or_else(
+            || akita_types::FoldSuccessor::Terminal(&terminal_params),
+            |(params, _, _)| akita_types::FoldSuccessor::Recursive(params),
+        );
         let (direct_level_bytes, stage3_bytes) = nonterminal_level_payload_bytes(
             policy,
             lp,
-            next_lp,
-            *input_witness_len,
+            &opening_layout,
+            successor,
             *output_witness_len,
         )?;
+        predecessor_rounds = Some(
+            lp.relation_address_geometry(
+                &opening_layout,
+                policy.claim_ext_degree,
+                successor.ring_dimension(),
+                *output_witness_len,
+            )?
+            .relation_point_variable_count(),
+        );
         total_bytes = total_bytes
             .checked_add(direct_level_bytes)
             .and_then(|value| value.checked_add(stage3_bytes))
@@ -219,17 +238,14 @@ pub(crate) fn walk_generated_schedule_entry(
             estimated_stage3_payload_bytes: stage3_bytes,
         });
     }
-    let terminal_direct_bytes = akita_types::FOLD_GRIND_NONCE_BYTES
-        .checked_add(extension_opening_reduction_level_bytes(
-            challenge_field_bits,
-            policy.claim_ext_degree,
-            PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-                input_witness_len,
-            )?),
-        )?)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal direct byte count overflow".to_string())
-        })?;
+    let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
+    })?;
+    let terminal_direct_bytes = extension_opening_reduction_level_bytes(
+        challenge_field_bits,
+        policy.claim_ext_degree,
+        PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
+    )?;
     let terminal_bytes = akita_types::terminal_response_planner_bytes(
         field_bits,
         &witness_shape,
@@ -257,33 +273,44 @@ pub(crate) fn walk_generated_schedule_entry(
         &terminal_params,
         &mut setup_field_elements,
     )?;
+    let terminal_response = CandidateTerminalResponse {
+        params: terminal_params,
+        sparse_challenge_config: if entry.terminal.response_l2_sq_cap.is_some() {
+            akita_challenges::selective_l2_challenge_config(
+                entry.terminal.inner_commit_matrix.ring_dimension as usize,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "generated terminal L2 route has no certified operator-norm challenge".into(),
+                )
+            })?
+        } else {
+            ring_challenge_config(entry.terminal.inner_commit_matrix.ring_dimension as usize)?
+        },
+        input_witness_len,
+        estimated_direct_payload_bytes: terminal_direct_bytes,
+        response_shape: witness_shape,
+        estimated_payload_bytes: terminal_bytes,
+    };
+    let nonce_bits = crate::runtime::candidate_grinding_nonce_bits(
+        policy,
+        &key.opening_layout()?,
+        &folds,
+        &terminal_response,
+    )?;
+    let nonce_bytes = akita_error::checked::div_ceil(nonce_bits, 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
+    total_bytes = total_bytes
+        .checked_add(nonce_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("generated proof byte total overflow".into()))?;
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
         setup_field_elements,
         None,
-        policy.selection_policy,
+        policy,
         &key.opening_layout()?,
         folds,
-        CandidateTerminalResponse {
-            params: terminal_params,
-            sparse_challenge_config: if entry.terminal.response_l2_sq_cap.is_some() {
-                akita_challenges::selective_l2_challenge_config(
-                    entry.terminal.inner_commit_matrix.ring_dimension as usize,
-                )
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "generated terminal L2 route has no certified operator-norm challenge"
-                            .into(),
-                    )
-                })?
-            } else {
-                ring_challenge_config(entry.terminal.inner_commit_matrix.ring_dimension as usize)?
-            },
-            input_witness_len,
-            estimated_direct_payload_bytes: terminal_direct_bytes,
-            response_shape: witness_shape,
-            estimated_payload_bytes: terminal_bytes,
-        },
+        terminal_response,
     )?;
     Ok(GeneratedEntryWalkOutput { planned_schedule })
 }

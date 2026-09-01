@@ -82,15 +82,18 @@ including its committed digit depths and response limits.
 
 ## Fiat-Shamir grinding
 
-Each fold proof carries one `u32` nonce. For candidate nonces
-`0, 1, ...`, the prover absorbs the nonce into the group-local fold-challenge
-domain and samples the sparse challenge stream. The verifier performs the same
-absorption and sampling for the proof's accepted nonce.
+Each fold consumes one 12-bit value from the proof-level packed
+`TranscriptNonceStream`. For candidate values `0, 1, ...`, the prover expands
+the value to `u32`, absorbs that numeric little-endian encoding into every
+group-local fold-challenge domain, and samples the sparse challenges. The
+verifier performs the same absorption and sampling for the accepted value.
+Moving the value from an individual `u32` proof field to 12 packed bits does
+not change the group-root input for the same numeric nonce.
 
-`FoldLinfProtocolBinding` binds only the protocol-wide nonce contract:
-
-- the exclusive probe cap (`4096`);
-- the nonce wire width (`4` bytes).
+`TranscriptGrindingBinding` commits the canonical grinding-plan digest. The
+plan binds the exclusive probe cap (`4096`), the 12-bit packed width, query
+order, and indexed sparse-oracle revision. Values outside the bound are not
+representable by the scheduled stream entry.
 
 Nonce values outside the bound are rejected. Exhausting the bound returns a
 prover error; it does not create an unbounded loop or a verifier panic.
@@ -104,7 +107,11 @@ pre-challenge randomness. See
 [Polynomial commitments and binding](../book/src/foundations/pcs-and-binding.md#fiat-shamir-queries-and-fold-nonces).
 
 For a multi-group fold, all groups share the same candidate nonce and must pass
-together. The `p = 1/8` calculation is a marginal, per-group sizing guarantee.
+together. Each group root then derives every claim-major block coordinate from
+a separate fixed-width indexed SHAKE256 query. These coordinate queries do not
+mutate the live transcript; with the root and nonce fixed, changing one query
+leaves all other coordinates fixed. The `p = 1/8` calculation is a marginal,
+per-group sizing guarantee.
 It does not assert independence between groups or a joint expected-attempt
 bound. The hard probe cap is the protocol-wide termination guarantee.
 
@@ -137,16 +144,17 @@ for the current group and terminal ownership model.
 2. **One sizing source.** Planner and prover consume the same SIS primitives and
    scheduled digit depths. Security pricing does not reconstruct a competing
    cap.
-3. **Transcript symmetry.** Prover and verifier absorb the same nonce before
-   squeezing the same group-local challenge stream.
+3. **Transcript symmetry.** Prover and verifier decode and absorb the same
+   packed nonce before squeezing the same group root and indexed coordinate
+   streams.
 4. **Structural verification.** The verifier relies on the digit-range or
    terminal-response checks, not on an unverifiable claim that grinding found a
    small response.
 5. **Bounded work.** Probing is sequential and capped. Malformed nonces and
    arithmetic overflow return `AkitaError` or `SerializationError`.
-6. **Descriptor consistency.** The setup descriptor binds the nonce wire
-   contract, while the effective plan binds the derived digit depths and
-   response limits.
+6. **Descriptor consistency.** The setup descriptor binds the complete
+   grinding-plan digest, including the nonce wire contract, while the selected
+   schedule binds the derived digit depths and response limits.
 
 ## Required regression coverage
 
@@ -154,7 +162,8 @@ for the current group and terminal ownership model.
 - monotonicity, zero-input rejection, and overflow rejection in tail sizing;
 - `min(β_inf, t*)` and universal digit-depth tests;
 - generated-schedule drift checks;
-- nonce wire round-trip and out-of-range rejection;
+- packed 12-bit nonce round-trip, padding, and out-of-range rejection;
+- coordinate isolation and refill-boundary XOF tests;
 - prover/verifier transcript-event equality;
 - end-to-end recursive and terminal prove/verify;
 - tamper rejection for committed fold handles and terminal responses.

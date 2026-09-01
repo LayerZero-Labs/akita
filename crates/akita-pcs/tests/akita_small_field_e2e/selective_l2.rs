@@ -210,7 +210,13 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
         assert!(verify(&bad_virtual).is_err());
 
         let mut bad_nonce = proof.clone();
-        bad_nonce.recursive_folds[l2_index].fold_grind_nonce += 1;
+        let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
+        nonce_bytes[0] ^= 1;
+        bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
+            nonce_bytes,
+            bad_nonce.nonce_stream.bit_len(),
+        )
+        .unwrap();
         assert!(verify(&bad_nonce).is_err());
 
         let mut bad_stage2 = proof;
@@ -302,11 +308,13 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
         verify(&proof).expect("verify shipped terminal proof");
 
         let mut bad_nonce = proof.clone();
-        bad_nonce.terminal.fold_grind_nonce = bad_nonce
-            .terminal
-            .fold_grind_nonce
-            .checked_add(1)
-            .expect("terminal nonce increment");
+        let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
+        nonce_bytes[0] ^= 1;
+        bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
+            nonce_bytes,
+            bad_nonce.nonce_stream.bit_len(),
+        )
+        .unwrap();
         assert!(verify(&bad_nonce).is_err());
 
         let mut over_cap = proof;

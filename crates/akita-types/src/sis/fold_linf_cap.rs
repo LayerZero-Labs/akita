@@ -9,9 +9,6 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 
-/// Maximum Fiat-Shamir probes per committed fold level.
-pub const MAX_FOLD_GRIND_ATTEMPTS: u32 = 4096;
-
 /// Per-challenge **grind** acceptance target `p_grind = NUM / DEN` used in the union-bound
 /// sizing for `t*` (`specs/fold-linf-rejection.md`).
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;

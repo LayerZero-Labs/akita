@@ -108,17 +108,17 @@ impl<F: Field> AkitaProverSetup<F> {
         let expanded = if verifier_matrix.len() == prover_matrix.len() {
             self.expanded.clone()
         } else {
-            let mut seed = self.expanded.seed().clone();
-            seed.num_field_elements = verifier_matrix.len();
+            let mut descriptor = self.expanded.descriptor().clone();
+            descriptor.num_field_elements = verifier_matrix.len();
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    seed,
+                    descriptor,
                     FlatMatrix::from_flat_data(verifier_matrix.to_vec()),
                 ),
             )
         };
         let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(self.expanded.seed().setup_seed.clone());
+            SetupPrefixVerifierRegistry::new(self.expanded.descriptor().setup_seed.clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
         AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
@@ -157,18 +157,21 @@ impl<F: Field> AkitaProverSetup<F> {
     where
         F: Field + CanonicalEncoding + Valid,
     {
-        expanded.seed().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
+        expanded.descriptor().check().map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "expanded setup descriptor validation failed: {err}"
+            ))
         })?;
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
         })?;
-        if expanded.shared_matrix().num_field_elements() != expanded.seed().num_field_elements {
+        if expanded.shared_matrix().num_field_elements() != expanded.descriptor().num_field_elements
+        {
             return Err(AkitaError::InvalidSetup(
-                "expanded setup matrix field count does not match setup seed".to_string(),
+                "expanded setup matrix field count does not match setup descriptor".to_string(),
             ));
         }
-        let setup_seed = expanded.seed().setup_seed.clone();
+        let setup_seed = expanded.descriptor().setup_seed.clone();
         let expanded = Arc::new(expanded);
         Ok(Self {
             expanded,
@@ -180,7 +183,7 @@ impl<F: Field> AkitaProverSetup<F> {
 impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.setup_seed() != &self.expanded.seed().setup_seed {
+        if self.prefix_slots.setup_seed() != &self.expanded.descriptor().setup_seed {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -223,7 +226,7 @@ mod tests {
                 num_field_elements: 3,
             })
             .expect("narrow verifier setup");
-        assert_eq!(verifier.expanded.seed().num_field_elements, 3);
+        assert_eq!(verifier.expanded.descriptor().num_field_elements, 3);
         assert_eq!(verifier.expanded.shared_matrix().num_field_elements(), 3);
         assert_eq!(
             verifier.expanded.shared_matrix().as_field_slice(),

@@ -26,6 +26,7 @@ policy and the checker use the same live set in
 | [`sis-quantum128-scalar-n-table`](../../../specs/sis-quantum128-scalar-n-table.md) | implemented | Current 128-bit SIS security policy source. |
 | [`structured-e-term`](../../../specs/structured-e-term.md) | implemented | Current structured verifier E-term contract. |
 | [`subring-coefficient-packing`](../../../specs/subring-coefficient-packing.md) | active | Merged implementation still has an unresolved proof blocker. |
+| [`transcript-grinding`](../../../specs/transcript-grinding.md) | proposed | Defines the planned public proof-of-work policy and packed nonce stream. |
 
 ## Archived records
 

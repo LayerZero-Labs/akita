@@ -38,6 +38,42 @@ pub enum TranscriptEvent {
         /// Number of squeezed bytes, or zero for scalar challenges.
         len: usize,
     },
+    /// One complete nonzero transcript proof-of-work transition.
+    Grinding {
+        /// Diagnostic label of the protected protocol query.
+        site_label: Vec<u8>,
+        /// Required low zero bits in the predicate.
+        grind_bits: u8,
+        /// Packed nonce width assigned by the public plan.
+        nonce_bits: u8,
+        /// Public proof nonce.
+        nonce: u32,
+        /// Number of predicate bytes squeezed.
+        predicate_len: usize,
+        /// Public predicate bytes used by independent acceptance checks.
+        predicate: [u8; crate::GRINDING_PREDICATE_LEN],
+    },
+    /// One compact run consumed from the public grinding plan.
+    GrindingPlanQuery {
+        /// Canonical fixed-width logical site encoding.
+        site: Vec<u8>,
+        /// Number of logical entries represented by this run.
+        multiplicity: u64,
+    },
+    /// Actual protected challenge observed after a scheduled PoW transition.
+    GrindingActualQuery {
+        /// Canonical logical site encoding supplied by the active adapter.
+        site: Vec<u8>,
+        /// Actual challenge label observed at the transcript boundary.
+        label: Vec<u8>,
+    },
+    /// Indexed sparse coordinates sampled at the live fold-draw boundary.
+    FoldChallengeRange {
+        /// Group-local index bound into the fold root.
+        group_index: usize,
+        /// Number of independently indexed coordinates sampled.
+        coordinate_count: usize,
+    },
     /// The verifier consumed a structured proof field that must be transcript-bound.
     Wire {
         /// Semantic transcript label.
@@ -165,7 +201,11 @@ impl<T> LoggingTranscript<T> {
                 TranscriptEvent::Absorb { label, .. }
                 | TranscriptEvent::Squeeze { label, .. }
                 | TranscriptEvent::Wire { label, .. } => label,
-                TranscriptEvent::Preamble { .. } => continue,
+                TranscriptEvent::Grinding { site_label, .. } => site_label,
+                TranscriptEvent::Preamble { .. }
+                | TranscriptEvent::GrindingPlanQuery { .. }
+                | TranscriptEvent::GrindingActualQuery { .. }
+                | TranscriptEvent::FoldChallengeRange { .. } => continue,
             };
             if !is_known_or_extension_limb_label(label, &known) {
                 errors.push(format!("unknown transcript label `{}`", label_text(label)));
@@ -176,7 +216,11 @@ impl<T> LoggingTranscript<T> {
     fn check_wire_value_before_squeeze_coverage(&self, errors: &mut Vec<String>) {
         let mut window_start = 0;
         for squeeze_index in self.events.iter().enumerate().filter_map(|(index, event)| {
-            matches!(event, TranscriptEvent::Squeeze { .. }).then_some(index)
+            matches!(
+                event,
+                TranscriptEvent::Squeeze { .. } | TranscriptEvent::Grinding { .. }
+            )
+            .then_some(index)
         }) {
             for (wire_index, event) in self.events[window_start..squeeze_index].iter().enumerate() {
                 let wire_index = window_start + wire_index;
@@ -241,10 +285,6 @@ where
     F: Field + CanonicalEncoding + CanonicalBytes,
     T: Transcript<F>,
 {
-    fn new(domain_label: &[u8]) -> Self {
-        Self::wrap(T::new(domain_label))
-    }
-
     fn bind_instance_bytes(&mut self, instance_bytes: &[u8]) {
         self.record(TranscriptEvent::Preamble {
             bytes_digest: digest32(instance_bytes),
@@ -264,6 +304,27 @@ where
     fn record_wire_bytes(&mut self, label: &[u8], bytes: &[u8]) {
         self.record_wire_use(label, bytes);
         self.inner.record_wire_bytes(label, bytes);
+    }
+
+    fn record_grinding_plan_query(&mut self, site: &[u8], multiplicity: u64) {
+        self.record(TranscriptEvent::GrindingPlanQuery {
+            site: site.to_vec(),
+            multiplicity,
+        });
+    }
+
+    fn record_grinding_actual_query(&mut self, site: &[u8], label: &[u8]) {
+        self.record(TranscriptEvent::GrindingActualQuery {
+            site: site.to_vec(),
+            label: label.to_vec(),
+        });
+    }
+
+    fn record_fold_challenge_range(&mut self, group_index: usize, coordinate_count: usize) {
+        self.record(TranscriptEvent::FoldChallengeRange {
+            group_index,
+            coordinate_count,
+        });
     }
 
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
@@ -312,6 +373,47 @@ where
         });
         self.inner.challenge_bytes(label, len)
     }
+
+    fn challenge_block(&mut self, label: &[u8]) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        self.record(TranscriptEvent::Squeeze {
+            label: label.to_vec(),
+            len: crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN,
+        });
+        self.inner.challenge_block(label)
+    }
+
+    fn grinding_predicate(
+        &mut self,
+        site_label: &[u8],
+        grind_bits: u8,
+        nonce_bits: u8,
+        counter: u32,
+    ) -> Option<[u8; crate::GRINDING_PREDICATE_LEN]> {
+        let predicate = self
+            .inner
+            .grinding_predicate(site_label, grind_bits, nonce_bits, counter);
+        if let Some(predicate_bytes) = predicate {
+            self.record(TranscriptEvent::Grinding {
+                site_label: site_label.to_vec(),
+                grind_bits,
+                nonce_bits,
+                nonce: counter,
+                predicate_len: crate::GRINDING_PREDICATE_LEN,
+                predicate: predicate_bytes,
+            });
+        }
+        predicate
+    }
+}
+
+impl<F, T> crate::TranscriptFactory<F> for LoggingTranscript<T>
+where
+    F: Field + CanonicalEncoding + CanonicalBytes,
+    T: crate::TranscriptFactory<F>,
+{
+    fn new(domain_label: &[u8]) -> Self {
+        Self::wrap(T::new(domain_label))
+    }
 }
 
 /// Clear the current thread's accumulated logging transcript events.
@@ -355,12 +457,15 @@ fn hex_bytes(bytes: &[u8]) -> String {
     out
 }
 
-impl<T> crate::FoldChallengeSeedPreview for LoggingTranscript<T>
+impl<T> crate::TranscriptChallengePreview for LoggingTranscript<T>
 where
-    T: crate::FoldChallengeSeedPreview,
+    T: crate::TranscriptChallengePreview,
 {
-    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8> {
-        self.inner.preview_fold_challenge_seed(absorb_payloads)
+    fn preview_challenge_block(
+        &self,
+        absorb_payloads: &[&[u8]],
+    ) -> [u8; crate::TRANSCRIPT_CHALLENGE_BLOCK_LEN] {
+        self.inner.preview_challenge_block(absorb_payloads)
     }
 }
 
@@ -454,5 +559,48 @@ mod tests {
             sample_ext_challenge::<Base, BaseFpExt2, _>(&mut transcript, labels::CHALLENGE_TAU0);
 
         transcript.assert_smell_checks();
+    }
+
+    #[test]
+    fn grinding_records_one_logical_event_and_zero_bits_record_none() {
+        let mut prover = LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"logging-test"));
+        let mut verifier =
+            LoggingTranscript::wrap(AkitaTranscript::<F>::unbound_verifier(b"logging-test"));
+        prover.bind_instance_bytes(b"descriptor");
+        verifier.bind_instance_bytes(b"descriptor");
+        let before_preview = prover.events().to_vec();
+        let nonce = crate::search_grinding_nonce(&prover, 1, 8).unwrap();
+        assert_eq!(prover.events(), before_preview);
+
+        let predicate =
+            Transcript::grinding_predicate(&mut prover, labels::CHALLENGE_TAU0, 1, 8, nonce)
+                .unwrap();
+        assert!(crate::grinding_predicate_accepts(
+            &predicate,
+            std::num::NonZeroU8::new(1).unwrap()
+        ));
+        assert!(matches!(
+            prover.events().last(),
+            Some(TranscriptEvent::Grinding {
+                site_label,
+                grind_bits: 1,
+                nonce_bits: 8,
+                nonce: recorded_nonce,
+                predicate_len: crate::GRINDING_PREDICATE_LEN,
+                predicate: _,
+            }) if site_label == labels::CHALLENGE_TAU0 && *recorded_nonce == nonce
+        ));
+        let verifier_predicate =
+            Transcript::grinding_predicate(&mut verifier, labels::CHALLENGE_TAU0, 1, 8, nonce)
+                .unwrap();
+        assert_eq!(predicate, verifier_predicate);
+        assert_eq!(prover.events(), verifier.events());
+        let event_count = prover.events().len();
+        assert_eq!(
+            Transcript::grinding_predicate(&mut prover, labels::CHALLENGE_TAU1, 0, 0, 0,),
+            None
+        );
+        assert_eq!(prover.events().len(), event_count);
+        prover.assert_smell_checks();
     }
 }

@@ -51,7 +51,7 @@ impl CompleteObjectiveBound {
         Self::for_direct_edge(
             policy,
             metrics.first_direct_setup_capacity.field_elements(),
-            metrics.proof_bytes,
+            metrics.proof_bytes(),
             metrics.setup_field_elements,
         )
     }
@@ -63,7 +63,7 @@ impl CompleteObjectiveBound {
                 setup_field_elements,
             } => {
                 (proof_bytes, setup_field_elements)
-                    > (incumbent.proof_bytes, incumbent.setup_field_elements)
+                    > (incumbent.proof_bytes(), incumbent.setup_field_elements)
             }
             Self::SetupFirst {
                 first_direct_setup_capacity,
@@ -76,7 +76,7 @@ impl CompleteObjectiveBound {
                     setup_field_elements,
                 ) > (
                     incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.proof_bytes,
+                    incumbent.proof_bytes(),
                     incumbent.setup_field_elements,
                 )
             }
@@ -100,7 +100,7 @@ impl CompleteObjectiveBound {
                 (first_direct_setup_capacity, proof_bytes)
                     > (
                         incumbent.first_direct_setup_capacity.field_elements(),
-                        incumbent.proof_bytes,
+                        incumbent.proof_bytes(),
                     )
             }
             Self::Direct { .. } => false,
@@ -116,7 +116,7 @@ impl CompleteObjectiveBound {
         incumbent: CandidateMetrics,
     ) -> bool {
         match self {
-            Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes,
+            Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes(),
             Self::Direct { .. } => false,
         }
     }

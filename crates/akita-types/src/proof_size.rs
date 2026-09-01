@@ -6,15 +6,15 @@
 //! prover/verifier replay path. The compact-entry walker that sums a whole
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
+//! The proof-level packed nonce stream is priced once from the canonical
+//! grinding plan and is not attributed to individual levels.
 
-use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
+use crate::layout::{field_bytes, proof_ring_vec_bytes};
 use crate::{
     CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan, InnerCommitSecurityRoute,
+    RelationAddressGeometry,
 };
 use akita_error::AkitaError;
-
-/// Fixed wire size of `fold_grind_nonce` on every fold level proof.
-pub const FOLD_GRIND_NONCE_BYTES: usize = 4;
 
 fn compressed_unipoly_bytes(degree: usize, elem_bytes: usize) -> usize {
     degree * elem_bytes
@@ -68,49 +68,36 @@ fn stage1_proof_bytes(
 /// separately by [`stage3_setup_product_bytes`]. The planner adds that exact
 /// payload when the selected successor consumes an incoming setup prefix.
 ///
-/// `next_lp` is required only for an intermediate outer-payload binding
+/// `next_outer_payload` is required only for an intermediate outer-payload binding
 /// (it sizes the next-level compressed payload shipped on the wire). It is
 /// unused for a terminal-inner binding.
 ///
 /// # Errors
 ///
-/// Returns an error if an outer-payload binding has no `next_lp`, or if an
-/// intermediate layout has no outgoing witness binding.
+/// Returns an error when a commitment payload or digit-range shape is invalid,
+/// overflows, or disagrees with the selected base-field profile.
 pub fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
     lp: &CommittedGroupParams,
-    next_lp: Option<&CommittedGroupParams>,
-    output_witness_len: usize,
-    next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
+    relation_geometry: RelationAddressGeometry,
+    next_outer_payload: Option<&CommittedGroupParams>,
 ) -> Result<usize, AkitaError> {
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
-    let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+    let rounds = relation_geometry.relation_point_variable_count();
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     let v_bytes = payload_bytes(
         base_field_bits,
         lp.open().matrix.sis_modulus_profile(),
         lp.opening_payload_geometry()?,
     )?;
-    let next_commit_bytes = match next_witness_binding {
-        Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
-            let next_lp = next_lp.ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "outer-payload level proof is missing successor params".to_string(),
-                )
-            })?;
-            payload_bytes(
-                base_field_bits,
-                next_lp.outer().matrix.sis_modulus_profile(),
-                next_lp.outer_payload_geometry()?,
-            )?
-        }
-        Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
-        None => {
-            return Err(AkitaError::InvalidSetup(
-                "intermediate level is missing an outgoing witness binding".to_string(),
-            ))
-        }
+    let next_commit_bytes = match next_outer_payload {
+        Some(next_lp) => payload_bytes(
+            base_field_bits,
+            next_lp.outer().matrix.sis_modulus_profile(),
+            next_lp.outer_payload_geometry()?,
+        )?,
+        None => 0,
     };
     let next_eval_bytes = challenge_elem_bytes;
     let b = 1usize << lp.open().digits.log_basis;
@@ -120,12 +107,7 @@ pub fn level_proof_bytes(
         challenge_elem_bytes,
         lp.inner().matrix.security_route(),
     )?;
-    Ok(v_bytes
-        + FOLD_GRIND_NONCE_BYTES
-        + stage1_bytes
-        + sumcheck
-        + next_commit_bytes
-        + next_eval_bytes)
+    Ok(v_bytes + stage1_bytes + sumcheck + next_commit_bytes + next_eval_bytes)
 }
 
 fn payload_bytes(
@@ -188,7 +170,7 @@ mod tests {
     use akita_sumcheck::EqFactoredUniPoly;
     use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
     use jolt_field::{
-        CanonicalEncoding, Ext2, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
+        CanonicalEncoding, Ext2, ExtField, Field, FpExt4, Prime128OffsetA7F7, Prime32Offset99,
         Prime64Offset59, Zero,
     };
 
@@ -196,14 +178,59 @@ mod tests {
     use crate::sis::sis_l2_table_key_for_collision_sq;
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-        FoldLevelProof, PhysicalL2NormProof, PhysicalL2NormProofShape, RingVec, SetupSumcheckProof,
-        SisL2TableDigest, SisModulusProfileId, TerminalLevelProof, TerminalResponse,
-        TerminalResponseShape, DEFAULT_SIS_SECURITY_POLICY, SETUP_SUMCHECK_DEGREE,
+        FoldLevelProof, OpeningClaimsLayout, PhysicalL2NormProof, PhysicalL2NormProofShape,
+        RingVec, SetupSumcheckProof, SisL2TableDigest, SisModulusProfileId, TerminalLevelProof,
+        TerminalResponse, TerminalResponseShape, DEFAULT_SIS_SECURITY_POLICY,
+        SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
     // `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
     const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+
+    fn test_opening_layout(
+        lp: &CommittedGroupParams,
+        output_witness_len: usize,
+    ) -> OpeningClaimsLayout {
+        OpeningClaimsLayout::new(crate::sumcheck_rounds(lp.d_a(), output_witness_len), 1)
+            .expect("test opening layout")
+    }
+
+    fn planned_level_proof_bytes(
+        base_field_bits: u32,
+        challenge_field_bits: u32,
+        lp: &CommittedGroupParams,
+        next_lp: Option<&CommittedGroupParams>,
+        output_witness_len: usize,
+        next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
+    ) -> Result<usize, AkitaError> {
+        let opening_layout = test_opening_layout(lp, output_witness_len);
+        let successor_ring_dimension = next_lp.map_or(lp.d_a(), CommittedGroupParams::d_a);
+        let next_outer_payload = match next_witness_binding {
+            Some(crate::NextWitnessBindingPolicy::OuterPayload) => next_lp,
+            Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => None,
+            None => {
+                return Err(AkitaError::InvalidSetup(
+                    "test level is missing an outgoing witness binding".into(),
+                ));
+            }
+        };
+        let extension_degree = usize::try_from(challenge_field_bits / base_field_bits)
+            .map_err(|_| AkitaError::InvalidSetup("test extension degree overflow".into()))?;
+        let relation_geometry = lp.relation_address_geometry(
+            &opening_layout,
+            extension_degree,
+            successor_ring_dimension,
+            output_witness_len,
+        )?;
+        level_proof_bytes(
+            base_field_bits,
+            challenge_field_bits,
+            lp,
+            relation_geometry,
+            next_outer_payload,
+        )
+    }
 
     fn terminal_response_fixture(
         lp: &CommittedGroupParams,
@@ -331,7 +358,7 @@ mod tests {
 
     fn exact_level_proof_bytes<
         B: Field + CanonicalEncoding + AkitaSerialize,
-        E: Field + AkitaSerialize,
+        E: Field + ExtField<B> + AkitaSerialize,
     >(
         lp: &CommittedGroupParams,
         next_lp: &CommittedGroupParams,
@@ -341,13 +368,21 @@ mod tests {
     ) -> Result<usize, AkitaError> {
         let current_coeffs = lp.opening_payload_geometry()?.transmitted_coefficients();
         let next_commit_coeffs = next_lp.outer_payload_geometry()?.transmitted_coefficients();
-        let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+        let opening_layout = test_opening_layout(lp, output_witness_len);
+        let extension_degree = E::DEGREE;
+        let rounds = lp
+            .relation_address_geometry(
+                &opening_layout,
+                extension_degree,
+                next_lp.d_a(),
+                output_witness_len,
+            )?
+            .relation_point_variable_count();
         let b = 1usize << lp.open().digits.log_basis;
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_coeffs(vec![B::zero(); current_coeffs]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof::<E>(rounds, b, lp.inner().matrix.security_route()),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck::<E>(rounds, 3),
@@ -377,7 +412,7 @@ mod tests {
         fold_digit_count: usize,
     ) where
         B: Field + CanonicalEncoding + AkitaSerialize,
-        E: Field + AkitaSerialize,
+        E: Field + ExtField<B> + AkitaSerialize,
     {
         const D: usize = 128;
         let challenge = SparseChallengeConfig::pm1_only(3);
@@ -413,7 +448,7 @@ mod tests {
             .unwrap();
         let output_witness_len = D * 8;
         assert_eq!(
-            level_proof_bytes(
+            planned_level_proof_bytes(
                 field_bits,
                 128,
                 &lp,
@@ -462,7 +497,7 @@ mod tests {
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
             assert_eq!(
-                level_proof_bytes(
+                planned_level_proof_bytes(
                     128,
                     128,
                     &lp,
@@ -482,6 +517,82 @@ mod tests {
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn planned_level_bytes_follow_successor_padded_relation_domain() {
+        let challenge = SparseChallengeConfig::pm1_only(3);
+        let current = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            3,
+            2,
+            2,
+            2,
+            challenge,
+        )
+        .with_decomp(1, 1, 2, 2, 2)
+        .unwrap();
+        let successor = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            128,
+            3,
+            2,
+            2,
+            2,
+            challenge,
+        )
+        .with_decomp(1, 1, 2, 2, 2)
+        .unwrap();
+        let output_witness_len = 64;
+        let opening_layout = OpeningClaimsLayout::new(6, 1).unwrap();
+        let rounds = current
+            .relation_address_geometry(&opening_layout, 1, successor.d_a(), output_witness_len)
+            .unwrap()
+            .relation_point_variable_count();
+        assert_eq!(rounds, 7);
+        let successor_padded_terminal_eor = crate::extension_opening_reduction_level_bytes(
+            128,
+            2,
+            crate::PolynomialGroupLayout::singleton(rounds),
+        )
+        .unwrap();
+        let stale_terminal_eor = crate::extension_opening_reduction_level_bytes(
+            128,
+            2,
+            crate::PolynomialGroupLayout::singleton(crate::sumcheck_rounds(
+                current.d_a(),
+                output_witness_len,
+            )),
+        )
+        .unwrap();
+        assert!(successor_padded_terminal_eor > stale_terminal_eor);
+
+        assert_eq!(
+            level_proof_bytes(
+                128,
+                128,
+                &current,
+                current
+                    .relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        successor.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
+                Some(&successor),
+            )
+            .unwrap(),
+            exact_level_proof_bytes::<F, F>(
+                &current,
+                &successor,
+                output_witness_len,
+                None,
+                crate::NextWitnessBindingPolicy::OuterPayload,
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -538,7 +649,7 @@ mod tests {
                 .expect("audited L2 matrix");
             let output_witness_len = D * 8;
             assert_eq!(
-                level_proof_bytes(
+                planned_level_proof_bytes(
                     128,
                     128,
                     &lp,
@@ -607,7 +718,7 @@ mod tests {
             lp.open().matrix.output_rank(),
             lp.open().matrix.input_width() * 4,
             lp.open().matrix.coeff_linf_bound(),
-            32,
+            64,
         );
 
         let mut next_lp = CommittedGroupParams::params_only(
@@ -640,7 +751,7 @@ mod tests {
         );
 
         let output_witness_len = D_A * 8;
-        let planned = level_proof_bytes(
+        let planned = planned_level_proof_bytes(
             128,
             128,
             &lp,
@@ -686,7 +797,7 @@ mod tests {
         );
         let output_witness_len = D * 8;
 
-        let outer = level_proof_bytes(
+        let outer = planned_level_proof_bytes(
             128,
             128,
             &lp,
@@ -695,7 +806,7 @@ mod tests {
             Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
-        let terminal_inner = level_proof_bytes(
+        let terminal_inner = planned_level_proof_bytes(
             128,
             128,
             &lp,
@@ -719,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn level_proof_bytes_rejects_incomplete_intermediate_schedule() {
+    fn test_pricing_helper_rejects_missing_binding_policy() {
         const D: usize = 64;
         let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
@@ -733,20 +844,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
 
-        let missing_successor = level_proof_bytes(
-            128,
-            128,
-            &lp,
-            None,
-            D * 8,
-            Some(crate::NextWitnessBindingPolicy::OuterPayload),
-        );
-        assert!(matches!(
-            missing_successor,
-            Err(AkitaError::InvalidSetup(_))
-        ));
-
-        let missing_binding = level_proof_bytes(128, 128, &lp, None, D * 8, None);
+        let missing_binding = planned_level_proof_bytes(128, 128, &lp, None, D * 8, None);
         assert!(matches!(missing_binding, Err(AkitaError::InvalidSetup(_))));
     }
 
@@ -825,7 +923,7 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                level_proof_bytes(
+                planned_level_proof_bytes(
                     128,
                     128,
                     &lp,
@@ -882,17 +980,14 @@ mod tests {
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
                 terminal_response,
-                0,
             );
 
             let serialized_without_witness =
                 terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
-            // A direct terminal level carries only the `fold_grind_nonce`
-            // (plus any extension-opening reduction, absent from this
-            // fixture); this mirrors the planner's terminal-direct accounting.
+            // The proof-level packed nonce stream is accounted separately.
             assert_eq!(
-                FOLD_GRIND_NONCE_BYTES, serialized_without_witness,
+                0, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
             );

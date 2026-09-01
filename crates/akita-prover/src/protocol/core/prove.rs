@@ -54,7 +54,7 @@ where
         + Fold
         + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -94,7 +94,7 @@ where
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
-    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+    let grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
         selection,
@@ -111,6 +111,7 @@ where
         claims,
         schedule,
         basis,
+        &grinding_plan,
     )
     .map(|(proof, _total_levels)| proof)
 }
@@ -144,6 +145,7 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &FoldSchedule,
     basis: BasisMode,
+    grinding_plan: &akita_types::GrindingPlan,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -161,7 +163,7 @@ where
         + Fold
         + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
     Cfg::Field: Ring + 'static,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
@@ -235,11 +237,13 @@ where
         },
     );
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
+    let mut grinding_transcript =
+        akita_types::ProverGrindingTranscript::<T>::new(transcript, grinding_plan)?;
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         claims,
         &schedule.root,
         next_params,
@@ -255,17 +259,19 @@ where
     // at this exact root/suffix boundary through the lifecycle hook.
     stacks.after_root_fold()?;
 
-    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
+    let suffix = crate::prove_suffix::<Cfg, _, C, O, TS, R>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         next_state,
         schedule,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
+    let nonce_stream = grinding_transcript.finish()?;
     Ok((
         AkitaBatchedProof {
+            nonce_stream,
             root,
             recursive_folds: suffix.recursive_folds,
             terminal: suffix.terminal,

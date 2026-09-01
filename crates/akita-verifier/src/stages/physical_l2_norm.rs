@@ -6,9 +6,9 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceVerifier, SumcheckInstanceVerifierExt};
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
-    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     reconstruct_l2_sq_from_gram, FpExtEncoding, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan, SisModulusProfileId,
@@ -220,11 +220,12 @@ pub(crate) fn verify_physical_l2_norm<F, E, T>(
     profile: SisModulusProfileId,
     cap: u128,
     transcript: &mut T,
+    level: u32,
 ) -> Result<PhysicalL2VerifierReplay<E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + Ring + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if range.equality_point.len() != plan.domain().num_vars() || range.leaf_coefficients.len() < 3 {
         return Err(AkitaError::InvalidSetup(
@@ -240,6 +241,7 @@ where
     let norm_input_claim = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => E::from_u128(proof.response_l2_sq),
         PhysicalL2NormProofShape::LimbGram { .. } => {
+            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
             let mut power = E::one();
             for _ in 0..proof.subclaims.len() {
@@ -253,6 +255,7 @@ where
                 .fold(E::zero(), |sum, (&claim, &weight)| sum + claim * weight)
         }
     };
+    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let verifier = PhysicalL2NormVerifier {
         plan,
@@ -264,8 +267,17 @@ where
         input_claim: range.input_claim + norm_merge * norm_input_claim,
         norm_merge,
     };
+    let mut round = 0u32;
     let point = verifier.verify::<F, T, _>(&proof.sumcheck, transcript, |tr| {
-        sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+            tr,
+            akita_types::SumcheckProtocol::PhysicalL2,
+            level,
+            0,
+            round,
+        )?;
+        round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+        Ok(challenge)
     })?;
     for evaluation in &proof.virtual_evaluations {
         transcript.append_serde(ABSORB_L2_VIRTUAL_EVALUATION, evaluation);

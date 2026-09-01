@@ -145,6 +145,7 @@ live_specs=(
   specs/sis-quantum128-scalar-n-table.md
   specs/structured-e-term.md
   specs/subring-coefficient-packing.md
+  specs/transcript-grinding.md
 )
 
 missing_live=()

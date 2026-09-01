@@ -73,7 +73,7 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     let mut prover_t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (proof, r_vec, final_claim) = prover_inst
         .prove::<F, _, _>(&mut prover_t, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -87,7 +87,7 @@ fn prover_driver_produces_proof_that_verifier_replays() {
     verifier_t.append_serde(labels::ABSORB_SUMCHECK_CLAIM, &initial_claim);
     let (final_claim_v, r_vec_v) = proof
         .verify::<F, _, _>(initial_claim, num_rounds, 1, &mut verifier_t, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
