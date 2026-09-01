@@ -39,33 +39,7 @@ jobs:
           BASE_REPOSITORY: ${{ github.repository }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "approved=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          approved=false
-          case "$AUTHOR_ASSOCIATION" in
-            OWNER|MEMBER|COLLABORATOR)
-              approved=true
-              ;;
-          esac
-          if [ "$HEAD_REPOSITORY" = "$BASE_REPOSITORY" ] || \
-             jq -e 'index("ci-approved") != null' <<< "$LABELS_JSON" >/dev/null; then
-            approved=true
-          fi
-          run=false
-          while IFS= read -r file_name; do
-            case "$file_name" in
-              .cargo/*|.config/nextest.toml|Cargo.lock|Cargo.toml|*/Cargo.toml|crates/*|fixtures/*|rust-toolchain.toml|third_party/*)
-                run=true
-                break
-                ;;
-            esac
-          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
-          echo "run=$run" >> "$GITHUB_OUTPUT"
-          echo "approved=$approved" >> "$GITHUB_OUTPUT"
+        run: python3 scripts/ci_expensive_path_gate.py
 
   fmt:
     name: Format

@@ -10,6 +10,7 @@ from scripts.ci_comment_workflow import (
     profile_baselines_for_comment,
     resolve_workflow_run_pr,
     run_matches_pr_identity,
+    timing_baselines_for_comment,
     validate_comment_file,
     validate_pr_head,
 )
@@ -444,6 +445,150 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
         self.assertRegex(oversized.warnings[0], "limit is 5000000")
 
 
+class TimingBaselineIdentityTests(unittest.TestCase):
+    CURRENT_RUN_ID = 300
+    PREVIOUS_SHA = "c" * 40
+    OLDER_SHA = "d" * 40
+    FUTURE_SHA = "e" * 40
+    MAIN_SHA = "f" * 40
+
+    class Client:
+        def __init__(self, *, sizes=None, failures=None):
+            self.sizes = sizes or {}
+            self.failures = failures or set()
+
+        def get_workflow_run(self, _owner, _repo, run_id):
+            self.assert_run_id(run_id, TimingBaselineIdentityTests.CURRENT_RUN_ID)
+            return {
+                "id": run_id,
+                "run_number": 30,
+                "workflow_id": 7,
+                "name": "CI",
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": HEAD_SHA,
+                "head_repository": {"full_name": HEAD_REPOSITORY},
+                "head_branch": "feature",
+                "pull_requests": [{"number": 459}],
+            }
+
+        @staticmethod
+        def assert_run_id(actual, expected):
+            if actual != expected:
+                raise AssertionError(f"expected run {expected}, got {actual}")
+
+        def list_workflow_runs(self, _owner, _repo, *, event, branch, status="completed"):
+            self.assert_run_id(status, "completed")
+            if event in self.failures:
+                raise RuntimeError(f"{event} API unavailable")
+            if event == "pull_request":
+                self.assert_run_id(branch, "feature")
+                return [
+                    self.pr_run(400, 40, TimingBaselineIdentityTests.FUTURE_SHA),
+                    self.pr_run(200, 20, TimingBaselineIdentityTests.PREVIOUS_SHA),
+                    self.pr_run(100, 10, TimingBaselineIdentityTests.OLDER_SHA),
+                ]
+            self.assert_run_id(event, "push")
+            self.assert_run_id(branch, "main")
+            return [
+                {
+                    "id": 500,
+                    "run_number": 50,
+                    "workflow_id": 7,
+                    "name": "CI",
+                    "event": "push",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "head_sha": TimingBaselineIdentityTests.MAIN_SHA,
+                    "head_repository": {"full_name": REPOSITORY},
+                    "head_branch": "main",
+                    "pull_requests": [],
+                }
+            ]
+
+        @classmethod
+        def pr_run(cls, run_id, run_number, sha):
+            return {
+                "id": run_id,
+                "run_number": run_number,
+                "workflow_id": 7,
+                "name": "CI",
+                "event": "pull_request",
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": sha,
+                "head_repository": {"full_name": HEAD_REPOSITORY},
+                "head_branch": "feature",
+                "pull_requests": [{"number": 459}],
+            }
+
+        def list_run_artifacts(self, _owner, _repo, run_id):
+            shas = {
+                100: TimingBaselineIdentityTests.OLDER_SHA,
+                200: TimingBaselineIdentityTests.PREVIOUS_SHA,
+                400: TimingBaselineIdentityTests.FUTURE_SHA,
+                500: TimingBaselineIdentityTests.MAIN_SHA,
+            }
+            return [
+                {
+                    "id": run_id + 1_000,
+                    "name": "ci-test-timing-data",
+                    "size_in_bytes": self.sizes.get(run_id, 1_000),
+                    "expired": False,
+                    "workflow_run": {"head_sha": shas[run_id]},
+                }
+            ]
+
+    def resolve(self, client):
+        return timing_baselines_for_comment(
+            client,
+            "LayerZero-Labs",
+            "akita",
+            current_run_id=self.CURRENT_RUN_ID,
+            workflow_name="CI",
+            artifact_name="ci-test-timing-data",
+            head_repository=HEAD_REPOSITORY,
+            head_branch="feature",
+            pr_number=459,
+            base_ref="main",
+            max_artifact_bytes=5_000_000,
+        )
+
+    def test_previous_is_the_latest_earlier_run_not_a_future_run(self) -> None:
+        baselines = self.resolve(self.Client())
+        self.assertIsNotNone(baselines.previous)
+        self.assertEqual(baselines.previous.run_id, 200)
+        self.assertEqual(baselines.previous.sha, self.PREVIOUS_SHA)
+        self.assertIsNotNone(baselines.main)
+        self.assertEqual(baselines.main.run_id, 500)
+
+    def test_bad_previous_artifact_does_not_drop_main(self) -> None:
+        baselines = self.resolve(
+            self.Client(sizes={200: 5_000_001, 100: 5_000_001})
+        )
+        self.assertIsNone(baselines.previous)
+        self.assertIsNotNone(baselines.main)
+        self.assertTrue(baselines.warnings)
+
+    def test_bad_latest_previous_artifact_falls_back_to_older_run(self) -> None:
+        baselines = self.resolve(self.Client(sizes={200: 5_000_001}))
+        self.assertIsNotNone(baselines.previous)
+        self.assertEqual(baselines.previous.run_id, 100)
+        self.assertEqual(baselines.previous.sha, self.OLDER_SHA)
+        self.assertIsNotNone(baselines.main)
+        self.assertTrue(baselines.warnings)
+
+    def test_each_api_failure_is_isolated_to_its_baseline(self) -> None:
+        previous_failure = self.resolve(self.Client(failures={"pull_request"}))
+        self.assertIsNone(previous_failure.previous)
+        self.assertIsNotNone(previous_failure.main)
+
+        main_failure = self.resolve(self.Client(failures={"push"}))
+        self.assertIsNotNone(main_failure.previous)
+        self.assertIsNone(main_failure.main)
+
+
 class WorkflowWiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -470,6 +615,13 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertNotIn("pull-requests: write", workflow)
                 self.assertNotIn("--head-branch '${{", workflow)
                 self.assertNotIn("--head-repository '${{", workflow)
+
+    def test_timing_renderer_separates_untrusted_input_from_trusted_output(self) -> None:
+        timing = self.workflows["test timing"]
+        self.assertIn("ci-test-timing-untrusted-current", timing)
+        self.assertIn("ci-test-timing-rendered/comment.md", timing)
+        self.assertNotIn("ci-test-timing-current/comment.md", timing)
+        self.assertIn("if: success() && steps.artifact.outputs.artifact-id != ''", timing)
 
     def test_artifact_metadata_guard_precedes_download(self) -> None:
         for name, workflow in self.workflows.items():
@@ -521,6 +673,7 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("ci-approved", self.ci_parent)
         self.assertIn("max-parallel: 2", self.ci_parent)
         self.assertIn("timeout-minutes: 30", self.ci_parent)
+        self.assertIn("scripts/ci_expensive_path_gate.py", self.ci_parent)
 
 
 if __name__ == "__main__":

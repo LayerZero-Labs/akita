@@ -59,6 +59,21 @@ class ProfileBaselines:
     warnings: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class TimingBaseline:
+    artifact_id: int
+    run_id: int
+    sha: str
+    label: str
+
+
+@dataclass(frozen=True)
+class TimingBaselines:
+    previous: TimingBaseline | None
+    main: TimingBaseline | None
+    warnings: tuple[str, ...] = ()
+
+
 def repository_parts(repository: str) -> tuple[str, str]:
     if REPOSITORY_RE.fullmatch(repository) is None:
         raise PolicyError(f"invalid repository identity: {repository!r}")
@@ -362,6 +377,155 @@ def profile_baselines_for_comment(
     )
 
 
+def timing_baselines_for_comment(
+    client: "GitHubApi",
+    owner: str,
+    repo: str,
+    *,
+    current_run_id: int,
+    workflow_name: str,
+    artifact_name: str,
+    head_repository: str,
+    head_branch: str,
+    pr_number: int,
+    base_ref: str,
+    max_artifact_bytes: int,
+) -> TimingBaselines:
+    """Select optional timing baselines with independent failure boundaries."""
+
+    warnings: list[str] = []
+
+    def first_bounded_artifact(
+        runs: list[dict[str, object]],
+        *,
+        event: str,
+        allowed_conclusions: set[str],
+        expected_repository: str,
+        expected_branch: str,
+        label: str,
+        current_run_number: int = 0,
+        current_workflow_id: int = 0,
+        require_pr_identity: bool = False,
+    ) -> TimingBaseline | None:
+        candidates: list[tuple[int, int, str]] = []
+        for run in runs:
+            try:
+                run_id = int(run.get("id") or 0)
+                run_number = int(run.get("run_number") or 0)
+                workflow_id = int(run.get("workflow_id") or 0)
+                sha = str(run.get("head_sha") or "")
+            except (TypeError, ValueError) as error:
+                warnings.append(f"{label} candidate rejected: invalid run metadata: {error}")
+                continue
+            if run_id <= 0 or run_number <= 0 or workflow_id <= 0:
+                continue
+            if run_id == current_run_id:
+                continue
+            if run.get("name") != workflow_name or run.get("event") != event:
+                continue
+            if run.get("status") != "completed":
+                continue
+            if run.get("conclusion") not in allowed_conclusions:
+                continue
+            if SHA_RE.fullmatch(sha) is None:
+                warnings.append(f"{label} candidate {run_id} rejected: invalid head commit")
+                continue
+            if _repository_name(run.get("head_repository")).lower() != (
+                expected_repository.lower()
+            ):
+                continue
+            if str(run.get("head_branch") or "") != expected_branch:
+                continue
+            if current_run_number and run_number >= current_run_number:
+                continue
+            if current_workflow_id and workflow_id != current_workflow_id:
+                continue
+            if require_pr_identity and not run_matches_pr_identity(
+                run, expected_repository, expected_branch, pr_number
+            ):
+                continue
+            candidates.append((run_number, run_id, sha))
+
+        for _run_number, run_id, sha in sorted(candidates, reverse=True):
+            try:
+                artifact = artifact_for_run(
+                    client,
+                    owner,
+                    repo,
+                    run_id,
+                    artifact_name,
+                    max_artifact_bytes,
+                    sha,
+                )
+            except (PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
+                warnings.append(f"{label} candidate {run_id} rejected: {error}")
+                continue
+            if artifact is not None:
+                return TimingBaseline(
+                    artifact_id=artifact.id,
+                    run_id=run_id,
+                    sha=sha,
+                    label=label,
+                )
+        return None
+
+    previous: TimingBaseline | None = None
+    try:
+        current_run = client.get_workflow_run(owner, repo, current_run_id)
+        current_number = int(current_run.get("run_number") or 0)
+        current_workflow_id = int(current_run.get("workflow_id") or 0)
+        if (
+            int(current_run.get("id") or 0) != current_run_id
+            or current_number <= 0
+            or current_workflow_id <= 0
+            or current_run.get("name") != workflow_name
+            or current_run.get("event") != "pull_request"
+            or current_run.get("status") != "completed"
+            or not run_matches_pr_identity(
+                current_run, head_repository, head_branch, pr_number
+            )
+        ):
+            raise PolicyError("current timing run does not match the resolved PR")
+        previous_runs = client.list_workflow_runs(
+            owner, repo, event="pull_request", branch=head_branch
+        )
+        previous = first_bounded_artifact(
+            previous_runs,
+            event="pull_request",
+            allowed_conclusions={"success", "failure"},
+            expected_repository=head_repository,
+            expected_branch=head_branch,
+            label="the previous update of this fork PR with a timing artifact",
+            current_run_number=current_number,
+            current_workflow_id=current_workflow_id,
+            require_pr_identity=True,
+        )
+    except (KeyError, PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
+        warnings.append(f"previous timing baseline rejected: {error}")
+
+    main: TimingBaseline | None = None
+    try:
+        main_runs = client.list_workflow_runs(
+            owner, repo, event="push", branch=base_ref
+        )
+        main = first_bounded_artifact(
+            main_runs,
+            event="push",
+            allowed_conclusions={"success"},
+            expected_repository=f"{owner}/{repo}",
+            expected_branch=base_ref,
+            label=f"the latest successful `{base_ref}` run",
+        )
+    except (KeyError, PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
+        warnings.append(f"main timing baseline rejected: {error}")
+
+    return TimingBaselines(
+        previous=previous,
+        main=main,
+        warnings=tuple(warnings),
+    )
+
+
 class GitHubApi:
     def __init__(self, token: str, api_url: str = "https://api.github.com") -> None:
         if not token:
@@ -653,74 +817,39 @@ def select_timing_baselines_command(args: argparse.Namespace) -> int:
     }
     try:
         owner, repo = repository_parts(os.environ["GITHUB_REPOSITORY"])
-        client = _github_client()
-
-        def first_artifact(
-            runs: list[dict[str, object]],
-            allowed_conclusions: set[str],
-            *,
-            expected_head_repository: str = "",
-            expected_pr_number: int = 0,
-        ) -> tuple[dict[str, object], Artifact] | None:
-            for run in runs:
-                if int(run.get("id") or 0) == args.current_run_id:
-                    continue
-                if run.get("name") != args.workflow_name:
-                    continue
-                if run.get("conclusion") not in allowed_conclusions:
-                    continue
-                if expected_head_repository and not run_matches_pr_identity(
-                    run,
-                    expected_head_repository,
-                    args.head_branch,
-                    expected_pr_number,
-                ):
-                    continue
-                artifact = artifact_for_run(
-                    client,
-                    owner,
-                    repo,
-                    int(run["id"]),
-                    args.artifact_name,
-                    args.max_bytes,
-                    str(run.get("head_sha") or ""),
-                )
-                if artifact is not None:
-                    return run, artifact
-            return None
-
-        previous_runs = client.list_workflow_runs(
-            owner, repo, event="pull_request", branch=args.head_branch
+        baselines = timing_baselines_for_comment(
+            _github_client(),
+            owner,
+            repo,
+            current_run_id=args.current_run_id,
+            workflow_name=args.workflow_name,
+            artifact_name=args.artifact_name,
+            head_repository=args.head_repository,
+            head_branch=args.head_branch,
+            pr_number=args.pr_number,
+            base_ref=args.base_ref,
+            max_artifact_bytes=args.max_bytes,
         )
-        previous = first_artifact(
-            previous_runs,
-            {"success", "failure"},
-            expected_head_repository=args.head_repository,
-            expected_pr_number=args.pr_number,
-        )
-        if previous:
-            run, artifact = previous
+        if baselines.previous is not None:
             outputs.update(
                 {
-                    "previous-artifact-id": artifact.id,
-                    "previous-run-id": int(run["id"]),
-                    "previous-sha": str(run.get("head_sha") or ""),
-                    "previous-label": "the previous update of this fork PR with a timing artifact",
+                    "previous-artifact-id": baselines.previous.artifact_id,
+                    "previous-run-id": baselines.previous.run_id,
+                    "previous-sha": baselines.previous.sha,
+                    "previous-label": baselines.previous.label,
                 }
             )
-
-        main_runs = client.list_workflow_runs(owner, repo, event="push", branch=args.base_ref)
-        main = first_artifact(main_runs, {"success"})
-        if main:
-            run, artifact = main
+        if baselines.main is not None:
             outputs.update(
                 {
-                    "main-artifact-id": artifact.id,
-                    "main-run-id": int(run["id"]),
-                    "main-sha": str(run.get("head_sha") or ""),
-                    "main-label": f"the latest successful `{args.base_ref}` run",
+                    "main-artifact-id": baselines.main.artifact_id,
+                    "main-run-id": baselines.main.run_id,
+                    "main-sha": baselines.main.sha,
+                    "main-label": baselines.main.label,
                 }
             )
+        for warning in baselines.warnings:
+            _warning(warning)
     except (KeyError, PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
         _warning(f"Could not determine bounded timing baselines: {error}")
     _write_outputs(outputs)

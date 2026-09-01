@@ -127,14 +127,34 @@ jobs:
             --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
             "$summary_path"
           if [ -n "$main_baseline_dir" ]; then
-            python3 scripts/ci_comment_workflow.py check-files \
-              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
-              "$main_baseline_dir/summary.json"
+            main_summary="$main_baseline_dir/summary.json"
+            if [ ! -e "$main_summary" ] && [ ! -L "$main_summary" ]; then
+              echo "::warning::Omitting missing merge-base benchmark summary."
+              main_baseline_dir=""
+              export AKITA_BENCH_MAIN_BASELINE_SHA=""
+              export AKITA_BENCH_MAIN_BASELINE_LABEL=""
+            elif ! python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" "$main_summary"; then
+              echo "::warning::Omitting invalid merge-base benchmark summary."
+              main_baseline_dir=""
+              export AKITA_BENCH_MAIN_BASELINE_SHA=""
+              export AKITA_BENCH_MAIN_BASELINE_LABEL=""
+            fi
           fi
           if [ -n "$previous_baseline_dir" ]; then
-            python3 scripts/ci_comment_workflow.py check-files \
-              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
-              "$previous_baseline_dir/summary.json"
+            previous_summary="$previous_baseline_dir/summary.json"
+            if [ ! -e "$previous_summary" ] && [ ! -L "$previous_summary" ]; then
+              echo "::warning::Omitting missing previous benchmark summary."
+              previous_baseline_dir=""
+              export AKITA_BENCH_PREVIOUS_BASELINE_SHA=""
+              export AKITA_BENCH_PREVIOUS_BASELINE_LABEL=""
+            elif ! python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" "$previous_summary"; then
+              echo "::warning::Omitting invalid previous benchmark summary."
+              previous_baseline_dir=""
+              export AKITA_BENCH_PREVIOUS_BASELINE_SHA=""
+              export AKITA_BENCH_PREVIOUS_BASELINE_LABEL=""
+            fi
           fi
           python3 scripts/profile_bench_report.py render \
             "$summary_path" \
@@ -180,7 +200,7 @@ jobs:
           } > "$AKITA_BENCH_COMMENT"
 
       - name: Revalidate head and upsert benchmark PR comment
-        if: steps.artifact.outputs.artifact-id != ''
+        if: success() && steps.artifact.outputs.artifact-id != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}

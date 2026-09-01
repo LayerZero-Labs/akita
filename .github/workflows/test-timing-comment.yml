@@ -60,7 +60,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ steps.artifact.outputs.artifact-id }}
-          path: ${{ runner.temp }}/ci-test-timing-current
+          path: ${{ runner.temp }}/ci-test-timing-untrusted-current
           merge-multiple: true
           run-id: ${{ github.event.workflow_run.id }}
           repository: ${{ github.repository }}
@@ -90,6 +90,7 @@ jobs:
 
       - name: Download main baseline data
         if: steps.baselines.outputs.main-artifact-id != ''
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ steps.baselines.outputs.main-artifact-id }}
@@ -101,6 +102,7 @@ jobs:
 
       - name: Download previous run data
         if: steps.baselines.outputs.previous-artifact-id != ''
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ steps.baselines.outputs.previous-artifact-id }}
@@ -120,28 +122,47 @@ jobs:
           AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
           AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          summary_path="${{ runner.temp }}/ci-test-timing-current/summary.json"
+          trusted_output="${{ runner.temp }}/ci-test-timing-rendered"
+          summary_path="${{ runner.temp }}/ci-test-timing-untrusted-current/summary.json"
+          mkdir -p "$trusted_output"
           if [ ! -f "$summary_path" ]; then
             python3 scripts/ci_test_timing_report.py failure-summary \
-              --output-dir "${{ runner.temp }}/ci-test-timing-current" \
+              --output-dir "$trusted_output" \
               --source-sha "$AKITA_REPORT_HEAD_SHA" \
               --source-branch "$AKITA_REPORT_HEAD_BRANCH" \
               --workflow-run-id "$AKITA_REPORT_RUN_ID" \
               --error "CI test timing artifact missing summary.json."
+            summary_path="$trusted_output/summary.json"
           fi
           python3 scripts/ci_comment_workflow.py check-files \
             --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
-            "$summary_path" \
-            "${{ runner.temp }}/ci-test-timing-main-baseline/summary.json" \
-            "${{ runner.temp }}/ci-test-timing-previous-run/summary.json"
+            "$summary_path"
+          baseline_args=()
+          main_summary="${{ runner.temp }}/ci-test-timing-main-baseline/summary.json"
+          if [ -e "$main_summary" ] || [ -L "$main_summary" ]; then
+            if python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" "$main_summary"; then
+              baseline_args+=(--main-baseline-dir "${{ runner.temp }}/ci-test-timing-main-baseline")
+            else
+              echo "::warning::Omitting invalid main timing baseline."
+            fi
+          fi
+          previous_summary="${{ runner.temp }}/ci-test-timing-previous-run/summary.json"
+          if [ -e "$previous_summary" ] || [ -L "$previous_summary" ]; then
+            if python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" "$previous_summary"; then
+              baseline_args+=(--previous-baseline-dir "${{ runner.temp }}/ci-test-timing-previous-run")
+            else
+              echo "::warning::Omitting invalid previous timing baseline."
+            fi
+          fi
           python3 scripts/ci_test_timing_report.py render \
             "$summary_path" \
-            --output-dir "${{ runner.temp }}/ci-test-timing-current" \
-            --main-baseline-dir "${{ runner.temp }}/ci-test-timing-main-baseline" \
-            --previous-baseline-dir "${{ runner.temp }}/ci-test-timing-previous-run"
+            --output-dir "$trusted_output" \
+            "${baseline_args[@]}"
 
       - name: Revalidate head and upsert timing PR comment
-        if: steps.artifact.outputs.artifact-id != ''
+        if: success() && steps.artifact.outputs.artifact-id != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
           AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}
@@ -151,7 +172,7 @@ jobs:
           AKITA_REPORT_BASE_REPOSITORY: ${{ steps.pr.outputs.base-repository }}
           AKITA_REPORT_BASE_BRANCH: ${{ steps.pr.outputs.base-branch }}
           AKITA_REPORT_BASE_SHA: ${{ steps.pr.outputs.base-sha }}
-          AKITA_REPORT_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
+          AKITA_REPORT_COMMENT: ${{ runner.temp }}/ci-test-timing-rendered/comment.md
         run: >-
           python3 scripts/ci_comment_workflow.py upsert-comment
           --pr-number "$AKITA_REPORT_PR_NUMBER"
