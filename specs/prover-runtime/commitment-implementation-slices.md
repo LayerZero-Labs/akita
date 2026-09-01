@@ -106,6 +106,20 @@ Exit gate:
 This is the first architectural experiment. It SHOULD be developed on a
 stacked branch and MUST NOT be merged as a commitment-only handle API.
 
+A **walking skeleton** is the thinnest executable path that crosses every
+proposed architectural layer. For this cutover, it starts at source ingress,
+executes the complete commitment epoch, carries opaque state across transcript
+absorption and challenge derivation, executes the first relation/opening epoch,
+and produces a message accepted by the verifier. It is deliberately narrow in
+source and schedule coverage, but it is not a mock of the boundary itself.
+
+The walking skeleton proves that the components compose. It does not establish
+production coverage, persistence, optimized placement, or final public API
+ergonomics. A test that calls the current `commit`, receives an
+`AkitaCommitmentHint`, and then hides that hint in a map is not a walking
+skeleton because the witness-shaped value has already crossed the proposed
+boundary.
+
 Introduce the minimum lifecycle substrate:
 
 ```rust,ignore
@@ -164,15 +178,76 @@ Exit gate:
   source stream forces one-hot expansion, revise the ingress design rather
   than accepting the regression.
 
-## Slice C3: perform the atomic public cutover
+## Slice C3: run the public cutover train
 
 Once C2 passes, replace the public root API and its first consumer together.
 This is intentionally breaking.
 
-Change:
+“Atomic” applies to the public merge boundary, not to development or review.
+C3 MAY use multiple reviewable commits, a draft pull request, or a private
+stack. Intermediate tips that expose both public APIs or retain temporary
+adapters MUST NOT merge independently. The final merged tree MUST contain one
+public commitment path and no compatibility facade.
 
-- `AkitaCommitmentScheme::commit` and `akita_prover::commit` to return a bound
-  committed artifact from a proof session;
+C3 should be broad in call-site coverage but shallow in new design. If it still
+needs to decide handle identity, ownership, source ingress, compression scope,
+or the first consumer boundary, C2 has not passed and C3 MUST stop.
+
+### Scope
+
+C3 includes:
+
+- ordinary in-memory root commitments through `akita_prover::commit` and
+  `AkitaCommitmentScheme::commit`;
+- the proof-session, artifact, and state-binding types proven by C2;
+- the CPU runtime and fake-remote conformance harness;
+- `SelectedProverOpeningData`, `ProverOpeningData`, root preparation, and the
+  work currently performed by `RingRelationProver::new` on commitment hints;
+- all in-tree callers of the ordinary root API, including tests, examples, and
+  benchmarks;
+- dense, one-hot, and downstream custom-source conformance coverage.
+
+C3 excludes:
+
+- setup-prefix checkpoint migration and disk-cache format changes;
+- recursive next-witness binding operations;
+- later relation, ring-switch, and sum-check epochs;
+- extraction of a joint Jolt/Akita runtime;
+- unrelated performance rewrites of leaf arithmetic.
+
+These exclusions make one revert sufficient to restore the old in-memory root
+API. C3 MUST NOT perform an irreversible state or persistence migration.
+
+### Entry gate
+
+Do not begin the public cutover until C2 has:
+
+- frozen the artifact and session semantics;
+- passed CPU/fake-remote commitment and first-consumer parity;
+- demonstrated failure-before-transcript-mutation for invalid handles;
+- preserved dense and one-hot source specialization;
+- recorded golden commitment, proof, and transcript fixtures;
+- assigned reviewers for ownership/API safety, protocol/transcript parity, and
+  source/performance behavior.
+
+### C3a: promote the proven runtime substrate
+
+Promote the exact C2 session, artifact, state-store, and CPU runtime contracts
+into production modules. Keep the fake transport in conformance test support.
+Do not redesign either contract during this step. Keep reusable inner,
+digit-row, and compression forms private to the CPU runtime.
+
+Any migration-only adapter introduced in an intermediate commit MUST be
+crate-private, named in the pull-request checklist, and deleted by C3d. No
+public `commit_legacy`, `commit_with_hint`, or parallel artifact constructor is
+permitted, even temporarily.
+
+### C3b: migrate the producer and first consumer together
+
+Change one dependency unit inside `akita-prover`:
+
+- `akita_prover::commit` to return a bound committed artifact from a proof
+  session;
 - `SelectedProverOpeningData::from_committed_claims` and
   `ProverOpeningData` to accept ordered artifacts and source ingress, not
   parallel `Vec<AkitaCommitmentHint<_>>` and polynomial groups;
@@ -180,7 +255,26 @@ Change:
 - transcript code to continue borrowing only canonical messages from the
   artifacts.
 
-Delete in the same cutover:
+The producer and first consumer belong in the same review step because neither
+is a sound public abstraction alone. This step MUST leave no internal path that
+can pair an independently supplied public message with retained state.
+
+### C3c: migrate the workspace callers
+
+Change `AkitaCommitmentScheme::commit`, then migrate `akita-pcs`, integration
+tests, examples, benchmarks, and downstream contract fixtures to construct a
+proof session, retain committed artifacts, and pass those artifacts into
+opening. Mechanical call-site changes SHOULD be separate commits grouped by
+crate or test family so reviewers can distinguish API churn from protocol
+changes.
+
+All ordinary in-memory source types MUST enter through the one artifact API.
+Representation-specific adapters MAY still call existing leaf forms privately;
+C4 replaces or optimizes those adapters and covers nonstandard producers.
+
+### C3d: delete the transitional surface and validate the tip
+
+Delete before the cutover is mergeable:
 
 - `CommitOutput`;
 - public construction and field access for root `AkitaCommitmentHint` values;
@@ -189,15 +283,36 @@ Delete in the same cutover:
 - any duplicate public `commit_legacy`, `commit_with_hint`, or
   `commit_artifact` entry point.
 
+Review the complete base-to-tip diff after deletion. Do not approve C3 from an
+intermediate commit or from a commit-by-commit summary alone.
+
+### Delivery and rollback rules
+
+- Develop C3 as one coordinated change surface. A draft pull request MAY expose
+  intermediate commits for review, but only the adapter-free tip may merge.
+- Keep intermediate commits buildable when practical. Temporary private shims
+  are acceptable only to make review commits buildable and MUST disappear from
+  the final diff.
+- Run parity and failure tests after the last deletion, not only before caller
+  migration.
+- Merge C3 as one public state transition. Do not leave main with both public
+  APIs while waiting for a follow-up.
+- If the final gate fails after merge, revert the coordinated C3 change. Do not
+  restore behavior by adding a public compatibility wrapper.
+
 Exit gate:
 
 - all in-tree ordinary dense and one-hot root prove/verify tests use artifacts;
 - downstream custom-source contract tests use the semantic runtime boundary;
 - public API consumers cannot construct a message/handle mismatch;
+- the fake remote crosses no witness-proportional value through the first
+  consumer;
+- golden commitment bytes, proof bytes, and transcript events match C0;
+- the final diff contains no migration-only adapter or parallel public API;
 - Jolt integration compiles without gaining a permanent Akita compatibility
   facade.
 
-## Slice C4: migrate every `CommittedGroup` producer
+## Slice C4: migrate specialized ingress and remaining `CommittedGroup` producers
 
 Move remaining public-root producers one representation at a time:
 

@@ -113,24 +113,35 @@ falsifiable order defined by
 
 ### Minimum coherent PR
 
-The first implementation PR SHOULD:
+Characterization and checked-plan extraction MAY land independently because
+they neither expose a second public commitment API nor weaken the current
+invariants. The first public cutover PR MUST follow the C3 cutover-train rules
+and SHOULD:
 
 - add runtime owner identity and typed opaque state handles;
 - add a validated full-commitment request;
 - implement one CPU commitment epoch covering inner, outer, and all
   compression maps;
-- route one production commitment entry point through it;
+- route the ordinary production commitment entry point through it;
+- replace parallel public hints and sources with bound committed artifacts;
+- carry the artifact through the first relation/opening consumer;
 - add a representation-independent fake remote backend;
-- assert one semantic call and no host-shaped intermediate result;
+- assert one semantic commitment call and no witness-shaped transfer through
+  the first consumer;
 - preserve public commitment and proof bytes.
 
 It SHOULD NOT add compatibility blanket implementations for all old backend
 traits. Existing leaf algorithms may be called privately from the CPU epoch.
 
-### Follow-up caller migrations
+The implementation MAY be developed as multiple commits or a private stack,
+but only the adapter-free final tip is a merge candidate. Main MUST NOT retain
+both public APIs between pull requests.
 
-- dense and multilinear commitment entry points;
-- one-hot, packed trace, and sparse-unit entry points;
+### Follow-up source and producer migrations
+
+- multilinear and packed Jolt trace ingress;
+- sparse-unit and other specialized ingress;
+- grouped and precommitted root producers;
 - setup-prefix generation;
 - Jolt-to-Akita commitment adapters.
 
@@ -138,39 +149,36 @@ traits. Existing leaf algorithms may be called privately from the CPU epoch.
 
 Every pretranscript/public `CommittedGroup` is created through the full semantic
 epoch. No caller producing that message sequences inner, outer, or compression
-kernels itself. Recursive next-witness messages remain the distinct Phase 4C
-epoch.
+kernels itself. An ordinary committed artifact reaches the first
+relation/opening consumer without witness-sized host readback. Recursive
+next-witness messages remain the distinct Phase 4C epoch.
 
-## Phase 2: committed artifacts and opening-state chain
+## Phase 2: extend the opening-state chain
 
 ### Deliverables
 
-- Replace parallel polynomial/hint arrays with bound committed artifacts.
-- Define the first opening/relation epoch that consumes bound committed
-  artifacts, not independently supplied messages and handles.
-- Move B-image reconstruction, `t_hat` derivation, compression-witness
-  materialization, quotient reuse, and source recomputation policy behind the
-  runtime.
-- Make terminal inner-state bindings explicit protocol messages.
-- Add owner-affinity planning from commitment through the first consumer.
+- Convert the remaining opening and relation computations after the first
+  consumer into semantic epochs over opaque relation state.
+- Remove protocol access to runtime-private B images, `t_hat` materialization,
+  compression witnesses, quotients, and source-recomputation recipes.
+- Extend owner-affinity planning beyond the first consumer through the last
+  relation state user.
 - Add explicit source-retention and recomputation policies where needed.
 
 ### Deletions
 
 Once the last reader migrates, delete:
 
-- `AkitaCommitmentHint` as a live/public type;
-- `RingRelationGroupWitness::hint`;
-- hint field access in `ProverOpeningData`;
-- hint/polynomial alignment checks made necessary by parallel vectors;
-- public hint serialization APIs not used for explicit checkpoints;
-- any compatibility wrapper that reconstructs a hint from runtime state.
+- CPU-shaped relation-state carriers that cross semantic epoch boundaries;
+- protocol-visible compression-witness and quotient accessors;
+- operation-cluster routing used only by the migrated opening/relation path;
+- implicit owner transfers or host reconstruction fallbacks.
 
 ### Exit gate
 
 A fake backend whose state has no `RingVec`, serialized polynomial, or cloneable
-hint can commit and execute the next opening/relation epoch without witness-sized
-host readback.
+hint can continue from the first relation/opening message through the remaining
+opening-state chain without witness-sized host readback.
 
 ## Phase 3: explicit checkpoints and setup-prefix persistence
 
