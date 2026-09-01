@@ -355,6 +355,46 @@ fn base_field_proof_shape_rejects_mixed_opening_families() {
 }
 
 #[test]
+fn proof_shape_accepts_group_local_subring_dimensions_within_packing_family() {
+    let mut schedule = recursive_schedule(128, 64, false);
+    retarget_outer_dimension(&mut schedule.root.params, 64).expect("root B dimension");
+    retarget_open_dimension(&mut schedule.root.params, 64).expect("root D dimension");
+    schedule.root.params.own_group_mut().opening.opening_method =
+        OpeningMethod::SubringCoefficientPacking {
+            challenge_subring_dimension: 64,
+        };
+    schedule
+        .root
+        .params
+        .own_group_mut()
+        .opening
+        .fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("64 challenge family");
+
+    let precommitted_group = PolynomialGroupLayout::singleton(8);
+    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
+    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
+        challenge_subring_dimension: 128,
+    };
+    precommitted.opening.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(128).expect("128 challenge family");
+    schedule
+        .root
+        .params
+        .insert_precommitted_group(precommitted)
+        .expect("packing-family precommit");
+    let layout = OpeningClaimsLayout::from_groups(vec![
+        precommitted_group,
+        schedule.root.params.final_group().profile.group,
+    ])
+    .expect("grouped opening layout");
+
+    let shape = canonical_proof_shape(&schedule, &layout, 2)
+        .expect("group-local packing dimensions share one opening family");
+    assert!(shape.root.extension_opening_reduction.is_none());
+}
+
+#[test]
 fn schedule_rejects_raw_root_payload() {
     let mut schedule = recursive_schedule(64, 64, false);
     schedule.root.params.payload_mode = CommitmentPayloadMode::Raw;
