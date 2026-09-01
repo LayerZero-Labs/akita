@@ -349,7 +349,7 @@ def profile_baselines_for_comment(
                     "previous benchmark run has no matching bounded artifact"
                 )
             previous_sha = claimed_previous_sha
-        except (PolicyError, RuntimeError, OSError, ValueError) as error:
+        except (PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
             warnings.append(f"previous PR benchmark rejected: {error}")
 
     return ProfileBaselines(
@@ -520,10 +520,16 @@ def artifact_for_run(
         or str(workflow_run.get("head_sha") or "") != expected_head_sha
     ):
         raise PolicyError(f"artifact {name!r} does not belong to expected head {expected_head_sha}")
-    size = int(candidate.get("size_in_bytes") or 0)
+    try:
+        size = int(candidate.get("size_in_bytes") or 0)
+        artifact_id = int(candidate["id"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise PolicyError(f"artifact {name!r} has invalid numeric metadata") from error
     if size < 0 or size > max_bytes:
         raise PolicyError(f"artifact {name!r} is {size} bytes; limit is {max_bytes}")
-    return Artifact(id=int(candidate["id"]), size_in_bytes=size)
+    if artifact_id <= 0:
+        raise PolicyError(f"artifact {name!r} has a non-positive ID")
+    return Artifact(id=artifact_id, size_in_bytes=size)
 
 
 def _write_outputs(values: dict[str, object]) -> None:
@@ -624,7 +630,7 @@ def resolve_artifact_command(args: argparse.Namespace) -> int:
         )
         if artifact is None:
             raise PolicyError(f"expected exactly one unexpired {args.name!r} artifact")
-    except (KeyError, PolicyError, RuntimeError, OSError, ValueError) as error:
+    except (KeyError, PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
         _warning(f"Artifact rejected before download: {error}")
         return 0
     _write_outputs({"artifact-id": artifact.id})
@@ -712,7 +718,7 @@ def select_timing_baselines_command(args: argparse.Namespace) -> int:
                     "main-label": f"the latest successful `{args.base_ref}` run",
                 }
             )
-    except (KeyError, PolicyError, RuntimeError, OSError, ValueError) as error:
+    except (KeyError, PolicyError, RuntimeError, OSError, TypeError, ValueError) as error:
         _warning(f"Could not determine bounded timing baselines: {error}")
     _write_outputs(outputs)
     return 0
@@ -760,6 +766,7 @@ def resolve_profile_baselines_command(args: argparse.Namespace) -> int:
         PolicyError,
         RuntimeError,
         OSError,
+        TypeError,
         ValueError,
         json.JSONDecodeError,
     ) as error:
@@ -804,7 +811,7 @@ def upsert_comment_command(args: argparse.Namespace) -> int:
     except PolicyError as error:
         _warning(f"Comment write skipped: {error}")
         return 0
-    except (KeyError, RuntimeError, OSError, ValueError) as error:
+    except (KeyError, RuntimeError, OSError, TypeError, ValueError) as error:
         _warning(f"Comment write failed: {error}")
         return 1
     return 0

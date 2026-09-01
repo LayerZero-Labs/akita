@@ -200,6 +200,21 @@ class ArtifactBoundaryTests(unittest.TestCase):
                 HEAD_SHA,
             )
 
+    def test_rejects_non_scalar_artifact_numbers_as_policy_input(self) -> None:
+        malformed = self.artifact()
+        malformed["id"] = []
+        malformed["size_in_bytes"] = {}
+        with self.assertRaisesRegex(PolicyError, "invalid numeric metadata"):
+            artifact_for_run(
+                self.Client([malformed]),
+                "LayerZero-Labs",
+                "akita",
+                1,
+                "report-data",
+                5_000_000,
+                HEAD_SHA,
+            )
+
 
 class IdentityTests(unittest.TestCase):
     EXPECTED = ResolvedPullRequest(
@@ -405,6 +420,14 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
         self.assertEqual(wrong_branch.main_sha, self.MAIN_SHA)
         self.assertEqual(wrong_branch.previous_sha, "")
         self.assertRegex(wrong_branch.warnings[0], "another fork or PR")
+
+        malformed_run_id = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA),
+            self.metadata(previous_run_id=[]),
+        )
+        self.assertEqual(malformed_run_id.main_sha, self.MAIN_SHA)
+        self.assertEqual(malformed_run_id.previous_sha, "")
+        self.assertTrue(malformed_run_id.warnings)
 
     def test_previous_archive_uses_archive_not_input_limit(self) -> None:
         baselines = self.resolve(
