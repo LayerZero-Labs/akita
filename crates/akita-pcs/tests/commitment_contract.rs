@@ -21,7 +21,9 @@ use akita_prover::compute::{
 use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
-use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use akita_types::{
+    CommittedSourceEncoding, CompressionChainPlan, NttCacheKey, OpeningClaimsLayout,
+};
 use jolt_field::Unreduced;
 use jolt_field::{CanonicalEncoding, Field, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -32,6 +34,8 @@ type F = <Cfg as CommitmentConfig>::Field;
 // root-direct fixture; `nv=14` is the first supported adaptive fp64 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
 static COMMIT_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
+static OUTER_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
+static COMPRESSION_KERNEL_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
 ///
@@ -145,6 +149,7 @@ where
         digit_vectors: &[&[[i8; RING_D]]],
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        OUTER_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
         CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
     }
 }
@@ -162,6 +167,7 @@ where
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; RING_D]]],
     ) -> Result<Vec<CompressionRowsProducts<F, RING_D>>, AkitaError> {
+        COMPRESSION_KERNEL_CALLS.fetch_add(1, Ordering::Relaxed);
         CpuBackend::DEFAULT.compression_rows_products(prepared, digit_vectors)
     }
 }
@@ -194,6 +200,8 @@ where
 #[test]
 fn custom_commit_source_runs_unified_explicit_commit() {
     COMMIT_KERNEL_CALLS.store(0, Ordering::Relaxed);
+    OUTER_KERNEL_CALLS.store(0, Ordering::Relaxed);
+    COMPRESSION_KERNEL_CALLS.store(0, Ordering::Relaxed);
     let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
@@ -245,6 +253,38 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     );
     assert_eq!(contract_output.hint, dense_output.hint);
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(OUTER_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    let profile = params.own_group().profile;
+    let compression_source_coefficients = profile
+        .outer_slice_count
+        .complete_source_coefficients(
+            profile.outer.matrix.output_rank(),
+            profile.outer.matrix.ring_dimension(),
+        )
+        .expect("complete B source geometry");
+    let compression_maps = CompressionChainPlan::for_complete_source(
+        profile.outer.matrix.sis_table_key().modulus_profile,
+        compression_source_coefficients,
+    )
+    .expect("commitment compression plan")
+    .maps()
+    .len();
+    assert_eq!(
+        COMPRESSION_KERNEL_CALLS.load(Ordering::Relaxed),
+        compression_maps,
+        "current commitment crosses the compression capability once per map"
+    );
+
+    // This is the baseline the semantic commitment epoch must replace. One
+    // logical protocol message currently crosses three backend capability
+    // families, and compression crosses its capability once per physical map.
+    // Keep the exact counts visible so the cutover test can demonstrate one
+    // semantic invocation without pretending that fewer local function calls
+    // are themselves the goal.
+    let current_physical_calls = COMMIT_KERNEL_CALLS.load(Ordering::Relaxed)
+        + OUTER_KERNEL_CALLS.load(Ordering::Relaxed)
+        + COMPRESSION_KERNEL_CALLS.load(Ordering::Relaxed);
+    assert!(current_physical_calls >= 3);
 
     let mut malformed_profile = params.own_group().profile;
     malformed_profile.inner.digits.num_digits += 1;
@@ -257,4 +297,5 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     .expect_err("malformed explicit profile must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
+    assert_eq!(OUTER_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 }

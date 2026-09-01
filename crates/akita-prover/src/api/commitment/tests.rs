@@ -430,11 +430,7 @@ fn commit_fixture_with_profile(
         payload,
         witness,
         quotients,
-    } = compute_commitment_compression(
-        ctx,
-        profile.outer.matrix.sis_table_key().modulus_profile,
-        source,
-    )?;
+    } = compute_commitment_compression(ctx, commitment_compression_plan(&profile)?, source)?;
     let hint = AkitaCommitmentHint::new_with_outer_compression(
         profile.inner.matrix.ring_dimension(),
         inner_rows,
