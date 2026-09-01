@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldParams, FoldSchedule, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OpeningScheduleSelection, ScheduleRowDigest, TerminalFoldParams, TerminalResponseShape,
+    CommittedGroupParams, FoldParams, FoldSchedule, GrindingPlan, GrindingRun, GrindingSite,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OpeningScheduleSelection, ScheduleRowDigest,
+    TerminalFoldParams, TerminalResponseShape,
 };
 use akita_challenges::SparseChallengeConfig;
 use jolt_field::Prime32Offset99;
@@ -57,6 +58,14 @@ fn sample_selection() -> OpeningScheduleSelection {
 
 fn sample_descriptor() -> AkitaInstanceDescriptor {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("valid opening batch");
+    let grinding_plan = GrindingPlan::new(
+        vec![
+            GrindingRun::proof_of_work(GrindingSite::EvaluationBatch { level: 0 }, 1, 128)
+                .expect("sample grinding run"),
+        ],
+        128,
+    )
+    .expect("sample grinding plan");
     AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<Prime32Offset99, Prime32Offset99>().expect("algebra"),
         SetupSection {
@@ -69,15 +78,15 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
             compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: [1; 32],
             protocol_features: ProtocolFeatureSet::current(),
-            fold_linf: FoldLinfProtocolBinding::CURRENT,
         },
         PlanSection::from_schedule(sample_selection(), &sample_schedule()),
+        TranscriptGrindingBinding::for_plan(&grinding_plan).expect("grinding binding"),
         CallSection::from_layout(&opening_batch, BasisMode::Lagrange).expect("call"),
     )
 }
 
 #[test]
-fn schedule_selection_is_bound_into_the_v1_instance_descriptor() {
+fn schedule_selection_is_bound_into_the_current_instance_descriptor() {
     let descriptor = sample_descriptor();
     let original = descriptor.canonical_bytes().expect("descriptor bytes");
 
@@ -220,6 +229,33 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
         suffixed.push(suffix);
         assert!(AkitaInstanceDescriptor::deserialize_uncompressed_exact(&suffixed, &()).is_err());
     }
+}
+
+#[test]
+fn grinding_binding_has_the_exact_dedicated_descriptor_position() {
+    let descriptor = sample_descriptor();
+    let bytes = descriptor.canonical_bytes().expect("serialize descriptor");
+    let offset = descriptor.version.serialized_size(Compress::No)
+        + descriptor.algebra.serialized_size(Compress::No)
+        + descriptor.setup.serialized_size(Compress::No)
+        + descriptor.plan.serialized_size(Compress::No);
+    let mut grinding_bytes = Vec::new();
+    descriptor
+        .grinding
+        .serialize_uncompressed(&mut grinding_bytes)
+        .expect("serialize grinding binding");
+    assert_eq!(descriptor.version, 3);
+    assert_eq!(
+        &bytes[offset..offset + grinding_bytes.len()],
+        grinding_bytes
+    );
+
+    let mut changed = descriptor.clone();
+    changed.grinding.plan_digest[0] ^= 1;
+    assert_ne!(
+        bytes,
+        changed.canonical_bytes().expect("changed grinding binding")
+    );
 }
 
 #[test]

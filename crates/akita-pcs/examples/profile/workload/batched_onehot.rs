@@ -9,7 +9,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -148,12 +148,20 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         (commitments, proof, setup)
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .expect("batched schedule")
         .into_schedule();
+    let effective_schedule = plan.unwrap_or(&schedule);
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
+        .expect("profile grinding plan");
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        Some(effective_schedule),
+        &grinding_plan,
+    );
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,

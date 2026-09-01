@@ -72,6 +72,6 @@ pub use norm_bound::{
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS, TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
+    TERMINAL_RESPONSE_WIRE_LINF_LIMIT,
 };
 pub use physical_l2::{InnerCommitSecurityRoute, LimbGramLayout, PhysicalL2NormProofShape};

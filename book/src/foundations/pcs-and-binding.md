@@ -40,6 +40,13 @@ ell_i * (k_i - 1) / |S_i|.
 This is the challenge-space error before Fiat-Shamir compilation. The precise
 parameters and batching factors must be taken from the schedule being proved.
 
+The implementation exposes this coordinate structure directly. It squeezes
+one root for each fold group, then derives every claim-major block coordinate
+from an indexed random-oracle input. A coordinate fork fixes the root and all
+other coordinate answers. This is different from expanding the full vector
+through one cursor, where rewinding the cursor query would change every
+coordinate at once.
+
 ## Fiat-Shamir queries and fold nonces
 
 Fiat-Shamir replaces each verifier challenge with a random-oracle answer. The
@@ -54,11 +61,13 @@ Fiat-Shamir knowledge error <= (Q + 1) * kappa,
 where `Q` is the adversary's total random-oracle query budget. This query factor
 is the correct way to account for repeated challenge trials.
 
-Each Akita fold carries a bounded nonce. The nonce is absorbed before the fold
-challenge is sampled. Trying another nonce is therefore another random-oracle
-query. It does not create a separate fixed loss of `log2(max_nonce_count)` bits
-at every fold. For a fixed transcript prefix and a bad-challenge set of measure
-`epsilon`, `q` trials have success probability
+Each Akita fold carries a bounded nonce in one proof-level packed stream. Each
+fold-response entry uses 12 bits rather than a separate 32-bit field. The
+nonce is absorbed before the fold challenge is sampled. Trying another nonce
+is therefore another random-oracle query. It does not create a separate fixed
+loss of `log2(max_nonce_count)` bits at every fold. For a fixed transcript
+prefix and a bad-challenge set of measure `epsilon`, `q` trials have success
+probability
 
 ```text
 1 - (1 - epsilon)^q <= q * epsilon.

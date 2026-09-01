@@ -20,6 +20,7 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
     instance: &RingRelationInstance<F>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
+    level: u32,
     w: &RecursiveWitnessFlat,
     lp: &CommittedGroupParams,
     opening_source_len: usize,
@@ -31,7 +32,7 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let default_gamma;
     let gamma = if let Some(gamma) = gamma {
@@ -52,6 +53,7 @@ where
         opening_batch,
         instance,
     )?;
+    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_capacity = opening_source_len
@@ -107,9 +109,11 @@ where
         .checked_mul(opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
 
+    transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
     let tau0: Vec<E> = (0..num_sc_vars)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
         .collect();
+    transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();

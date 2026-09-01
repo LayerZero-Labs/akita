@@ -22,12 +22,13 @@ jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "
   "solinas",
 ] }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
-sha3 = "0.10.8"
+keccak = { version = "0.1.6", features = ["asm"] }
 smallvec = { version = "1.15.2", features = ["const_generics"] }
 tracing = "0.1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+sha3 = "0.10.8"
 
 [[bench]]
 name = "sparse_challenge"
@@ -38,6 +39,7 @@ default = ["transcript-blake2b"]
 transcript-blake2b = ["akita-transcript/transcript-blake2b"]
 transcript-keccak = ["akita-transcript/transcript-keccak"]
 parallel = ["jolt-field/parallel"]
+logging-transcript = ["akita-transcript/logging-transcript"]
 
 [lints]
 workspace = true
