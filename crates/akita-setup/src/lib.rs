@@ -646,13 +646,13 @@ mod tests {
         let verifier_setup = prover_setup.to_verifier_setup(capacity).unwrap();
 
         let mut bytes = Vec::new();
-        prover_setup
+        verifier_setup
             .expanded
             .serialize_compressed(&mut bytes)
             .unwrap();
         let decoded = AkitaExpandedSetup::<TestF>::deserialize_compressed(&bytes[..], &()).unwrap();
 
-        assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
+        assert_eq!(decoded, verifier_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
         let decoded_prover = AkitaProverSetup::from_validated_expanded(decoded.clone()).unwrap();
