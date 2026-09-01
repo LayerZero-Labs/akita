@@ -17,7 +17,7 @@ fn operation_ctx_rejects_mismatched_expanded_setup() {
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup a");
     let setup_b =
         AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192)).expect("setup b");
-    assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
+    assert_ne!(setup_a.expanded.descriptor(), setup_b.expanded.descriptor());
 
     let prepared_a = CpuBackend::DEFAULT
         .prepare_setup(&setup_a)
