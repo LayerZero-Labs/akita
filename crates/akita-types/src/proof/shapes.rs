@@ -194,18 +194,22 @@ pub fn canonical_proof_shape(
         extension_degree: usize,
     ) -> Result<Option<ExtensionOpeningReductionShape>, AkitaError> {
         let first_method = params.group_params(opening_layout, 0)?.opening_method();
+        let first_is_packing = matches!(
+            first_method,
+            OpeningMethod::SubringCoefficientPacking { .. }
+        );
         for group_index in 1..opening_layout.num_groups() {
-            if params
+            let method = params
                 .group_params(opening_layout, group_index)?
-                .opening_method()
-                != first_method
+                .opening_method();
+            if matches!(method, OpeningMethod::SubringCoefficientPacking { .. }) != first_is_packing
             {
                 return Err(AkitaError::InvalidSetup(
                     "one fold cannot mix opening-method families".to_string(),
                 ));
             }
         }
-        if extension_degree == 1 || !matches!(first_method, OpeningMethod::EvaluationTrace) {
+        if extension_degree == 1 || first_is_packing {
             return Ok(None);
         }
         canonical_extension_opening_reduction_shape(opening_layout, extension_degree).map(Some)
