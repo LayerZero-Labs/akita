@@ -204,9 +204,10 @@ recursive folds and the terminal use `EvaluationTrace`; packing adds neither
 an EOR payload nor a packing terminal.
 
 This chapter documents the implemented relation and schedule boundary. The
-live specification remains `active` because its full-vector-fork extraction
-argument is still an open review item; the equations here should not be read
-as a completed end-to-end soundness theorem.
+active design record gives the formal planner and soundness requirements,
+including the implemented coordinatewise CWSS accounting. The equations here
+are protocol relations; by themselves, they are not an end-to-end soundness
+theorem.
 
 ## The root fold
 

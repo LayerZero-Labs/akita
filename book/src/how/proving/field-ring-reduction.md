@@ -667,8 +667,8 @@ The base-field path follows the reduction above:
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
-   adds the trace relation to the fused Stage-2 sumcheck.
+   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
+   adds the prepared linear relation to the fused Stage-2 sumcheck.
 
 The main data flow is:
 
@@ -701,7 +701,7 @@ build_evaluation_trace_weights
       `-- T(x) on the committed e_hat segment
                          |
                          v
-accumulate_fused_relation_trace
+accumulate_fused_relation_linear
       |
       `-- Stage 2 proves v_tr = sum_x w(x) T(x)
 ```
@@ -750,8 +750,9 @@ The packed path follows the second derivation:
 2. The prover's coefficient-packing kernels form the $ks$ canonical
    base-field coordinates of each $e_b$ and decompose them into the
    $\hat e$ segment.
-3. [`canonical_extension_basis`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-field/src/ext/lift.rs)
-   supplies the fixed elements $\beta_t$.
+3. [`canonical_extension_basis`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/ext.rs)
+   from Akita's pinned `jolt-field` revision supplies the fixed elements
+   $\beta_t$.
 4. [`coefficient_packing_relation.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation.rs)
    factors Equation (30) into the source weights
    $\beta_tI_j^{\mathrm{tail}}$ and the claim, block, row, and gadget factors
