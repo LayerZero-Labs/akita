@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -22,6 +23,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
+use crate::GrindingPlan;
 use crate::{
     canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
     sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
@@ -44,6 +46,8 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
+#[path = "schedule_tests/proof_shapes.rs"]
+mod proof_shapes;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
 type F = Prime128OffsetA7F7;
@@ -288,79 +292,6 @@ fn append_recursive_fold(schedule: &mut FoldSchedule) {
         .output_witness_len;
     schedule.terminal.input_witness_len = step.output_witness_len;
     schedule.recursive_folds.push(step);
-}
-
-#[test]
-fn base_field_proof_shape_rejects_mixed_opening_families() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    let precommitted_group = PolynomialGroupLayout::singleton(8);
-    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
-    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("production challenge family");
-    schedule
-        .root
-        .params
-        .insert_precommitted_group(precommitted)
-        .expect("mixed-family precommit");
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        precommitted_group,
-        schedule.root.params.final_group().profile.group,
-    ])
-    .expect("grouped opening layout");
-
-    let error = canonical_proof_shape(&schedule, &layout, 1)
-        .expect_err("base-field proof shape must reject mixed opening families");
-    assert!(
-        matches!(
-            &error,
-            AkitaError::InvalidSetup(message)
-                if message.contains("cannot mix opening-method families")
-        ),
-        "unexpected mixed-family error: {error:?}"
-    );
-}
-
-#[test]
-fn proof_shape_accepts_group_local_subring_dimensions_within_packing_family() {
-    let mut schedule = recursive_schedule(128, 64, false);
-    retarget_outer_dimension(&mut schedule.root.params, 64).expect("root B dimension");
-    retarget_open_dimension(&mut schedule.root.params, 64).expect("root D dimension");
-    schedule.root.params.own_group_mut().opening.opening_method =
-        OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-    schedule
-        .root
-        .params
-        .own_group_mut()
-        .opening
-        .fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(64).expect("64 challenge family");
-
-    let precommitted_group = PolynomialGroupLayout::singleton(8);
-    let mut precommitted = preceding_group_params(&schedule.root.params, precommitted_group);
-    precommitted.opening.opening_method = OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 128,
-    };
-    precommitted.opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(128).expect("128 challenge family");
-    schedule
-        .root
-        .params
-        .insert_precommitted_group(precommitted)
-        .expect("packing-family precommit");
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        precommitted_group,
-        schedule.root.params.final_group().profile.group,
-    ])
-    .expect("grouped opening layout");
-
-    let shape = canonical_proof_shape(&schedule, &layout, 2)
-        .expect("group-local packing dimensions share one opening family");
-    assert!(shape.root.extension_opening_reduction.is_none());
 }
 
 #[test]
@@ -829,7 +760,6 @@ fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
         opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-        fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -871,14 +801,21 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
+        let opening_layout =
+            OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
                 level_proof_bytes(
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -926,21 +863,17 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
             terminal_response,
-            0,
         );
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level: a direct terminal level
-        // carries only the `fold_grind_nonce` (plus any extension-opening
-        // reduction, absent from this fixture), matching the planner's
-        // terminal-direct accounting.
+        // it from the serialized terminal level. The proof-level packed nonce
+        // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            crate::FOLD_GRIND_NONCE_BYTES,
-            serialized_without_witness,
+            0, serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
         );
@@ -982,6 +915,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
+        let opening_layout = OpeningClaimsLayout::new(rounds, 1).unwrap();
         let b = 1usize << log_basis;
         let level_proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -994,7 +928,6 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 .unwrap()
                 .terminal_coefficients()
             ]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -1016,9 +949,14 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),

@@ -164,7 +164,7 @@ impl CheckedCommitmentPlan {
         )?;
         validate_commitment_geometry::<F>(&profile, &compression, expanded)?;
         Ok(Self {
-            setup_descriptor: expanded.seed().clone(),
+            setup_descriptor: expanded.descriptor().clone(),
             source_contract,
             slice_geometry,
             compression,
@@ -180,7 +180,12 @@ impl CheckedCommitmentPlan {
         F: Field + CanonicalEncoding,
         B: crate::compute::ComputeBackendSetup<F>,
     {
-        if ctx.backend().prepared_expanded_setup(ctx.prepared()).seed() != &self.setup_descriptor {
+        if ctx
+            .backend()
+            .prepared_expanded_setup(ctx.prepared())
+            .descriptor()
+            != &self.setup_descriptor
+        {
             return Err(AkitaError::InvalidSetup(
                 "commitment backend context belongs to a different setup".into(),
             ));
@@ -344,17 +349,17 @@ where
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
-    if polys.len() > setup.seed.max_num_batched_polys {
+    if polys.len() > setup.descriptor.max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.seed.max_num_batched_polys
+            setup.descriptor.max_num_batched_polys
         )));
     }
-    if num_vars > setup.seed.max_num_vars {
+    if num_vars > setup.descriptor.max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.seed.max_num_vars
+            num_vars, setup.descriptor.max_num_vars
         )));
     }
     Ok(akita_types::PolynomialGroupLayout::new(

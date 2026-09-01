@@ -208,31 +208,36 @@ transcript also binds the method, challenge subring dimension, challenge
 family, group order, claim count, and block count. After challenge folding, the
 prover binds `Q_pack` and the next witness before sampling `alpha`.
 
-Packing challenge generation divides the canonical claim and block order into
-fixed batches of 128 challenges. Each batch uses a SHAKE256 stream derived from
-the transcript seed, a packing batch domain, and the batch index. The prover
-and verifier therefore get the same challenge order for every worker count.
-Evaluation trace challenge generation keeps its existing single stream.
+Both opening methods squeeze one dedicated 32-byte root per commitment group.
+They then derive coordinate `(claim, block)` from a fresh SHAKE256 stream whose
+input is exactly that root followed by the claim-major coordinate index as a
+little-endian `u64`. The fixed widths make this encoding unambiguous. The
+coordinate streams do not mutate the live transcript. Sequential and parallel
+samplers therefore return the same ordered vector, and one coordinate can be
+forked without changing any other coordinate.
 
 The production primes satisfy the fixed LS18 congruence and shortness
 condition used for unit pairwise challenge differences. This fact belongs to
 the field and challenge security review. It is not planner metadata and does
 not require a per-schedule certificate.
 
-The implementation derives the complete claim and block challenge vector from
-one transcript seed. A fork of that query generally changes the whole vector,
-so it does not directly provide the coordinatewise forks used by the original
-extraction sketch. The security proof remains open. It must either prove a
-full-vector extraction theorem for the implemented distribution, including the
-matrix-invertibility probability and forking loss, or the challenge derivation
-must change to support coordinatewise forks.
+For CWSS extraction, fix the transcript prefix, group root, shared fold-response
+nonce, and all coordinate-oracle answers except one. Reprogramming coordinate
+`j` gives two accepting transcripts whose challenge difference is zero outside
+`j`. The production LS18 condition makes every nonzero sparse-challenge
+difference a unit, so subtracting the accepted relations isolates that opening.
+The extractor uses the central accepting vector and one such fork for every
+claim-major coordinate. The random-oracle reduction charges all root and
+coordinate queries, including the jointly searched fold nonce. It does not
+assume that two arbitrary full-vector forks are enough.
 
 The packed consistency equation still gives one polynomial identity in `E[Y]`.
 After including the `(Y^s + 1)Q_pack` term, its degree is at most `2s-1`, so the
-conditional polynomial-check error is `(2s-1)/|E|`. This root bound does not
-close the extraction gap. See the active
+conditional polynomial-check error is `(2s-1)/|E|`. This term is added to the
+existing CWSS, random-oracle forking, sum-check, collision, and MSIS terms. See
+the active
 [subring coefficient packing design record](../../../specs/subring-coefficient-packing.md)
-for the open acceptance criteria.
+for the complete accounting.
 
 The challenge response identity is exact when the accepted challenge has
 scalar covariance. The fixed point operator norm filter is not assumed to have

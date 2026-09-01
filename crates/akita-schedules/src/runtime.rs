@@ -3,7 +3,7 @@
 use akita_error::AkitaError;
 use akita_types::{
     ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldParams,
-    FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
+    FoldSchedule, FoldScheduleEstimate, FoldSuccessor, OpeningClaimsLayout, PlannedFoldSchedule,
     PolynomialGroupLayout, RingRole, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
     TerminalResponseShape, WitnessLayout, DEFAULT_SIS_SECURITY_POLICY, MAX_I16_LOG_BASIS,
     MAX_I8_LOG_BASIS,
@@ -471,12 +471,64 @@ pub struct CandidateTerminalResponse {
     pub estimated_payload_bytes: usize,
 }
 
+fn fold_schedule_from_candidate_parts(
+    folds: &[CandidateFoldStep],
+    terminal_response: &CandidateTerminalResponse,
+) -> Result<FoldSchedule, AkitaError> {
+    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(
+            "a fold schedule requires root and terminal folds".to_string(),
+        )
+    })?;
+    Ok(FoldSchedule {
+        root: FoldParams {
+            params: (*root.params).clone(),
+            input_witness_len: root.input_witness_len,
+            output_witness_len: root.output_witness_len,
+        },
+        recursive_folds: recursive_folds
+            .iter()
+            .map(|fold| FoldParams {
+                params: (*fold.params).clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: TerminalFoldParams {
+            fold_challenge_config: terminal_response.sparse_challenge_config,
+            response_shape: terminal_response.response_shape.clone(),
+            input_witness_len: terminal_response.input_witness_len,
+            ..terminal_response.params.clone()
+        },
+    })
+}
+
+/// Price the canonical grinding plan for one complete schedule candidate.
+#[doc(hidden)]
+pub fn candidate_grinding_nonce_bits(
+    policy: &PlannerPolicy,
+    root_layout: &OpeningClaimsLayout,
+    folds: &[CandidateFoldStep],
+    terminal_response: &CandidateTerminalResponse,
+) -> Result<usize, AkitaError> {
+    let schedule = fold_schedule_from_candidate_parts(folds, terminal_response)?;
+    akita_types::transcript_grinding_nonce_bits_for_planner_candidate(
+        &schedule,
+        root_layout,
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )
+}
+
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
 pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
-    successor: Option<&CommittedGroupParams>,
+    successor: FoldSuccessor<'_>,
 ) -> Result<usize, AkitaError> {
-    let Some(prefix) = successor.and_then(|params| params.setup_prefix()) else {
+    let Some(prefix) = (match successor {
+        FoldSuccessor::Recursive(params) => params.setup_prefix(),
+        FoldSuccessor::Terminal(_) => None,
+    }) else {
         return Ok(usize::default());
     };
     let n_prefix = prefix.n_prefix()?;
@@ -497,33 +549,33 @@ pub fn stage3_payload_bytes_for_successor(
 pub fn nonterminal_level_payload_bytes(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
-    successor: Option<&CommittedGroupParams>,
-    input_witness_len: usize,
+    opening_layout: &OpeningClaimsLayout,
+    successor: FoldSuccessor<'_>,
     output_witness_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let challenge_field_bits = policy.challenge_field_bits()?;
+    let next_outer_payload = match successor {
+        FoldSuccessor::Recursive(params) => Some(params),
+        FoldSuccessor::Terminal(_) => None,
+    };
+    let relation_geometry = params.relation_address_geometry(
+        opening_layout,
+        policy.claim_ext_degree,
+        successor.ring_dimension(),
+        output_witness_len,
+    )?;
     let direct = akita_types::level_proof_bytes(
         policy.decomposition.field_bits(),
         challenge_field_bits,
         params,
-        successor,
-        output_witness_len,
-        Some(if successor.is_some() {
-            akita_types::NextWitnessBindingPolicy::OuterPayload
-        } else {
-            akita_types::NextWitnessBindingPolicy::TerminalInnerState
-        }),
+        relation_geometry,
+        next_outer_payload,
     )?;
     let eor = if matches!(
         params.opening_method(),
         akita_types::OpeningMethod::EvaluationTrace
     ) {
-        let final_group = PolynomialGroupLayout::singleton(
-            akita_types::padded_boolean_opening_vars(input_witness_len)?,
-        );
-        let opening_shape = params
-            .opening_layout_for_final_group(final_group)?
-            .aggregate_polynomial_group_layout()?;
+        let opening_shape = opening_layout.aggregate_polynomial_group_layout()?;
         akita_types::extension_opening_reduction_level_bytes(
             challenge_field_bits,
             policy.claim_ext_degree,
@@ -560,53 +612,74 @@ pub fn expanded_schedule_proof_payload_bytes(
         .checked_add(1)
         .ok_or_else(|| AkitaError::InvalidSetup("fold level count overflow".into()))?;
     let mut total = 0usize;
+    let mut predecessor_rounds = None;
     for level in 0..nonterminal_levels {
-        let (params, input_witness_len, output_witness_len) = if level == 0 {
-            (
-                &schedule.root.params,
-                schedule.root.input_witness_len,
-                schedule.root.output_witness_len,
-            )
+        let (params, output_witness_len) = if level == 0 {
+            (&schedule.root.params, schedule.root.output_witness_len)
         } else {
             let fold = schedule.recursive_folds.get(level - 1).ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive fold index is out of range".into())
             })?;
-            (
-                &fold.params,
-                fold.input_witness_len,
-                fold.output_witness_len,
-            )
+            (&fold.params, fold.output_witness_len)
         };
-        let successor = schedule.recursive_folds.get(level).map(|fold| &fold.params);
+        let opening_layout = match predecessor_rounds {
+            None => key.opening_layout()?,
+            Some(rounds) => {
+                params.opening_layout_for_final_group(PolynomialGroupLayout::singleton(rounds))?
+            }
+        };
+        let successor = schedule.recursive_folds.get(level).map_or_else(
+            || FoldSuccessor::Terminal(&schedule.terminal),
+            |fold| FoldSuccessor::Recursive(&fold.params),
+        );
         let (direct, stage3) = nonterminal_level_payload_bytes(
             policy,
             params,
+            &opening_layout,
             successor,
-            input_witness_len,
             output_witness_len,
         )?;
+        predecessor_rounds = Some(
+            params
+                .relation_address_geometry(
+                    &opening_layout,
+                    policy.claim_ext_degree,
+                    successor.ring_dimension(),
+                    output_witness_len,
+                )?
+                .relation_point_variable_count(),
+        );
         total = total
             .checked_add(direct)
             .and_then(|value| value.checked_add(stage3))
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }
 
+    let terminal_predecessor_rounds = predecessor_rounds.ok_or_else(|| {
+        AkitaError::InvalidSetup("terminal proof is missing predecessor relation geometry".into())
+    })?;
     let terminal_eor = akita_types::extension_opening_reduction_level_bytes(
         policy.challenge_field_bits()?,
         policy.claim_ext_degree,
-        PolynomialGroupLayout::singleton(akita_types::padded_boolean_opening_vars(
-            schedule.terminal.input_witness_len,
-        )?),
+        PolynomialGroupLayout::singleton(terminal_predecessor_rounds),
     )?;
     let terminal_response = akita_types::terminal_response_planner_bytes(
         field_bits,
         &schedule.terminal.response_shape,
         schedule.terminal.response_l2_sq_cap(),
     );
+    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        schedule,
+        &key.opening_layout()?,
+        field_bits,
+        policy.claim_ext_degree,
+    )?;
+    let nonce_stream_bytes = akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     total
-        .checked_add(akita_types::FOLD_GRIND_NONCE_BYTES)
-        .and_then(|value| value.checked_add(terminal_eor))
+        .checked_add(terminal_eor)
         .and_then(|value| value.checked_add(terminal_response))
+        .and_then(|value| value.checked_add(nonce_stream_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))
 }
 
@@ -617,25 +690,26 @@ pub fn materialize_candidate_schedule(
     cached_total: usize,
     cached_num_setup_field_elements: usize,
     cached_first_direct_setup_field_len: Option<usize>,
-    selection_policy: SelectionPolicyId,
+    policy: &PlannerPolicy,
     root_layout: &OpeningClaimsLayout,
-    mut folds: Vec<CandidateFoldStep>,
+    folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    if folds.is_empty() {
-        return Err(AkitaError::UnsupportedSchedule(
+    let schedule = fold_schedule_from_candidate_parts(&folds, &terminal_response)?;
+    let (root, recursive_folds) = folds.split_first().ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
-        ));
-    }
-    let root = folds.remove(0);
+        )
+    })?;
     let mut estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
-        estimated_recursive_direct_payload_bytes: folds
+        estimated_recursive_direct_payload_bytes: recursive_folds
             .iter()
             .map(|fold| fold.estimated_direct_payload_bytes)
             .collect(),
-        estimated_recursive_stage3_payload_bytes: folds
+        estimated_recursive_stage3_payload_bytes: recursive_folds
             .iter()
             .map(|fold| fold.estimated_stage3_payload_bytes)
             .collect(),
@@ -648,38 +722,22 @@ pub fn materialize_candidate_schedule(
         first_direct_setup_field_len: None,
         selected_offload_edges: 0,
     };
+    let grinding_plan = akita_types::derive_transcript_grinding_plan_from_public_shape(
+        &schedule,
+        root_layout,
+        policy.decomposition.field_bits(),
+        policy.claim_ext_degree,
+    )?;
+    estimate.nonce_stream_bytes =
+        akita_error::checked::div_ceil(grinding_plan.total_nonce_bits(), 8)
+            .ok_or_else(|| AkitaError::InvalidSetup("invalid nonce stream byte width".into()))?;
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(
             "cached schedule cost {cached_total} disagrees with materialized estimate {recomputed}"
         )));
     }
-    let root_params = Arc::unwrap_or_clone(root.params);
-    let schedule = FoldSchedule {
-        root: FoldParams {
-            params: root_params.clone(),
-            input_witness_len: root.input_witness_len,
-            output_witness_len: root.output_witness_len,
-        },
-        recursive_folds: folds
-            .into_iter()
-            .map(|fold| {
-                let params = Arc::unwrap_or_clone(fold.params);
-                FoldParams {
-                    params,
-                    input_witness_len: fold.input_witness_len,
-                    output_witness_len: fold.output_witness_len,
-                }
-            })
-            .collect(),
-        terminal: TerminalFoldParams {
-            fold_challenge_config: terminal_response.sparse_challenge_config,
-            response_shape: terminal_response.response_shape,
-            input_witness_len: terminal_response.input_witness_len,
-            ..terminal_response.params
-        },
-    };
-    let first_direct_setup_field_len = match selection_policy {
+    let first_direct_setup_field_len = match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayload => None,
         SelectionPolicyId::MinFirstDirectSetupThenPayload => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,

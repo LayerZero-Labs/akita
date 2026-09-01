@@ -204,7 +204,7 @@ fn catalog_comparison_reports_complete_key_union() {
     assert!(added.report.contains("\tadded\t"));
 
     let mut changed_entries = entries.clone();
-    changed_entries[0].1.root.input_witness_len += 1;
+    changed_entries[0].1.root.input_witness_len *= 2;
     let changed = compare_catalog_rows(&spec, table, &changed_entries).expect("changed report");
     assert_eq!(changed.changed_rows, 1);
     assert!(changed.report.contains("\tchanged\t"));
@@ -244,19 +244,13 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     schedule.validate_structure().expect("valid W8R2 schedule");
 
     assert_eq!(
-        schedule.root.params.group.opening_method,
+        schedule.root.params.opening_method(),
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         },
     );
     assert_eq!(schedule.root.params.precommitted_groups().len(), 2);
-    let shared_opening_dimension = schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .role_dims()
-        .d_d();
+    let shared_opening_dimension = schedule.root.params.role_dims().d_d();
     let mut expected_precommit_signatures = Vec::new();
     for (index, group) in schedule
         .root
@@ -267,11 +261,11 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
-        } = group.commitment.opening.opening_method
+        } = group.opening.opening_method
         else {
             panic!("packing root must use packing for every precommitted group");
         };
-        let d_a = group.commitment.layout.inner.matrix.ring_dimension();
+        let d_a = group.profile.inner.matrix.ring_dimension();
         let geometry = akita_types::SubringCoefficientPackingGeometry::try_new(
             spec.policy.claim_ext_degree,
             d_a,
@@ -282,7 +276,6 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
             .partial_base_field_width()
             .is_multiple_of(shared_opening_dimension));
         group
-            .commitment
             .d_segment_width(spec.policy.claim_ext_degree, shared_opening_dimension)
             .expect("group-local packing width at the shared D dimension");
         expected_precommit_signatures.push(format!(
@@ -299,7 +292,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
         .first()
         .expect("W8R2 row has a recursive packing fold");
     assert_eq!(
-        first_recursive.params.group.opening_method,
+        first_recursive.params.opening_method(),
         OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension: 64,
         },
@@ -307,8 +300,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     assert_eq!(
         first_recursive
             .params
-            .setup_prefix
-            .as_ref()
+            .setup_prefix()
             .expect("first recursive fold consumes the setup prefix")
             .opening
             .opening_method,
@@ -318,7 +310,7 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     );
     assert!(schedule.recursive_folds[1..]
         .iter()
-        .all(|fold| fold.params.group.opening_method == OpeningMethod::EvaluationTrace));
+        .all(|fold| fold.params.opening_method() == OpeningMethod::EvaluationTrace));
 
     let policy_signature =
         catalog_policy_signature(&spec, &schedule).expect("W8R2 policy signature");
@@ -387,8 +379,6 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
     activation_changed
         .root
         .params
-        .final_group
-        .commitment
         .witness_chunk
         .num_activated_levels = 1;
     assert_ne!(

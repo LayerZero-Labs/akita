@@ -8,7 +8,7 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::CommitmentConfig;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_error::checked;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -173,7 +173,7 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
             .expanded
-            .seed
+            .descriptor
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         bytes.push(u8::try_from(layout.setup_matrix_padding).map_err(|_| {
             SerializationError::InvalidData(
@@ -235,7 +235,7 @@ where
             self.commitment.serialized_size(BLOB_COMPRESS),
             self.verifier_setup
                 .expanded
-                .seed
+                .descriptor
                 .serialized_size(BLOB_COMPRESS),
         ])
         .ok_or_else(|| {
@@ -642,9 +642,19 @@ where
             .profiles()
             .opening_layout()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let expected_shape =
-            canonical_proof_shape(resolved.schedule(), &root_opening_layout, E::DEGREE)
-                .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+            resolved.schedule(),
+            &root_opening_layout,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        proof_shape.validate_grinding_plan(&grinding_plan)?;
+        let expected_shape = canonical_proof_shape(
+            resolved.schedule(),
+            &root_opening_layout,
+            E::DEGREE,
+            &grinding_plan,
+        )
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         if *proof_shape != expected_shape {
             return Err(SerializationError::InvalidData(
                 "proof shape does not match the selected canonical schedule".to_string(),

@@ -178,11 +178,12 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     basis: BasisMode,
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if prepared_points.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSize {
@@ -232,9 +233,9 @@ where
     if reduction.is_none() {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(
@@ -328,11 +329,12 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
     F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -340,9 +342,9 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(

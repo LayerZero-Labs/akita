@@ -314,7 +314,7 @@ where
         max_num_rounds,
         max_degree,
         transcript,
-        &mut sample_challenge,
+        |transcript| Ok(sample_challenge(transcript)),
     )?;
 
     Ok(BatchedSumcheckRoundResult {
