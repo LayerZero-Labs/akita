@@ -79,6 +79,39 @@ same modulus profile and ring dimension whose coefficient bound is at least
 remains the one-response target set; response-chunk count is not an independent
 table axis. Selective L2 rows remain one-chunk cells.
 
+#### Deferred part-indexed relation alternative
+
+The factor `C` is required by the implemented relation, but it is not inherent
+to reusing one public A matrix across chunks. A future protocol change could
+retain separate carrier-consistency and A equations for every response chunk,
+while continuing to aggregate the additive public-image, opening, and
+compression equations. The chunk-indexed logical rows could still be
+random-batched into one sumcheck and could all reuse the same physical A
+matrix.
+
+With those local equations, extraction can select one differing chunk. Its
+accepted response-difference diameter is `2^t - 1`, so the corresponding raw A
+collision target would be
+
+```text
+B_A_local = 4 * ||c||_1 * (2^t - 1).
+```
+
+This improvement cannot be obtained by changing only the security proof or
+the table lookup. Under the current shared equation, adding a vector `u` to one
+accepted chunk and subtracting it from another leaves the aggregate response
+unchanged whenever both modified chunks remain in range. Local consistency and
+A rows would instead expose the two residuals separately.
+
+This PR does not implement that alternative. It would require part-indexed
+ring-relation and quotient rows, proof and schedule identity changes, planner
+and generated-table regeneration, and negative tests for cross-chunk
+cancellation. In particular, the quotient witnesses are bound before the row
+batching challenges in the current transcript, so a single quotient formed
+after random batching is not a drop-in replacement. Until the prover and
+verifier enforce the local relation, every multi-chunk coefficient route must
+retain the factor `C` above.
+
 The production challenge masses are `14, 16, 19, 23, 31, 51`; the D64
 selective-L2 shell additionally contributes `53`. A ring dimension retains
 only the masses reachable through its evaluation-trace or coefficient-packing

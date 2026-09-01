@@ -850,10 +850,23 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
     let mut params = audited_grouped_level_params();
-    let prefix_params = *params
-        .precommitted_groups()
-        .last()
-        .expect("synthetic prefix params");
+    let mut cache = SetupPrefixSearchCache::default();
+    let prefix_params = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            policy: &policy,
+            opening: PlannerOpeningCandidate::evaluation_trace(params.fold_challenge_config()),
+            log_basis_open: params.open().digits.log_basis,
+            n_prefix: 1 << 6,
+            num_chunks: 1,
+            inner_ring_dimension: params.d_a(),
+            outer_ring_dimension: params.outer().matrix.ring_dimension(),
+        },
+    )
+    .expect("setup-prefix candidates")
+    .into_iter()
+    .next()
+    .expect("synthetic prefix params");
     params
         .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
             1 << 6,
