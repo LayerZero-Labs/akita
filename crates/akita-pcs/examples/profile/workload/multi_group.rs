@@ -18,8 +18,9 @@ use akita_prover::{
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
-    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
+    dispatch_for_field, AkitaSetupSeed, BasisMode, FoldSchedule, FpExtEncoding,
+    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims, PolynomialGroupLayout,
+    SetupContributionMode,
 };
 use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
@@ -198,8 +199,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         setup,
     ) = {
         let t0 = Instant::now();
-        let mut setup =
-            AkitaCommitmentScheme::<ProofCfg>::setup_prover(final_num_vars, total_polys).unwrap();
+        let mut setup = AkitaCommitmentScheme::<ProofCfg>::setup_prover(
+            final_num_vars,
+            total_polys,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();

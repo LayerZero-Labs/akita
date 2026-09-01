@@ -17,9 +17,9 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 use akita_types::{
     canonical_proof_shape, dispatch_for_field, AkitaBatchedProof, AkitaExpandedSetup,
-    AkitaScheduleLookupKey, AkitaVerifierSetup, CommittedGroupBatchProfile, FlatMatrix,
-    GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry, SetupPrefixSlotId,
-    SetupPrefixVerifierRegistry, SetupSumcheckProof,
+    AkitaScheduleLookupKey, AkitaSetupSeed, AkitaVerifierSetup, CommittedGroupBatchProfile,
+    FlatMatrix, GroupBatchStatement, PolynomialGroupLayout, SetupPrefixProverRegistry,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupSumcheckProof,
 };
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -567,8 +567,9 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         );
         on_schedule(&schedule);
 
-        let setup = Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
-            .expect("recursive setup");
+        let setup =
+            Recursive::<BaseCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE, AkitaSetupSeed::DEFAULT)
+                .expect("recursive setup");
         assert!(
             !setup.prefix_slots.is_empty(),
             "recursive setup must precompute setup-prefix slots for the generated profile"

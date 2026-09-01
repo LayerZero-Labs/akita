@@ -49,10 +49,17 @@ exists to give the verifier a concrete public value to check.
 
 The configuration determines which generated schedules the application may
 use. `setup_prover` allocates enough public matrix data for the declared maximum
-number of variables and polynomials in one group.
+number of variables and polynomials in one group. The third argument is the
+public setup seed; `AkitaSetupSeed::DEFAULT` is the stable protocol default.
+The [setup chapter](./setup-runtime.md#choosing-a-setup-identity) covers
+choosing a deployment-specific identity instead.
 
 ```rust
-let setup = AkitaCommitmentScheme::<Config>::setup_prover(NUM_VARS, 1)?;
+let setup = AkitaCommitmentScheme::<Config>::setup_prover(
+    NUM_VARS,
+    1,
+    AkitaSetupSeed::DEFAULT,
+)?;
 let backend = CpuBackend::DEFAULT;
 let prepared = backend.prepare_setup(&setup)?;
 let stack = UniformProverStack::uniform(

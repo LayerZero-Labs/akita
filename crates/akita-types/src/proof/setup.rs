@@ -42,6 +42,22 @@ pub struct AkitaSetupSeed {
 }
 
 impl AkitaSetupSeed {
+    /// Stable protocol-default public-matrix identity.
+    ///
+    /// Deployments that do not mint their own identity share this seed, so it
+    /// must never change: every setup, cache entry, and transcript derived from
+    /// it would otherwise silently move.
+    pub const DEFAULT: Self = {
+        let mut seed = [0u8; 32];
+        let entropy = 0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes();
+        let mut index = 0;
+        while index < entropy.len() {
+            seed[index] = entropy[index];
+            index += 1;
+        }
+        Self::shake256_paged_v1(seed)
+    };
+
     /// Construct a v1 paged SHAKE256 public-matrix identity.
     #[must_use]
     pub const fn shake256_paged_v1(seed: [u8; 32]) -> Self {
@@ -49,6 +65,22 @@ impl AkitaSetupSeed {
             derivation: PublicMatrixDerivation::Shake256PagedV1,
             seed,
         }
+    }
+
+    /// Sample a fresh public-matrix identity from `rng`.
+    ///
+    /// The caller supplies the entropy source, which keeps OS-entropy
+    /// dependencies out of the verifier and RISC-V guest dependency graphs. A
+    /// predictable seed lets whoever predicted it choose the public matrix,
+    /// hence the `CryptoRng` bound.
+    ///
+    /// Sample once at deployment time and record the result: setup caches are
+    /// keyed by seed digest, so a seed sampled per run never hits its cache.
+    #[must_use]
+    pub fn from_rng(rng: &mut (impl RngCore + CryptoRng)) -> Self {
+        let mut seed = [0u8; 32];
+        rng.fill_bytes(&mut seed);
+        Self::shake256_paged_v1(seed)
     }
 }
 
@@ -146,7 +178,7 @@ impl<F: Field> AkitaVerifierSetup<F> {
         expanded: Arc<AkitaExpandedSetup<F>>,
         prefix_slots: SetupPrefixVerifierRegistry<F>,
     ) -> Result<Self, AkitaError> {
-        if prefix_slots.setup_seed() != &expanded.descriptor.setup_seed {
+        if prefix_slots.setup_seed() != expanded.setup_seed() {
             return Err(AkitaError::InvalidSetup(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -156,6 +188,12 @@ impl<F: Field> AkitaVerifierSetup<F> {
             prefix_slots,
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         })
+    }
+
+    /// Semantic identity of the public field stream this setup was derived from.
+    #[must_use]
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        self.expanded.setup_seed()
     }
 
     /// In-memory byte footprint of verifier NTT prefixes materialized so far.
@@ -182,7 +220,7 @@ impl<F: Field + CanonicalEncoding> AkitaVerifierSetup<F> {
         schedule_row_digest: crate::ScheduleRowDigest,
     ) -> Result<(), AkitaError> {
         let metadata = crate::prepared_verifier_ntt_cache_metadata(artifact)?;
-        let setup_seed_digest = crate::setup_seed_digest(&self.expanded.descriptor.setup_seed)
+        let setup_seed_digest = crate::setup_seed_digest(self.setup_seed())
             .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
         let expected_binding = crate::PreparedVerifierNttCacheBinding {
             setup_seed_digest,
@@ -253,6 +291,12 @@ impl<F: Field> AkitaExpandedSetup<F> {
         &self.descriptor
     }
 
+    /// Semantic identity of the public field stream backing this setup.
+    #[must_use]
+    pub fn setup_seed(&self) -> &AkitaSetupSeed {
+        &self.descriptor.setup_seed
+    }
+
     /// Shared coefficient-form matrix backing all setup roles.
     #[must_use]
     pub fn shared_matrix(&self) -> &FlatMatrix<F> {
@@ -282,14 +326,6 @@ where
         out.check()?;
         Ok(out)
     }
-}
-
-/// Fixed public seed for deterministic, reproducible setup.
-#[must_use]
-pub fn sample_akita_setup_seed() -> AkitaSetupSeed {
-    let mut seed = [0u8; 32];
-    seed[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
-    AkitaSetupSeed::shake256_paged_v1(seed)
 }
 
 /// Derive an exact flat prefix of public field elements from a seed.
@@ -655,7 +691,7 @@ impl<F: Field + CanonicalEncoding + Valid + AkitaDeserialize<Context = ()>> Akit
 impl<F: Field + CanonicalEncoding + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.setup_seed() != &self.expanded.descriptor.setup_seed {
+        if self.prefix_slots.setup_seed() != self.setup_seed() {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -1064,6 +1100,84 @@ mod tests {
                 87_058_165_705_274_552_119_584_186_413_843_782_366,
                 214_441_952_004_995_181_775_787_633_634_410_275_750,
             ]
+        );
+    }
+
+    #[test]
+    fn default_seed_is_the_pinned_protocol_constant() {
+        let mut expected = [0u8; 32];
+        expected[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABEu64.to_le_bytes());
+
+        assert_eq!(AkitaSetupSeed::DEFAULT.seed, expected);
+        assert_eq!(
+            AkitaSetupSeed::DEFAULT.derivation,
+            PublicMatrixDerivation::Shake256PagedV1
+        );
+        // Pins the serialized encoding too: every cache filename and transcript
+        // setup identity moves if this digest moves.
+        assert_eq!(
+            crate::setup_seed_digest(&AkitaSetupSeed::DEFAULT).expect("digest"),
+            [
+                0x20, 0x75, 0x02, 0x83, 0xdc, 0x25, 0xa4, 0xd2, 0x2e, 0x0a, 0x82, 0x20, 0xad, 0x9d,
+                0x0f, 0xf8, 0xbd, 0x4f, 0x54, 0x72, 0x67, 0x41, 0xd1, 0xaa, 0x86, 0xbc, 0x91, 0x19,
+                0x3a, 0x1d, 0xc6, 0x88,
+            ]
+        );
+    }
+
+    #[test]
+    fn sampled_seeds_differ_and_carry_the_current_derivation() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(0xAC17_A5EE_D001);
+        let first = AkitaSetupSeed::from_rng(&mut rng);
+        let second = AkitaSetupSeed::from_rng(&mut rng);
+
+        assert_ne!(first.seed, second.seed);
+        assert_ne!(first, AkitaSetupSeed::DEFAULT);
+        assert_eq!(first.derivation, PublicMatrixDerivation::Shake256PagedV1);
+        assert_eq!(second.derivation, PublicMatrixDerivation::Shake256PagedV1);
+    }
+
+    #[test]
+    fn sampled_seed_survives_a_serialization_roundtrip() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(0xAC17_A5EE_D002);
+        let sampled = AkitaSetupSeed::from_rng(&mut rng);
+
+        let mut bytes = Vec::new();
+        sampled
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize sampled seed");
+        let decoded = AkitaSetupSeed::deserialize_with_mode(
+            bytes.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .expect("deserialize sampled seed");
+
+        assert_eq!(decoded, sampled);
+    }
+
+    #[test]
+    fn sampled_seeds_derive_different_public_matrices() {
+        use rand::rngs::StdRng;
+        use rand::SeedableRng;
+
+        let mut rng = StdRng::seed_from_u64(0xAC17_A5EE_D003);
+        let first = AkitaSetupSeed::from_rng(&mut rng);
+        let second = AkitaSetupSeed::from_rng(&mut rng);
+
+        let first_matrix = derive_public_matrix_prefix::<F>(4 * D, &first);
+        let second_matrix = derive_public_matrix_prefix::<F>(4 * D, &second);
+
+        assert_ne!(
+            first_matrix.as_field_slice(),
+            second_matrix.as_field_slice()
         );
     }
 

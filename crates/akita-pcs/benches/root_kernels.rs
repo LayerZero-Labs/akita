@@ -8,7 +8,7 @@ use akita_prover::kernels::linear::{
     mat_vec_mul_ntt_i8_dense_single_row,
 };
 use akita_prover::DensePoly;
-use akita_types::{prepare_ntt_cache, NttCacheMode};
+use akita_types::{prepare_ntt_cache, AkitaSetupSeed, NttCacheMode};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use jolt_field::{CanonicalEncoding, Ring};
 use rand::rngs::StdRng;
@@ -46,7 +46,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     .root
     .params
     .clone();
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 1, AkitaSetupSeed::DEFAULT).unwrap();
     let total = setup.expanded.shared_matrix.num_field_elements() / D;
     let ntt_shared = prepare_ntt_cache(
         setup

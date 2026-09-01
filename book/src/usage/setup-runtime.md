@@ -21,16 +21,56 @@ The public matrix stream has one identity across ring dimensions. A generated
 schedule takes the exact rows, widths, and dimensions needed by each operation
 from a prefix of that stream.
 
+## Choosing a setup identity
+
+Setup is a deterministic function of the public seed and the requested shape, so
+the seed is what makes two machines agree. A deployment picks one of two ways to
+get it.
+
+`AkitaSetupSeed::DEFAULT` is the stable protocol default. Deployments that do
+not need their own identity share it, and it never changes.
+
+`AkitaSetupSeed::from_rng` mints a deployment-specific identity. The caller
+supplies the entropy source, so Akita never reaches for OS randomness itself and
+the verifier's dependency graph stays free of it.
+
+```rust
+let setup_seed = AkitaSetupSeed::from_rng(&mut OsRng);
+```
+
+Sample once, at deployment time, and record the result. Do not sample on the
+proving path: cache entries are keyed by seed digest, so a fresh seed always
+misses its cache and regenerates the whole public matrix. The
+`generate_setup` example in `akita-pcs` shows the intended shape — sample,
+print the seed and its digest for recording, then build setup.
+
+Both prover and verifier then read that recorded seed from their own trusted
+configuration. Akita logs the seed when it builds setup, which gives operators
+one value to compare across machines. No error names the seed, so a mismatch is
+otherwise invisible until an algebraic check fails for no stated reason.
+
+The seed is public but it is not proof data. A verifier must take it from
+trusted configuration and never from a proof, because whoever chooses the seed
+chooses the public matrix.
+
 ## Build prover setup once
 
 The normal entry point takes the largest number of variables and largest group
-size that the host plans to support.
+size that the host plans to support, plus the setup identity to derive from.
 
 ```rust
 let setup = AkitaCommitmentScheme::<Config>::setup_prover(
     max_num_vars,
     max_polynomials_in_one_group,
+    setup_seed,
 )?;
+```
+
+A setup carries its own identity, so code holding only the artifact can still
+report which seed produced it:
+
+```rust
+let setup_seed = setup.setup_seed();
 ```
 
 A larger covering setup can serve a smaller proof under the same public seed.
@@ -96,6 +136,35 @@ path.
 The complete setup prefix commitment registry remains part of verifier setup.
 Those commitments authenticate the offloaded public setup contributions.
 
+## Verifying on a separate machine
+
+A verifier that never receives a setup artifact rebuilds it from the recorded
+seed. There is no separate entry point: it constructs setup exactly as the
+prover does, then narrows it.
+
+```rust
+let setup = AkitaCommitmentScheme::<Config>::setup_prover(
+    max_num_vars,
+    max_polynomials_in_one_group,
+    configured_seed,
+)?;
+let verifier_setup =
+    AkitaCommitmentScheme::<Config>::setup_verifier(&setup)?;
+```
+
+Two costs are worth knowing before choosing this over shipping a setup package.
+
+Construction is a one-time startup cost. With `disk-persistence` the public
+matrix and prefix registry are cached per seed, so later runs load instead of
+rederiving.
+
+For a recursive configuration, that first construction also commits to the
+required setup prefixes. It runs a backend prepare and a commitment pass over
+the prover-sized matrix before the narrowed verifier view is taken, so peak
+memory during setup construction is prover-sized even though the retained
+verifier setup is smaller. A deployment that cannot afford that peak should
+distribute an authenticated verifier package instead.
+
 ## Reuse and release CPU caches
 
 Prepared state stays warm by default. That is the right policy for a service
@@ -120,6 +189,11 @@ Versioned filenames prevent an older setup format from being accepted as a
 current entry. If a cache entry is missing or invalid, Akita can regenerate the
 public data from the seed.
 
+Cache identity includes the setup seed, so two seeds on one machine keep
+separate entries and neither invalidates the other. Loading also rechecks the
+seed recorded inside each file, so a stale or mismatched entry is rejected and
+regenerated rather than used.
+
 A deployment that distributes verifier setup should authenticate the package
 or regenerate it from the public seed. This gives every verifier the same
 public setup identity while allowing each machine to choose its own local
@@ -143,6 +217,8 @@ Share protocol identity and choose compute state locally.
 
 - Prover and verifier packages must agree on the setup seed and prefix
   commitments.
+- The seed is trusted configuration on both sides. A verifier must never take it
+  from a proof.
 - A prover may materialize a larger covering matrix prefix.
 - Each machine may build its own prepared transform caches.
 - Cache release and persistence policies may follow the host's measured memory

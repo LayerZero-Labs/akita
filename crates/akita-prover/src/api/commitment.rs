@@ -247,17 +247,18 @@ where
             "all polynomials in a batched commit must have the same num_vars".to_string(),
         ));
     }
-    if polys.len() > setup.descriptor.max_num_batched_polys {
+    if polys.len() > setup.descriptor().max_num_batched_polys {
         return Err(AkitaError::InvalidInput(format!(
             "commit received {} polynomials but setup supports at most {}",
             polys.len(),
-            setup.descriptor.max_num_batched_polys
+            setup.descriptor().max_num_batched_polys
         )));
     }
-    if num_vars > setup.descriptor.max_num_vars {
+    if num_vars > setup.descriptor().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "commit received a polynomial with {} variables but setup supports at most {}",
-            num_vars, setup.descriptor.max_num_vars
+            num_vars,
+            setup.descriptor().max_num_vars
         )));
     }
     Ok(akita_types::PolynomialGroupLayout::new(

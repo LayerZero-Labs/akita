@@ -2,7 +2,9 @@ use super::*;
 
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp32;
-use akita_types::{basis_weights, AkitaScheduleLookupKey, OpeningMethod, PolynomialGroupLayout};
+use akita_types::{
+    basis_weights, AkitaScheduleLookupKey, AkitaSetupSeed, OpeningMethod, PolynomialGroupLayout,
+};
 use jolt_field::ExtField;
 
 type PackingCfg = crate::test_support::RootCoefficientPackingConfig<fp32::Dense>;
@@ -165,7 +167,8 @@ fn fixed_root_packing_round_trips_in_both_bases() {
             let polynomial =
                 akita_prover::MultilinearPolynomial::<PackingField, usize>::dense(polynomial);
 
-            let mut setup = PackingScheme::setup_prover(num_vars, 1).unwrap();
+            let mut setup =
+                PackingScheme::setup_prover(num_vars, 1, AkitaSetupSeed::DEFAULT).unwrap();
             let setup_prefix = row.schedule().recursive_folds[0]
                 .params
                 .setup_prefix()

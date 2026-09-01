@@ -374,8 +374,7 @@ mod tests {
         .expect("setup-prefix compression plan")
         .terminal_coefficients();
         level_params.set_setup_prefix(Some(id)).unwrap();
-        let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(expanded.descriptor.setup_seed.clone());
+        let mut prefix_slots = SetupPrefixVerifierRegistry::new(expanded.setup_seed().clone());
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.slot_id().expect("setup prefix group"),

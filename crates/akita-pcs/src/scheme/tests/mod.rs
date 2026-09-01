@@ -13,7 +13,8 @@ use akita_types::CommittedGroupParams;
 use akita_types::DigitRangePlan;
 use akita_types::ExtensionOpeningReductionProof;
 use akita_types::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field, RingVec,
+    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    AkitaSetupSeed, RingVec,
 };
 use akita_types::{
     AkitaBatchedProofShape, LevelProofShape, NextWitnessBindingShape, TerminalLevelProofShape,
@@ -162,7 +163,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = Scheme::setup_prover(full_num_vars, 1).unwrap();
+    let setup = Scheme::setup_prover(full_num_vars, 1, AkitaSetupSeed::DEFAULT).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,

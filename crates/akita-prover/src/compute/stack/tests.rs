@@ -3,20 +3,24 @@ use crate::compute::CompressionComputeBackend;
 use crate::AkitaProverSetup;
 use crate::CpuBackend;
 use akita_error::AkitaError;
-use akita_types::SetupMatrixCapacity;
+use akita_types::{AkitaSetupSeed, SetupMatrixCapacity};
 use jolt_field::Fp64;
 
 type F = Fp64<4294967197>;
-fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
-    SetupMatrixCapacity { num_field_elements }
+fn test_setup(num_field_elements: usize) -> AkitaProverSetup<F> {
+    AkitaProverSetup::<F>::generate_with_capacity(
+        8,
+        1,
+        SetupMatrixCapacity { num_field_elements },
+        AkitaSetupSeed::DEFAULT,
+    )
+    .expect("test setup")
 }
 
 #[test]
 fn operation_ctx_rejects_mismatched_expanded_setup() {
-    let setup_a =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup a");
-    let setup_b =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192)).expect("setup b");
+    let setup_a = test_setup(4096);
+    let setup_b = test_setup(8192);
     assert_ne!(setup_a.expanded.descriptor(), setup_b.expanded.descriptor());
 
     let prepared_a = CpuBackend::DEFAULT
@@ -30,8 +34,7 @@ fn operation_ctx_rejects_mismatched_expanded_setup() {
 
 #[test]
 fn operation_ctx_accepts_matching_expanded_setup() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     OperationCtx::new(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("matching expanded metadata should validate");
@@ -88,8 +91,7 @@ fn all_cluster_requirements() -> NttExecutionRequirements {
 
 #[test]
 fn heterogeneous_stack_accepts_distinct_operation_clusters() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let commit_backend = CommitCluster;
     let ring_backend = RingSwitchCluster;
@@ -114,8 +116,7 @@ fn heterogeneous_stack_accepts_distinct_operation_clusters() {
 
 #[test]
 fn heterogeneous_stack_implements_level_prove_stacks() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let commit_backend = CommitCluster;
     let ring_backend = RingSwitchCluster;
@@ -136,8 +137,7 @@ fn heterogeneous_stack_implements_level_prove_stacks() {
 
 #[test]
 fn prewarm_routes_only_to_declared_physical_cluster_owner() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let commit_prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("commit prepared");
@@ -213,8 +213,7 @@ fn prewarm_routes_only_to_declared_physical_cluster_owner() {
 
 #[test]
 fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -249,8 +248,7 @@ fn prewarm_and_metrics_skip_streamed_cpu_ring_switch_slots() {
 
 #[test]
 fn configured_ring_switch_limit_drives_prewarm_and_metrics_boundary() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let backend =
         CpuBackend::with_resource_limits(5, CpuBackend::DEFAULT_COMMIT_SCRATCH_BYTES_PER_WORKER)
             .unwrap();
@@ -288,8 +286,7 @@ fn configured_ring_switch_limit_drives_prewarm_and_metrics_boundary() {
 
 #[test]
 fn prewarm_preserves_cached_operation_sharing_a_route_with_streamed_operation() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -336,8 +333,7 @@ fn prewarm_preserves_cached_operation_sharing_a_route_with_streamed_operation() 
 
 #[test]
 fn prewarm_max_joins_retained_requests_by_physical_owner_before_building() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -381,8 +377,7 @@ fn prewarm_max_joins_retained_requests_by_physical_owner_before_building() {
 
 #[test]
 fn fused_operation_extent_routes_all_domains_together() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -411,8 +406,7 @@ fn fused_operation_extent_routes_all_domains_together() {
 
 #[test]
 fn planned_metrics_deduplicate_all_shared_clusters() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -427,8 +421,7 @@ fn planned_metrics_deduplicate_all_shared_clusters() {
 
 #[test]
 fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("uniform stack");
@@ -461,8 +454,7 @@ fn root_lifecycle_retains_by_default_and_explicit_release_deduplicates_owner() {
 
 #[test]
 fn planned_metrics_keep_four_independent_clusters_separate() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let commit = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("commit prepared");
@@ -510,8 +502,7 @@ fn tiered_prove_stacks_rejects_empty_table() {
 
 #[test]
 fn tiered_prove_stacks_rejects_length_mismatch() {
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup");
+    let setup = test_setup(4096);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack = TestUniformStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
         .expect("stack");
@@ -522,10 +513,8 @@ fn tiered_prove_stacks_rejects_length_mismatch() {
 
 #[test]
 fn tiered_prove_stacks_rejects_non_increasing_bounds() {
-    let setup_a =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup a");
-    let setup_b =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192)).expect("setup b");
+    let setup_a = test_setup(4096);
+    let setup_b = test_setup(8192);
     let prepared_a = CpuBackend::DEFAULT
         .prepare_setup(&setup_a)
         .expect("prepared a");
@@ -545,10 +534,8 @@ fn tiered_prove_stacks_rejects_non_increasing_bounds() {
 
 #[test]
 fn tiered_prove_stacks_selects_by_fold_level() {
-    let setup_a =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096)).expect("setup a");
-    let setup_b =
-        AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192)).expect("setup b");
+    let setup_a = test_setup(4096);
+    let setup_b = test_setup(8192);
     let prepared_a = CpuBackend::DEFAULT
         .prepare_setup(&setup_a)
         .expect("prepared a");

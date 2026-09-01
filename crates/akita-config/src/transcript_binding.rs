@@ -53,7 +53,7 @@ where
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
-            &setup.descriptor().setup_seed,
+            setup.setup_seed(),
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),

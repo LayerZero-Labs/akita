@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
     seed: usize,
@@ -105,7 +106,8 @@ fn fp32_ext4_multiblock_l2_pcs_roundtrip_and_stage2_rejections() {
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
-        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("L2 prover setup");
+        let setup =
+            Scheme::setup_prover(NUM_VARS, 1, AkitaSetupSeed::DEFAULT).expect("L2 prover setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepared L2 setup");
@@ -246,7 +248,8 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
             .map(|i| E::from_u64((i as u64).wrapping_mul(5).wrapping_add(1)))
             .collect::<Vec<_>>();
         let opening = onehot_opening_lagrange(&poly, &point);
-        let setup = Scheme::setup_prover(NUM_VARS, 1).expect("terminal L2 prover setup");
+        let setup = Scheme::setup_prover(NUM_VARS, 1, AkitaSetupSeed::DEFAULT)
+            .expect("terminal L2 prover setup");
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&setup)
             .expect("prepared terminal L2 setup");

@@ -184,7 +184,7 @@ where
 fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
     use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
     use akita_types::{
-        sample_akita_setup_seed, AkitaCommitmentHint, AkitaSetupDescriptor, CommittedGroupParams,
+        AkitaCommitmentHint, AkitaSetupDescriptor, AkitaSetupSeed, CommittedGroupParams,
         FlatMatrix, GroupCommitPhaseParams, InnerCommitMatrixParams, OuterCommitMatrixParams,
         SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SisModulusProfileId,
         EXTENSION_OPENING_REDUCTION_DEGREE,
@@ -238,7 +238,7 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
                 max_num_vars: 9,
                 max_num_batched_polys: 1,
                 num_field_elements: setup_evals.len(),
-                setup_seed: sample_akita_setup_seed(),
+                setup_seed: AkitaSetupSeed::DEFAULT,
             },
             FlatMatrix::from_flat_data(setup_evals.clone()),
         ),

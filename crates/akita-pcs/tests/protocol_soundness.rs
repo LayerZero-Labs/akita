@@ -12,7 +12,7 @@ use akita_prover::OneHotPoly;
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
-use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
+use akita_types::{lagrange_weights, AkitaSetupSeed, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
     CommittedGroupBatchProfile, GroupBatchStatement, OpeningClaims, OpeningMethod,
@@ -207,7 +207,7 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -407,7 +407,8 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(NV);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).unwrap();
+        let setup =
+            AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2, AkitaSetupSeed::DEFAULT).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -524,7 +525,7 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
             err,
             akita_error::AkitaError::UnsupportedSchedule(_)
         ));
-        let setup_err = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1)
+        let setup_err = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT)
             .expect_err("tiny capacity must not produce a prover setup");
         assert!(
             matches!(setup_err, akita_error::AkitaError::InvalidSetup(_)),
@@ -576,8 +577,12 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup =
-            AkitaCommitmentScheme::<Cfg>::setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+            nv,
+            SAME_POINT_ONEHOT_BATCH_SIZE,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -701,8 +706,12 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             })
             .collect();
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(EXT4_NV, EXT4_BATCH)
-            .expect("fp32 prover setup");
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+            EXT4_NV,
+            EXT4_BATCH,
+            AkitaSetupSeed::DEFAULT,
+        )
+        .expect("fp32 prover setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -955,7 +964,8 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
             dense_lagrange_opening_from_evals(&evals_b, &point),
         ];
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2, AkitaSetupSeed::DEFAULT)
+            .expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -1104,7 +1114,8 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             })
             .collect();
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2).expect("setup");
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(NV, 2, AkitaSetupSeed::DEFAULT)
+            .expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,

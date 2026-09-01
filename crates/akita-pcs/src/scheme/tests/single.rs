@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 #[test]
 fn verify_rejects_wrong_opening() {
     let alpha = D.trailing_zeros() as usize;
@@ -8,7 +9,7 @@ fn verify_rejects_wrong_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = Scheme::setup_prover(num_vars, 1).unwrap();
+    let setup = Scheme::setup_prover(num_vars, 1, AkitaSetupSeed::DEFAULT).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,

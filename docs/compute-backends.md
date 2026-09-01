@@ -7,7 +7,7 @@ scheduling remain follow-up work.
 ## Ownership
 
 - `AkitaExpandedSetup<F>` owns setup data shared with verifier/protocol code:
-  seed, shared matrix, descriptor digest, and setup shape.
+  the setup descriptor (public seed plus setup shape) and the shared matrix.
 - `AkitaProverSetup<F>` is a D-free prover setup wrapper around expanded setup.
   It stores a flat public-matrix prefix and does not own CPU NTT caches, device
   buffers, command queues, or any backend-prepared state.
@@ -27,7 +27,8 @@ Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:
 
 ```rust
-let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys)?;
+let setup =
+    AkitaCommitmentScheme::<Cfg>::setup_prover(nv, num_polys, AkitaSetupSeed::DEFAULT)?;
 let backend = CpuBackend::DEFAULT;
 let prepared = backend.prepare_setup(&setup)?;
 let stack = UniformProverStack::uniform(

@@ -4,7 +4,7 @@ use crate::compute::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
 use akita_types::MAX_I8_LOG_BASIS;
-use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use akita_types::{AkitaSetupSeed, NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
 use jolt_field::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -18,15 +18,20 @@ fn setup_capacity(num_ring_elements: usize) -> SetupMatrixCapacity {
     }
 }
 
+fn test_setup(max_num_vars: usize, setup_seed: AkitaSetupSeed) -> AkitaProverSetup<F> {
+    AkitaProverSetup::<F>::generate_with_capacity(max_num_vars, 1, setup_capacity(D), setup_seed)
+        .unwrap()
+}
+
 pub(super) fn prepared() -> CpuPreparedSetup<F> {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = test_setup(8, AkitaSetupSeed::DEFAULT);
     CpuBackend::DEFAULT.prepare_setup(&setup).unwrap()
 }
 
 #[test]
 fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
-    let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let setup_b = AkitaProverSetup::<F>::generate_with_capacity(9, 1, setup_capacity(D)).unwrap();
+    let setup_a = test_setup(8, AkitaSetupSeed::DEFAULT);
+    let setup_b = test_setup(9, AkitaSetupSeed::DEFAULT);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup_a).unwrap();
 
     CpuBackend::DEFAULT
@@ -41,9 +46,26 @@ fn cpu_prepared_setup_identity_rejects_mismatched_setup() {
 }
 
 #[test]
+fn cpu_prepared_setup_identity_rejects_another_setup_seed() {
+    // Same shape and capacity, different public matrix: identity must track the
+    // setup seed and not just the requested dimensions.
+    let setup_a = test_setup(8, AkitaSetupSeed::DEFAULT);
+    let setup_b = test_setup(8, AkitaSetupSeed::shake256_paged_v1([7u8; 32]));
+    assert_ne!(setup_a.setup_seed(), setup_b.setup_seed());
+
+    let prepared = CpuBackend::DEFAULT.prepare_setup(&setup_a).unwrap();
+    assert!(
+        CpuBackend::DEFAULT
+            .validate_prepared_setup(&prepared, setup_b.expanded.as_ref())
+            .is_err(),
+        "prepared context must reject a setup derived from a different seed"
+    );
+}
+
+#[test]
 fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
-    let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
-    let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup_a = test_setup(8, AkitaSetupSeed::DEFAULT);
+    let setup_b = test_setup(8, AkitaSetupSeed::DEFAULT);
     assert!(!Arc::ptr_eq(&setup_a.expanded, &setup_b.expanded));
 
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup_a).unwrap();
@@ -71,7 +93,7 @@ fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
 
 #[test]
 fn prepare_setup_starts_with_empty_ntt_cache() {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = test_setup(8, AkitaSetupSeed::DEFAULT);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
     assert!(prepared.shared_ntt.lock().unwrap().is_empty());
@@ -79,7 +101,7 @@ fn prepare_setup_starts_with_empty_ntt_cache() {
 
 #[test]
 fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = test_setup(8, AkitaSetupSeed::DEFAULT);
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let partial_key = NttCacheKey {
         ring_d: D,
@@ -104,7 +126,7 @@ fn cpu_prepared_setup_builds_only_requested_ntt_slots() {
 
 #[test]
 fn concurrent_same_key_ntt_warm_builds_once() {
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_capacity(D)).unwrap();
+    let setup = test_setup(8, AkitaSetupSeed::DEFAULT);
     let prepared = CpuBackend::DEFAULT
         .prepare_expanded(setup.expanded.clone())
         .expect("empty prepared setup");

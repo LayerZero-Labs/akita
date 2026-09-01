@@ -25,8 +25,8 @@ use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::Valid;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, AkitaSetupSeed, BasisMode,
+    CommittedGroup, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
 use akita_verifier::batched_verify;
@@ -345,8 +345,9 @@ macro_rules! generate_scalar_case {
 
         tracing::info!(case = %case, num_vars, d = $d, "generating scalar OneHot recursion artifact");
         let t0 = Instant::now();
-        let mut prover_setup = AkitaCommitmentScheme::<ScalarCfg>::setup_prover(num_vars, 1)
-            .map_err(|err| format!("{} prover setup: {err}", case))?;
+        let mut prover_setup =
+            AkitaCommitmentScheme::<ScalarCfg>::setup_prover(num_vars, 1, AkitaSetupSeed::DEFAULT)
+                .map_err(|err| format!("{} prover setup: {err}", case))?;
         let prepared = CpuBackend::DEFAULT
             .prepare_setup(&prover_setup)
             .map_err(|err| format!("{} backend setup preparation: {err}", case))?;
@@ -631,8 +632,12 @@ fn run() -> Result<(), String> {
         .collect();
 
     let t0 = Instant::now();
-    let mut prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, PRE_GROUPS + FINAL_POLYS)
-        .map_err(|err| format!("prover setup failed: {err}"))?;
+    let mut prover_setup = AkitaCommitmentScheme::<Cfg>::setup_prover(
+        nv,
+        PRE_GROUPS + FINAL_POLYS,
+        AkitaSetupSeed::DEFAULT,
+    )
+    .map_err(|err| format!("prover setup failed: {err}"))?;
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&prover_setup)
         .map_err(|err| format!("backend setup preparation failed: {err}"))?;

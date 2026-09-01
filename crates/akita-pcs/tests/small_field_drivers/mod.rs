@@ -16,7 +16,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, Unifo
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    AkitaBatchedProof, AkitaSetupSeed, BasisMode, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 
 use akita_prover::SelectedProverOpeningData;
@@ -60,7 +61,8 @@ pub(super) fn single_group_roundtrip<Cfg>(
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
-    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).expect("setup");
+    let setup =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1, AkitaSetupSeed::DEFAULT).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =
         UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())

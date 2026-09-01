@@ -216,9 +216,9 @@ mod tests {
     use crate::AkitaProverSetup;
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
-        active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixCapacity,
-        SisModulusProfileId, SisTableKey,
+        active_setup_field_len, setup_prefix_precommitted_params, AkitaSetupSeed,
+        CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout,
+        OuterCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId, SisTableKey,
     };
     use jolt_field::Prime128OffsetA7F7 as F;
 
@@ -324,6 +324,7 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: setup_capacity_for(level_params, n_prefix).max(1),
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .expect("setup")
     }
@@ -337,6 +338,7 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: padded_ring_slots * 64,
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .expect("setup");
         let fields = setup.expanded.shared_matrix().as_field_slice();
@@ -386,6 +388,7 @@ mod tests {
             SetupMatrixCapacity {
                 num_field_elements: natural_len,
             },
+            AkitaSetupSeed::DEFAULT,
         )
         .expect("setup");
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();

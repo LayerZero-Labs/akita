@@ -685,8 +685,8 @@ mod tests {
     #[test]
     fn setup_prefix_openings_match_copied_dense_oracles() {
         use akita_types::{
-            coefficient_packing_partials, sample_akita_setup_seed, AkitaCommitmentHint,
-            AkitaSetupDescriptor, BasisMode, CommittedGroupParams, GroupCommitPhaseParams,
+            coefficient_packing_partials, AkitaCommitmentHint, AkitaSetupDescriptor,
+            AkitaSetupSeed, BasisMode, CommittedGroupParams, GroupCommitPhaseParams,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PreparedSubringCoefficientPackingPoint, SetupPrefixPublicCommitment, SetupPrefixSlotId,
             SisModulusProfileId, SubringCoefficientPackingGeometry,
@@ -738,7 +738,7 @@ mod tests {
                     max_num_vars: 9,
                     max_num_batched_polys: 1,
                     num_field_elements: fields.len(),
-                    setup_seed: sample_akita_setup_seed(),
+                    setup_seed: AkitaSetupSeed::DEFAULT,
                 },
                 FlatMatrix::from_flat_data(fields.clone()),
             ),

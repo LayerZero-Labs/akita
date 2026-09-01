@@ -120,7 +120,7 @@ mod tests {
         CompressionComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     };
     use crate::AkitaProverSetup;
-    use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+    use akita_types::{AkitaSetupSeed, NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
     use jolt_field::Prime64Offset59;
 
     type F = Prime64Offset59;
@@ -131,8 +131,13 @@ mod tests {
     }
 
     fn empty_prepared() -> CpuPreparedSetup<F> {
-        let setup =
-            AkitaProverSetup::<F>::generate_with_capacity(8, 1, setup_envelope(6 * D)).unwrap();
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            setup_envelope(6 * D),
+            AkitaSetupSeed::DEFAULT,
+        )
+        .unwrap();
         CpuBackend::DEFAULT
             .prepare_expanded(setup.expanded)
             .expect("empty prepared setup")

@@ -1,5 +1,6 @@
 use super::*;
 
+use akita_types::AkitaSetupSeed;
 #[test]
 fn selective_l2_proof_rejects_transcript_mutations() {
     const NV: usize = 30;
@@ -27,7 +28,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         })
         .collect();
 
-    let setup = L2Scheme::setup_prover(NV, BATCH_SIZE).expect("L2 setup");
+    let setup = L2Scheme::setup_prover(NV, BATCH_SIZE, AkitaSetupSeed::DEFAULT).expect("L2 setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared L2 setup");
