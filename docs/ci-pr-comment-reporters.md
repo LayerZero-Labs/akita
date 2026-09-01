@@ -14,10 +14,8 @@ The implementation lives in:
   write comments;
 - `scripts/ci_comment_workflow.py`, which owns the shared identity, size, and
   final-write policy; and
-- `scripts/ci_expensive_path_gate.py`, which computes the parent workflow's
-  fail-closed path and author decisions; and
-- `scripts/tests/test_ci_comment_workflows.py` and
-  `scripts/tests/test_ci_expensive_path_gate.py`, which exercise those policies.
+- `scripts/tests/test_ci_comment_workflows.py`, which exercises those policies
+  and the parent workflow's security-critical wiring.
 
 ## The short mental model
 
@@ -245,11 +243,13 @@ tests at the exact boundary and one byte beyond it.
 
 The parent workflows can execute contributor-controlled code, so expensive jobs
 use path filters, timeouts, bounded matrix fan-out, and author/repository policy.
-The path gate obtains the complete changed-file list before making a decision;
-an invalid commit ID or failed `git diff` fails the gate instead of being
-interpreted as an empty diff. Its trigger set includes Rust/build inputs plus the
-schedule generator and committed schedule-evidence paths consumed by the sole
-regeneration job.
+The path and author gate stays inline in the protected workflow definition; it
+must never execute gate policy from the pull-request checkout. It obtains the
+complete changed-file list in a regular command before making a decision, so an
+invalid commit ID or failed `git diff` fails the gate instead of being
+interpreted as an empty diff. Its trigger set includes Rust/build inputs plus
+the schedule generator and committed schedule-evidence paths consumed by the
+sole regeneration job.
 
 External fork authors need either an eligible repository association or the
 `ci-approved` label in addition to GitHub's repository-level Actions approval.
@@ -274,10 +274,10 @@ When changing either reporter:
 4. Keep optional comparisons independent from the primary report and from each
    other.
 5. Preserve exact head and base revalidation at the final write.
-6. Add regression cases to `scripts/tests/test_ci_comment_workflows.py` or
-   `scripts/tests/test_ci_expensive_path_gate.py` for malformed types, missing
-   associations, cross-fork identity, chronology, rebases, path selection, Git
-   failures, size boundaries, and failure isolation as applicable.
+6. Add regression cases to `scripts/tests/test_ci_comment_workflows.py` for
+   malformed types, missing associations, cross-fork identity, chronology,
+   rebases, path selection, Git failures, size boundaries, and failure isolation
+   as applicable.
 7. Run the script/workflow tests and documentation guardrails. Expensive
    benchmark, schedule-regeneration, and full Rust validation are not needed
    for reporter-only changes unless another changed path requires them.

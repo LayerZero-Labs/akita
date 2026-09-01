@@ -673,7 +673,11 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("ci-approved", self.ci_parent)
         self.assertIn("max-parallel: 2", self.ci_parent)
         self.assertIn("timeout-minutes: 30", self.ci_parent)
-        self.assertIn("scripts/ci_expensive_path_gate.py", self.ci_parent)
+        self.assertIn("scripts/generate-schedule-tables.sh", self.ci_parent)
+        self.assertIn("specs/evidence/subring-coefficient-packing/*", self.ci_parent)
+        self.assertIn('git diff --name-only "$BASE_SHA...$HEAD_SHA" >', self.ci_parent)
+        self.assertNotIn("done < <(git diff", self.ci_parent)
+        self.assertNotIn("scripts/ci_expensive_path_gate.py", self.ci_parent)
 
 
 if __name__ == "__main__":
