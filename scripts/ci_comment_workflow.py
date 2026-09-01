@@ -39,6 +39,8 @@ class ResolvedPullRequest:
     head_branch: str
     head_repository: str
     base_repository: str
+    base_branch: str = ""
+    base_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -204,12 +206,18 @@ def validate_pr_head(
         raise PolicyError(f"PR #{expected.number} head repository changed")
     if _repository_name(base.get("repo")).lower() != expected.base_repository.lower():
         raise PolicyError(f"PR #{expected.number} base repository changed")
+    if expected.base_branch and str(base.get("ref") or "") != expected.base_branch:
+        raise PolicyError(f"PR #{expected.number} base branch changed")
+    if expected.base_sha and str(base.get("sha") or "") != expected.base_sha:
+        raise PolicyError(f"PR #{expected.number} base commit changed")
 
 
 def run_matches_pr_identity(
-    run: dict[str, object], head_repository: str, pr_number: int
+    run: dict[str, object], head_repository: str, head_branch: str, pr_number: int
 ) -> bool:
     if _repository_name(run.get("head_repository")).lower() != head_repository.lower():
+        return False
+    if str(run.get("head_branch") or "") != head_branch:
         return False
     associations = run.get("pull_requests") or []
     if not isinstance(associations, list):
@@ -235,14 +243,16 @@ def profile_baselines_for_comment(
     artifact_name: str,
     head_sha: str,
     head_repository: str,
+    head_branch: str,
     pr_number: int,
     base_sha: str,
-    max_bytes: int,
+    max_input_bytes: int,
+    max_artifact_bytes: int,
 ) -> ProfileBaselines:
     """Authenticate fork-produced baseline identity metadata before rendering."""
 
     validate_input_files(
-        (metadata_path, main_summary_path, previous_summary_path), max_bytes
+        (metadata_path, main_summary_path, previous_summary_path), max_input_bytes
     )
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -276,6 +286,8 @@ def profile_baselines_for_comment(
         claimed_previous_sha = str(metadata.get("previous_baseline_sha") or "")
         if previous_run_id <= 0 or SHA_RE.fullmatch(claimed_previous_sha) is None:
             raise PolicyError("previous benchmark identity is incomplete")
+        if claimed_previous_sha == head_sha:
+            raise PolicyError("previous benchmark commit equals the current PR head")
 
         current_run = client.get_workflow_run(owner, repo, current_run_id)
         previous_run = client.get_workflow_run(owner, repo, previous_run_id)
@@ -290,7 +302,9 @@ def profile_baselines_for_comment(
             current_run.get("name") != workflow_name
             or current_run.get("event") != "pull_request"
             or str(current_run.get("head_sha") or "") != head_sha
-            or not run_matches_pr_identity(current_run, head_repository, pr_number)
+            or not run_matches_pr_identity(
+                current_run, head_repository, head_branch, pr_number
+            )
         ):
             raise PolicyError("current benchmark run does not match the resolved PR")
         if (
@@ -312,15 +326,26 @@ def profile_baselines_for_comment(
             raise PolicyError("previous benchmark run is not a completed reportable run")
         if str(previous_run.get("head_sha") or "") != claimed_previous_sha:
             raise PolicyError("fork artifact claimed the wrong previous-run commit")
-        if not run_matches_pr_identity(previous_run, head_repository, pr_number):
+        if not run_matches_pr_identity(
+            previous_run, head_repository, head_branch, pr_number
+        ):
             raise PolicyError("previous benchmark run belongs to another fork or PR")
+        comparison = client.compare_commits(
+            owner, repo, claimed_previous_sha, head_sha
+        )
+        merge_base = comparison.get("merge_base_commit")
+        previous_merge_base = (
+            str(merge_base.get("sha") or "") if isinstance(merge_base, dict) else ""
+        )
+        if previous_merge_base != claimed_previous_sha:
+            raise PolicyError("previous benchmark commit is not an ancestor of this PR head")
         if artifact_for_run(
             client,
             owner,
             repo,
             previous_run_id,
             artifact_name,
-            max_bytes,
+            max_artifact_bytes,
             claimed_previous_sha,
         ) is None:
             raise PolicyError("previous benchmark run has no matching bounded artifact")
@@ -529,6 +554,7 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
         "head-branch": "",
         "head-repository": "",
         "base-repository": "",
+        "base-branch": "",
         "base-sha": "",
     }
     try:
@@ -543,9 +569,21 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
         pull_request = client.get_pull(owner, repo, resolved.number)
         validate_pr_head(pull_request, resolved)
         base = pull_request.get("base")
+        base_branch = str(base.get("ref") or "") if isinstance(base, dict) else ""
         base_sha = str(base.get("sha") or "") if isinstance(base, dict) else ""
+        if not base_branch or "\n" in base_branch or "\r" in base_branch:
+            raise PolicyError("resolved PR base branch is invalid")
         if SHA_RE.fullmatch(base_sha) is None:
-            raise PolicyError("resolved PR base SHA is not a full commit ID")
+            raise PolicyError("resolved PR base commit is not a full commit ID")
+        resolved = ResolvedPullRequest(
+            number=resolved.number,
+            head_sha=resolved.head_sha,
+            head_branch=resolved.head_branch,
+            head_repository=resolved.head_repository,
+            base_repository=resolved.base_repository,
+            base_branch=base_branch,
+            base_sha=base_sha,
+        )
     except (KeyError, PolicyError, RuntimeError, OSError, json.JSONDecodeError) as error:
         _warning(f"Could not resolve workflow run to one PR: {error}")
         _write_outputs(empty)
@@ -557,7 +595,8 @@ def resolve_pr_command(_args: argparse.Namespace) -> int:
             "head-branch": resolved.head_branch,
             "head-repository": resolved.head_repository,
             "base-repository": resolved.base_repository,
-            "base-sha": base_sha,
+            "base-branch": resolved.base_branch,
+            "base-sha": resolved.base_sha,
         }
     )
     print(f"Resolved workflow run to PR #{resolved.number} at {resolved.head_sha}.")
@@ -617,7 +656,10 @@ def select_timing_baselines_command(args: argparse.Namespace) -> int:
                 if run.get("conclusion") not in allowed_conclusions:
                     continue
                 if expected_head_repository and not run_matches_pr_identity(
-                    run, expected_head_repository, expected_pr_number
+                    run,
+                    expected_head_repository,
+                    args.head_branch,
+                    expected_pr_number,
                 ):
                     continue
                 artifact = artifact_for_run(
@@ -696,9 +738,11 @@ def resolve_profile_baselines_command(args: argparse.Namespace) -> int:
             artifact_name=args.artifact_name,
             head_sha=args.head_sha,
             head_repository=args.head_repository,
+            head_branch=args.head_branch,
             pr_number=args.pr_number,
             base_sha=args.base_sha,
-            max_bytes=args.max_bytes,
+            max_input_bytes=args.max_input_bytes,
+            max_artifact_bytes=args.max_artifact_bytes,
         )
         outputs = {
             "main-sha": baselines.main_sha,
@@ -724,6 +768,8 @@ def upsert_comment_command(args: argparse.Namespace) -> int:
         head_branch=args.head_branch,
         head_repository=args.head_repository,
         base_repository=args.base_repository,
+        base_branch=args.base_branch,
+        base_sha=args.base_sha,
     )
     try:
         body = validate_comment_file(pathlib.Path(args.comment), args.marker, args.max_bytes)
@@ -791,9 +837,11 @@ def parse_args() -> argparse.Namespace:
     profile_baselines.add_argument("--artifact-name", required=True)
     profile_baselines.add_argument("--head-sha", required=True)
     profile_baselines.add_argument("--head-repository", required=True)
+    profile_baselines.add_argument("--head-branch", required=True)
     profile_baselines.add_argument("--pr-number", type=int, required=True)
     profile_baselines.add_argument("--base-sha", required=True)
-    profile_baselines.add_argument("--max-bytes", type=int, required=True)
+    profile_baselines.add_argument("--max-input-bytes", type=int, required=True)
+    profile_baselines.add_argument("--max-artifact-bytes", type=int, required=True)
 
     upsert = subparsers.add_parser("upsert-comment")
     upsert.add_argument("--pr-number", type=int, required=True)
@@ -801,6 +849,8 @@ def parse_args() -> argparse.Namespace:
     upsert.add_argument("--head-branch", required=True)
     upsert.add_argument("--head-repository", required=True)
     upsert.add_argument("--base-repository", required=True)
+    upsert.add_argument("--base-branch", required=True)
+    upsert.add_argument("--base-sha", required=True)
     upsert.add_argument("--comment", required=True)
     upsert.add_argument("--marker", required=True)
     upsert.add_argument("--max-bytes", type=int, default=DEFAULT_BODY_LIMIT)

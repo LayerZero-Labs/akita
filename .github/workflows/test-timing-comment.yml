@@ -147,6 +147,8 @@ jobs:
           AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
           AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
           AKITA_REPORT_BASE_REPOSITORY: ${{ steps.pr.outputs.base-repository }}
+          AKITA_REPORT_BASE_BRANCH: ${{ steps.pr.outputs.base-branch }}
+          AKITA_REPORT_BASE_SHA: ${{ steps.pr.outputs.base-sha }}
           AKITA_REPORT_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
         run: >-
           python3 scripts/ci_comment_workflow.py upsert-comment
@@ -155,6 +157,8 @@ jobs:
           --head-branch "$AKITA_REPORT_HEAD_BRANCH"
           --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
           --base-repository "$AKITA_REPORT_BASE_REPOSITORY"
+          --base-branch "$AKITA_REPORT_BASE_BRANCH"
+          --base-sha "$AKITA_REPORT_BASE_SHA"
           --comment "$AKITA_REPORT_COMMENT"
           --marker "$AKITA_TEST_TIMING_MARKER"
           --max-bytes "$AKITA_REPORT_MAX_BODY_BYTES"

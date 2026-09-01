@@ -48,7 +48,11 @@ def candidate(
             "ref": "feature",
             "repo": {"full_name": head_repository},
         },
-        "base": {"repo": {"full_name": base_repository}},
+        "base": {
+            "ref": "main",
+            "sha": "d" * 40,
+            "repo": {"full_name": base_repository},
+        },
     }
 
 
@@ -204,6 +208,8 @@ class IdentityTests(unittest.TestCase):
         head_branch="feature",
         head_repository=HEAD_REPOSITORY,
         base_repository=REPOSITORY,
+        base_branch="main",
+        base_sha="d" * 40,
     )
 
     def test_final_pr_revalidation_accepts_only_original_open_head(self) -> None:
@@ -213,6 +219,14 @@ class IdentityTests(unittest.TestCase):
             {"state": "open", **candidate(sha="b" * 40)},
             {"state": "open", **candidate(head_repository="other/akita")},
             {"state": "open", **candidate(base_repository="other/base")},
+            {
+                "state": "open",
+                **{**candidate(), "base": {**candidate()["base"], "ref": "other"}},
+            },
+            {
+                "state": "open",
+                **{**candidate(), "base": {**candidate()["base"], "sha": "e" * 40}},
+            },
         )
         for pull_request in variants:
             with self.subTest(pull_request=pull_request), self.assertRaises(PolicyError):
@@ -221,24 +235,39 @@ class IdentityTests(unittest.TestCase):
     def test_previous_run_requires_head_repository_and_pr_when_associated(self) -> None:
         base = {
             "head_repository": {"full_name": HEAD_REPOSITORY},
+            "head_branch": "feature",
             "pull_requests": [],
         }
-        self.assertTrue(run_matches_pr_identity(base, HEAD_REPOSITORY, 459))
+        self.assertTrue(
+            run_matches_pr_identity(base, HEAD_REPOSITORY, "feature", 459)
+        )
         self.assertTrue(
             run_matches_pr_identity(
-                {**base, "pull_requests": [{"number": 459}]}, HEAD_REPOSITORY, 459
+                {**base, "pull_requests": [{"number": 459}]},
+                HEAD_REPOSITORY,
+                "feature",
+                459,
             )
         )
         self.assertFalse(
             run_matches_pr_identity(
-                {**base, "pull_requests": [{"number": 460}]}, HEAD_REPOSITORY, 459
+                {**base, "pull_requests": [{"number": 460}]},
+                HEAD_REPOSITORY,
+                "feature",
+                459,
             )
         )
         self.assertFalse(
             run_matches_pr_identity(
                 {**base, "head_repository": {"full_name": "other/akita"}},
                 HEAD_REPOSITORY,
+                "feature",
                 459,
+            )
+        )
+        self.assertFalse(
+            run_matches_pr_identity(
+                {**base, "head_branch": "other"}, HEAD_REPOSITORY, "feature", 459
             )
         )
 
@@ -248,11 +277,25 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
     PREVIOUS_SHA = "c" * 40
 
     class Client:
-        def __init__(self, *, main_sha, previous_repository=HEAD_REPOSITORY):
+        def __init__(
+            self,
+            *,
+            main_sha,
+            previous_repository=HEAD_REPOSITORY,
+            previous_branch="feature",
+            previous_ancestor=True,
+            artifact_size=5_000_000,
+        ):
             self.main_sha = main_sha
             self.previous_repository = previous_repository
+            self.previous_branch = previous_branch
+            self.previous_ancestor = previous_ancestor
+            self.artifact_size = artifact_size
 
-        def compare_commits(self, _owner, _repo, _base_sha, _head_sha):
+        def compare_commits(self, _owner, _repo, base_sha, _head_sha):
+            if base_sha == ProfileBaselineIdentityTests.PREVIOUS_SHA:
+                merge_base = base_sha if self.previous_ancestor else "f" * 40
+                return {"merge_base_commit": {"sha": merge_base}}
             return {"merge_base_commit": {"sha": self.main_sha}}
 
         def get_workflow_run(self, _owner, _repo, run_id):
@@ -265,6 +308,7 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
                     "event": "pull_request",
                     "head_sha": HEAD_SHA,
                     "head_repository": {"full_name": HEAD_REPOSITORY},
+                    "head_branch": "feature",
                     "pull_requests": [{"number": 459}],
                 }
             return {
@@ -277,6 +321,7 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
                 "conclusion": "success",
                 "head_sha": ProfileBaselineIdentityTests.PREVIOUS_SHA,
                 "head_repository": {"full_name": self.previous_repository},
+                "head_branch": self.previous_branch,
                 "pull_requests": [{"number": 459}],
             }
 
@@ -285,7 +330,7 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
                 {
                     "id": 123,
                     "name": "profile-bench-data",
-                    "size_in_bytes": 100,
+                    "size_in_bytes": self.artifact_size,
                     "expired": False,
                     "workflow_run": {
                         "head_sha": ProfileBaselineIdentityTests.PREVIOUS_SHA
@@ -319,9 +364,11 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
             artifact_name="profile-bench-data",
             head_sha=HEAD_SHA,
             head_repository=HEAD_REPOSITORY,
+            head_branch="feature",
             pr_number=459,
             base_sha="d" * 40,
-            max_bytes=2_000_000,
+            max_input_bytes=2_000_000,
+            max_artifact_bytes=5_000_000,
         )
 
     def metadata(self, **overrides):
@@ -348,6 +395,28 @@ class ProfileBaselineIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "another fork or PR"):
             self.resolve(
                 self.Client(main_sha=self.MAIN_SHA, previous_repository="other/akita"),
+                self.metadata(),
+            )
+        with self.assertRaisesRegex(PolicyError, "another fork or PR"):
+            self.resolve(
+                self.Client(main_sha=self.MAIN_SHA, previous_branch="other"),
+                self.metadata(),
+            )
+        with self.assertRaisesRegex(PolicyError, "not an ancestor"):
+            self.resolve(
+                self.Client(main_sha=self.MAIN_SHA, previous_ancestor=False),
+                self.metadata(),
+            )
+
+    def test_previous_archive_uses_archive_not_input_limit(self) -> None:
+        baselines = self.resolve(
+            self.Client(main_sha=self.MAIN_SHA, artifact_size=5_000_000),
+            self.metadata(),
+        )
+        self.assertEqual(baselines.previous_sha, self.PREVIOUS_SHA)
+        with self.assertRaisesRegex(PolicyError, "limit is 5000000"):
+            self.resolve(
+                self.Client(main_sha=self.MAIN_SHA, artifact_size=5_000_001),
                 self.metadata(),
             )
 
@@ -408,6 +477,12 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("steps.baselines.outputs.main-sha", profile)
         self.assertIn("steps.baselines.outputs.previous-sha", profile)
         self.assertIn("- Prior PR run:", profile)
+        self.assertIn('--max-input-bytes "$AKITA_REPORT_MAX_INPUT_BYTES"', profile)
+        self.assertIn('--max-artifact-bytes "$AKITA_REPORT_MAX_ARTIFACT_BYTES"', profile)
+        self.assertIn('main_baseline_dir=""', profile)
+        self.assertIn('previous_baseline_dir=""', profile)
+        self.assertIn('if [ -n "$AKITA_BENCH_MAIN_BASELINE_SHA" ]', profile)
+        self.assertIn('if [ -n "$AKITA_BENCH_PREVIOUS_BASELINE_SHA" ]', profile)
         self.assertLess(
             profile.index("resolve-profile-baselines"),
             profile.index("scripts/profile_bench_report.py render"),

@@ -72,6 +72,7 @@ jobs:
           AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}
           AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
           AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
+          AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
           AKITA_REPORT_BASE_SHA: ${{ steps.pr.outputs.base-sha }}
           AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
           AKITA_REPORT_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
@@ -86,9 +87,11 @@ jobs:
           --artifact-name "$AKITA_BENCH_ARTIFACT_NAME"
           --head-sha "$AKITA_REPORT_HEAD_SHA"
           --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
+          --head-branch "$AKITA_REPORT_HEAD_BRANCH"
           --pr-number "$AKITA_REPORT_PR_NUMBER"
           --base-sha "$AKITA_REPORT_BASE_SHA"
-          --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES"
+          --max-input-bytes "$AKITA_REPORT_MAX_INPUT_BYTES"
+          --max-artifact-bytes "$AKITA_REPORT_MAX_ARTIFACT_BYTES"
 
       - name: Render benchmark comment with trusted code
         if: steps.artifact.outputs.artifact-id != ''
@@ -96,9 +99,7 @@ jobs:
           AKITA_BENCH_SOURCE_SHA: ${{ steps.pr.outputs.head-sha }}
           AKITA_BENCH_SOURCE_BRANCH: ${{ steps.pr.outputs.head-branch }}
           AKITA_BENCH_MAIN_BASELINE_SHA: ${{ steps.baselines.outputs.main-sha }}
-          AKITA_BENCH_MAIN_BASELINE_LABEL: the merge-base benchmarked on this runner
           AKITA_BENCH_PREVIOUS_BASELINE_SHA: ${{ steps.baselines.outputs.previous-sha }}
-          AKITA_BENCH_PREVIOUS_BASELINE_LABEL: the previous PR update with a benchmark artifact
           GITHUB_RUN_ID: ${{ github.event.workflow_run.id }}
           GITHUB_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           AKITA_BENCH_RESULT: ${{ github.event.workflow_run.conclusion }}
@@ -110,15 +111,33 @@ jobs:
             echo "::warning::Benchmark artifact has no structured summary.json."
             exit 0
           fi
+          main_baseline_dir=""
+          previous_baseline_dir=""
+          if [ -n "$AKITA_BENCH_MAIN_BASELINE_SHA" ]; then
+            main_baseline_dir="$AKITA_BENCH_INPUT/main-baseline"
+            export AKITA_BENCH_MAIN_BASELINE_LABEL='the merge-base benchmarked on this runner'
+          fi
+          if [ -n "$AKITA_BENCH_PREVIOUS_BASELINE_SHA" ]; then
+            previous_baseline_dir="$AKITA_BENCH_INPUT/previous-baseline"
+            export AKITA_BENCH_PREVIOUS_BASELINE_LABEL='the previous PR update with a benchmark artifact'
+          fi
           python3 scripts/ci_comment_workflow.py check-files \
             --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
-            "$summary_path" \
-            "$AKITA_BENCH_INPUT/main-baseline/summary.json" \
-            "$AKITA_BENCH_INPUT/previous-baseline/summary.json"
+            "$summary_path"
+          if [ -n "$main_baseline_dir" ]; then
+            python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
+              "$main_baseline_dir/summary.json"
+          fi
+          if [ -n "$previous_baseline_dir" ]; then
+            python3 scripts/ci_comment_workflow.py check-files \
+              --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
+              "$previous_baseline_dir/summary.json"
+          fi
           python3 scripts/profile_bench_report.py render \
             "$summary_path" \
-            --main-baseline-dir "$AKITA_BENCH_INPUT/main-baseline" \
-            --previous-baseline-dir "$AKITA_BENCH_INPUT/previous-baseline" \
+            --main-baseline-dir "$main_baseline_dir" \
+            --previous-baseline-dir "$previous_baseline_dir" \
             --compact > "$AKITA_BENCH_COMMENT.body.raw"
           if [ -n "$AKITA_BENCH_PREVIOUS_BASELINE_SHA" ]; then
             previous_short="${AKITA_BENCH_PREVIOUS_BASELINE_SHA:0:7}"
@@ -167,6 +186,8 @@ jobs:
           AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
           AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
           AKITA_REPORT_BASE_REPOSITORY: ${{ steps.pr.outputs.base-repository }}
+          AKITA_REPORT_BASE_BRANCH: ${{ steps.pr.outputs.base-branch }}
+          AKITA_REPORT_BASE_SHA: ${{ steps.pr.outputs.base-sha }}
           AKITA_REPORT_COMMENT: ${{ runner.temp }}/profile-bench-comment.md
         run: >-
           python3 scripts/ci_comment_workflow.py upsert-comment
@@ -175,6 +196,8 @@ jobs:
           --head-branch "$AKITA_REPORT_HEAD_BRANCH"
           --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
           --base-repository "$AKITA_REPORT_BASE_REPOSITORY"
+          --base-branch "$AKITA_REPORT_BASE_BRANCH"
+          --base-sha "$AKITA_REPORT_BASE_SHA"
           --comment "$AKITA_REPORT_COMMENT"
           --marker "$AKITA_BENCH_MARKER"
           --max-bytes "$AKITA_REPORT_MAX_BODY_BYTES"
