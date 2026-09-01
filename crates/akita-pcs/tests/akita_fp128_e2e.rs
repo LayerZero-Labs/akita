@@ -236,8 +236,8 @@ fn fp128_dense_mc() {
             .expect("dense multi-chunk schedule must have a recursive fold");
         assert_eq!(
             first_fold.params.outer_slice_count(),
-            akita_types::CommitmentSliceCount::ONE,
-            "multi-chunk regression profile must pin the selected S=1 level-one geometry"
+            akita_types::CommitmentSliceCount::FOUR,
+            "multi-chunk regression profile must pin the selected S=4 level-one geometry"
         );
         assert_eq!(
             first_fold.params.witness_chunk.num_chunks, 8,
