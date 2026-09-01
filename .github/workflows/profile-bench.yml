@@ -5,13 +5,22 @@ on:
     branches: [main]
   pull_request:
     branches: ["**", main]
+    paths:
+      - ".cargo/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "profile/**"
+      - "rust-toolchain.toml"
+      - "scripts/cargo_feature_exists.py"
+      - "scripts/check_profile_ci_features.sh"
+      - "scripts/check_profile_ci_linkage.sh"
+      - "scripts/profile_bench_*.py"
   workflow_dispatch:
 
 permissions:
   actions: read
   contents: read
-  issues: write
-  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -47,9 +56,18 @@ jobs:
   # run, then interleaved benchmark only when merge-base can complete every case.
   bench:
     name: Bench (${{ matrix.group.name }})
+    # Truly external fork authors need a maintainer-applied `ci-approved` label.
+    # Repository Actions approval remains the authoritative pre-execution gate.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) ||
+      contains(github.event.pull_request.labels.*.name, 'ci-approved')
     runs-on: GitHubRunner-Large-Public
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         # Group names are index-prefixed so the `report` glob sorts
         # deterministically, fixing case order in the comment. `cases` is a
@@ -320,8 +338,9 @@ jobs:
   report:
     name: Report
     needs: bench
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && needs.bench.result != 'skipped' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -396,6 +415,7 @@ jobs:
             const pullRequest = context.payload.pull_request;
             const headRef = pullRequest.head.ref;
             const headSha = pullRequest.head.sha;
+            const headRepository = pullRequest.head.repo.full_name.toLowerCase();
 
             function setBaselineOutput(prefix, run, label) {
               core.setOutput(`${prefix}-run-id`, run ? String(run.id) : '');
@@ -441,6 +461,9 @@ jobs:
               });
               const previousPrCandidates = prRunsResponse.data.workflow_runs.filter(run => {
                 if (run.head_sha === headSha) {
+                  return false;
+                }
+                if (run.head_repository?.full_name?.toLowerCase() !== headRepository) {
                   return false;
                 }
                 const prs = run.pull_requests || [];
@@ -509,6 +532,17 @@ jobs:
           BENCH_RESULT: ${{ needs.bench.result }}
         run: |
           summary_path="$AKITA_BENCH_ARTIFACT_DIR/summary.json"
+          mkdir -p \
+            "$AKITA_BENCH_ARTIFACT_DIR/main-baseline" \
+            "$AKITA_BENCH_ARTIFACT_DIR/previous-baseline"
+          if [ -f "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" ]; then
+            cp "$AKITA_BENCH_MAIN_BASELINE_DIR/summary.json" \
+              "$AKITA_BENCH_ARTIFACT_DIR/main-baseline/summary.json"
+          fi
+          if [ -f "$AKITA_BENCH_PREVIOUS_RUN_DIR/summary.json" ]; then
+            cp "$AKITA_BENCH_PREVIOUS_RUN_DIR/summary.json" \
+              "$AKITA_BENCH_ARTIFACT_DIR/previous-baseline/summary.json"
+          fi
           python3 scripts/profile_bench_report.py render \
             "$summary_path" \
             --main-baseline-dir "$AKITA_BENCH_MAIN_BASELINE_DIR" \
@@ -535,57 +569,6 @@ jobs:
           } > "$AKITA_BENCH_COMMENT.marked"
           mv "$AKITA_BENCH_COMMENT.marked" "$AKITA_BENCH_COMMENT"
           cp "$AKITA_BENCH_COMMENT" "$AKITA_BENCH_ARTIFACT_DIR/comment.md"
-
-      - name: Upsert benchmark PR comment
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const fs = require('fs');
-            const commentPath = process.env.AKITA_BENCH_COMMENT;
-            if (!fs.existsSync(commentPath)) {
-              core.info('No benchmark comment body found.');
-              return;
-            }
-
-            const markers = [
-              '<!-- akita-profile-bench-report -->',
-            ];
-            const body = fs.readFileSync(commentPath, 'utf8');
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            try {
-              const comments = await github.paginate(
-                github.rest.issues.listComments,
-                { owner, repo, issue_number, per_page: 100 }
-              );
-              const existing = comments.find(comment =>
-                comment.user?.login === 'github-actions[bot]' &&
-                markers.some(marker => comment.body?.includes(marker))
-              );
-
-              if (existing) {
-                const response = await github.rest.issues.updateComment({
-                  owner,
-                  repo,
-                  comment_id: existing.id,
-                  body,
-                });
-                core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
-              } else {
-                const response = await github.rest.issues.createComment({
-                  owner,
-                  repo,
-                  issue_number,
-                  body,
-                });
-                core.info(`Created benchmark PR comment: ${response.data.html_url}`);
-              }
-            } catch (error) {
-              core.warning(`Could not upsert benchmark PR comment: ${error.message}`);
-            }
 
       - name: Upload benchmark artifact
         if: always()

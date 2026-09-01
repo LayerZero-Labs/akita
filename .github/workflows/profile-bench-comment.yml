@@ -9,147 +9,115 @@ permissions:
   actions: read
   contents: read
   issues: write
-  pull-requests: write
+  pull-requests: read
 
 env:
   AKITA_BENCH_ARTIFACT_NAME: profile-bench-data
+  AKITA_REPORT_MAX_ARTIFACT_BYTES: "5000000"
+  AKITA_REPORT_MAX_INPUT_BYTES: "2000000"
+  AKITA_REPORT_MAX_BODY_BYTES: "60000"
+  AKITA_BENCH_MARKER: "<!-- akita-profile-bench-report -->"
 
 jobs:
   comment:
-    # `report` uploads the artifact on !cancelled, so forks also get the comment
-    # on partial-failure runs (comment.md already carries the warning banner +
-    # passing cases). Download below tolerates a missing artifact.
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Resolve PR number
         id: pr
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const workflowRun = context.payload.workflow_run;
-            let prs = workflowRun.pull_requests || [];
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_comment_workflow.py resolve-pr
 
-            // GitHub leaves workflow_run.pull_requests empty for cross-fork
-            // pull_request runs. Resolve those runs from their immutable head
-            // identity, and refuse to guess when the result is ambiguous.
-            if (prs.length === 0) {
-              const { owner, repo } = context.repo;
-              const headOwner = workflowRun.head_repository?.owner?.login;
-              const headRepository = workflowRun.head_repository?.full_name;
-              const headBranch = workflowRun.head_branch;
-              const headSha = workflowRun.head_sha;
-
-              if (!headOwner || !headRepository || !headBranch || !headSha) {
-                core.warning('Cross-fork workflow run is missing head identity metadata.');
-                core.setOutput('issue-number', '');
-                return;
-              }
-
-              const candidates = await github.paginate(
-                github.rest.pulls.list,
-                {
-                  owner,
-                  repo,
-                  state: 'open',
-                  head: `${headOwner}:${headBranch}`,
-                  per_page: 100,
-                }
-              );
-              const expectedBaseRepository = `${owner}/${repo}`.toLowerCase();
-              const expectedHeadRepository = headRepository.toLowerCase();
-              prs = candidates.filter(candidate =>
-                candidate.head?.sha === headSha &&
-                candidate.head?.repo?.full_name?.toLowerCase() === expectedHeadRepository &&
-                candidate.base?.repo?.full_name?.toLowerCase() === expectedBaseRepository
-              );
-
-              if (prs.length !== 1) {
-                core.warning(
-                  `Expected exactly one open PR for ${headRepository}:${headBranch}@${headSha}; ` +
-                  `found ${prs.length}.`
-                );
-                core.setOutput('issue-number', '');
-                return;
-              }
-
-              core.info(`Resolved cross-fork workflow run to PR #${prs[0].number}.`);
-            } else if (prs.length !== 1) {
-              core.warning(`Expected exactly one associated PR; found ${prs.length}.`);
-              core.setOutput('issue-number', '');
-              return;
-            }
-
-            core.setOutput('issue-number', String(prs[0].number));
-
-      - name: Download benchmark artifact
+      - name: Resolve bounded benchmark artifact
         if: steps.pr.outputs.issue-number != ''
-        # Only a total build failure leaves no artifact; the upsert step no-ops
-        # on a missing file, so don't fail the job.
+        id: artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: >-
+          python3 scripts/ci_comment_workflow.py resolve-artifact
+          --run-id "$AKITA_REPORT_RUN_ID"
+          --name "$AKITA_BENCH_ARTIFACT_NAME"
+          --max-bytes "$AKITA_REPORT_MAX_ARTIFACT_BYTES"
+          --expected-head-sha "$AKITA_REPORT_HEAD_SHA"
+
+      - name: Download benchmark data artifact
+        if: steps.artifact.outputs.artifact-id != ''
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.AKITA_BENCH_ARTIFACT_NAME }}
+          artifact-ids: ${{ steps.artifact.outputs.artifact-id }}
           path: ${{ runner.temp }}/profile-bench-artifact
+          merge-multiple: true
           run-id: ${{ github.event.workflow_run.id }}
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
-      - name: Upsert benchmark PR comment
-        if: steps.pr.outputs.issue-number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      - name: Render benchmark comment with trusted code
+        if: steps.artifact.outputs.artifact-id != ''
         env:
-          AKITA_BENCH_COMMENT: ${{ runner.temp }}/profile-bench-artifact/comment.md
-          AKITA_BENCH_ISSUE_NUMBER: ${{ steps.pr.outputs.issue-number }}
-        with:
-          script: |
-            const fs = require('fs');
-            const commentPath = process.env.AKITA_BENCH_COMMENT;
-            if (!fs.existsSync(commentPath)) {
-              core.warning('No benchmark comment body found in benchmark artifact.');
-              return;
-            }
+          AKITA_BENCH_SOURCE_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_BENCH_SOURCE_BRANCH: ${{ steps.pr.outputs.head-branch }}
+          GITHUB_RUN_ID: ${{ github.event.workflow_run.id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          AKITA_BENCH_RESULT: ${{ github.event.workflow_run.conclusion }}
+          AKITA_BENCH_INPUT: ${{ runner.temp }}/profile-bench-artifact
+          AKITA_BENCH_COMMENT: ${{ runner.temp }}/profile-bench-comment.md
+        run: |
+          summary_path="$AKITA_BENCH_INPUT/summary.json"
+          if [ ! -f "$summary_path" ]; then
+            echo "::warning::Benchmark artifact has no structured summary.json."
+            exit 0
+          fi
+          python3 scripts/ci_comment_workflow.py check-files \
+            --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
+            "$summary_path" \
+            "$AKITA_BENCH_INPUT/main-baseline/summary.json" \
+            "$AKITA_BENCH_INPUT/previous-baseline/summary.json"
+          python3 scripts/profile_bench_report.py render \
+            "$summary_path" \
+            --main-baseline-dir "$AKITA_BENCH_INPUT/main-baseline" \
+            --previous-baseline-dir "$AKITA_BENCH_INPUT/previous-baseline" \
+            --compact > "$AKITA_BENCH_COMMENT.body"
+          {
+            echo "$AKITA_BENCH_MARKER"
+            echo
+            if [ "$AKITA_BENCH_RESULT" != "success" ]; then
+              echo '> [!WARNING]'
+              echo '> One or more benchmark cases failed; this report contains only available structured results.'
+              echo
+            fi
+            cat "$AKITA_BENCH_COMMENT.body"
+          } > "$AKITA_BENCH_COMMENT"
 
-            const marker = '<!-- akita-profile-bench-report -->';
-            const maxBodyBytes = 60_000;
-            const body = fs.readFileSync(commentPath, 'utf8');
-            if (!body.startsWith(marker)) {
-              core.warning('Benchmark comment is missing the required report marker.');
-              return;
-            }
-            if (Buffer.byteLength(body, 'utf8') > maxBodyBytes) {
-              core.warning(`Benchmark comment exceeds the ${maxBodyBytes}-byte policy limit.`);
-              return;
-            }
-
-            const { owner, repo } = context.repo;
-            const issue_number = Number(process.env.AKITA_BENCH_ISSUE_NUMBER);
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number, per_page: 100 }
-            );
-            const existing = comments.find(comment =>
-              comment.user?.login === 'github-actions[bot]' &&
-              comment.body?.includes(marker)
-            );
-
-            if (existing) {
-              const response = await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated benchmark PR comment: ${response.data.html_url}`);
-            } else {
-              const response = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-              core.info(`Created benchmark PR comment: ${response.data.html_url}`);
-            }
+      - name: Revalidate head and upsert benchmark PR comment
+        if: steps.artifact.outputs.artifact-id != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}
+          AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
+          AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
+          AKITA_REPORT_BASE_REPOSITORY: ${{ steps.pr.outputs.base-repository }}
+          AKITA_REPORT_COMMENT: ${{ runner.temp }}/profile-bench-comment.md
+        run: >-
+          python3 scripts/ci_comment_workflow.py upsert-comment
+          --pr-number "$AKITA_REPORT_PR_NUMBER"
+          --head-sha "$AKITA_REPORT_HEAD_SHA"
+          --head-branch "$AKITA_REPORT_HEAD_BRANCH"
+          --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
+          --base-repository "$AKITA_REPORT_BASE_REPOSITORY"
+          --comment "$AKITA_REPORT_COMMENT"
+          --marker "$AKITA_BENCH_MARKER"
+          --max-bytes "$AKITA_REPORT_MAX_BODY_BYTES"

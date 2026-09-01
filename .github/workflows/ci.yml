@@ -18,6 +18,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  expensive-paths:
+    name: Expensive test path gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+      approved: ${{ steps.filter.outputs.approved }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Detect Rust test inputs
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          BASE_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "approved=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          approved=false
+          case "$AUTHOR_ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR)
+              approved=true
+              ;;
+          esac
+          if [ "$HEAD_REPOSITORY" = "$BASE_REPOSITORY" ] || \
+             jq -e 'index("ci-approved") != null' <<< "$LABELS_JSON" >/dev/null; then
+            approved=true
+          fi
+          run=false
+          while IFS= read -r file_name; do
+            case "$file_name" in
+              .cargo/*|.config/nextest.toml|Cargo.lock|Cargo.toml|*/Cargo.toml|crates/*|fixtures/*|rust-toolchain.toml|third_party/*)
+                run=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "approved=$approved" >> "$GITHUB_OUTPUT"
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -106,11 +155,31 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  script-tests:
+    name: Script and workflow tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Run Python script fixtures
+        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
+
   test:
     name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: expensive-paths
+    # Truly external fork authors need a maintainer-applied `ci-approved` label.
+    # Repository Actions approval remains the authoritative pre-execution gate.
+    if: >-
+      github.event_name == 'push' ||
+      (needs.expensive-paths.outputs.run == 'true' &&
+       needs.expensive-paths.outputs.approved == 'true')
     runs-on: GitHubRunner-Large-Public
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         shard: [1, 2]
     steps:
@@ -161,7 +230,13 @@ jobs:
 
   test-all-schedules-drift:
     name: Schedule table drift (all-schedules)
+    needs: expensive-paths
+    if: >-
+      github.event_name == 'push' ||
+      (needs.expensive-paths.outputs.run == 'true' &&
+       needs.expensive-paths.outputs.approved == 'true')
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
@@ -226,9 +301,15 @@ jobs:
 
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
+    needs: expensive-paths
+    if: >-
+      github.event_name == 'push' ||
+      (needs.expensive-paths.outputs.run == 'true' &&
+       needs.expensive-paths.outputs.approved == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
+      max-parallel: 2
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
     steps:
@@ -247,12 +328,14 @@ jobs:
   test-timing:
     name: Test timing
     needs: [test]
-    if: always() && needs.test.result != 'cancelled'
+    if: >-
+      always() &&
+      needs.test.result != 'cancelled' &&
+      needs.test.result != 'skipped'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Test timing script fixtures
-        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
       - name: Download test shard artifacts
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

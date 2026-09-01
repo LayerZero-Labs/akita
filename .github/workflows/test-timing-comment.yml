@@ -9,11 +9,14 @@ permissions:
   actions: read
   contents: read
   issues: write
-  pull-requests: write
+  pull-requests: read
 
 env:
   AKITA_TEST_TIMING_ARTIFACT_NAME: ci-test-timing-data
   AKITA_TEST_TIMING_MARKER: "<!-- akita-ci-test-timing -->"
+  AKITA_REPORT_MAX_ARTIFACT_BYTES: "5000000"
+  AKITA_REPORT_MAX_INPUT_BYTES: "2000000"
+  AKITA_REPORT_MAX_BODY_BYTES: "60000"
 
 jobs:
   comment:
@@ -21,264 +24,137 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Resolve PR number
-        id: pr
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const workflowRun = context.payload.workflow_run;
-            let prs = workflowRun.pull_requests || [];
-
-            // GitHub leaves workflow_run.pull_requests empty for cross-fork
-            // pull_request runs. Resolve those runs from their immutable head
-            // identity, and refuse to guess when the result is ambiguous.
-            if (prs.length === 0) {
-              const { owner, repo } = context.repo;
-              const headOwner = workflowRun.head_repository?.owner?.login;
-              const headRepository = workflowRun.head_repository?.full_name;
-              const headBranch = workflowRun.head_branch;
-              const headSha = workflowRun.head_sha;
-
-              if (!headOwner || !headRepository || !headBranch || !headSha) {
-                core.warning('Cross-fork workflow run is missing head identity metadata.');
-                core.setOutput('issue-number', '');
-                return;
-              }
-
-              const candidates = await github.paginate(
-                github.rest.pulls.list,
-                {
-                  owner,
-                  repo,
-                  state: 'open',
-                  head: `${headOwner}:${headBranch}`,
-                  per_page: 100,
-                }
-              );
-              const expectedBaseRepository = `${owner}/${repo}`.toLowerCase();
-              const expectedHeadRepository = headRepository.toLowerCase();
-              prs = candidates.filter(candidate =>
-                candidate.head?.sha === headSha &&
-                candidate.head?.repo?.full_name?.toLowerCase() === expectedHeadRepository &&
-                candidate.base?.repo?.full_name?.toLowerCase() === expectedBaseRepository
-              );
-
-              if (prs.length !== 1) {
-                core.warning(
-                  `Expected exactly one open PR for ${headRepository}:${headBranch}@${headSha}; ` +
-                  `found ${prs.length}.`
-                );
-                core.setOutput('issue-number', '');
-                return;
-              }
-
-              core.info(`Resolved cross-fork workflow run to PR #${prs[0].number}.`);
-            } else if (prs.length !== 1) {
-              core.warning(`Expected exactly one associated PR; found ${prs.length}.`);
-              core.setOutput('issue-number', '');
-              return;
-            }
-
-            core.setOutput('issue-number', String(prs[0].number));
-            core.setOutput('head-sha', String(workflowRun.head_sha || ''));
-            core.setOutput('head-branch', String(workflowRun.head_branch || ''));
-
       - name: Checkout trusted default branch
-        if: steps.pr.outputs.issue-number != ''
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
-      - name: Download current test timing artifact
+      - name: Resolve PR number
+        id: pr
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci_comment_workflow.py resolve-pr
+
+      - name: Resolve bounded current timing artifact
         if: steps.pr.outputs.issue-number != ''
+        id: artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: >-
+          python3 scripts/ci_comment_workflow.py resolve-artifact
+          --run-id "$AKITA_REPORT_RUN_ID"
+          --name "$AKITA_TEST_TIMING_ARTIFACT_NAME"
+          --max-bytes "$AKITA_REPORT_MAX_ARTIFACT_BYTES"
+          --expected-head-sha "$AKITA_REPORT_HEAD_SHA"
+
+      - name: Download current test timing data
+        if: steps.artifact.outputs.artifact-id != ''
         continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          artifact-ids: ${{ steps.artifact.outputs.artifact-id }}
           path: ${{ runner.temp }}/ci-test-timing-current
+          merge-multiple: true
           run-id: ${{ github.event.workflow_run.id }}
           repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
-      - name: Determine baseline artifacts
-        if: steps.pr.outputs.issue-number != ''
+      - name: Determine identity-bound baseline artifacts
+        if: steps.artifact.outputs.artifact-id != ''
         id: baselines
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const artifactName = process.env.AKITA_TEST_TIMING_ARTIFACT_NAME;
-            const workflowName = context.payload.workflow_run.name;
-            const currentRunId = Number(context.payload.workflow_run.id);
-            const headRef = String(context.payload.workflow_run.head_branch || '');
-            const baseRef = String(context.payload.workflow_run.repository?.default_branch || 'main');
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
+          AKITA_REPORT_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
+          AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
+          AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}
+          AKITA_REPORT_BASE_REF: ${{ github.event.repository.default_branch }}
+        run: >-
+          python3 scripts/ci_comment_workflow.py select-timing-baselines
+          --current-run-id "$AKITA_REPORT_RUN_ID"
+          --workflow-name "$AKITA_REPORT_WORKFLOW_NAME"
+          --artifact-name "$AKITA_TEST_TIMING_ARTIFACT_NAME"
+          --head-branch "$AKITA_REPORT_HEAD_BRANCH"
+          --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
+          --pr-number "$AKITA_REPORT_PR_NUMBER"
+          --base-ref "$AKITA_REPORT_BASE_REF"
+          --max-bytes "$AKITA_REPORT_MAX_ARTIFACT_BYTES"
 
-            function setBaselineOutput(prefix, run, label) {
-              core.setOutput(`${prefix}-run-id`, run ? String(run.id) : '');
-              core.setOutput(`${prefix}-sha`, run ? String(run.head_sha || '') : '');
-              core.setOutput(`${prefix}-label`, run ? label : '');
-            }
-
-            async function runHasArtifact(runId) {
-              const resp = await github.rest.actions.listWorkflowRunArtifacts({
-                owner,
-                repo,
-                run_id: runId,
-                per_page: 100,
-              });
-              const artifact = resp.data.artifacts.find(candidate =>
-                candidate.name === artifactName && !candidate.expired
-              );
-              return Boolean(artifact);
-            }
-
-            async function firstRunWithArtifact(runs, allowedConclusions = ['success']) {
-              const allowed = new Set(allowedConclusions);
-              for (const run of runs) {
-                if (run.id === currentRunId) {
-                  continue;
-                }
-                if (run.name !== workflowName || !allowed.has(run.conclusion)) {
-                  continue;
-                }
-                if (await runHasArtifact(run.id)) {
-                  return run;
-                }
-              }
-              return null;
-            }
-
-            setBaselineOutput('previous', null, '');
-            setBaselineOutput('main', null, '');
-
-            try {
-              if (headRef) {
-                const prRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-                  owner,
-                  repo,
-                  event: 'pull_request',
-                  branch: headRef,
-                  status: 'completed',
-                  per_page: 100,
-                });
-                const previousPrRun = await firstRunWithArtifact(
-                  prRunsResponse.data.workflow_runs,
-                  ['success', 'failure']
-                );
-                setBaselineOutput('previous', previousPrRun, 'the previous PR update with a timing artifact');
-              }
-
-              const mainRunsResponse = await github.rest.actions.listWorkflowRunsForRepo({
-                owner,
-                repo,
-                event: 'push',
-                branch: baseRef,
-                status: 'completed',
-                per_page: 100,
-              });
-              const mainCandidates = mainRunsResponse.data.workflow_runs.filter(run =>
-                run.name === workflowName && run.conclusion === 'success'
-              );
-              const mainRun = await firstRunWithArtifact(mainCandidates, ['success']);
-              setBaselineOutput('main', mainRun, `the latest successful \`${baseRef}\` run`);
-            } catch (error) {
-              core.warning(`Could not determine timing baselines: ${error.message}`);
-            }
-
-      - name: Download main baseline artifact
-        if: steps.baselines.outputs.main-run-id != ''
+      - name: Download main baseline data
+        if: steps.baselines.outputs.main-artifact-id != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          artifact-ids: ${{ steps.baselines.outputs.main-artifact-id }}
           path: ${{ runner.temp }}/ci-test-timing-main-baseline
+          merge-multiple: true
           run-id: ${{ steps.baselines.outputs.main-run-id }}
+          repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
-      - name: Download previous run artifact
-        if: steps.baselines.outputs.previous-run-id != ''
+      - name: Download previous run data
+        if: steps.baselines.outputs.previous-artifact-id != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ env.AKITA_TEST_TIMING_ARTIFACT_NAME }}
+          artifact-ids: ${{ steps.baselines.outputs.previous-artifact-id }}
           path: ${{ runner.temp }}/ci-test-timing-previous-run
+          merge-multiple: true
           run-id: ${{ steps.baselines.outputs.previous-run-id }}
+          repository: ${{ github.repository }}
           github-token: ${{ github.token }}
 
-      - name: Render timing comment
-        if: steps.pr.outputs.issue-number != ''
+      - name: Render timing comment with trusted code
+        if: steps.artifact.outputs.artifact-id != ''
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_RUN_ID: ${{ github.event.workflow_run.id }}
+          AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
+          AKITA_REPORT_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           summary_path="${{ runner.temp }}/ci-test-timing-current/summary.json"
           if [ ! -f "$summary_path" ]; then
             python3 scripts/ci_test_timing_report.py failure-summary \
               --output-dir "${{ runner.temp }}/ci-test-timing-current" \
-              --source-sha "${{ steps.pr.outputs.head-sha }}" \
-              --source-branch "${{ steps.pr.outputs.head-branch }}" \
-              --workflow-run-id "${{ github.event.workflow_run.id }}" \
+              --source-sha "$AKITA_REPORT_HEAD_SHA" \
+              --source-branch "$AKITA_REPORT_HEAD_BRANCH" \
+              --workflow-run-id "$AKITA_REPORT_RUN_ID" \
               --error "CI test timing artifact missing summary.json."
           fi
+          python3 scripts/ci_comment_workflow.py check-files \
+            --max-bytes "$AKITA_REPORT_MAX_INPUT_BYTES" \
+            "$summary_path" \
+            "${{ runner.temp }}/ci-test-timing-main-baseline/summary.json" \
+            "${{ runner.temp }}/ci-test-timing-previous-run/summary.json"
           python3 scripts/ci_test_timing_report.py render \
             "$summary_path" \
             --output-dir "${{ runner.temp }}/ci-test-timing-current" \
             --main-baseline-dir "${{ runner.temp }}/ci-test-timing-main-baseline" \
             --previous-baseline-dir "${{ runner.temp }}/ci-test-timing-previous-run"
 
-      - name: Upsert timing PR comment
-        if: steps.pr.outputs.issue-number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      - name: Revalidate head and upsert timing PR comment
+        if: steps.artifact.outputs.artifact-id != ''
         env:
-          AKITA_TEST_TIMING_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
-          AKITA_TEST_TIMING_ISSUE_NUMBER: ${{ steps.pr.outputs.issue-number }}
-          AKITA_TEST_TIMING_MARKER: ${{ env.AKITA_TEST_TIMING_MARKER }}
-        with:
-          script: |
-            const fs = require('fs');
-            const commentPath = process.env.AKITA_TEST_TIMING_COMMENT;
-            if (!fs.existsSync(commentPath)) {
-              core.warning('No timing comment body found in timing artifact dir.');
-              return;
-            }
-            const body = fs.readFileSync(commentPath, 'utf8');
-            const marker = String(process.env.AKITA_TEST_TIMING_MARKER || '<!-- akita-ci-test-timing -->');
-            const maxBodyBytes = 60_000;
-            if (!body.startsWith(marker)) {
-              core.warning('Timing comment is missing the required report marker.');
-              return;
-            }
-            if (Buffer.byteLength(body, 'utf8') > maxBodyBytes) {
-              core.warning(`Timing comment exceeds the ${maxBodyBytes}-byte policy limit.`);
-              return;
-            }
-
-            const issue_number = Number(process.env.AKITA_TEST_TIMING_ISSUE_NUMBER);
-            const { owner, repo } = context.repo;
-
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number, per_page: 100 }
-            );
-            const existing = comments.find(comment =>
-              comment.user?.login === 'github-actions[bot]' &&
-              comment.body?.includes(marker)
-            );
-
-            if (existing) {
-              const response = await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated timing PR comment: ${response.data.html_url}`);
-            } else {
-              const response = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-              core.info(`Created timing PR comment: ${response.data.html_url}`);
-            }
+          GITHUB_TOKEN: ${{ github.token }}
+          AKITA_REPORT_PR_NUMBER: ${{ steps.pr.outputs.issue-number }}
+          AKITA_REPORT_HEAD_SHA: ${{ steps.pr.outputs.head-sha }}
+          AKITA_REPORT_HEAD_BRANCH: ${{ steps.pr.outputs.head-branch }}
+          AKITA_REPORT_HEAD_REPOSITORY: ${{ steps.pr.outputs.head-repository }}
+          AKITA_REPORT_BASE_REPOSITORY: ${{ steps.pr.outputs.base-repository }}
+          AKITA_REPORT_COMMENT: ${{ runner.temp }}/ci-test-timing-current/comment.md
+        run: >-
+          python3 scripts/ci_comment_workflow.py upsert-comment
+          --pr-number "$AKITA_REPORT_PR_NUMBER"
+          --head-sha "$AKITA_REPORT_HEAD_SHA"
+          --head-branch "$AKITA_REPORT_HEAD_BRANCH"
+          --head-repository "$AKITA_REPORT_HEAD_REPOSITORY"
+          --base-repository "$AKITA_REPORT_BASE_REPOSITORY"
+          --comment "$AKITA_REPORT_COMMENT"
+          --marker "$AKITA_TEST_TIMING_MARKER"
+          --max-bytes "$AKITA_REPORT_MAX_BODY_BYTES"
