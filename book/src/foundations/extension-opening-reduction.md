@@ -1,14 +1,13 @@
 # Extension-opening reduction
 
-Akita sometimes commits to a polynomial whose coefficients lie in a base field
-the base field $\mathbb{F}$, then opens that polynomial at a point whose
+Akita sometimes commits to a polynomial whose coefficients lie in the base
+field $\mathbb{F}$, then opens that polynomial at a point whose
 coordinates lie in a larger extension field $\mathbb{E}$. Extension-opening reduction bridges
 those two field roles. It converts the original opening into an opening of a
 smaller polynomial whose values already lie in $\mathbb{E}$.
 
-This chapter gives the protocol idea needed to follow the implementation. A
-worked numerical example and a complete soundness derivation are deferred to a
-later documentation slice. For Akita's scheduling and prover paths, see
+This chapter gives the protocol idea needed to follow the implementation. For
+Akita's scheduling and concrete prover storage, see
 [How it works → Extension-opening reduction](../how/proving/extension-opening-reduction.md).
 
 ## Packing several Boolean variables into one value

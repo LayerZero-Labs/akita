@@ -141,6 +141,93 @@ reduce the wide accumulator at the same cap and continue from zero. Ring shift
 helpers preserve negacyclic wrap. Tests reach the exact addition cap with
 maximal canonical limbs and cover wrapped shifts.
 
+## Compact digit range proving
+
+Stage 1 proves the range protocol described in [Sumcheck
+stages](./proving/sumcheck-stages.md#stage-1-digit-range-check), but the prover
+does not begin by expanding every digit into a field-valued range-image table.
+It keeps the balanced digits in packed signed storage and exploits the
+involution
+
+$$
+w\longmapsto -w-1.
+$$
+
+The two digits in each pair have the same range image:
+
+$$
+w(w+1)=(-w-1)(-w).
+$$
+
+The implementation therefore replaces a balanced digit by its small collision
+class
+
+$$
+c(w)=
+\begin{cases}
+w, & w\ge 0,\\
+-w-1, & w<0,
+\end{cases}
+$$
+
+and recovers the range image as `c(w)(c(w)+1)`. Padding uses class zero. A
+`CompactDigitSource` stores the packed digits, the exact live-prefix geometry,
+and, when a class-indexed stage needs them, compact indices for consecutive
+ordered class pairs.
+
+For bases 16, 32, and 64, the product substages compute their first two rounds
+from small tables indexed by these class pairs. After the first challenge, the
+prover either uses a quartet coefficient table or rescans factorized folded
+pairs to prepare the second-round polynomial. Only after the second challenge
+does it materialize the exact folded table, now one quarter of the original
+Boolean domain. The final range leaf uses the same class-indexed machinery; the
+basis-16 leaf has the dedicated two-round quartet path.
+
+The direct basis-4 and basis-8 leaves go one round further. When there are at
+least three ring variables, a bivariate prefix reconstructs the first two
+sumcheck messages from the compact digits. The third message is computed from
+compact octets, and the prover materializes the range image only after the
+third challenge, at one eighth of its original length. The basis-8 kernel caches
+the value and first three normalized derivatives of its quartic at every folded
+quad, so evaluating `Q(a+dT)` needs only powers of `d` and a few field
+multiplications.
+
+These are prover-only representations. The transcript contains the same stage
+claims and sumcheck polynomials defined by the protocol, and the verifier does
+not need to know which compact kernel produced them.
+
+## Physical Euclidean norm proving
+
+When the schedule selects the Euclidean security route, the prover reconstructs
+the complete physical response from its packed digits according to
+`PhysicalResponsePlan`. This is an explicit materialization: the direct route
+builds one centered-integer response table, while the small-field route builds
+the signed limb tables needed for its Gram decomposition. The implementation
+then converts these exact prefixes to field tables for sumcheck.
+
+The prover does not run a separate sumcheck over those tables. It batches the
+physical norm identity into the final digit-range leaf and uses the same
+challenge vector:
+
+- The direct route contributes the degree-two polynomial for
+  `sum_x z(x)^2`.
+- The limb-Gram route contributes selected degree-three products of signed
+  limb pairs. Public block-and-pair subclaims are combined with a transcript
+  challenge, and checked integer arithmetic reconstructs the complete squared
+  norm outside the field.
+
+The latter route is required when the whole squared norm need not fit below the
+base-field modulus. Each individual Gram subclaim has a unique centered lift,
+so the verifier can recover the integer norm without accepting a value that
+wrapped in the field.
+
+At the final point, the proof exposes one virtual response evaluation for the
+direct route or one evaluation per limb for the Gram route. Stage 2 ties those
+values to the balanced digit planes of the committed response. The fused Stage
+1 proof saves a second round sequence, but it does not pretend that the
+physical response tables are free: their materialization is part of the
+Euclidean prover's memory cost.
+
 ## Prepared NTT state
 
 The flat public matrix is stable setup data. A transformed matrix prefix is a

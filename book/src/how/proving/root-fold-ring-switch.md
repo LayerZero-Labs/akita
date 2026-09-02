@@ -343,15 +343,122 @@ group rules for its folded witness and an incoming setup prefix.
 
 ## Ring switching
 
-The lattice fold lifts the relation `M w = h` from
-`R_q = Z_q[X]/(X^D+1)` to `Z_q[X]` through its unique quotient. The prover
-computes native ring quotients with paired cyclic and negacyclic NTTs. A packing
-consistency row instead has modulus dimension `s` and `k` coordinate planes.
-Its physical width is `k s`; it is not a ring of dimension `k s`.
+The fold relation is stated in a quotient ring, but Stage 2 evaluates ordinary
+polynomials at a random field point. Ring switching supplies the missing link.
+For every physical relation row, the prover gives the unique polynomial that
+accounts for reduction modulo `X^D + 1`.
 
-This ring switch is distinct from EOR. EOR changes an extension valued opening
-claim before the lattice relation. Ring switching proves the polynomial
-quotients of the lattice relation itself.
+This operation is distinct from EOR. EOR changes an extension-valued opening
+claim before the lattice relation is formed. Ring switching lifts the resulting
+lattice relation out of its quotient ring so that sumcheck can prove it over a
+field.
+
+### Recover the quotient from two convolutions
+
+Let `a(X)` and `s(X)` have degree less than `D`, and write their ordinary
+product as
+
+$$
+a(X)s(X)=L(X)+X^D H(X),
+$$
+
+where both `L` and `H` have degree less than `D`. Reducing this product modulo
+the cyclic and negacyclic moduli gives
+
+$$
+\begin{aligned}
+[as]_{X^D-1} &= L+H,\\
+[as]_{X^D+1} &= L-H.
+\end{aligned}
+$$
+
+The field has odd characteristic, so division by two is defined. The high half
+of the ordinary convolution is therefore
+
+$$
+H=\frac{[as]_{X^D-1}-[as]_{X^D+1}}{2}.
+\tag{1}
+$$
+
+Equation (1) is exactly the quotient in
+
+$$
+a(X)s(X)-[as]_{X^D+1}=(X^D+1)H(X).
+$$
+
+For a complete row of the relation, let
+
+$$
+P_i(X)=\sum_j M_{i,j}(X)w_j(X).
+$$
+
+The quotient-ring equation says that `[P_i]_(X^D+1) = h_i`. Consequently, the
+ordinary-polynomial identity used by Stage 2 is
+
+$$
+P_i(X)-h_i(X)=(X^D+1)r_i(X),
+$$
+
+with
+
+$$
+r_i=\frac{[P_i]_{X^D-1}-[P_i]_{X^D+1}}{2}
+   =\frac{[P_i]_{X^D-1}-h_i}{2}.
+\tag{2}
+$$
+
+The prover digit-decomposes each `r_i` and appends those digits to the recursive
+witness. After the verifier substitutes `X = alpha`, the factor `X^D + 1`
+becomes the public scalar `alpha^D + 1`. This turns every lifted row into a
+field relation suitable for the fused Stage-2 sumcheck.
+
+### Preserve each row's native ring
+
+Akita does not enlarge every relation to one common ring dimension before
+computing Equation (2). Consistency and A rows use `d_A`, B rows use `d_B`, and
+D rows use `d_D`. Their quotients retain those same native dimensions. This is
+both the mathematical layout and the physical recursive-witness layout; the
+row geometry records the native dimension and the number of coordinate planes.
+
+The coefficient-packing consistency row is the one nonstandard geometry. It is
+an equation over `E[Y]/(Y^s + 1)`, represented as `k` base-field coordinate
+planes of length `s`. Its quotient therefore has `k s` physical coordinates.
+It is not reinterpreted as one ring of dimension `k s`.
+
+### Compute only the coefficients that survive
+
+The matrix rows use paired cyclic and negacyclic transforms to obtain Equation
+(2). Akita performs both convolutions through the same CRT profiles used for
+ring multiplication, then converts their difference back to the base field and
+multiplies by `1/2`.
+
+Sparse challenge products need less work. If a nonzero challenge coefficient
+is at position `p`, only source coefficients `D-p` through `D-1` can reach the
+high half of the ordinary convolution. The quotient kernel visits only those
+coefficients and accumulates directly into `r`; it does not form the low half
+that negacyclic reduction would discard. The same rule applies when the
+consistency row combines folded opening material with sparse challenges.
+
+Compressed commitments introduce additional F and H relation rows. Their
+quotients use the same cyclic-versus-negacyclic identity and remain attached to
+the compression layer that owns them. Compression changes the row layout, not
+the algebra of Equation (2).
+
+### Cached and streamed execution are equivalent
+
+The CPU backend chooses between two execution plans after the complete row
+geometry has been validated:
+
+- A retained operation reuses the exact transformed setup prefix held by the
+  prepared setup.
+- A large operation transforms CRT-safe chunks of the same logical prefix as
+  it proceeds and releases each chunk afterward.
+
+Both plans cover the same rows, columns, transform domains, and quotient
+coordinates. The CRT capacity bound limits how many products may be accumulated
+before reconstruction in either plan. This choice affects time and memory only;
+it does not change setup identity, proof bytes, transcript order, or the
+quotient checked by the verifier.
 
 ## Implementation map
 
