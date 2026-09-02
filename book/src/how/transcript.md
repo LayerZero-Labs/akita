@@ -33,23 +33,103 @@ challenge from the advanced transcript. A fold-response nonce is instead a
 the verifier still checks the resulting response representation and norm
 bound. Zero-bit sites consume no proof bits and do not change the transcript.
 
-Sparse fold challenges preserve one live transcript squeeze per commitment
-group. The 32-byte group root and numeric fold-response nonce define a fresh
-indexed SHAKE256 stream for each claim-major block coordinate. Coordinate XOF
-queries do not mutate the live transcript, so changing one coordinate leaves
-the other coordinates and transcript state fixed. Prover and verifier must
-consume the complete plan in order; truncation, reordering, nonzero tail
-padding, or leftover nonce bits is an error.
+Prover and verifier must consume the complete plan in order. Truncation,
+reordering, nonzero tail padding, or leftover nonce bits is an error.
 
-Implementation: `crates/akita-types/src/transcript_grinding_plan.rs`,
-`crates/akita-transcript/src/grinding.rs`, and
-`crates/akita-challenges/src/sampler/xof.rs`.
+Implementation: `crates/akita-types/src/transcript_grinding_plan.rs` and
+`crates/akita-transcript/src/grinding.rs`.
 Normative design: [`specs/transcript-grinding.md`](../../specs/transcript-grinding.md).
 
 Deferred work: prover/verifier trait split, `Bound<T>`, algorithm-as-bytes digest, NARG migration.
 
 Implementation: `crates/akita-transcript/`.
 Tests: `crates/akita-pcs/tests/transcript_hardening.rs`.
+
+## Sparse fold challenges
+
+A fold needs one sparse ring challenge for every `(claim, live block)` pair.
+Akita draws them in claim-major order. It performs only one live transcript
+squeeze per commitment group, while still giving each pair an independently
+forkable random-oracle coordinate.
+
+### The group root
+
+Before the squeeze, the transcript absorbs the complete public draw context:
+
+- group index, number of live blocks, and number of claims;
+- total number of challenge coordinates;
+- challenge ring dimension;
+- counts of coefficients at magnitude 1 and magnitude 2;
+- the shared fold-response grinding nonce;
+- the coefficient-packing method domain and challenge-subring dimension, when
+  coefficient packing is selected; and
+- the operator-norm rejection policy, when the selected L2 route requires it.
+
+The transcript then squeezes one 32-byte group root. Evaluation trace preserves
+its established domain encoding. Coefficient packing adds a distinct method
+domain so the same transcript state cannot reinterpret a draw under the two
+opening methods.
+
+### One indexed stream per coordinate
+
+For coordinate index \(i\), the sampler initializes a fresh SHAKE256 reader
+from
+
+```text
+group_root || little_endian_u64(i).
+```
+
+Coordinate \(i\) is `claim * num_live_blocks + block`. Expanding one coordinate
+does not mutate either the live transcript or another coordinate's reader.
+This gives the extraction argument the required fork: one challenge can change
+while every other challenge and the surrounding transcript remain fixed.
+
+The indexed readers are an expansion of one transcript root, not additional
+Fiat--Shamir squeezes and not additional proof data.
+
+### Positions, magnitudes, and signs
+
+Suppose the challenge ring has dimension \(D\). A configured challenge has
+`count_pm1` coefficients at magnitude 1 and `count_pm2` coefficients at
+magnitude 2. The sampler first chooses their distinct positions by a partial
+Fisher--Yates shuffle of `0..D`.
+
+When the challenge is very sparse, the implementation stores only the swaps
+touched by that partial shuffle, using \(O(w)\) scratch for Hamming weight
+\(w\). Denser cases use a fixed stack permutation for better locality. These
+are two implementations of the same ordered partial shuffle and consume the
+same random stream.
+
+Every bounded integer draw uses bitmask rejection rather than `% D`, so the
+position law has no modulo bias. After positions are fixed, fresh low bits
+choose independent signs. The first `count_pm1` positions receive \(\pm1\);
+the remainder receive \(\pm2\).
+
+### Optional operator-norm rejection
+
+An L2 fold may require a challenge whose negacyclic convolution operator norm
+is below a scheduled threshold. For supported D64 and D128 challenge families,
+the sampler tests each indexed candidate against the certified predicate and
+continues reading the same coordinate stream until one is accepted. The search
+is capped at 4096 candidates.
+
+This rejection rule is part of the public challenge method. The policy and
+threshold are bound before the group root is squeezed, and the verifier repeats
+the same deterministic search. Coefficient-packing folds use the L-infinity
+security route and reject an operator-norm policy.
+
+Implementation:
+
+- `crates/akita-challenges/src/fold_draw.rs` binds the group context and owns
+  the single transcript squeeze.
+- `crates/akita-challenges/src/sampler/xof.rs` defines the indexed SHAKE256
+  stream and unbiased bounded draws.
+- `crates/akita-challenges/src/sampler/position_sample.rs` implements the
+  partial Fisher--Yates paths.
+- `crates/akita-challenges/src/sampler/signed_sparse.rs` assigns magnitudes and
+  signs.
+- `crates/akita-challenges/src/sampler/op_norm.rs` checks the certified
+  operator-norm predicate.
 
 ## AkitaInstanceDescriptor
 
