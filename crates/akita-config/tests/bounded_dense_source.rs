@@ -145,20 +145,23 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
 ///
 /// Each catalog family independently minimizes its setup-first objective, so its
 /// selected setup envelope need not be monotone in the source bound: a bounded
-/// family may spend its lower digit cost on a different A/B/D shape. The direct
-/// consequences pinned by these catalog rows are instead a shallower digit
-/// decomposition and a smaller level-1 witness.
+/// family may spend its lower digit cost on a different A/B/D shape, including a
+/// different A basis. Compare digit depths at the bounded row's own basis rather
+/// than comparing unlike raw digit counts. The smaller level-1 witness is a
+/// separate consequence pinned by these catalog rows.
 #[test]
-fn the_bound_shrinks_the_digit_depth_and_next_witness() {
+fn the_bound_shrinks_same_basis_digit_depth_and_next_witness() {
     for num_vars in [24usize, 26] {
         let bounded = root_shape::<fp128::DenseBounded>(num_vars);
         let full = root_shape::<fp128::Dense>(num_vars);
+        let full_width_digits_at_bounded_basis =
+            akita_types::sis::compute_num_digits_field_width(128, bounded.inner_basis);
 
         assert!(
-            bounded.inner_digits < full.inner_digits,
-            "nv={num_vars}: bounded digit depth {} must be below full-width {}",
+            bounded.inner_digits < full_width_digits_at_bounded_basis,
+            "nv={num_vars}: bounded digit depth {} must be below same-basis full-width {}",
             bounded.inner_digits,
-            full.inner_digits
+            full_width_digits_at_bounded_basis
         );
         assert!(
             bounded.next_witness < full.next_witness,
