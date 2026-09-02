@@ -426,34 +426,87 @@ evaluations created in this fold, and one to the commitment that entered it.
 
 #### Subring-coefficient-packing consistency
 
-Packing must preserve the same two links, but an unrestricted challenge in
-$R$ would mix both coefficient axes of the source. The packed partial has
-already contracted $u$ and retains only $j$, so its challenge is sampled from
+Recall the coefficient-table index split
+
+$$
+\ell=u+k\eta j,
+\qquad
+u\in[k\eta],
+\qquad
+j\in[s].
+$$
+
+Here $\ell$ (read "ell") is only the flat coefficient index in the A ring:
+$u$ selects a column and $j$ selects a row. The packed partial has already
+taken the same weighted sum across the $u$ columns of every row. It keeps the
+$j$ rows, so the fold challenge must act on those rows without mixing the
+already-contracted column axis. This is why it is sampled from
 
 $$
 S=F[U]/(U^s+1).
 $$
 
-Let
+We use two linear maps. The first symbol below is $\iota$ (Greek "iota",
+not the index $\ell$). It embeds a row operation from $S$ into the source ring
+$R$:
 
 $$
 \iota:S\hookrightarrow R,
 \qquad
-\iota(U)=X^{k\eta},
+\iota(U)=X^{k\eta}.
 $$
 
-and let $L$ be the public linear packing map from one source-block vector to
-$C$. It contracts the $u$ axis with the opening weights and expresses the
-result in the canonical $E/F$ basis. For each block, the partial created in the
-fold is exactly
+The second map, $L$, is the public packing map from one source-block vector to
+$C=E[U]/(U^s+1)$. It contracts the position axis $p$ and the column axis $u$,
+but leaves one output coefficient for every row $j$:
 
 $$
-e_b=L(\mathbf s_b),
+L(\mathbf s_b)(U)
+=
+\sum_{j=0}^{s-1}e_{b,j}U^j
+=e_b(U),
+\qquad
+e_{b,j}
+=
+\sum_{p,u}Q_pI_u^{\mathrm{pack}}[F_{p,b}]_{u+k\eta j}.
 $$
 
-where $L$ includes the public position and inner-gadget weights from the
-scalar derivation. Multiplication by $\iota(c)$ shifts only the retained $j$
-axis, so packing commutes with the challenge action:
+The intuition is now simple: $\iota$ moves rows, while $L$ compresses each row.
+For example, take $D=8$, $k=2$, $\eta=2$, and $s=2$. The source table has two
+rows of width four:
+
+~~~text
+       u = 0   1   2   3       after applying L
+j = 0     a0  a1  a2  a3  ----------------------> e0
+j = 1     b0  b1  b2  b3  ----------------------> e1
+~~~
+
+Both rows use the same packing weights, so
+
+$$
+e_0=\sum_{u=0}^{3}I_u^{\mathrm{pack}}a_u,
+\qquad
+e_1=\sum_{u=0}^{3}I_u^{\mathrm{pack}}b_u.
+$$
+
+Since $\iota(U)=X^4$, multiplying in $R$ moves the first row to the second and
+wraps the second row back with a minus sign. Thus $(a,b)$ becomes $(-b,a)$.
+Applying $L$ after this move gives $-e_1+e_0U$. Applying $L$ first gives
+$e_0+e_1U$, and multiplying by $U$ in $C$ gives the same result because
+$U^2=-1$:
+
+$$
+L(\iota(U)\mathbf s)
+=
+-e_1+e_0U
+=
+U(e_0+e_1U)
+=
+UL(\mathbf s).
+$$
+
+Because any $c(U)\in S$ is a linear combination of these row shifts, the same
+commuting identity holds for every challenge:
 
 $$
 \boxed{
@@ -484,10 +537,10 @@ L(\mathbf z)
 $$
 
 The same embedded challenges $\iota(c_b)$ are used in the inner-commitment
-identity $\sum_b\iota(c_b)\mathbf t_b=\mathbf A\mathbf z$. There is no second
-challenge draw for the A relation. This shared challenge is what makes the
-packed partial and the source fold describe the same random combination of
-blocks.
+identity $\sum_b\iota(c_b)\mathbf t_b=\mathbf A\mathbf z$. There is no
+second challenge draw for the A relation. This shared challenge is what makes
+the packed partial and the source fold describe the same random combination
+of blocks.
 
 This compression has an arithmetic cost: combining the blocks increases
 coefficient magnitudes. Let $\sigma_\infty$ bound the coefficient norm of
@@ -632,8 +685,8 @@ A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
 $$
 
 For packing, every $c_b$ in Equation (13) denotes the embedded element
-$\iota(c_b)\in R$. Thus Equations (12b) and (13) use the same transcript
-challenge in their respective native geometries.
+$\iota(c_b)\in R$. Thus Equations (12b) and (13) use the same
+transcript challenge in their respective native geometries.
 
 There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (13):
 $\mathbf A$ already acts on the inner digit vector $\mathbf s_b$, whose

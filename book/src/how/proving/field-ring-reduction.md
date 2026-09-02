@@ -507,10 +507,34 @@ I_u^{\mathrm{pack}}I_j^{\mathrm{tail}}.
 \tag{24}
 $$
 
-The index $u$ is contracted now; $j$ remains explicit. For each block define
+The index $u$ is contracted now; $j$ remains explicit. It helps to see this
+as a two-dimensional coefficient table rather than one flat list. For a fixed
+block $b$, first apply the position weights and write
+
+$$
+\phi_{b,j,u}
+:=
+\sum_p Q_p f[u+k\eta j,p,b]
+\in E.
+$$
+
+The rows are indexed by the coefficient $j$ that will remain in the packed
+partial. The columns are indexed by $u$, which is consumed now:
+
+| retained row | $u=0$ | $u=1$ | $\cdots$ | $u=k\eta-1$ | after contracting the row |
+|---|---|---|---|---|---|
+| $j=0$ | $\phi_{b,0,0}$ | $\phi_{b,0,1}$ | $\cdots$ | $\phi_{b,0,k\eta-1}$ | $e_{b,0}$ |
+| $j=1$ | $\phi_{b,1,0}$ | $\phi_{b,1,1}$ | $\cdots$ | $\phi_{b,1,k\eta-1}$ | $e_{b,1}$ |
+| $\vdots$ | $\vdots$ | $\vdots$ | $\ddots$ | $\vdots$ | $\vdots$ |
+| $j=s-1$ | $\phi_{b,s-1,0}$ | $\phi_{b,s-1,1}$ | $\cdots$ | $\phi_{b,s-1,k\eta-1}$ | $e_{b,s-1}$ |
+
+The table is not a new witness. It is only a view of the position-folded
+source coefficients. Contracting one row gives
 
 $$
 e_{b,j}
+=
+\sum_u I_u^{\mathrm{pack}}\phi_{b,j,u}
 =
 \sum_{p,u}
 Q_p I_u^{\mathrm{pack}}
@@ -518,6 +542,18 @@ f[u+k\eta j,p,b]
 \in E.
 \tag{25}
 $$
+
+For example, take $D=8$, $k=2$, $\eta=2$, and $s=2$. Then $k\eta=4$, so the
+flat inner coefficients become two rows:
+
+~~~text
+        j = 0:  ell = 0  1  2  3  -> e[b,0]
+        j = 1:  ell = 4  5  6  7  -> e[b,1]
+~~~
+
+Each row is contracted to one element of the degree-two field $E$. The packed
+partial therefore contains two elements of $E$, or four base-field
+coordinates, instead of all eight source coefficients.
 
 Substituting Equations (24) and (25) into the original multilinear evaluation
 gives
@@ -591,6 +627,12 @@ v
 }
 \tag{30}
 $$
+
+Read Equation (30) from the inside out. The opening gadget weights rebuild
+each base-field coordinate $e_{b,t,j}$ from its digits. The basis elements
+$\beta_t$ rebuild the extension-field coefficient $e_{b,j}$. The tail weights
+consume the retained $j$ rows, and the block weights combine the live blocks.
+The result is the original scalar opening $v$.
 
 This is an $E$-valued virtual row on the committed digit witness. It is not a
 ring-matrix row and has no cyclotomic quotient. Claim batching and Stage-2 row
@@ -740,23 +782,30 @@ directly from the committed digit witness.
 
 ### Subring coefficient packing
 
-The packed path follows the second derivation:
+The implementation follows the same derivation in three stages:
 
-1. [`PreparedSubringCoefficientPackingPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing.rs)
-   splits the public point as
-   $[r_{\mathrm{pack}}\mid r_{\mathrm{tail}}\mid
-   r_{\mathrm{pos}}\mid r_{\mathrm{blk}}]$ and prepares the four weight
-   families.
-2. The prover's coefficient-packing kernels form the $ks$ canonical
-   base-field coordinates of each $e_b$ and decompose them into the
-   $\hat e$ segment.
-3. [`canonical_extension_basis`](https://github.com/a16z/jolt/blob/72dc6451628d8b1dd794147a1f1cc40be0d77963/crates/jolt-field/src/solinas/ext.rs)
-   from Akita's pinned `jolt-field` revision supplies the fixed elements
-   $\beta_t$.
-4. [`coefficient_packing_relation.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation.rs)
-   factors Equation (30) into the source weights
-   $\beta_tI_j^{\mathrm{tail}}$ and the claim, block, row, and gadget factors
-   consumed by Stage 2.
+1. **Prepare the point.**
+   [`PreparedSubringCoefficientPackingPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing.rs)
+   checks $D=k\eta s$ and prepares the packing, tail, position, and block
+   weights.
+2. **Pack and bind the partials.**
+   The prover contracts the $p$ and $u$ axes to obtain the coordinates
+   $e_{b,t,j}$ in `[block][extension coordinate][subring coefficient]` order.
+   It recombines those coordinates as in Equation (30), then binds their digit
+   decompositions before sampling the fold challenges.
+3. **Fold and verify.**
+   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/coefficient_packing.rs)
+   folds the packed partials and produces $Q_{\mathrm{pack}}$. Stage 2 then
+   checks both the packing relation and the direct scalar opening, using
+   $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.
+
+The reference tests in
+[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
+compare the direct partial and scalar formulas with the flat factorization.
+The Stage-2 tests in
+[`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)
+compare the expanded prover terms with the verifier's compact evaluation and
+check that every extension-coordinate plane is bound.
 
 ## Base-field polynomial at an extension-field point
 

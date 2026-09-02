@@ -42,37 +42,28 @@ The embedding used by the A relation is
 $$
 \iota:S\hookrightarrow R,
 \qquad
-U\longmapsto X^{k\eta}.
+\iota(U)=X^{k\eta}.
 $$
 
-The source index split from the semantic derivation is
-$\ell=u+k\eta j$. The physical coefficient grid is therefore
+The [two-dimensional source
+table](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials)
+already showed how the $u$ columns are contracted and the $j$ rows are kept.
+This page starts from its output. One packed partial has $s$ coefficients in
+$E$. Expanding each coefficient in the canonical $E/F$ basis gives the
+following physical representation:
 
-```text
-                         contracted by the opening
-                    u = 0   1   ...   k eta - 1
-                  +-----------------------------
-       j = 0      |  f     f             f      | -> e_i[0]   in E
-       j = 1      |  f     f             f      | -> e_i[1]   in E
-         ...      |  ...                     ...|
-       j = s - 1  |  f     f             f      | -> e_i[s-1] in E
-                  +-----------------------------
+| Object | Logical shape | Base-field storage | Width |
+|---|---|---|---:|
+| all packed partials $e_i(U)$ | one $s$-coefficient element of $C$ per claim/block pair | `[claim][block][extension coordinate][subring coefficient]` | $ks$ per pair |
+| one group's $Q_{\mathrm{pack}}(U)$ | one degree-below-$s$ polynomial in $E[U]$ | `[extension coordinate][subring coefficient]` | $ks$ |
 
-                    retained as the U coefficient index
-```
-
-One packed partial has $s$ coefficients in $E$. In the canonical $E/F$ basis,
-it is stored as $k$ coordinate planes of length $s$, in the order
-
-```text
-[claim][block][extension coordinate][subring coefficient].
-```
-
-Its physical width is therefore $ks=D/\eta$. This is **not** one ring of
-dimension $ks$: it is one logical $C$-valued object represented by $k$
-base-field planes, each with modulus $U^s+1$. The D commitment, or its
-compressed H realization, binds the digit-decomposed planes before the fold
-challenge is sampled.
+Within either object, one extension-coordinate plane contains all $s$
+coefficients in increasing $j$ order. Its width $ks=D/\eta$ is **not** the
+dimension of one larger ring. A packed partial is one logical $C$-valued
+element represented by $k$ base-field planes. The quotient has the same
+coefficient shape, but is kept as a degree-below-$s$ representative in
+$E[U]$. The D commitment, or its compressed H realization, binds the
+digit-decomposed partial planes before the fold challenge is sampled.
 
 ### The packing consistency quotient
 
@@ -87,7 +78,15 @@ $$
 
 Canonical representatives of the two sides need not be equal as ordinary
 polynomials. Their difference is divisible by the cyclotomic modulus, so the
-prover supplies $Q_{\mathrm{pack}}(U)\in C$ such that
+prover supplies
+
+$$
+Q_{\mathrm{pack}}(U)\in E[U],
+\qquad
+\deg Q_{\mathrm{pack}}<s,
+$$
+
+such that the following identity holds in $E[U]$:
 
 $$
 \boxed{
