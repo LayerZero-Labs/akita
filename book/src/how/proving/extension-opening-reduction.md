@@ -8,7 +8,7 @@ when its scheduled opening method is `EvaluationTrace` and
 Subring coefficient packing also skips EOR because it opens the extension
 valued claim directly. See
 [Fold path and field geometry](./fold-path.md). The generic reduction and its
-soundness live in
+field algebra live in
 [Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md);
 this page is about Akita's prover paths, scheduling, and efficiency.
 

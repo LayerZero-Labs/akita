@@ -463,7 +463,12 @@ quotient checked by the verifier.
 ## Implementation map
 
 - `crates/akita-prover/src/protocol/ring_relation.rs`.
-- `crates/akita-prover/src/protocol/ring_switch.rs`.
+- `crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs` computes
+  the role-native ordinary quotients and sparse high-half contributions.
+- `crates/akita-prover/src/compute/cpu/ring_switch.rs` selects the retained or
+  streamed CPU kernels.
+- `crates/akita-prover/src/protocol/ring_switch.rs` assembles the ring-switch
+  witness and proof state.
 - `crates/akita-prover/src/protocol/coefficient_packing.rs`.
 - `crates/akita-types/src/subring_coefficient_packing.rs`.
 - `crates/akita-types/src/proof/coefficient_packing_relation.rs`.

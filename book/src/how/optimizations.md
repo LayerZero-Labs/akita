@@ -183,14 +183,15 @@ does it materialize the exact folded table, now one quarter of the original
 Boolean domain. The final range leaf uses the same class-indexed machinery; the
 basis-16 leaf has the dedicated two-round quartet path.
 
-The direct basis-4 and basis-8 leaves go one round further. When there are at
-least three ring variables, a bivariate prefix reconstructs the first two
-sumcheck messages from the compact digits. The third message is computed from
-compact octets, and the prover materializes the range image only after the
-third challenge, at one eighth of its original length. The basis-8 kernel caches
-the value and first three normalized derivatives of its quartic at every folded
-quad, so evaluating `Q(a+dT)` needs only powers of `d` and a few field
-multiplications.
+On the coefficient-bound route, the direct basis-4 and basis-8 leaves go one
+round further. When there are at least three ring variables, a bivariate prefix
+reconstructs the first two sumcheck messages from the compact digits. The third
+message is computed from compact octets, and the prover materializes the range
+image only after the third challenge, at one eighth of its original length.
+The basis-8 kernel caches the value and first three normalized derivatives of
+its quartic at every folded quad, so evaluating `Q(a+dT)` needs only powers of
+`d` and a few field multiplications. A Euclidean fold instead uses the
+class-indexed leaf described below because the norm term shares its rounds.
 
 These are prover-only representations. The transcript contains the same stage
 claims and sumcheck polynomials defined by the protocol, and the verifier does
@@ -227,6 +228,17 @@ values to the balanced digit planes of the committed response. The fused Stage
 1 proof saves a second round sequence, but it does not pretend that the
 physical response tables are free: their materialization is part of the
 Euclidean prover's memory cost.
+
+Relevant sources:
+
+- `crates/akita-prover/src/backend/packed_digits/` owns compact signed-digit
+  storage.
+- `crates/akita-prover/src/protocol/sumcheck/digit_range/` owns the direct and
+  class-indexed range provers.
+- `crates/akita-prover/src/protocol/sumcheck/physical_l2_norm.rs` fuses the
+  physical norm with the final range leaf.
+- `crates/akita-types/src/sis/physical_l2.rs` defines the direct and limb-Gram
+  plans and reconstructs the integer norm.
 
 ## Prepared NTT state
 

@@ -138,6 +138,52 @@ When a row is longer, the implementation ends the current accumulation chunk,
 reduces it, and continues. It never relies on a wide accumulator being
 effectively unbounded.
 
+### Product accumulators
+
+A product accumulator stores each base-$2^64$ limb sum in its own `u128` slot.
+The slots use wrapping addition and subtraction. Reduction later reads each
+slot as an unsigned integer and propagates carries between limbs. The result is
+exact only while the final mathematical value of every slot remains below
+`2^128`; this headroom is established separately for each concrete product
+formula.
+
+| Product | Accumulator | Proven term headroom |
+| --- | --- | ---: |
+| fp32 by fp32 | 2 `u128` slots | `2^64` |
+| fp64 by fp64 | 2 `u128` slots | `2^64` |
+| fp128 by fp128 | 4 `u128` slots | `2^64 - 1` |
+| fp128 by `u64` | 3 `u128` slots | `2^64 - 1` |
+| fp32 degree-4 extension product | 4 `u128` slots | `2^61` |
+| fp64 degree-2 extension product | 4 `u128` slots | more than `2^62` |
+
+The extension accumulators fuse reduction by the extension polynomial into the
+per-coordinate formulas. Subtractive coordinates receive a fixed multiple of
+the base-field modulus squared before accumulation, preventing unsigned
+underflow without changing their residue.
+
+### Small signed linear accumulators
+
+A different representation serves matrix products with small signed
+coefficients. It splits each canonical field element into 16-bit pieces stored
+in signed `i32` lanes: 2 lanes for fp32, 4 for fp64, and 8 for fp128. Scaling a
+field value by a small signed digit scales each lane directly. Fresh lanes have
+magnitude below `2^16`, so at least
+
+$$
+\left\lfloor\frac{2^{31}-1}{2^{16}-1}\right\rfloor=32768
+$$
+
+same-sign additions fit. More generally, `k` terms scaled by magnitude `s` are
+admitted only when
+
+$$
+k|s|(2^{16}-1)<2^{31}.
+$$
+
+Reduction propagates signed carries through the 16-bit lanes and then applies
+the field's Solinas reduction. These lanes use ordinary non-wrapping arithmetic;
+debug builds also trap an accidental lane overflow.
+
 ## Uniform field sampling
 
 `Field::random` uses exact rejection sampling. For a modulus with \(k\)
