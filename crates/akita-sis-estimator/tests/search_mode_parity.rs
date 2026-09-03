@@ -110,7 +110,7 @@ fn certified_search_is_at_least_as_good_as_local_minimum_smoke() {
         let certified = estimate(&params, &certified_config()).unwrap();
         if !exhaustive_at_least_as_good(&certified, &local, tol) {
             violations.push(format!(
-                "certified search worse than local-minimum for {row:?}\n  local={local:?}\n  certified={certified:?}"
+                "certified search worse than local-minimum for {row:?}"
             ));
         }
     }
@@ -130,9 +130,7 @@ fn full_exhaustive_parallel_matches_certified_search_smoke() {
         let certified = estimate(&params, &certified_config()).unwrap();
         let full = estimate(&params, &full_exhaustive_parallel_config()).unwrap();
         if !same_exact_or_above_target_result(&certified, &full) {
-            mismatches.push(format!(
-                "full exhaustive mismatch for {row:?}\n  certified={certified:?}\n  full={full:?}"
-            ));
+            mismatches.push(format!("full exhaustive mismatch for {row:?}"));
         }
     }
     if !mismatches.is_empty() {
@@ -166,7 +164,7 @@ fn certified_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
         let certified = estimate(&params, &certified_config()).unwrap();
         if !exhaustive_at_least_as_good(&certified, &local, tol) {
             violations.push(format!(
-                "certified search worse than local-minimum for {row:?}\n  local={local:?}\n  certified={certified:?}"
+                "certified search worse than local-minimum for {row:?}"
             ));
         }
     }
@@ -186,9 +184,7 @@ fn full_exhaustive_parallel_matches_certified_search_on_medium_subset() {
         let certified = estimate(&params, &certified_config()).unwrap();
         let full = estimate(&params, &full_exhaustive_parallel_config()).unwrap();
         if !same_exact_or_above_target_result(&certified, &full) {
-            mismatches.push(format!(
-                "full exhaustive mismatch for {row:?}\n  certified={certified:?}\n  full={full:?}"
-            ));
+            mismatches.push(format!("full exhaustive mismatch for {row:?}"));
         }
     }
     if !mismatches.is_empty() {
@@ -213,7 +209,7 @@ fn certified_search_rank20_geometries() {
         let certified = estimate(&params, &certified_config()).unwrap();
         assert!(
             exhaustive_at_least_as_good(&certified, &local, tol),
-            "rank-20 certified-search regression for {row:?}\n  local={local:?}\n  certified={certified:?}"
+            "rank-20 certified-search regression for {row:?}"
         );
     }
 }
