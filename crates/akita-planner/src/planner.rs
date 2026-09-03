@@ -62,7 +62,7 @@ pub(crate) fn precommitted_group_equivalence_classes(
 fn canonicalize_interchangeable_precommitted_groups(
     groups: &mut [GroupOpenPhaseParams],
     equivalence_classes: &[Vec<usize>],
-) {
+) -> Result<(), AkitaError> {
     for indices in equivalence_classes {
         let mut canonical = indices
             .iter()
@@ -71,19 +71,29 @@ fn canonicalize_interchangeable_precommitted_groups(
                 (group.canonical_descriptor_bytes(), group)
             })
             .collect::<Vec<_>>();
-        canonical.sort_by(|(left, _), (right, _)| {
-            // Group descriptors are concatenated without per-group framing in
-            // the complete schedule descriptor. Comparing `left || right`
-            // with `right || left` therefore gives the order that minimizes
-            // the complete concatenation even if descriptor lengths diverge.
-            left.iter()
-                .chain(right.iter())
-                .cmp(right.iter().chain(left.iter()))
-        });
+        let Some(descriptor_len) = canonical.first().map(|(descriptor, _)| descriptor.len()) else {
+            continue;
+        };
+        // Equal profiles and the root's shared opening method make every
+        // descriptor in one class the same width. The earliest class slot at
+        // which two representatives differ therefore decides the complete
+        // schedule descriptor even when the class indices are non-adjacent.
+        // Reject future variable-width encodings instead of applying a local
+        // comparator that cannot account for bytes between those indices.
+        if canonical
+            .iter()
+            .any(|(descriptor, _)| descriptor.len() != descriptor_len)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "interchangeable precommitted group descriptors must have one width".into(),
+            ));
+        }
+        canonical.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (&index, (_, group)) in indices.iter().zip(canonical) {
             groups[index] = group;
         }
     }
+    Ok(())
 }
 
 fn materialize_precommitted_group_for_open_basis(
@@ -217,7 +227,7 @@ fn precommitted_groups_for_open_basis(
         };
         groups.push(materialized);
     }
-    canonicalize_interchangeable_precommitted_groups(&mut groups, equivalence_classes);
+    canonicalize_interchangeable_precommitted_groups(&mut groups, equivalence_classes)?;
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
