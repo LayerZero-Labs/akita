@@ -75,7 +75,6 @@ where
 #[cfg(test)]
 use kernels::evaluate_weighted_setup_row;
 use kernels::{
-    add_reduced_base_ring_weights, base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment,
-    ReducedScanGroupWeights, RoleProjection,
+    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
+    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
 };
