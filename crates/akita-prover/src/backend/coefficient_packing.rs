@@ -4,9 +4,9 @@ use crate::compute::SubringCoefficientPackingPlan;
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
 use jolt_field::solinas::parallel::*;
-use jolt_field::{ExtField, Field};
+use jolt_field::{AdditiveGroup, ExtField, Field, MulBaseUnreduced, Unreduced};
 
-fn zero_vec<T: Field>(len: usize) -> Result<Vec<T>, AkitaError> {
+fn zero_vec<T: AdditiveGroup>(len: usize) -> Result<Vec<T>, AkitaError> {
     let mut values = Vec::new();
     values.try_reserve_exact(len).map_err(|_| {
         AkitaError::InvalidInput(format!(
@@ -17,6 +17,31 @@ fn zero_vec<T: Field>(len: usize) -> Result<Vec<T>, AkitaError> {
     Ok(values)
 }
 
+/// Precompute the tensor product reused by every claim in one opening batch.
+pub(crate) fn prepare_packing_position_weights<E: Field>(
+    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+) -> Result<Vec<E>, AkitaError> {
+    let len = point
+        .num_positions_per_block()
+        .checked_mul(point.geometry().subring_embedding_stride())
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("coefficient-packing fused weight length overflow".into())
+        })?;
+    let mut weights = Vec::new();
+    weights.try_reserve_exact(len).map_err(|_| {
+        AkitaError::InvalidInput("coefficient-packing fused weight allocation failed".into())
+    })?;
+    for &position_weight in point.position_weights() {
+        weights.extend(
+            point
+                .packing_weights()
+                .iter()
+                .map(|&packing_weight| position_weight * packing_weight),
+        );
+    }
+    Ok(weights)
+}
+
 /// Construct canonical partials from an A-ring position source.
 ///
 /// The source callback runs once per position. Dense sources borrow their ring
@@ -24,15 +49,16 @@ fn zero_vec<T: Field>(len: usize) -> Result<Vec<T>, AkitaError> {
 /// owned array. The arithmetic loop is shared and reads the prepared position
 /// through `coefficient` without repeating source validation or decoding.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
-pub fn coefficient_packing_partials_from_position_source<F, E, P, const D: usize>(
+pub(crate) fn coefficient_packing_partials_from_position_source<F, E, P, const D: usize>(
     plan: SubringCoefficientPackingPlan<'_, E>,
+    fused_weights: &[E],
     source_num_vars: usize,
     position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
     coefficient: impl Fn(usize, usize, &P) -> F + Sync,
 ) -> Result<Vec<F>, AkitaError>
 where
     F: Field,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
     P: Sync,
 {
     plan.validate::<D>(source_num_vars)?;
@@ -63,28 +89,47 @@ where
                 .checked_sub(first_position)
                 .ok_or(AkitaError::InvalidProof)?
                 .min(point.num_positions_per_block());
-            let mut packed = zero_vec::<E>(s)?;
-            for position_in_block in 0..live_in_block {
-                let position = first_position
-                    .checked_add(position_in_block)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let source_position = position_at(position)?;
-                let position_weight = point.position_weights()[position_in_block];
-                for (subring_index, accumulator) in packed.iter_mut().enumerate() {
-                    let subring_offset = subring_index.checked_mul(stride).ok_or_else(|| {
-                        AkitaError::InvalidInput(
-                            "coefficient-packing subring offset overflow".into(),
-                        )
-                    })?;
-                    let mut packed_position = E::zero();
-                    for (low_index, &packing_weight) in point.packing_weights().iter().enumerate() {
-                        let coefficient_index = subring_offset + low_index;
-                        let source = coefficient(position, coefficient_index, &source_position);
-                        packed_position += packing_weight.mul_base(source);
+            let packed = if E::SUM_IS_EXACT {
+                let mut products = zero_vec::<<E as Unreduced>::Product>(s)?;
+                for position_in_block in 0..live_in_block {
+                    let position = first_position
+                        .checked_add(position_in_block)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let source_position = position_at(position)?;
+                    let weights =
+                        packing_position_weights(fused_weights, position_in_block, stride)?;
+                    let mut coefficient_index = 0;
+                    for accumulator in &mut products {
+                        for &weight in weights {
+                            let source = coefficient(position, coefficient_index, &source_position);
+                            *accumulator += weight.mul_base_unreduced(source);
+                            coefficient_index += 1;
+                        }
                     }
-                    *accumulator += position_weight * packed_position;
+                    debug_assert_eq!(coefficient_index, D);
                 }
-            }
+                products.into_iter().map(E::reduce_product).collect()
+            } else {
+                let mut reduced = zero_vec::<E>(s)?;
+                for position_in_block in 0..live_in_block {
+                    let position = first_position
+                        .checked_add(position_in_block)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let source_position = position_at(position)?;
+                    let weights =
+                        packing_position_weights(fused_weights, position_in_block, stride)?;
+                    let mut coefficient_index = 0;
+                    for accumulator in &mut reduced {
+                        for &weight in weights {
+                            let source = coefficient(position, coefficient_index, &source_position);
+                            *accumulator += weight.mul_base(source);
+                            coefficient_index += 1;
+                        }
+                    }
+                    debug_assert_eq!(coefficient_index, D);
+                }
+                reduced
+            };
 
             let mut output_coordinates = zero_vec::<F>(partial_width)?;
             for (subring_index, coefficient) in packed.into_iter().enumerate() {
@@ -115,6 +160,23 @@ where
         output.extend(coordinates);
     }
     Ok(output)
+}
+
+#[inline]
+fn packing_position_weights<'a, E: Field>(
+    fused_weights: &'a [E],
+    position: usize,
+    stride: usize,
+) -> Result<&'a [E], AkitaError> {
+    let start = position.checked_mul(stride).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing fused weight offset overflow".into())
+    })?;
+    let end = start.checked_add(stride).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing fused weight extent overflow".into())
+    })?;
+    fused_weights
+        .get(start..end)
+        .ok_or(AkitaError::InvalidProof)
 }
 
 #[cfg(test)]
@@ -151,7 +213,7 @@ mod tests {
     fn assert_dense_matches_reference<T, U, const RING_D: usize>(s: usize)
     where
         T: Field + CanonicalEncoding + Ring,
-        U: ExtField<T> + FpExtEncoding<T> + Ring,
+        U: ExtField<T> + FpExtEncoding<T> + Ring + jolt_field::MulBaseUnreduced<T>,
     {
         let geometry = SubringCoefficientPackingGeometry::try_new(U::DEGREE, RING_D, s).unwrap();
         let point_len = (2 * RING_D).next_power_of_two().trailing_zeros() as usize;

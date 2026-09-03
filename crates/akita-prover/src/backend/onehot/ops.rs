@@ -267,7 +267,7 @@ impl<F, E, const D: usize, I>
     SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
     I: OneHotIndex,
 {
     #[tracing::instrument(skip_all, name = "coefficient_packing_onehot_partials")]
@@ -299,6 +299,8 @@ where
         let stride = geometry.subring_embedding_stride();
         let s = geometry.challenge_subring_dimension();
         let num_blocks = point.num_live_blocks();
+        let fused_weights =
+            crate::backend::coefficient_packing::prepare_packing_position_weights(point)?;
 
         source
             .polys
@@ -378,23 +380,26 @@ where
                             let coefficient_index = field_index % D;
                             let low_index = coefficient_index % stride;
                             let subring_index = coefficient_index / stride;
-                            let value = point.position_weights()[position_in_block]
-                                * point.packing_weights()[low_index];
+                            let weight_index = position_in_block
+                                .checked_mul(stride)
+                                .and_then(|base| base.checked_add(low_index))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            let value = *fused_weights
+                                .get(weight_index)
+                                .ok_or(AkitaError::InvalidProof)?;
                             let extension_coordinates = value.ext_coords();
                             if extension_coordinates.len() != geometry.extension_degree() {
                                 return Err(AkitaError::InvalidSetup(
                                     "coefficient-packing extension encoding width mismatch".into(),
                                 ));
                             }
-                            for (extension_coordinate, coordinate) in
-                                extension_coordinates.iter().copied().enumerate()
+                            for (coordinate_block, coordinate) in block
+                                .chunks_exact_mut(s)
+                                .zip(extension_coordinates.iter().copied())
                             {
-                                let local_index = extension_coordinate
-                                    .checked_mul(s)
-                                    .and_then(|base| base.checked_add(subring_index))
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                *block.get_mut(local_index).ok_or(AkitaError::InvalidProof)? +=
-                                    coordinate;
+                                *coordinate_block
+                                    .get_mut(subring_index)
+                                    .ok_or(AkitaError::InvalidProof)? += coordinate;
                             }
                         }
                         Ok(block)

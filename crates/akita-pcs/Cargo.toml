@@ -216,6 +216,10 @@ name = "root_kernels"
 harness = false
 
 [[bench]]
+name = "coefficient_packing"
+harness = false
+
+[[bench]]
 name = "decompose_fold"
 harness = false
 

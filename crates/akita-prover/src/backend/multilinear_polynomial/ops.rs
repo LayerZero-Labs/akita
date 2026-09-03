@@ -5,7 +5,7 @@
 
 use akita_error::AkitaError;
 use akita_types::FpExtEncoding;
-use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use jolt_field::{Unreduced, WithCommitAccumulator};
 
 use crate::backend::{DenseBatchView, DenseView, OneHotBatchView, OneHotView};
@@ -26,7 +26,7 @@ impl<F, E, const D: usize, I>
     for CpuBackend
 where
     F: Field + CanonicalEncoding + Ring,
-    E: ExtField<F> + FpExtEncoding<F>,
+    E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
     I: OneHotIndex,
 {
     fn coefficient_packing_partials_batch(

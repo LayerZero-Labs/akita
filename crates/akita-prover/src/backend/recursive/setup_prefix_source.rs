@@ -501,7 +501,7 @@ impl<F, E, const D: usize>
     SubringCoefficientPackingBatchKernel<RecursiveFoldBatchView<'_, F, D>, F, E, D> for CpuBackend
 where
     F: Field + CanonicalEncoding + Ring,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
     fn coefficient_packing_partials_batch(
         &self,
@@ -509,6 +509,8 @@ where
         source: RecursiveFoldBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let fused_weights =
+            crate::backend::coefficient_packing::prepare_packing_position_weights(plan.point)?;
         let mut outputs = Vec::with_capacity(source.polys.len());
         for poly in source.polys {
             plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
@@ -537,6 +539,7 @@ where
                             D,
                         >(
                             plan,
+                            &fused_weights,
                             RootPolyMeta::<F>::num_vars(*poly),
                             |position| {
                                 rings

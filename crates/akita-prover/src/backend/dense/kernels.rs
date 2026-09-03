@@ -1,7 +1,9 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source;
+use crate::backend::coefficient_packing::{
+    coefficient_packing_partials_from_position_source, prepare_packing_position_weights,
+};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -11,7 +13,7 @@ use crate::compute::{
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
 use jolt_field::solinas::parallel::*;
-use jolt_field::{CanonicalEncoding, ExtField, Field};
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
@@ -116,7 +118,7 @@ impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'
     for CpuBackend
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
     fn coefficient_packing_partials_batch(
         &self,
@@ -124,6 +126,7 @@ where
         source: DenseBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let fused_weights = prepare_packing_position_weights(plan.point)?;
         source
             .polys
             .iter()
@@ -140,6 +143,7 @@ where
                 }
                 let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
                     plan,
+                    &fused_weights,
                     RootPolyMeta::<F>::num_vars(*poly),
                     |position| {
                         rings

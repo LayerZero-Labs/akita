@@ -719,7 +719,7 @@ impl<F, E, const D: usize>
     SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D> for CpuBackend
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
     fn coefficient_packing_partials_batch(
         &self,
@@ -727,6 +727,8 @@ where
         source: SuffixWitnessBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let fused_weights =
+            crate::backend::coefficient_packing::prepare_packing_position_weights(plan.point)?;
         source
             .polys
             .iter()
@@ -746,6 +748,7 @@ where
                     D,
                 >(
                     plan,
+                    &fused_weights,
                     view.num_vars(),
                     |position| view.ring_elem(position).ok_or(AkitaError::InvalidProof),
                     |position, coefficient_index, source| {
