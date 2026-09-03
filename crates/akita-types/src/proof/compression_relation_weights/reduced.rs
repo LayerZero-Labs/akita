@@ -4,7 +4,6 @@ use akita_algebra::{
     offset_eq::OffsetEqWindow,
     ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint},
 };
-use jolt_field::solinas::parallel::*;
 use jolt_field::{ExtField, Unreduced, Zero};
 
 #[derive(Clone, Debug)]
@@ -134,9 +133,12 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
         }
         let residue_point = ResidueKernelPoint::new(alpha, ring_dimension)?;
         let low_offset = columns.physical_start % ring_dimension;
+        // Compression maps have few columns, while each column already uses a
+        // tight residue dot product. Dispatching these short loops through
+        // Rayon costs more than it saves in multi-threaded verification.
         let column_evaluations = if low_offset == 0 {
             let kernel = residue_point.field_kernel(&low_equality)?;
-            let values = cfg_into_iter!(0..columns.input_width)
+            let values = (0..columns.input_width)
                 .map(|column| {
                     let (_, coefficients) = columns.column(column)?;
                     Ok(eval_flat_ring_at_pows_fast(coefficients, &kernel))
@@ -167,7 +169,7 @@ impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
                 );
             let first_kernel = residue_point.field_kernel(&first_equality)?;
             let second_kernel = residue_point.field_kernel(&second_equality)?;
-            let values = cfg_into_iter!(0..columns.input_width)
+            let values = (0..columns.input_width)
                 .map(|column| {
                     let (_, coefficients) = columns.column(column)?;
                     Ok([
