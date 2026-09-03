@@ -149,5 +149,5 @@ pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = Generated
     ring_dimensions: CATALOG_RING_DIMENSIONS,
     ring_challenge_config_digest: 17970171637396625756,
     key_count: 8,
-    key_digest: 15657991200289127810,
+    key_digest: 9197067707862155722,
 };

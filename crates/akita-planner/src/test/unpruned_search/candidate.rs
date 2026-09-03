@@ -244,8 +244,8 @@ pub(super) fn prepend_fold(
         AkitaError::InvalidSetup("unpruned traversal fold proof size overflow".into())
     })?;
     let successor = child.folds.first().map_or_else(
-        || akita_types::GrindingPlanSuccessor::Terminal(&child.terminal.params),
-        |fold| akita_types::GrindingPlanSuccessor::Recursive(fold.params.as_ref()),
+        || akita_types::FoldSuccessor::Terminal(&child.terminal.params),
+        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let edge_nonce_bits = akita_types::transcript_grinding_nonce_bits_for_planner_edge(
         params,
@@ -290,8 +290,8 @@ pub(super) fn prepend_root(
                 AkitaError::InvalidSetup("unpruned root setup field length must be nonzero".into())
             })?;
     let successor = suffix.folds.first().map_or_else(
-        || akita_types::GrindingPlanSuccessor::Terminal(&suffix.terminal.params),
-        |fold| akita_types::GrindingPlanSuccessor::Recursive(fold.params.as_ref()),
+        || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
+        |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
     let root_bytes = reference_level_proof_bytes(
         policy.decomposition.field_bits(),

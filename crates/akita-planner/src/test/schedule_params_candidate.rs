@@ -133,6 +133,7 @@ fn audited_grouped_level_params() -> CommittedGroupParams {
         groups,
         open_matrix,
         params.payload_mode,
+        params.ring_relation_mode,
         params.source_encoding,
         params.witness_chunk,
     )
