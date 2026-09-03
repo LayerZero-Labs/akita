@@ -273,18 +273,17 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring +
         _ => unreachable!(),
     };
 
-    let (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg) = cfg_fold_reduce!(
+    let (norm_pos, norm_neg, relation_accum, _) = cfg_fold_reduce!(
         0..live_x_cols,
         || {
             (
                 [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
                 [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
                 [E::Product::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                vec![0usize; y_quads],
             )
         },
-        |(mut norm_pos, mut norm_neg, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
+        |(mut norm_pos, mut norm_neg, mut relation_accum, mut lookup_indices), x_idx| {
             let column_start = x_idx * y_len;
             let mut column = w_compact
                 .slice(column_start..column_start + y_len)
@@ -292,12 +291,13 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring +
                 .iter();
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
+            let linear_lane = linear_terms.resolve_lane(x_idx);
             let mut x_rel_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             let mut x_rel_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
-                let base = 4 * y_quad;
                 let quad = column.next_array::<4>().expect("compact quad digits");
                 let lookup_idx = lookup_index_fn(quad.map(w_digit_fn));
+                lookup_indices[y_quad] = lookup_idx;
                 let norm_weight = eq_y_weight * eq_x_weight;
                 accum_lookup_vector_signed_selected(
                     &mut norm_pos,
@@ -312,54 +312,54 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring +
                     &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
-                let linear_quad = linear_terms.quad_at(x_idx, base, y_len);
-                let linear_point_values = stage2_relation_m_point_values_compressed(linear_quad);
-                accum_pointwise_signed(
-                    &mut linear_pos,
-                    &mut linear_neg,
-                    &linear_point_values,
-                    &rel_table[lookup_idx],
-                );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
-                rel_accum[idx] += row_val.mul_unreduced(x_rel);
+                relation_accum[idx] += row_val.mul_unreduced(x_rel);
             }
-            (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg)
+            linear_lane.for_each_factored(|factor, values| {
+                debug_assert_eq!(values.len(), y_len);
+                let mut x_linear_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+                let mut x_linear_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+                for (linear_quad, &lookup_idx) in values.chunks_exact(4).zip(&lookup_indices) {
+                    let linear_point_values = stage2_relation_m_point_values_compressed([
+                        linear_quad[0],
+                        linear_quad[1],
+                        linear_quad[2],
+                        linear_quad[3],
+                    ]);
+                    accum_pointwise_signed(
+                        &mut x_linear_pos,
+                        &mut x_linear_neg,
+                        &linear_point_values,
+                        &rel_table[lookup_idx],
+                    );
+                }
+                for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
+                    let x_linear = reduce_signed_accum::<E>(x_linear_pos[idx], x_linear_neg[idx]);
+                    relation_accum[idx] += factor.mul_unreduced(x_linear);
+                }
+            });
+            (norm_pos, norm_neg, relation_accum, lookup_indices)
         },
-        |(mut norm_pos_a, mut norm_neg_a, mut rel_accum_a, mut linear_pos_a, mut linear_neg_a),
-         (norm_pos_b, norm_neg_b, rel_accum_b, linear_pos_b, linear_neg_b)| {
+        |(mut norm_pos_a, mut norm_neg_a, mut relation_accum_a, lookup_indices_a),
+         (norm_pos_b, norm_neg_b, relation_accum_b, _)| {
             for (dst, src) in norm_pos_a.iter_mut().zip(norm_pos_b.iter()) {
                 *dst += *src;
             }
             for (dst, src) in norm_neg_a.iter_mut().zip(norm_neg_b.iter()) {
                 *dst += *src;
             }
-            for (dst, src) in rel_accum_a.iter_mut().zip(rel_accum_b.iter()) {
+            for (dst, src) in relation_accum_a.iter_mut().zip(relation_accum_b.iter()) {
                 *dst += *src;
             }
-            for (dst, src) in linear_pos_a.iter_mut().zip(linear_pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in linear_neg_a.iter_mut().zip(linear_neg_b.iter()) {
-                *dst += *src;
-            }
-            (
-                norm_pos_a,
-                norm_neg_a,
-                rel_accum_a,
-                linear_pos_a,
-                linear_neg_a,
-            )
+            (norm_pos_a, norm_neg_a, relation_accum_a, lookup_indices_a)
         }
     );
     let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| {
-            E::reduce_product(rel_accum[idx])
-                + reduce_signed_accum::<E>(linear_pos[idx], linear_neg[idx])
-        });
+        std::array::from_fn(|idx| E::reduce_product(relation_accum[idx]));
     Some(Stage2BivariateSkipProof {
         norm: Stage2CompressedGrid {
             omitted_corner: norm_omitted_corner,

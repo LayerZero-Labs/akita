@@ -53,5 +53,6 @@ pub(crate) use column_sweep::column_sweep_ajtai_onehot_multi;
 pub use entries::OneHotIndex;
 #[cfg(test)]
 use inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_single_chunk_tiled};
+pub(super) use ops::onehot_coefficient_packing_partials;
 pub use ops::{OneHotBatchView, OneHotView};
 pub use poly::OneHotPoly;

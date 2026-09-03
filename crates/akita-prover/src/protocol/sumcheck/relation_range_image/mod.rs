@@ -266,6 +266,7 @@ mod dense_terms;
 mod evaluation_trace;
 mod lane_prefix;
 mod lifecycle;
+mod prepared_linear_lane;
 mod round_flow;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
@@ -275,6 +276,7 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+pub(crate) use prepared_linear_lane::PreparedLinearLane;
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
