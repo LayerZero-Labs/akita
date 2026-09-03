@@ -624,22 +624,24 @@ determines how the first semantic family enters this lift.
 | Opening method | Consistency realization | Source-fold geometry |
 |---|---|---|
 | `EvaluationTrace` | one ordinary relation in $R_D$ | the same $R_D$ challenge acts on $\mathbf z$ and $\hat{\mathbf e}$ |
-| `SubringCoefficientPacking` | one logical $C=E[U]/(U^s+1)$ relation, carried by structured Stage-2 terms over $k$ base-field coordinate planes | $c(U)$ is embedded as $c(X^{k\eta})$ in the A ring |
+| `SubringCoefficientPacking` | one logical $C=E[U]/(U^s+1)$ relation over $k$ base-field coordinate planes; packed E/Q use the common relation events and the folded source uses the packing-Z term | $c(U)$ is embedded as $c(X^{k\eta})$ in the A ring |
 
 For packing, each coordinate plane has modulus $U^s+1$. The complete relation
 has physical width $ks$; that does **not** make it one ring of dimension $ks$.
-The current Stage-2 realization supplies packed E/Q coordinate-plane events
-and the structured packing-Z term. These are method-specific linear terms,
-not extra ordinary matrix rows. The legacy ordinary `consistency` row is
-omitted, and all planes together realize the single semantic Equation (12b).
+The logical consistency-row slot remains in the row domain, so its $\tau_1$
+weight also batches the packed relation. The packed E/Q coordinate-plane
+events join the common relation-weight factorization; only the folded-source
+side is supplied as the separate packing-Z structured term. These coefficients
+replace the legacy `EvaluationTrace` consistency formula, and all planes
+together realize the single semantic Equation (12b).
 
 The ordinary physical equations are congruences in cyclotomic rings, whereas
 sumcheck needs exact field identities. In the raw basic case, every ordinary
 row uses the common ring $R_D$ for `EvaluationTrace`. Packing omits the
-ordinary consistency row; its A, B, and D rows remain in their scheduled
-native rings, while the separate packing quotient uses coordinate planes of
-dimension $s$. Compressed mode retains those scheduled ordinary dimensions and
-adds two
+legacy `EvaluationTrace` consistency coefficients; its A, B, and D rows remain
+in their scheduled native rings, while its consistency-row slot uses $k$
+coordinate planes of dimension $s$. Compressed mode retains those scheduled
+dimensions and adds two
 compression-only dimensions: the $\mathbf F_1$ and $\mathbf H_1$ rows lie in
 $R_{d_1}$, while the $\mathbf F_2$ and $\mathbf H_2$ rows lie in $R_{d_2}$.
 There is therefore no single denominator $X^D+1$ that applies to every row in
@@ -675,10 +677,11 @@ G_g^{(r)}\hat r_{i,g}(X),
 $$
 
 Logically, these quotient digits extend the witness in the same way in both
-payload modes. Their physical placement differs. In raw `EvaluationTrace`
-mode, $\hat{\mathbf r}_{\mathrm{ord}}$ contains the quotient digits for the
-`consistency`, $\mathbf A$, $\mathbf B$, and $\mathbf D$ rows in canonical row
-order:
+payload modes. Before any compression-only suffix, the witness layout places
+the quotient digits for every relation-row family in one shared segment
+$\hat{\mathbf r}_{\mathrm{ord}}$. In raw `EvaluationTrace` mode this segment
+contains the quotients for the `consistency`, $\mathbf A$, $\mathbf B$, and
+$\mathbf D$ rows in canonical row order:
 
 $$
 \boxed{
@@ -695,9 +698,13 @@ $$
 \tag{21a}
 $$
 
-For packing, the ordinary segment contains the A, B, and D quotients, while
-the $k$ coordinate planes of $Q_{\mathrm{pack}}$ belong to the
-method-dependent packing spans consumed by the structured terms.
+For packing, the same shared segment still includes the consistency-row
+quotient slot. That slot stores the digit-decomposed $k$ coordinate planes of
+$Q_{\mathrm{pack}}$; the A, B, and D quotients follow their normal row layout.
+$Q_{\mathrm{pack}}$ is therefore not stored in a separate method-dependent
+witness span. Its packed Q events, together with the packed E events, enter the
+common relation-weight factorization. The packing-Z and direct-opening terms
+are the separate structured Stage-2 sources.
 
 Compressed mode keeps that ordinary quotient segment, then stores each
 compression layer's balanced base-$2$ digits beside the quotient digits for
@@ -801,8 +808,8 @@ The direct scalar opening in either method reuses the same row-batching
 challenge $\tau_1$, but it is absent from the physical ring-row layout, its
 public right-hand side, and the quotient polynomials $r_i$. Coefficient packing
 also changes the physical consistency realization through the packed E/Q
-events and packing-Z term described above; those method-specific constraints
-are separate from the direct scalar opening.
+events in the common relation-weight factorization and the separate packing-Z
+term described above. Both are distinct from the direct scalar opening.
 
 [Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
 continues from Equation (24) and fuses the physical relation, the

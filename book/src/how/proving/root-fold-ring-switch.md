@@ -67,12 +67,24 @@ digit-decomposed partial planes before the fold challenge is sampled.
 
 ### The packing consistency quotient
 
-Let $e_i(U)\in C$ be the packed partial for a live claim/block pair, let
-$c_i(U)\in S$ be its fold challenge, and let $L(G\hat z)(U)$ be the packed
-image of the recomposed folded-source digits. Semantic consistency says
+Let $e_i(U)\in C$ be the packed partial for a live claim/block pair and let
+$c_i(U)\in S$ be its fold challenge. For the folded-source digits, use the
+shorthand
 
 $$
-\sum_i c_i(U)e_i(U)=L(G\hat z)(U)
+G\hat{\mathbf z}
+:=
+\left(
+\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}
+\right)_{p,a}.
+$$
+
+This notation preserves the $(p,a)$ vector: the sum recomposes only the fold
+digit index $f$. Applying the packing map gives $L(G\hat{\mathbf z})(U)$.
+Semantic consistency says
+
+$$
+\sum_i c_i(U)e_i(U)=L(G\hat{\mathbf z})(U)
 \qquad\text{in }C.
 $$
 
@@ -90,7 +102,7 @@ such that the following identity holds in $E[U]$:
 
 $$
 \boxed{
-\sum_i c_i(U)e_i(U)-L(G\hat z)(U)
+\sum_i c_i(U)e_i(U)-L(G\hat{\mathbf z})(U)
 =
 (U^s+1)Q_{\mathrm{pack}}(U).
 }
@@ -98,10 +110,12 @@ $$
 $$
 
 The quotient also has $s$ coefficients in $E$, hence $k$ coordinate planes of
-length $s$. The current Stage-2 implementation realizes Equation (1) through
-packed E/Q coordinate-plane events plus the structured packing-Z term. It does
-not add the legacy ordinary `consistency` row as a second copy of the same
-obligation.
+length $s$. Its digit coordinates occupy the consistency-row slot in the
+shared pre-compression quotient range. In Stage 2, the packed E and Q events
+join the common relation-weight factorization, while the folded-source side is
+the separate packing-Z structured term. These contributions replace the
+legacy `EvaluationTrace` consistency coefficients; they do not add a second
+copy of the obligation.
 
 ### Evaluate the native relations at one challenge
 
@@ -110,7 +124,7 @@ ring-switch challenge $\alpha$. Evaluating Equation (1) at $U=\alpha$ gives
 
 $$
 \sum_i c_i(\alpha)e_i(\alpha)
--L(G\hat z)(\alpha)
+-L(G\hat{\mathbf z})(\alpha)
 =
 (\alpha^s+1)Q_{\mathrm{pack}}(\alpha).
 \tag{2}

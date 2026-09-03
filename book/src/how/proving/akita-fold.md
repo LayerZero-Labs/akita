@@ -457,23 +457,28 @@ $$
 $$
 
 The second map, $L$, is the public packing map from one source-block vector to
-$C=E[U]/(U^s+1)$. It contracts the position axis $p$ and the column axis $u$,
-but leaves one output coefficient for every row $j$:
+$C=E[U]/(U^s+1)$. For any vector
+$\mathbf y=(y_{p,a})_{p,a}$ with the same shape as $\mathbf s_b$, define
 
 $$
-L(\mathbf s_b)(U)
+L(\mathbf y)(U)
 =
-\sum_{j=0}^{s-1}e_{b,j}U^j
-=e_b(U),
-\qquad
-e_{b,j}
-=
-\sum_{p,u}Q_pI_u^{\mathrm{pack}}[F_{p,b}]_{u+k\eta j}.
+\sum_{j=0}^{s-1}
+\left(
+\sum_{p,a,u}
+Q_pG_a^{\mathrm{in}}I_u^{\mathrm{pack}}
+[y_{p,a}]_{u+k\eta j}
+\right)U^j.
 $$
 
-The intuition is now simple: $\iota$ moves rows, while $L$ compresses each row.
+Thus $L$ first recomposes the inner digits with $G_a^{\mathrm{in}}$, then
+contracts the position axis $p$ and the column axis $u$, while leaving one
+output coefficient for every row $j$. Together with the definition of $e_b$
+above, Equation (1) gives $L(\mathbf s_b)=e_b$. The intuition is now simple:
+$\iota$ moves rows, while $L$ compresses each row.
 For example, take $D=8$, $k=2$, $\eta=2$, and $s=2$. The source table has two
-rows of width four:
+rows of width four. In this picture, $a_u$ and $b_u$ already include the
+position sum over $p$ and the inner-digit recomposition over $a$:
 
 ~~~text
        u = 0   1   2   3       after applying L
@@ -653,18 +658,33 @@ $$
 \hat e_{b,d,t,j}U^j
 =
 L\!\left(
-\sum_{p,a,f}G_f^{\mathrm{fold}}
+\left(
+\sum_fG_f^{\mathrm{fold}}
 \hat z_{p,a,f}
+\right)_{p,a}
 \right)(U).
 }
 \tag{12b}
 $$
 
+The outer $(\cdot)_{p,a}$ is essential: it reconstructs each coordinate
+$z_{p,a}$ separately before $L$ applies the position weights $Q_p$, the inner
+gadget weights $G_a^{\mathrm{in}}$, and the packing weights
+$I_u^{\mathrm{pack}}$. Equivalently, the right-hand side is
+
+$$
+\sum_{j,p,a,u,f}
+Q_pG_a^{\mathrm{in}}I_u^{\mathrm{pack}}G_f^{\mathrm{fold}}
+[\hat z_{p,a,f}]_{u+k\eta j}U^j.
+$$
+
 This is the same semantic obligation in the smaller geometry: the packed
 partials on the left and the packed folded source on the right must agree.
 The expression is one logical $C$-valued relation. Its physical realization
-uses $k$ extension-coordinate planes and a structured Stage-2 term; it is not
-$k$ independent protocol claims.
+uses $k$ extension-coordinate planes. The packed E/Q contributions enter the
+common relation-weight factorization, while the folded-source contribution is
+a separate packing-Z Stage-2 term. Together they realize one protocol claim,
+not $k$ independent claims.
 
 ### 2. Inner-commitment consistency
 

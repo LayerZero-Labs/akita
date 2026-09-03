@@ -94,13 +94,15 @@ The scheduled method supplies that binding. Evaluation trace uses
 is a virtual row because the verifier evaluates its public tensor formula at
 the final point instead of adding a physical matrix row and quotient digits.
 
-Subring coefficient packing contributes an ordered sum of structured linear
-terms. `CoefficientPackingRelationEvents` supplies the packed E and Q relation
-weights. `CoefficientPackingStage2Terms` supplies the packing-Z and direct
-opening weights from the block point, tail point, extension basis coordinates,
-and opening digit weights. The packing-Z weights do not share the native A
-row's low alpha factor, so they remain a separate factorized term. Every term
-still evaluates the same flat witness at the same final point.
+Subring coefficient packing splits its contribution across the common relation
+path and the structured path. `CoefficientPackingRelationEvents` supplies the
+packed E and Q weights to the common relation-weight factorization.
+`CoefficientPackingStage2Terms` supplies the two ordered structured sources:
+packing-Z and direct opening. Their weights come from the block point, tail
+point, extension basis coordinates, and opening digit weights. The packing-Z
+weights do not share the native A row's low alpha factor, so they remain a
+separate factorized term. Every contribution still evaluates the same flat
+witness at the same final point.
 
 ## Why the terms share one point
 
