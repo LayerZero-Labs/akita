@@ -32,6 +32,60 @@ pub(crate) use root_candidates::exhaustive_root_candidates_for_reference;
 
 type PrecommittedGroupSeed = (GroupCommitPhaseParams, HonestFoldPolicySpec);
 
+/// Partition precommitted groups whose opening choices may be permuted without
+/// changing feasibility or any numeric planner objective.
+pub(crate) fn precommitted_group_equivalence_classes(
+    profiles: &[GroupCommitPhaseParams],
+    honest_fold_policies: &[HonestFoldPolicySpec],
+) -> Result<Vec<Vec<usize>>, AkitaError> {
+    if profiles.len() != honest_fold_policies.len() {
+        return Err(AkitaError::InvalidSetup(
+            "group-batch planning requires one honest fold policy per precommitted profile"
+                .to_string(),
+        ));
+    }
+    let mut classes: Vec<Vec<usize>> = Vec::new();
+    for index in 0..profiles.len() {
+        if let Some(indices) = classes.iter_mut().find(|indices| {
+            let representative = indices[0];
+            profiles[representative] == profiles[index]
+                && honest_fold_policies[representative] == honest_fold_policies[index]
+        }) {
+            indices.push(index);
+        } else {
+            classes.push(vec![index]);
+        }
+    }
+    Ok(classes)
+}
+
+fn canonicalize_interchangeable_precommitted_groups(
+    groups: &mut [GroupOpenPhaseParams],
+    equivalence_classes: &[Vec<usize>],
+) {
+    for indices in equivalence_classes {
+        let mut canonical = indices
+            .iter()
+            .map(|&index| {
+                let group = groups[index];
+                (group.canonical_descriptor_bytes(), group)
+            })
+            .collect::<Vec<_>>();
+        canonical.sort_by(|(left, _), (right, _)| {
+            // Group descriptors are concatenated without per-group framing in
+            // the complete schedule descriptor. Comparing `left || right`
+            // with `right || left` therefore gives the order that minimizes
+            // the complete concatenation even if descriptor lengths diverge.
+            left.iter()
+                .chain(right.iter())
+                .cmp(right.iter().chain(left.iter()))
+        });
+        for (&index, (_, group)) in indices.iter().zip(canonical) {
+            groups[index] = group;
+        }
+    }
+}
+
 fn materialize_precommitted_group_for_open_basis(
     (layout, honest_fold_policy): &PrecommittedGroupSeed,
     policy: &PlannerPolicy,
@@ -144,6 +198,7 @@ struct RootFinalGroupCandidateInput<'a> {
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
     openings: &[PlannerOpeningCandidate],
+    equivalence_classes: &[Vec<usize>],
     policy: &PlannerPolicy,
     shared_opening_ring_dimension: usize,
     log_basis_open: u32,
@@ -162,6 +217,7 @@ fn precommitted_groups_for_open_basis(
         };
         groups.push(materialized);
     }
+    canonicalize_interchangeable_precommitted_groups(&mut groups, equivalence_classes);
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
@@ -208,12 +264,10 @@ pub(crate) fn root_level_candidates_for_basis(
         return Ok(Vec::new());
     }
 
-    if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
-        return Err(AkitaError::InvalidSetup(
-            "group-batch planning requires one honest fold policy per precommitted profile"
-                .to_string(),
-        ));
-    }
+    let equivalence_classes = precommitted_group_equivalence_classes(
+        &key.precommitteds,
+        precommitted_honest_fold_policies,
+    )?;
     if precommitted_openings.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(
             "root precommit opening candidate count mismatch".into(),
@@ -283,6 +337,7 @@ pub(crate) fn root_level_candidates_for_basis(
         precommitted_groups_for_open_basis(
             &precommitted_groups,
             precommitted_openings,
+            &equivalence_classes,
             policy,
             shared_opening_ring_dimension,
             candidate_log_basis_open,

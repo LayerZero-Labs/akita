@@ -703,6 +703,51 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         OpeningMethod::SubringCoefficientPacking { .. }
     )));
 
+    let precommit_domain = PlannerOpeningCandidate::coefficient_packing_domain(
+        0,
+        policy.claim_ext_degree,
+        CommitmentRingDims {
+            inner: frozen_group.inner.matrix.ring_dimension(),
+            outer: frozen_group.outer.matrix.ring_dimension(),
+            opening: dimensions.d_d(),
+        },
+    )
+    .expect("precommit opening domain");
+    let exhaustive_products = precommit_domain
+        .iter()
+        .flat_map(|&left| precommit_domain.iter().map(move |&right| vec![left, right]))
+        .collect::<Vec<_>>();
+    let materialized_root_domain = |products: &[Vec<PlannerOpeningCandidate>]| {
+        products
+            .iter()
+            .flat_map(|product| {
+                crate::planner::root_level_candidates_for_basis(
+                    &product_key,
+                    honest_fold_policy_of::<Dense>(),
+                    &[
+                        honest_fold_policy_of::<Dense>(),
+                        honest_fold_policy_of::<Dense>(),
+                    ],
+                    &policy,
+                    dimensions,
+                    opening,
+                    product,
+                    Dense::inner_basis_range().0,
+                    Dense::opening_basis_range().0,
+                )
+                .expect("materialized root candidate domain")
+            })
+            .map(|(params, output_witness_len)| {
+                (params.canonical_descriptor_bytes(), output_witness_len)
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        materialized_root_domain(&opening_products),
+        materialized_root_domain(&exhaustive_products),
+        "one canonical representative per multiset must preserve the exhaustive root domain"
+    );
+
     let repeated_key = AkitaScheduleLookupKey {
         final_group: grouped_key.final_group,
         precommitteds: vec![frozen_group; 16],
