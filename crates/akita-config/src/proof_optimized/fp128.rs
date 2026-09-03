@@ -167,6 +167,14 @@ impl_multi_chunk_companion!(
     akita_types::MultiChunkProfileId::W8R2,
     "fp128_onehot_multi_chunk"
 );
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHot {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive";
+}
+
+impl crate::recursive_commitment::RecursiveScheduleConfig for OneHotMultiChunk {
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str = "fp128_onehot_recursive_multi_chunk_w8r2";
+}
 impl_multi_chunk_companion!(
     OneHotMultiChunkW2R2,
     OneHot,

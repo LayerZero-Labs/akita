@@ -1,14 +1,8 @@
-//! Runtime schedule catalogs and strict generated schedule resolution.
+//! Runtime schedule catalogs and strict schedule resolution.
 
 mod artifact;
 mod audit;
 mod candidate;
-#[cfg(feature = "planner-support")]
-pub mod catalog_identity;
-#[cfg(feature = "planner-support")]
-pub mod generated;
-#[cfg(feature = "planner-support")]
-mod group_batch;
 mod policy_digest;
 mod resolve;
 mod runtime;
@@ -18,21 +12,8 @@ pub use akita_types::{
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use artifact::TrustedScheduleCatalog;
-#[cfg(feature = "planner-support")]
-pub use catalog_identity::{
-    expected_catalog_identity, identity_digest, key_digest, ring_challenge_config_digest,
-    validate_catalog_identity,
-};
-#[cfg(feature = "planner-support")]
-pub use generated::*;
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
-#[cfg(feature = "planner-support")]
-pub use resolve::{
-    estimate_proof_bytes, resolve_generated_catalog_row_for_key,
-    resolve_generated_catalog_row_for_profiles, resolve_generated_schedule_selection,
-    schedule_from_entry, trusted_catalog_from_generated,
-};
 pub use runtime::{
     default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,
     PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy,
@@ -40,7 +21,7 @@ pub use runtime::{
     SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 
-/// Shared schedule-construction primitives used by offline search and generated-row replay.
+/// Shared schedule-construction primitives used by offline search and artifact validation.
 #[doc(hidden)]
 pub mod planner_support {
     pub use crate::candidate::{

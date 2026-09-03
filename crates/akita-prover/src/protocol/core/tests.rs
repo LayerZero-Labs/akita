@@ -1,6 +1,6 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
+use akita_config::{proof_optimized::fp128::OneHot, test_support::TestScheduleProvider};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout};
 use jolt_field::{Fp32, FpExt2, One, TwoNr, Zero};

@@ -9,7 +9,9 @@
 //! `recursive_multi_group_round_trip` driver needs them too.
 
 use crate::common::*;
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    recursive_commitment::RecursiveScheduleConfig, CommitmentConfig, RecursiveCommitmentConfig,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
@@ -31,7 +33,8 @@ use akita_types::{
 #[allow(dead_code)]
 pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(transcript_domain: &'static [u8])
 where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    BaseCfg:
+        CommitmentConfig<Field = F, ExtField = F> + RecursiveScheduleConfig + TestScheduleProvider,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
 
@@ -157,7 +160,7 @@ where
 
 pub(super) fn prove_verify_dense_roundtrip<Cfg>(nv_values: &[usize], label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 {
     prove_verify_dense_roundtrip_with_evals::<Cfg>(nv_values, label, dense_field_evals);
 }
@@ -168,7 +171,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
     label: &[u8],
     evals_for: impl Fn(usize, u64) -> Vec<F>,
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 {
     for &nv in nv_values {
         let seed = 0x7e57_0000_u64 ^ nv as u64;
@@ -245,7 +248,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
 pub(super) fn prove_verify_onehot_roundtrip<Cfg>(nv_values: &[usize], k: usize, label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 {
     for &nv in nv_values {
         let seed = 0x0bee_0000_u64 ^ nv as u64;
@@ -324,7 +327,7 @@ const PRE_NV: usize = 14;
 
 pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(final_nvs: &[usize], label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 {
     for &final_nv in final_nvs {
         let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
@@ -480,7 +483,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     k: usize,
     label: &[u8],
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 {
     for &final_nv in final_nvs {
         let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()

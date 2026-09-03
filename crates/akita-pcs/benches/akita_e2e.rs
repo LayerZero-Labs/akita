@@ -6,6 +6,7 @@ use workspace_schedules::WorkspaceScheduleArtifactExt as _;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
+use akita_config::test_support::TestScheduleProvider;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -25,7 +26,7 @@ use std::time::Duration;
 
 type F = fp128::Field;
 
-fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
+fn make_dense_evals<Cfg: CommitmentConfig<Field = F> + TestScheduleProvider>(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xdead_beef);
     let len = 1usize << nv;
     let decomp = Cfg::decomposition();
@@ -55,7 +56,7 @@ fn prover_claims<'a, Cfg, P>(
     hint: AkitaCommitmentHint<Cfg::Field>,
 ) -> SelectedProverOpeningData<'a, F, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
 where
-    Cfg: CommitmentConfig<ExtField = F>,
+    Cfg: CommitmentConfig<ExtField = F> + TestScheduleProvider,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let group = PolynomialGroupClaims::new(
@@ -102,7 +103,10 @@ fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>, nv: usize) {
 /// Setup-contribution modes benchmarked per phase. Direct scans the expanded
 /// These scalar benches instantiate direct-schedule configs. Recursive stage-3
 /// setup contribution is benchmarked by the config-typed multi-group profile.
-fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn bench_dense_phases<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+>(
     c: &mut Criterion,
     label: &str,
     nv: usize,
@@ -286,7 +290,7 @@ fn bench_dense_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField 
     group.finish();
 }
 
-fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn bench_onehot_phases<Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider>(
     c: &mut Criterion,
     label: &str,
     nv: usize,

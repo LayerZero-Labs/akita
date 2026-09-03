@@ -3,12 +3,12 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::CommitmentConfig;
+use akita_config::{test_support::TestScheduleProvider, CommitmentConfig};
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout,
 };
 
-fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
+fn schedule<Cfg: CommitmentConfig + TestScheduleProvider>(num_vars: usize) -> FoldSchedule {
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)

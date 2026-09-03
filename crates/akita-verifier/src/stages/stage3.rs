@@ -297,7 +297,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_config::{proof_optimized::fp128::Dense, CommitmentConfig};
+    use akita_config::{proof_optimized::fp128::Dense, test_support::TestScheduleProvider};
     use akita_transcript::AkitaTranscript;
     use akita_types::{
         derive_public_matrix_prefix, padded_setup_prefix_len, scheduled_setup_prefix,

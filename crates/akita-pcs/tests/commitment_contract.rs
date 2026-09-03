@@ -10,6 +10,7 @@
 
 use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
+use akita_config::test_support::TestScheduleProvider;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_prover::backend::DenseView;

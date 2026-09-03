@@ -49,7 +49,6 @@ mod common;
 mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

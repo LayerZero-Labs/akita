@@ -119,6 +119,11 @@ fn a_distinct_bound_is_a_distinct_catalog_identity() {
         bounded, full,
         "the committed-source bound must separate two otherwise identical policies"
     );
+    assert_ne!(
+        &bounded[8..],
+        &[0u8; 24],
+        "the serialized policy identity must carry the full cryptographic digest"
+    );
 
     let bounded_catalog = catalog::<fp128::DenseBounded>();
     let full_catalog = catalog::<fp128::Dense>();

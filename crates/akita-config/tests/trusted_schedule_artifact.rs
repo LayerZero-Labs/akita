@@ -32,7 +32,7 @@ fn replace_once(bytes: &mut [u8], needle: &[u8], replacement: &[u8]) {
     bytes[offset..offset + needle.len()].copy_from_slice(replacement);
 }
 
-fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
+fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
     let rows_marker = b"\"rows\":[";
     let rows_start = bytes
         .windows(rows_marker.len())
@@ -41,10 +41,11 @@ fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
         .expect("artifact rows marker");
     assert_eq!(bytes.get(rows_start), Some(&b'{'));
 
+    let mut ranges = Vec::new();
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
-    let mut row_end = None;
+    let mut row_start = None;
     for (relative, &byte) in bytes[rows_start..].iter().enumerate() {
         if in_string {
             if escaped {
@@ -58,26 +59,54 @@ fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
         }
         match byte {
             b'"' => in_string = true,
-            b'{' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    row_start = Some(rows_start + relative);
+                }
+                depth += 1;
+            }
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    row_end = Some(rows_start + relative + 1);
-                    break;
+                    ranges.push(
+                        row_start.take().expect("artifact row start")..rows_start + relative + 1,
+                    );
                 }
             }
+            b']' if depth == 0 => break,
             _ => {}
         }
     }
-    let row_end = row_end.expect("complete first artifact row");
+    ranges
+}
+
+fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
+    let first = json_row_ranges(bytes)
+        .into_iter()
+        .next()
+        .expect("complete first artifact row");
     let insert_at = bytes.len() - 2;
     assert_eq!(&bytes[insert_at..], b"]}");
-    let mut duplicated = Vec::with_capacity(bytes.len() + row_end - rows_start + 1);
+    let mut duplicated = Vec::with_capacity(bytes.len() + first.len() + 1);
     duplicated.extend_from_slice(&bytes[..insert_at]);
     duplicated.push(b',');
-    duplicated.extend_from_slice(&bytes[rows_start..row_end]);
+    duplicated.extend_from_slice(&bytes[first]);
     duplicated.extend_from_slice(&bytes[insert_at..]);
     duplicated
+}
+
+fn swap_first_two_json_rows(bytes: &[u8]) -> Vec<u8> {
+    let ranges = json_row_ranges(bytes);
+    let first = ranges.first().expect("first artifact row");
+    let second = ranges.get(1).expect("second artifact row");
+    assert_eq!(&bytes[first.end..second.start], b",");
+    let mut swapped = Vec::with_capacity(bytes.len());
+    swapped.extend_from_slice(&bytes[..first.start]);
+    swapped.extend_from_slice(&bytes[second.clone()]);
+    swapped.push(b',');
+    swapped.extend_from_slice(&bytes[first.clone()]);
+    swapped.extend_from_slice(&bytes[second.end..]);
+    swapped
 }
 
 #[test]
@@ -198,6 +227,28 @@ fn decoder_rejects_format_policy_and_duplicate_row_tampering() {
     let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&duplicate)
         .expect_err("duplicate semantic rows must reject");
     assert!(format!("{error}").contains("duplicate"));
+
+    let reordered = swap_first_two_json_rows(&bytes);
+    let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&reordered)
+        .expect_err("noncanonical row order must reject");
+    assert!(format!("{error}").contains("canonical digest order"));
+}
+
+#[test]
+fn binding_revalidates_the_concrete_config_challenge_hook() {
+    let catalog = checked_in_catalog::<fp128::Dense>();
+    let error = catalog
+        .validate_binding(
+            fp128::Dense::schedule_family_name(),
+            &policy_of::<fp128::Dense>(),
+            |_| {
+                Err(akita_error::AkitaError::InvalidSetup(
+                    "deliberately mismatched challenge hook".to_string(),
+                ))
+            },
+        )
+        .expect_err("binding must revalidate challenge hooks");
+    assert!(format!("{error}").contains("deliberately mismatched challenge hook"));
 }
 
 #[test]

@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use akita_challenges::SparseChallengeConfig;
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{policy_of, test_support::TestScheduleProvider, CommitmentConfig};
 use akita_error::AkitaError;
 use akita_types::sis::{
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
@@ -38,7 +38,7 @@ fn select_synthetic_schedule_row<C>(
     key: AkitaScheduleLookupKey,
 ) -> Result<akita_config::ResolvedScheduleRow, AkitaError>
 where
-    C: CommitmentConfig + 'static,
+    C: CommitmentConfig + TestScheduleProvider + 'static,
 {
     let row = C::resolve_catalog_row_for_key(&key)?;
     if row.profiles() != profiles {
@@ -348,7 +348,7 @@ pub(crate) struct EarlyEvaluationTraceConfig<Base, const LEVEL: usize>(PhantomDa
 
 impl<Base> RootCoefficientPackingConfig<Base>
 where
-    Base: CommitmentConfig + 'static,
+    Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     pub(crate) fn derive_catalog_row(
         key: &AkitaScheduleLookupKey,
@@ -719,7 +719,7 @@ where
 
 impl<Base, const LEVEL: usize> EarlyEvaluationTraceConfig<Base, LEVEL>
 where
-    Base: CommitmentConfig + 'static,
+    Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     fn derive_row(
         key: &AkitaScheduleLookupKey,
@@ -791,6 +791,10 @@ where
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Base::RING_DIMENSION_SCHEDULE_MODE;
 
+    fn schedule_family_name() -> &'static str {
+        Base::schedule_family_name()
+    }
+
     fn decomposition() -> DecompositionParams {
         Base::decomposition()
     }
@@ -801,18 +805,6 @@ where
 
     fn sis_modulus_profile() -> SisModulusProfileId {
         Base::sis_modulus_profile()
-    }
-
-    fn setup_matrix_capacity(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let base = Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
-        Ok(SetupMatrixCapacity {
-            num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
-                AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
-            })?,
-        })
     }
 
     fn opening_basis_range() -> (u32, u32) {
@@ -838,12 +830,30 @@ where
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
         Base::selection_policy()
     }
+}
+
+impl<Base> TestScheduleProvider for RootCoefficientPackingConfig<Base>
+where
+    Base: CommitmentConfig + TestScheduleProvider + 'static,
+{
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let base = Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
+        Ok(SetupMatrixCapacity {
+            num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
+                AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
+            })?,
+        })
+    }
 
     fn resolve_catalog_row_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         Self::derive_catalog_row(key, 64)
     }
+
     fn resolve_catalog_row_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
@@ -868,6 +878,10 @@ where
     const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode =
         Base::RING_DIMENSION_SCHEDULE_MODE;
 
+    fn schedule_family_name() -> &'static str {
+        Base::schedule_family_name()
+    }
+
     fn decomposition() -> DecompositionParams {
         Base::decomposition()
     }
@@ -878,16 +892,6 @@ where
 
     fn sis_modulus_profile() -> SisModulusProfileId {
         Base::sis_modulus_profile()
-    }
-
-    fn setup_matrix_capacity(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixCapacity, AkitaError> {
-        RootCoefficientPackingConfig::<Base>::setup_matrix_capacity(
-            max_num_vars,
-            max_num_batched_polys,
-        )
     }
 
     fn opening_basis_range() -> (u32, u32) {
@@ -912,6 +916,21 @@ where
 
     fn selection_policy() -> akita_schedules::SelectionPolicyId {
         Base::selection_policy()
+    }
+}
+
+impl<Base, const LEVEL: usize> TestScheduleProvider for EarlyEvaluationTraceConfig<Base, LEVEL>
+where
+    Base: CommitmentConfig + TestScheduleProvider + 'static,
+{
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        RootCoefficientPackingConfig::<Base>::setup_matrix_capacity(
+            max_num_vars,
+            max_num_batched_polys,
+        )
     }
 
     fn resolve_catalog_row_for_key(
@@ -983,6 +1002,26 @@ where
         Envelope::sis_modulus_profile()
     }
 
+    fn opening_basis_range() -> (u32, u32) {
+        Envelope::opening_basis_range()
+    }
+
+    fn inner_basis_range() -> (u32, u32) {
+        Envelope::inner_basis_range()
+    }
+
+    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
+        Envelope::committed_source_class()
+    }
+}
+
+impl<Envelope, Final> TestScheduleProvider for EnvelopeFinalGroupConfig<Envelope, Final>
+where
+    Envelope: CommitmentConfig + TestScheduleProvider + 'static,
+    Final: CommitmentConfig<Field = Envelope::Field, ExtField = Envelope::ExtField>
+        + TestScheduleProvider
+        + 'static,
+{
     fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
@@ -1015,18 +1054,6 @@ where
             }
         }
         Ok(SetupMatrixCapacity { num_field_elements })
-    }
-
-    fn opening_basis_range() -> (u32, u32) {
-        Envelope::opening_basis_range()
-    }
-
-    fn inner_basis_range() -> (u32, u32) {
-        Envelope::inner_basis_range()
-    }
-
-    fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
-        Envelope::committed_source_class()
     }
 
     fn resolve_catalog_row_for_key(

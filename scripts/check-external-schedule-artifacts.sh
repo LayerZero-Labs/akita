@@ -18,9 +18,10 @@ report_matches() {
     fi
 }
 
-report_matches \
-    "generated schedule-row Rust modules are forbidden; commit .aks artifacts instead" \
-    find crates/akita-schedules/src/generated -maxdepth 1 -type f -name 'fp*.rs' -print
+if [ -e crates/akita-schedules/src/generated ]; then
+    echo "error: generated schedule-row machinery is forbidden; commit .aks artifacts instead" >&2
+    failures=1
+fi
 
 report_matches \
     "legacy schedule-table Cargo features are forbidden" \
@@ -39,12 +40,6 @@ report_matches \
         crates/akita-config/src crates/akita-pcs/src crates/akita-prover/src \
         crates/akita-schedules/src crates/akita-setup/src crates/akita-verifier/src \
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/test_support.rs'
-
-if ! grep -A1 -F '#[cfg(feature = "planner-support")]' crates/akita-schedules/src/lib.rs \
-    | grep -qF 'pub mod generated;'; then
-    echo "error: compact generated-row machinery must remain gated behind planner-support" >&2
-    failures=1
-fi
 
 if [ "$failures" -ne 0 ]; then
     exit 1

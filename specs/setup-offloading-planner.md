@@ -5,14 +5,14 @@
 | Author(s)     | Amirhossein Khajehpour, Quang Dao          |
 | Created       | 2026-07-10                                 |
 | Status        | implemented                                |
-| PR            | #301; revised by #318                      |
+| PR            | #301; revised by #318 and #428             |
 | Supersedes    | Fixed two-level rollout in this document   |
 | Superseded-by | Flat setup/capacity portions superseded by `flat-public-matrix-and-exact-ntt-cache.md`; recursive selection remains the current policy |
 | Book-chapter  | book/src/how/setup-offloading.md           |
 
 > **Commit-API update (2026-08-10).** The public commitment flow is one
 > `AkitaCommitmentScheme::commit` entry point taking a `GroupContext`:
-> `scheduler_without_precommitted_groups()` for each independent prior commitment and
+> a base-scheme commitment for each independent prior commitment and
 > `scheduler_with_precommitted_groups` for the grouped final commitment. A recursive
 > companion catalog ships no row without precommitted groups at a precommit layout, so
 > the caller precommits under the base `Cfg` and proves the grouped root under
@@ -31,7 +31,7 @@ The current target is the planner-selected policy in this revision. It
 supersedes the original rollout rule that forced setup offloading at fold
 levels 0 and 1 above a fixed prefix threshold. That original rule is preserved
 under [Legacy fixed-window rollout (archival)](#legacy-fixed-window-rollout-archival)
-for review history only. It is not a current schedule invariant, generated-row
+for review history only. It is not a current schedule invariant, artifact-row
 validation rule, or verifier acceptance condition.
 
 This revision is intentionally narrower than the future multi-objective
@@ -39,7 +39,7 @@ planner. It records the remediation shipped by PR #318: exact
 recursive proof accounting, explicit direct/offloaded alternatives, a minimum
 recursive-witness contraction, and a verifier-first schedule comparator. It
 does not add mixed ring dimensions, independent role bases, commitment slicing,
-or a full Pareto frontier. The planner policy and generated schedule contract
+or a full Pareto frontier. The planner policy and external schedule contract
 are shipped. The Book setup offloading chapter explains that behavior for
 readers.
 
@@ -53,14 +53,15 @@ newly committed folded witness and the setup-prefix commitment selected by the
 preceding fold.
 
 This design adds `RecursiveCommitmentConfig<Cfg>`. Precommitted groups use the
-generated `GroupCommitPhaseParams` and the independent commit flow specified in
+artifact-owned `GroupCommitPhaseParams` and the independent commit flow specified in
 [`archive/2026-Q3/multi-group-batching.md`](archive/2026-Q3/multi-group-batching.md); the earlier conservative
 config adapter has been removed. The ordinary `Cfg` resolves a direct-only
 schedule. Selecting the recursion adapter activates setup-aware planning for
-supported scalar and genuine multi-group roots. The current compiled recursive
-companions are the fp128 one-hot table and the fp128 one-hot W8R2 table. Other
-base configurations do not expose a recursive catalog and are rejected. Each
-supported family replays rows from its own generated catalog.
+supported scalar and genuine multi-group roots. The current external recursive
+companions are the fp128 one-hot artifact and the fp128 one-hot W8R2 artifact.
+Only configs implementing `RecursiveScheduleConfig` can instantiate the adapter,
+so unsupported base configurations fail at compile time. Each supported family
+loads and validates rows from its own caller-supplied artifact.
 
 For each supported nonterminal edge under the recursion adapter, the planner
 considers two transitions:
@@ -82,8 +83,8 @@ then exact estimated proof bytes, including Stage 3. Equal candidates then use
 the smaller total physical setup envelope and the canonical schedule descriptor.
 Recursive successors use the existing multi-group representation with the setup
 prefix as a precommitted group and the folded witness as the final group.
-Recursive multi-group generated schedules are stored separately from ordinary
-schedules. The design reuses `SetupPrefixSlotId`, `SetupPrefixSlot`,
+Recursive multi-group artifact rows are stored separately from ordinary
+artifact rows. The design reuses `SetupPrefixSlotId`, `SetupPrefixSlot`,
 `SetupPrefixVerifierSlot`, `OpeningClaims`, and the existing grouped commitment
 machinery rather than adding parallel requirement, geometry, or carried-claim
 models.
@@ -171,12 +172,12 @@ setup-prefix commitment.
   generation continues to retain one locally smallest next-witness candidate
   per basis. Direct and offloaded alternatives retain both first-direct and
   payload projections.
-- **Generated and fallback schedules agree.** A generated row stores the exact
-  incoming-prefix topology chosen by dynamic planning, and the canonical row
-  walker recomputes every prefix transition and grouped witness length.
-- **Generated catalogs do not alias.** Direct and recursive schedules are
-  emitted into separate generated tables. The recursion adapter never reads the
-  ordinary config's direct table.
+- **Artifact and planner schedules agree.** An artifact row stores the exact
+  incoming-prefix topology chosen by dynamic planning. Artifact admission
+  recomputes every prefix transition and grouped witness length.
+- **External catalogs do not alias.** Direct and recursive schedules are
+  emitted into separate family artifacts. Family and policy validation prevents
+  the recursion adapter from accepting the ordinary config's direct catalog.
 - **Preprocessing is complete for planned schedules.** Every recursive edge in
   every setup-supported selected schedule has an exact `SetupPrefixSlot`.
   Setup construction never truncates `natural_len`.
@@ -262,13 +263,13 @@ Among feasible complete schedules, the PR #318 policy compares:
 
 where `exact_estimated_proof_bytes` includes every Stage 3 payload. Adaptive
 direct and recursive planning share the projected suffix frontier over these
-coordinates. The descriptor is only a complete-schedule tie-break. Generated
+coordinates. The descriptor is only a complete-schedule tie-break. External
 catalogs bind the selection policy that produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the
 deterministic public stream has no protocol length ceiling. An explicit host
-budget remains a candidate-feasibility input, so the generated catalog identity
+budget remains a candidate-feasibility input, so the external catalog identity
 binds `None` or the exact `Some(limit)` value alongside the selection policy.
 The contraction threshold is likewise explicit as
 `PlannerPolicy::min_offloaded_witness_contraction`, with a shipped value of
@@ -279,7 +280,7 @@ decoder allocation guard and it is not proof-system semantics. Comparing the
 direct and offloaded capacity and proof frontiers remains deferred to the
 multi-objective planner.
 
-The generated catalog binds:
+The external catalog binds:
 
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
@@ -317,12 +318,12 @@ properties to `Cfg`. It differs in schedule planning:
 ```text
 ordinary Cfg:
   planner recursion flag = false
-  schedule catalog = Cfg::schedule_catalog()
+  explicit direct-family TrustedScheduleCatalog
   every recursive fold has incoming_setup_prefix = None
 
 RecursiveCommitmentConfig<Cfg>:
   planner recursion flag = true
-  use the recursive companion schedule catalog
+  explicit recursive-family TrustedScheduleCatalog
   accept selected scalar and genuine multi-group keys
   enumerate direct transitions at every nonterminal edge
   enumerate feasible offloaded transitions admitted by RecursiveSetupSearchPolicy
@@ -343,23 +344,20 @@ recursive companion catalog. Shipped recursive catalogs bind
 `RecursiveSetupSearchPolicy::RootAndFirstChildV1`; audit callers may select
 `Exhaustive` explicitly.
 
-The base config's `schedule_catalog()` remains the direct table.
-`RecursiveCommitmentConfig<Cfg>` overrides the same `schedule_catalog()` hook
-and selects the matching compiled recursive companion by base-config type and
-feature. There is no second `recursive_multi_group_schedule_catalog()` hook.
-The recursive table contains the selected scalar and grouped keys for the
-supported companion family.
+Configs identify only their stable external artifact family and planner policy.
+They do not own rows or expose catalog lookup hooks. The application loads the
+direct or recursive artifact from its chosen storage, validates it for the
+concrete config, and constructs a separate `AkitaCommitmentScheme` for that
+catalog. `RecursiveScheduleConfig` supplies the recursive family identity; no
+string matching, Cargo feature, or compiled companion table selects it.
 
-Its `resolve_catalog_row_for_key` routing is:
+The recursive scheme's honest lookup is:
 
 ```text
-validate the SIS modulus profile
-validate the config and recursive policy
-resolve_generated_catalog_row_for_key(
-    key,
-    recursion-enabled policy_of<RecursiveCommitmentConfig<Cfg>>,
-    RecursiveCommitmentConfig<Cfg>::schedule_catalog(),
-)
+load artifact bytes at the application or preprocessing boundary
+validate family, recursive policy, challenge hooks, and every expanded row
+construct AkitaCommitmentScheme<RecursiveCommitmentConfig<Cfg>>(catalog)
+resolve the exact key in scheme.schedules()
 ```
 
 Catalog resolution rejects unsupported base configurations before accepting a
@@ -875,35 +873,30 @@ For each fold it:
    validates them against the stored input.
 4. Recomputes and validates the shared opening-matrix rank, relation rows,
    complete next-witness length, Stage 3 bytes, and total proof bytes.
-5. Validates that the generated incoming prefix is compatible with the
+5. Validates that the artifact's incoming prefix is compatible with the
    predecessor setup envelope, successor group geometry, commitment params,
    witness partition, and supported ring dimensions.
 6. Forwards the exact stored prefix edge to the next recursive fold. Absence of
    `incoming_setup_prefix` means the predecessor evaluates setup directly.
 7. Rejects a terminal step carrying an incoming setup prefix.
 
-Replay does not re-run the selection policy and does not derive an expected
-offload count from fold indices or prefix lengths. The generated row is the
-selected topology; replay proves that this topology is internally consistent
-and recomputes the policy metrics used for audit output.
+Artifact admission does not re-run the selection policy or derive an expected
+offload count from fold indices or prefix lengths. The expanded row is the
+selected topology; `ResolvedScheduleRow` proves that this topology is internally
+consistent and recomputes the policy metrics used for audit output.
 
-`schedule_from_entry`, proof-byte estimation, and public generated-row
-validation already share this walker; no second replay implementation is
-introduced.
-
-At runtime, a recursive table miss is unsupported and
-`RecursiveCommitmentConfig<Cfg>::resolve_catalog_row_for_key` returns an error.
-The planner is used offline by catalog generation and drift checks, not as a
-runtime fallback. This keeps table-backed resolution strict and prevents a
-prover and verifier from silently selecting different schedules.
+At runtime, a recursive catalog miss is unsupported and
+`scheme.schedules().resolve_key(key)` returns an error. The planner is used
+offline by artifact generation and drift checks, not as a runtime fallback.
+This keeps external-catalog resolution strict and prevents a prover and verifier
+from silently selecting different schedules.
 
 ## Setup Preprocessing
 
-Setup-prefix population reuses the generated-key and setup-envelope scan owned
-by `akita-config`. It visits the same deterministic scalar and grouped schedule
-keys selected under `RecursiveCommitmentConfig<Cfg>`. Ordinary `Cfg` setup does
-not populate offloading slots. There is no second `SetupScheduleCase`
-representation.
+Setup-prefix population reuses the exact-catalog and setup-envelope scan owned
+by `akita-config`. It visits the admitted scalar and grouped artifact rows bound
+to `RecursiveCommitmentConfig<Cfg>`. Direct-family rows do not populate
+offloading slots. There is no second `SetupScheduleCase` representation.
 
 For every selected schedule and every recursive successor whose
 `incoming_setup_prefix` is present:
@@ -911,7 +904,7 @@ For every selected schedule and every recursive successor whose
 1. Derive the current opening layout.
 2. Compute `natural_len` with `active_setup_field_len`.
 3. Compute `n_prefix` with `padded_setup_prefix_len`.
-4. Use the finalized successor's generated/precommitted setup-prefix group
+4. Use the finalized successor's artifact-owned precommitted setup-prefix group
    params, not the successor witness group params, as the prefix commitment
    params.
 5. Build the existing `SetupPrefixSlotId`.
@@ -1061,7 +1054,7 @@ the candidate score that decides whether and how long to offload.
       use one.
 - [x] Every fold that consumes an incoming setup prefix is nonterminal, and the
       successor-owned `incoming_setup_prefix` is the sole topology authority.
-- [x] Generated recursive rows store the exact setup-prefix commitment params
+- [x] Recursive artifact rows store the exact setup-prefix commitment params
       for every fold that consumes an incoming prefix.
 - [x] Setup-prefix commitment params describe the prefix group's own inner and
       outer matrices and never clone the ordinary witness group's matrices.
@@ -1071,9 +1064,9 @@ the candidate score that decides whether and how long to offload.
 - [x] Every selected recursive edge has an exact preprocessed slot.
 - [x] The recursive verifier no longer scans setup to obtain the terminal
       prefix opening.
-- [x] Generated table replay and offline planner regeneration produce identical
+- [x] Canonical artifact decoding and offline planner regeneration produce identical
       topology, params, witness lengths, Stage 3 bytes, and proof-byte totals.
-- [x] Direct and recursive generated catalogs are separate and reject
+- [x] Direct and recursive external catalogs are separate and reject
       cross-catalog identity mismatches.
 - [x] Terminal, unsupported, malformed, or missing-slot cases reject without
       panic.
@@ -1105,15 +1098,15 @@ the candidate score that decides whether and how long to offload.
 - terminal candidates with an incoming prefix are infeasible;
 - schedules with more than two feasible offloaded edges are representable and
   replay exactly;
-- generated-row and DP parity;
+- artifact-row and DP parity;
 - direct/recursive catalog identity mismatch rejection.
 
 `akita-config`:
 
 - recursion adapter delegates algebra/security policy to the base config;
-- recursion adapter selects scalar and grouped rows from the recursive
+- recursion adapter binds scalar and grouped rows from its explicit recursive
   companion catalog;
-- ordinary config selects only the direct catalog;
+- ordinary config binds only an explicitly supplied direct catalog;
 - unsupported capability combinations reject offloaded candidates;
 - offline direct and recursive catalog generation uses the matching planner
   path and policy bit; runtime catalog misses reject;
@@ -1223,7 +1216,7 @@ duplicate internal arithmetic without serving the protocol.
 
 ### Call-Wide Setup Mode
 
-Rejected. A call-time mode does not select the matching generated catalog and
+Rejected. A call-time mode does not select the matching external catalog and
 cannot bind which individual folds offload. Config selection chooses the planner
 family; each recursive successor's `incoming_setup_prefix` binds the exact
 transition point.
@@ -1280,7 +1273,7 @@ Update the statuses of related specs when their deferred work is completed.
 - `crates/akita-types/src/layout/params.rs`
 - `crates/akita-types/src/opening_claims.rs`
 - `crates/akita-planner/src/schedule_params.rs`
-- `crates/akita-planner/src/generated/walk.rs`
-- `crates/akita-config/src/conservative_commitment.rs`
-- `crates/akita-config/src/generated_families.rs`
+- `crates/akita-planner/src/emit/materialize.rs`
+- `crates/akita-planner/src/generated_families.rs`
+- `crates/akita-schedules/src/artifact.rs`
 - `crates/akita-setup/src/recursive_prefixes.rs`

@@ -10,7 +10,9 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, test_support::TestScheduleProvider, CommitmentConfig,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -26,7 +28,11 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
 
-pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+pub(crate) fn run_batched_onehot<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+>(
     label: &str,
     nv: usize,
     num_polys: usize,

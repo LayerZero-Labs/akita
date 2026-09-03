@@ -4,7 +4,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 
 use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_config::test_support::akita_batched_root_layout;
+use akita_config::test_support::{akita_batched_root_layout, TestScheduleProvider};
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
@@ -37,7 +37,9 @@ const DENSE_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 
-fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
+fn singleton_layout<Cfg: CommitmentConfig + TestScheduleProvider>(
+    num_vars: usize,
+) -> CommittedGroupParams {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     Cfg::resolve_catalog_row_for_opening(&opening_batch)
@@ -106,7 +108,11 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Field>>(
+fn prove_input<
+    'a,
+    Cfg: CommitmentConfig + TestScheduleProvider,
+    P: akita_prover::RootPolyMeta<Cfg::Field>,
+>(
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
@@ -138,7 +144,7 @@ fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Fie
     selected
 }
 
-fn verify_input<'a, Cfg: CommitmentConfig>(
+fn verify_input<'a, Cfg: CommitmentConfig + TestScheduleProvider>(
     selection: OpeningScheduleSelection,
     point: &[Cfg::ExtField],
     openings: &[Cfg::ExtField],
@@ -154,7 +160,7 @@ fn verify_input<'a, Cfg: CommitmentConfig>(
     GroupBatchStatement::new(selection, claims).expect("valid verifier statement")
 }
 
-fn selection_for<Cfg: CommitmentConfig>(
+fn selection_for<Cfg: CommitmentConfig + TestScheduleProvider>(
     commitment: &CommittedGroup<Cfg::Field>,
 ) -> OpeningScheduleSelection {
     Cfg::resolve_catalog_row_for_profiles(&CommittedGroupBatchProfile {
@@ -175,7 +181,11 @@ type DenseFixture<FField, E, const D: usize> = (
     OpeningScheduleSelection,
 );
 
-fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FField>>(
+fn make_dense_fixture<
+    FField,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FField> + TestScheduleProvider,
+>(
     nv: usize,
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, Cfg::ExtField, D>

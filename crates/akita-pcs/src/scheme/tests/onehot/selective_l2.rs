@@ -8,7 +8,8 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     type L2Cfg = OneHotCfg;
     type L2Scheme = AkitaCommitmentScheme<L2Cfg>;
 
-    let layout = akita_batched_root_layout::<L2Cfg>(NV, BATCH_SIZE).expect("L2 root layout");
+    let scheme = L2Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let layout = catalog_root_layout(&scheme, NV, BATCH_SIZE);
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|index| debug_make_onehot_poly(NV, layout.d_a(), 0x0bee_fcaf_1200_0000 + index as u64))
         .collect();
@@ -27,10 +28,7 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         })
         .collect();
 
-    let setup = L2Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(NV, BATCH_SIZE)
-        .expect("L2 setup");
+    let setup = scheme.setup_prover(NV, BATCH_SIZE).expect("L2 setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared L2 setup");
@@ -40,15 +38,11 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         setup.expanded.as_ref(),
     )
     .expect("L2 stack");
-    let verifier_setup = L2Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_verifier(&setup)
-        .expect("L2 verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("L2 verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = L2Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit::<_, _>(
             &setup,
             &polys,
@@ -64,11 +58,11 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     )
     .expect("L2 prover group");
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-    let proof = L2Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    let proof = scheme
         .batched_prove::<_, _, _>(
             &setup,
             selected_prover_data::<L2Cfg, _>(
+                &scheme,
                 OpeningClaims::from_groups(vec![prover_group]).expect("L2 prover claims"),
                 vec![hint],
                 vec![&poly_refs],
@@ -89,15 +83,13 @@ fn selective_l2_proof_rejects_transcript_mutations() {
         .expect("L2 verifier group")])
         .expect("L2 verifier claims");
         let mut transcript = AkitaTranscript::<OneHotF>::new(TRANSCRIPT_LABEL);
-        L2Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .batched_verify(
-                candidate,
-                &verifier_setup,
-                &mut transcript,
-                selected_statement::<L2Cfg>(claims).expect("L2 verifier statement"),
-                BasisMode::Lagrange,
-            )
+        scheme.batched_verify(
+            candidate,
+            &verifier_setup,
+            &mut transcript,
+            selected_statement::<L2Cfg>(&scheme, claims).expect("L2 verifier statement"),
+            BasisMode::Lagrange,
+        )
     };
     verify(&proof).expect("valid L2 proof");
 

@@ -449,6 +449,32 @@ impl AkitaScheduleLookupKey {
         bytes
     }
 
+    /// Canonical ordering used by artifact lookup and deterministic emission.
+    pub fn canonical_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let own_group = (
+            self.final_group.num_vars(),
+            self.final_group.num_polynomials(),
+        );
+        let other_group = (
+            other.final_group.num_vars(),
+            other.final_group.num_polynomials(),
+        );
+        own_group
+            .cmp(&other_group)
+            .then_with(|| self.precommitteds.len().cmp(&other.precommitteds.len()))
+            .then_with(|| {
+                self.precommitteds
+                    .iter()
+                    .map(GroupCommitPhaseParams::canonical_descriptor_bytes)
+                    .cmp(
+                        other
+                            .precommitteds
+                            .iter()
+                            .map(GroupCommitPhaseParams::canonical_descriptor_bytes),
+                    )
+            })
+    }
+
     /// Build a multi-group opening layout from this schedule lookup key.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups: Vec<PolynomialGroupLayout> = self

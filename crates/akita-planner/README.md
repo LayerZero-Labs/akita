@@ -187,9 +187,8 @@ stream byte count is rounded once across the complete plan. Terminal proof
 bodies contain only any extension-opening reduction; their clear witness is
 priced by `terminal_response_bytes`.
 
-This keeps generated-table expansion and offline DP regeneration aligned. A
-generated table row and a fresh DP run are two ways to produce the same typed
-`FoldSchedule` and the same separately held `FoldScheduleEstimate`.
+The planner materializes this accounting directly into the expanded
+`FoldSchedule` stored in each external artifact row.
 
 ## SIS Layout Derivation
 
@@ -214,7 +213,7 @@ Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
 
 The shipped policy is `Quantum128BitADPS16`: a single ADPS16 quantum LGSA rule
 at a 128-bit target. The policy, table digest, exact profile, and role are part
-of planner inputs, catalog identity, generated table expansion, and descriptor
+of planner inputs, artifact policy binding, expanded schedules, and descriptor
 bytes, so a schedule generated for one table cannot be silently reused under
 another table or role.
 
@@ -231,24 +230,13 @@ the A input width, the SIS rank, and the next-level witness length. A bounded de
 family (`fp128::DenseBounded`) differs from its full-width sibling in that parameter
 alone.
 
-## Generated Tables
+## Schedule Artifacts
 
-The planner owns the generated schedule table representation and expansion
-logic. Deterministic generated table data is tracked in the `akita-schedules`
-crate. Compact entries mirror the protocol topology:
-
-- `GeneratedFoldCore` stores the new group, shared opening matrix, and witness
-  chunk count used by every nonterminal fold.
-- `GeneratedRootFold` adds the root inner digit depth and ordered frozen
-  precommitted groups.
-- `GeneratedRecursiveFold` adds the optional setup prefix, payload mode, and
-  optional L2 response cap.
-- `GeneratedTerminalFold` records only source geometry and the inner matrix
-  choice; terminal B/D matrices and outer/open digit bases do not exist.
-
-Generated matrices store ring dimension, digit basis, and slice count where
-applicable. Expansion reconstructs widths, collision buckets, and minimum
-SIS-secure output ranks from the shared security primitives.
+The planner materializes complete expanded `FoldSchedule` values. The artifact
+emitter pairs each schedule with its committed group profiles, constructs a
+validated `TrustedScheduleCatalog`, and serializes that catalog directly as a
+canonical `.aks` file. There is no intermediate Rust table representation or
+runtime expansion path.
 
 The reusable artifact emitter lives in this crate and accepts explicit
 `EmitSpec` values. The `gen_schedule_artifacts` binary is enabled by the
@@ -422,6 +410,6 @@ This boundary avoids a circular dependency while keeping a single source of trut
 - `src/emit/`: schedule materialization and canonical artifact emission.
 - `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
 - `src/emit/mod.rs`: reusable offline materializer.
-- `src/bin/gen_schedule_tables.rs`: source for the `gen_schedule_artifacts` binary.
+- `src/bin/gen_schedule_artifacts.rs`: source for the `gen_schedule_artifacts` binary.
 - `src/generated_families.rs`: preset family list and regeneration hooks.
 - `artifacts/schedules/`: tracked external family artifacts.

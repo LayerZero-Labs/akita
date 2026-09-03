@@ -221,8 +221,10 @@ later execution during preprocessing restoration or in a guest.
 - [x] Existing configurations produce the same expanded rows and proof/setup
   geometry as the pre-removal generated tables. Any catalog-digest change is
   explained by the external artifact identity.
-- [x] A linkage check demonstrates that default Akita and recursion binaries do
+- [x] A linkage check demonstrates that the default Akita profile binary does
   not contain removed row arrays or external artifact payloads.
+- [ ] A follow-up linkage check covers an actual Jolt recursion guest or host
+  binary after that integration owns preprocessing artifacts.
 - [x] The CI feature matrix, Book text, crate graph, generation instructions,
   recursion profile documentation, and PR description match the external full-
   catalog design.
@@ -289,8 +291,9 @@ after that workflow is updated to remove schedule-table features and drift jobs.
   body and remains one 32-byte digest.
 - Setup size is the exact maximum required by eligible rows in the supplied
   catalog, not the maximum of compiled families or a planner-derived approximation.
-- PR #428 records default and recursion binary sizes before and after generated
-  row removal.
+- PR #428 records the current default profile binary size. Before/after default
+  and recursion measurements remain follow-up evidence and are not claimed by
+  this storage cutover.
 - A first Jolt full-catalog integration MAY increase preprocessing or guest input
   size. It records that cost explicitly rather than hiding it in the executable.
 - The authenticated-subset follow-up is responsible for reducing recursion input

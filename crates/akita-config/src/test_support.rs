@@ -7,9 +7,75 @@
 //! explicitly.
 //!
 use akita_error::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
+use akita_types::{
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupParams, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
+};
 
 use crate::CommitmentConfig;
+
+/// Explicit test fixture for schedule lookup and setup sizing.
+///
+/// Production configuration types deliberately do not own schedules. Tests
+/// opt into this separate fixture trait so synthetic catalogs cannot leak into
+/// the production protocol surface.
+pub trait TestScheduleProvider: CommitmentConfig {
+    /// Size setup through this fixture's catalog.
+    fn setup_matrix_capacity(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        let catalog = workspace_schedule_catalog::<Self>()?;
+        crate::trusted_setup_matrix_capacity::<Self>(&catalog, max_num_vars, max_num_batched_polys)
+    }
+
+    /// Resolve one exact runtime key through this fixture's catalog.
+    fn resolve_catalog_row_for_key(
+        key: &AkitaScheduleLookupKey,
+    ) -> Result<crate::ResolvedScheduleRow, AkitaError> {
+        workspace_schedule_catalog::<Self>()?.resolve_key(key)
+    }
+
+    /// Resolve a scalar opening layout through this fixture's catalog.
+    fn resolve_catalog_row_for_opening(
+        layout: &OpeningClaimsLayout,
+    ) -> Result<crate::ResolvedScheduleRow, AkitaError> {
+        layout.check()?;
+        if layout.num_groups() != 1 {
+            return Err(AkitaError::InvalidInput(
+                "grouped schedule selection requires exact committed-group descriptors".to_string(),
+            ));
+        }
+        Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
+            layout.root_final_group_layout()?,
+        ))
+    }
+
+    /// Resolve the independently committed profile for one group.
+    fn profile_without_precommitted_groups(
+        group: PolynomialGroupLayout,
+    ) -> Result<akita_types::GroupCommitPhaseParams, AkitaError> {
+        Ok(
+            Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))?
+                .profiles()
+                .final_group,
+        )
+    }
+
+    /// Resolve exact committed profiles through this fixture's catalog.
+    fn resolve_catalog_row_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<crate::ResolvedScheduleRow, AkitaError> {
+        workspace_schedule_catalog::<Self>()?.resolve_profiles(profiles)
+    }
+
+    /// Resolve a public row selection through this fixture's catalog.
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<crate::ResolvedScheduleRow, AkitaError> {
+        workspace_schedule_catalog::<Self>()?.resolve_selection(selection)
+    }
+}
 
 /// Path to this config's checked-in workspace schedule artifact.
 pub fn workspace_schedule_artifact_path<Cfg: CommitmentConfig>() -> std::path::PathBuf {
@@ -58,7 +124,7 @@ pub fn akita_batched_root_layout<Cfg>(
     num_polynomials: usize,
 ) -> Result<CommittedGroupParams, AkitaError>
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + TestScheduleProvider,
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(lookup_key))?;

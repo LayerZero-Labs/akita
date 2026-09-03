@@ -10,7 +10,10 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, test_support::TestScheduleProvider, CommitmentConfig,
+    RecursiveCommitmentConfig,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
@@ -93,7 +96,9 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     final_num_vars: usize,
     final_num_polys: usize,
 ) where
-    Cfg: CommitmentConfig<Field = FF>,
+    Cfg: CommitmentConfig<Field = FF>
+        + akita_config::recursive_commitment::RecursiveScheduleConfig
+        + TestScheduleProvider,
     FF: CanonicalEncoding
         + CanonicalBytes
         + CanonicalEncoding
@@ -145,8 +150,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     setup_contribution_mode: SetupContributionMode,
     validate_against_planner: bool,
 ) where
-    Cfg: CommitmentConfig<Field = FF>,
-    ProofCfg: CommitmentConfig<Field = FF, ExtField = Cfg::ExtField>,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+    ProofCfg: CommitmentConfig<Field = FF, ExtField = Cfg::ExtField> + TestScheduleProvider,
     FF: CanonicalEncoding
         + CanonicalBytes
         + CanonicalEncoding

@@ -9,6 +9,7 @@ use crate::workload::{
     run_onehot, run_recursive_multi_group_onehot,
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
+use akita_config::test_support::TestScheduleProvider;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
@@ -35,7 +36,10 @@ fn fp128_prime_label() -> String {
     }
 }
 
-fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn run_dense_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+>(
     label: &str,
     title: &str,
     nv: usize,
@@ -50,7 +54,11 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
-fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+fn run_dense_mode_for<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+>(
     label: &str,
     title: &str,
     nv: usize,
@@ -83,7 +91,11 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
 }
 
-fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+fn run_onehot_mode_for<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+>(
     label: &str,
     title: &str,
     nv: usize,
@@ -158,7 +170,10 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     }
 }
 
-fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn run_onehot_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+>(
     label: &str,
     title: &str,
     nv: usize,
@@ -405,7 +420,7 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp128_with_cfg<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 >(
     label: &str,
     nv: usize,
@@ -448,7 +463,12 @@ fn run_profile_onehot_fp128_with_cfg<
 /// Shared driver for the multi-group profiles. Every such profile fixes the
 /// shape declared by the `MULTI_GROUP_*` constants above; only the base preset
 /// (`Cfg`) and the `layout_note` describing its witness layout differ.
-fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+fn run_multi_group_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>
+        + TestScheduleProvider
+        + akita_config::recursive_commitment::RecursiveScheduleConfig,
+>(
     label: &str,
     layout_note: &str,
     nv: usize,
@@ -512,7 +532,7 @@ fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, nu
 
 fn run_profile_onehot_fp128_multi_chunk_named<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
 >(
     label: &str,
     profile: MultiChunkProfileId,
@@ -611,7 +631,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
     }
 }
 
-fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(
+fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider>(
     group: PolynomialGroupLayout,
 ) -> CommittedGroupParams {
     Cfg::resolve_catalog_row_for_opening(

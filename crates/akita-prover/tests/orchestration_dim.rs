@@ -3,7 +3,9 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
-use akita_config::{effective_batched_schedule, CommitmentConfig};
+use akita_config::{
+    effective_batched_schedule, test_support::TestScheduleProvider, CommitmentConfig,
+};
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey,
     CommittedGroupBatchProfile, GroupCommitPhaseParams, OpeningClaimsLayout, PolynomialGroupLayout,

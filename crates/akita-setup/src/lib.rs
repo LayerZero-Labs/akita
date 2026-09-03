@@ -566,6 +566,8 @@ fn validate_cached_matrix<F: Field + CanonicalEncoding + Valid>(
 mod tests {
     use super::*;
     use akita_config::proof_optimized::fp128;
+    #[cfg(feature = "disk-persistence")]
+    use akita_config::test_support::TestScheduleProvider;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use akita_types::SetupMatrixCapacity;
     #[cfg(feature = "disk-persistence")]
@@ -586,6 +588,10 @@ mod tests {
         type Field = TestF;
         type ExtField = <Cfg as CommitmentConfig>::ExtField;
 
+        fn schedule_family_name() -> &'static str {
+            "test_wrong_modulus_profile"
+        }
+
         const RING_DIMENSION_SCHEDULE_MODE: akita_config::RingDimensionScheduleMode =
             Cfg::RING_DIMENSION_SCHEDULE_MODE;
 
@@ -603,13 +609,6 @@ mod tests {
             akita_types::SisModulusProfileId::Q64Offset59
         }
 
-        fn setup_matrix_capacity(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
-            panic!("invalid config reached setup capacity materialization")
-        }
-
         fn opening_basis_range() -> (u32, u32) {
             Cfg::opening_basis_range()
         }
@@ -620,6 +619,15 @@ mod tests {
 
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             Cfg::committed_source_class()
+        }
+    }
+
+    impl akita_config::test_support::TestScheduleProvider for WrongModulusProfileConfig {
+        fn setup_matrix_capacity(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
+            panic!("invalid config reached setup capacity materialization")
         }
     }
 
@@ -1082,7 +1090,6 @@ mod tests {
         fn ntt_caches_rebuilt_correctly_from_disk() {
             with_test_cache_dir("ntt-rebuild", || {
                 use akita_algebra::CyclotomicRing;
-                use akita_config::CommitmentConfig;
                 use akita_prover::compute::{CommitInnerPlan, RootCommitKernel, RootCommitSource};
                 use akita_prover::DensePoly;
                 use akita_prover::{ComputeBackendSetup, CpuBackend, DigitRowsComputeBackend};

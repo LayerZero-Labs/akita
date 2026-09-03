@@ -633,9 +633,9 @@ pub fn nonterminal_level_payload_bytes(
 
 /// Recompute the exact serialized proof payload for one expanded schedule.
 ///
-/// This is the non-leaking reporting counterpart to generated-row replay. It
+/// This is the non-leaking reporting counterpart to artifact validation. It
 /// consumes only the public lookup key, expanded schedule, and catalog policy;
-/// no compact generated row or planner candidate is constructed.
+/// no compact intermediate row or planner candidate is constructed.
 pub fn expanded_schedule_proof_payload_bytes(
     key: &akita_types::AkitaScheduleLookupKey,
     schedule: &FoldSchedule,

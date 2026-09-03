@@ -189,7 +189,7 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
 
 /// Assert the exact shipped `W8R2` profile shape, not just "some mixed fold".
 ///
-/// The generated table is exact for the `(32, 2) + two (16, 1)` profiling key, so
+/// The shipped artifact is exact for the `(32, 2) + two (16, 1)` profiling key, so
 /// the test pins every distinguishing fact. This catches `W4R2` vs `W8R2`, a
 /// level-0/level-1 mode swap, only one mixed leading fold, and a missing/extra
 /// setup-prefix handoff — none of which a bare "any chunked recursive fold" check
@@ -197,8 +197,7 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
 fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     assert!(
         schedule.recursive_folds.len() >= 2,
-        "W8R2 profile must have at least three fold levels, got {}",
-        1 + schedule.recursive_folds.len()
+        "W8R2 profile must have at least three fold levels"
     );
     for (level, (params, expected_d_a, expected_packing_factor)) in [
         (&schedule.root.params, 256, 4),

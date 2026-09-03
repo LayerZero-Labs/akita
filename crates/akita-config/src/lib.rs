@@ -11,15 +11,11 @@ use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
-use akita_types::{schedule_row_digest, FoldSchedule};
-#[cfg(any(test, feature = "test-support"))]
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, OpeningClaimsLayout,
-    OpeningScheduleSelection, PolynomialGroupLayout,
+    schedule_row_digest, AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
 };
-use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, SetupMatrixCapacity, SisModulusProfileId,
-};
+use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -68,6 +64,9 @@ macro_rules! impl_multi_chunk_companion {
                 $profile.cfg()
             }
         }
+
+        #[cfg(any(test, feature = "test-support"))]
+        impl $crate::test_support::TestScheduleProvider for $cfg {}
     };
 }
 
@@ -77,6 +76,8 @@ pub mod schedule_selection;
 pub mod setup_prefix_slots;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+#[cfg(test)]
+use test_support::TestScheduleProvider;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
@@ -84,24 +85,12 @@ pub use akita_schedules::RingDimensionScheduleMode;
 pub use akita_schedules::TrustedScheduleCatalog;
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
-    setup_level_params_from_schedule,
+    setup_level_params_from_schedule, trusted_setup_matrix_capacity,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_from_catalog;
 
-/// Size setup from the exact rows in a trusted catalog.
-pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
-    catalog: &TrustedScheduleCatalog,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<SetupMatrixCapacity, AkitaError> {
-    proof_optimized::trusted_setup_matrix_capacity::<Cfg>(
-        catalog,
-        max_num_vars,
-        max_num_batched_polys,
-    )
-}
 pub use transcript_binding::bind_transcript_instance_descriptor;
 pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
@@ -162,7 +151,11 @@ pub fn validate_trusted_schedule_catalog<Cfg: CommitmentConfig>(
     catalog: &TrustedScheduleCatalog,
 ) -> Result<(), AkitaError> {
     validate_config_policy::<Cfg>()?;
-    catalog.validate_binding(Cfg::schedule_family_name(), &policy_of::<Cfg>())
+    catalog.validate_binding(
+        Cfg::schedule_family_name(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+    )
 }
 
 /// Validate a config's schedule policy and concrete extension-field tower.
@@ -339,77 +332,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     }
 
     /// Stable trusted schedule family identity for external artifact loading.
-    fn schedule_family_name() -> &'static str {
-        std::any::type_name::<Self>()
-    }
-
-    /// Test-only setup sizing through the checked-in workspace artifact.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn setup_matrix_capacity(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let catalog = crate::test_support::workspace_schedule_catalog::<Self>()?;
-        crate::trusted_setup_matrix_capacity::<Self>(&catalog, max_num_vars, max_num_batched_polys)
-    }
-
-    /// Test-only key lookup through the checked-in workspace artifact.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn resolve_catalog_row_for_key(
-        key: &AkitaScheduleLookupKey,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
-        crate::test_support::workspace_schedule_catalog::<Self>()?.resolve_key(key)
-    }
-
-    /// Test-only scalar-opening lookup through the checked-in workspace artifact.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn resolve_catalog_row_for_opening(
-        layout: &OpeningClaimsLayout,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
-        layout.check()?;
-        if layout.num_groups() != 1 {
-            return Err(AkitaError::InvalidInput(
-                "grouped schedule selection requires exact committed-group descriptors".to_string(),
-            ));
-        }
-        Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            layout.root_final_group_layout()?,
-        ))
-    }
-
-    /// Test-only independent commitment profile lookup.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn profile_without_precommitted_groups(
-        group: PolynomialGroupLayout,
-    ) -> Result<akita_types::GroupCommitPhaseParams, AkitaError> {
-        Ok(
-            Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))?
-                .profiles()
-                .final_group,
-        )
-    }
-
-    /// Test-only exact profile lookup through the checked-in workspace artifact.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn resolve_catalog_row_for_profiles(
-        profiles: &CommittedGroupBatchProfile,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
-        crate::test_support::workspace_schedule_catalog::<Self>()?.resolve_profiles(profiles)
-    }
-
-    /// Test-only public-selection lookup through the checked-in workspace artifact.
-    #[cfg(any(test, feature = "test-support"))]
-    #[doc(hidden)]
-    fn resolve_schedule_selection(
-        selection: OpeningScheduleSelection,
-    ) -> Result<ResolvedScheduleRow, AkitaError> {
-        crate::test_support::workspace_schedule_catalog::<Self>()?.resolve_selection(selection)
-    }
+    fn schedule_family_name() -> &'static str;
 }
 
 #[cfg(test)]
@@ -432,6 +355,10 @@ mod tests {
     impl CommitmentConfig for SingleExtensionConfig {
         type Field = Base;
         type ExtField = BaseExt;
+
+        fn schedule_family_name() -> &'static str {
+            "test_single_extension"
+        }
 
         const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
             RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
@@ -457,13 +384,6 @@ mod tests {
             SisModulusProfileId::Q32Offset99
         }
 
-        fn setup_matrix_capacity(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            Ok(SetupMatrixCapacity::minimum())
-        }
-
         fn opening_basis_range() -> (u32, u32) {
             (3, 3)
         }
@@ -476,6 +396,10 @@ mod tests {
     impl CommitmentConfig for WrongDeclaredExtensionDegree {
         type Field = crate::proof_optimized::fp32::Field;
         type ExtField = crate::proof_optimized::fp32::ExtensionField;
+
+        fn schedule_family_name() -> &'static str {
+            "test_wrong_declared_extension_degree"
+        }
 
         const EXT_DEGREE: usize = 2;
         const RING_DIMENSION_SCHEDULE_MODE: RingDimensionScheduleMode =
@@ -493,19 +417,30 @@ mod tests {
             SingleExtensionConfig::sis_modulus_profile()
         }
 
-        fn setup_matrix_capacity(
-            max_num_vars: usize,
-            max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixCapacity, AkitaError> {
-            SingleExtensionConfig::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
-        }
-
         fn opening_basis_range() -> (u32, u32) {
             SingleExtensionConfig::opening_basis_range()
         }
 
         fn committed_source_class() -> akita_types::sis::CommittedSourceClass {
             SingleExtensionConfig::committed_source_class()
+        }
+    }
+
+    impl crate::test_support::TestScheduleProvider for SingleExtensionConfig {
+        fn setup_matrix_capacity(
+            _max_num_vars: usize,
+            _max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixCapacity, AkitaError> {
+            Ok(SetupMatrixCapacity::minimum())
+        }
+    }
+
+    impl crate::test_support::TestScheduleProvider for WrongDeclaredExtensionDegree {
+        fn setup_matrix_capacity(
+            max_num_vars: usize,
+            max_num_batched_polys: usize,
+        ) -> Result<SetupMatrixCapacity, AkitaError> {
+            SingleExtensionConfig::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
         }
     }
 

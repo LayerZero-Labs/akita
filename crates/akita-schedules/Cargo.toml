@@ -17,7 +17,6 @@ readme = "../../README.md"
 
 [features]
 default = ["transcript-blake2b"]
-planner-support = []
 transcript-blake2b = [
   "akita-challenges/transcript-blake2b",
   "akita-types/transcript-blake2b",

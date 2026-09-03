@@ -4,7 +4,9 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
     on_schedule: fn(&FoldSchedule),
 ) where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F>
+        + akita_config::recursive_commitment::RecursiveScheduleConfig
+        + TestScheduleProvider,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
 

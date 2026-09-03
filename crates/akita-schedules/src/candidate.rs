@@ -21,7 +21,7 @@ pub struct SelectiveL2CandidateGeometry<'a> {
     pub fold_basis: usize,
     pub fold_digit_count: usize,
     pub fold_challenge_config: &'a SparseChallengeConfig,
-    /// Planner-frozen response cap. Generated schedule expansion and resolved
+    /// Planner-frozen response cap. Artifact validation and resolved
     /// schedule audit replay this exact public value instead of rerunning an
     /// offline response model.
     pub response_l2_sq_cap: Option<u128>,

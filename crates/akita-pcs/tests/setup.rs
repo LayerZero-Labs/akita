@@ -21,6 +21,7 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
+use akita_config::test_support::TestScheduleProvider;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
@@ -105,7 +106,7 @@ fn onehot_lagrange_opening(indices: &[Option<usize>], onehot_k: usize, point: &[
 /// the batch-capacity axis can reuse the same builder).
 fn run_dense_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
     Cfg: 'static,
 {
     assert_eq!(256, D);
@@ -235,7 +236,7 @@ where
 /// by the config; standard one-hot presets use `K = 256`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
     Cfg: 'static,
 {
     assert_eq!(256, D);
@@ -401,7 +402,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
     Cfg: 'static,
 {
     assert_eq!(256, D);
@@ -508,7 +509,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     poly_nv: usize,
     commit_batch: usize,
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
     Cfg: 'static,
 {
     assert_eq!(256, D);

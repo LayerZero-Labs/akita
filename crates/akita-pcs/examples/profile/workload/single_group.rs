@@ -11,7 +11,9 @@ use crate::report::{
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
 use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
+use akita_config::{
+    derive_transcript_grinding_plan, test_support::TestScheduleProvider, CommitmentConfig,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
     RecursiveProveBackend, RootPolyShape, RuntimeCoefficientPackingBackendFor,
@@ -39,7 +41,7 @@ use std::time::Instant;
 fn run_prove<
     FF,
     const D: usize,
-    Cfg: CommitmentConfig<Field = FF>,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
     P: RuntimeRootProvePoly<FF> + RuntimeCommitSource<FF>,
 >(
     label: &str,
@@ -266,7 +268,11 @@ fn run_prove<
     );
 }
 
-pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+pub(crate) fn run_dense_for<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+>(
     label: &str,
     nv: usize,
     layout: &CommittedGroupParams,
@@ -414,7 +420,11 @@ fn splitmix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
-pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+pub(crate) fn run_onehot<
+    FF,
+    const D: usize,
+    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
+>(
     label: &str,
     nv: usize,
     layout: &CommittedGroupParams,

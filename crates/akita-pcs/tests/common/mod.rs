@@ -8,6 +8,7 @@ pub(super) use opening_oracles::*;
 pub(super) use workspace_schedules::WorkspaceScheduleArtifactExt;
 
 pub(super) use akita_config::proof_optimized::fp128;
+pub(super) use akita_config::test_support::TestScheduleProvider;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::{derive_transcript_grinding_plan, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
@@ -328,7 +329,7 @@ pub(super) fn prove_input<'a, Cfg, P>(
     Cfg::Field,
 >
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + TestScheduleProvider,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let group = PolynomialGroupClaims::new(
@@ -360,7 +361,7 @@ pub(super) fn selected_prover_data<'a, Cfg, P>(
     Cfg::Field,
 >
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + TestScheduleProvider,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
@@ -373,7 +374,7 @@ pub(super) fn selected_statement<'a, Cfg>(
     claims: OpeningClaims<'a, Cfg::ExtField, &'a CommittedGroup<Cfg::Field>>,
 ) -> GroupBatchStatement<'a, Cfg::ExtField, Cfg::Field>
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + TestScheduleProvider,
 {
     let (final_group, precommitteds) = claims
         .groups()
@@ -398,7 +399,7 @@ pub(super) fn verify_input<'a, Cfg>(
     commitment: &'a CommittedGroup<Cfg::Field>,
 ) -> GroupBatchStatement<'a, Cfg::ExtField, Cfg::Field>
 where
-    Cfg: CommitmentConfig,
+    Cfg: CommitmentConfig + TestScheduleProvider,
 {
     let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),

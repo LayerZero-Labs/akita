@@ -5,10 +5,6 @@ mod catalog_snapshot;
 mod generation_output_path;
 
 use catalog_policy_report::catalog_policy_signature;
-#[cfg(all(test, feature = "catalog-check"))]
-use catalog_policy_report::source_encoding_signature;
-#[cfg(test)]
-use generation_output_path::resolved_output_path;
 use generation_output_path::validate_explicit_output_isolation;
 
 use akita_planner::emit::{
@@ -16,11 +12,11 @@ use akita_planner::emit::{
     MaterializationDiagnostics, PrecommittedProducer,
 };
 use akita_planner::generated_families::{
-    emit_spec_for_family, wiring_emit_spec, GeneratedFamily, GenerationPreplans,
+    emit_spec_for_family, empty_emit_spec, GeneratedFamily, GenerationPreplans,
     ALL_GENERATED_FAMILIES,
 };
 use akita_planner::{
-    publish_generated_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
+    publish_artifact_outputs, render_schedule_artifact_outputs_with_validation, EmitSpec,
 };
 use akita_types::{
     schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
@@ -59,10 +55,6 @@ struct ExplicitGroup {
 struct ExplicitRange {
     start: usize,
     end: usize,
-}
-
-fn generator_command() -> &'static str {
-    "cargo run --release -p akita-planner --features catalog-gen --bin gen_schedule_artifacts -- <output-dir>"
 }
 
 fn usage() -> &'static str {
@@ -239,7 +231,7 @@ fn parse_args_from(raw_args: Vec<String>) -> Result<ParsedArgs, String> {
     let catalog_rows_requested =
         check_catalog || catalog_snapshot.is_some() || catalog_baseline.is_some();
     if catalog_rows_requested && explicit_rows.final_group.is_some() {
-        return Err("catalog checks and snapshots require ordinary generated rows".to_string());
+        return Err("catalog checks and snapshots require the standard artifact rows".to_string());
     }
     if check_catalog && !cfg!(feature = "catalog-check") {
         return Err("--check-catalog requires the `catalog-check` feature".to_string());
@@ -329,7 +321,7 @@ struct CatalogRowMetrics {
     policy_signature: String,
 }
 
-const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tkey\tcompiled_setup_fields\tregenerated_setup_fields\tcompiled_proof_bytes\tregenerated_proof_bytes\tcompiled_levels\tregenerated_levels\tcompiled_row_digest\tregenerated_row_digest\tcompiled_policy\tregenerated_policy\n";
+const CATALOG_DRIFT_REPORT_HEADER: &str = "family\tstatus\tdetail\n";
 
 fn row_digest_hex(key: &AkitaScheduleLookupKey, schedule: &FoldSchedule) -> Result<String, String> {
     let final_group =
@@ -418,7 +410,7 @@ fn catalog_snapshot_row(
     let metrics = catalog_row_metrics(spec, key, schedule)?;
     Ok(catalog_snapshot::CatalogSnapshotRow {
         schema: catalog_snapshot::SnapshotSchema::Current,
-        family: spec.module_name.to_string(),
+        family: spec.family_name.to_string(),
         logical_key,
         lookup_key_digest: catalog_lookup_key_digest(key),
         setup_fields: metrics.setup_fields,
@@ -481,17 +473,6 @@ fn materialized_snapshot_rows(
             }
             catalog_snapshot_row(spec, &key, entry.schedule(), logical_key)
         })
-        .collect()
-}
-
-#[cfg(all(test, feature = "catalog-check"))]
-fn catalog_snapshot_rows(
-    spec: &EmitSpec,
-    entries: &[(AkitaScheduleLookupKey, FoldSchedule)],
-) -> Result<Vec<catalog_snapshot::CatalogSnapshotRow>, String> {
-    entries
-        .iter()
-        .map(|(key, schedule)| catalog_snapshot_row(spec, key, schedule, catalog_logical_key(key)))
         .collect()
 }
 
@@ -579,19 +560,17 @@ fn emit_spec_with_overrides(
     preplans: &GenerationPreplans,
     base_dir: PathBuf,
     explicit_rows: &ExplicitRows,
-    generator_command: &'static str,
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
-        return emit_spec_for_family(family, preplans, base_dir, generator_command)
+        return emit_spec_for_family(family, preplans, base_dir)
             .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
     }
 
-    // Explicit sweeps replace the catalog key set. Start from the cheap wiring
+    // Explicit sweeps replace the catalog key set. Start from an empty request
     // shape so a one-key diagnostic does not first plan every default grouped
     // root merely to discard those rows below.
-    let mut spec = wiring_emit_spec(family, base_dir)
+    let mut spec = empty_emit_spec(family, base_dir)
         .map_err(|e| format!("{}: producer contract: {e}", family.module_name))?;
-    spec.generator_command = generator_command;
 
     let final_group = explicit_rows
         .final_group
@@ -639,7 +618,6 @@ fn main() -> Result<(), String> {
         .map_err(|e| format!("create {}: {e}", args.base_dir.display()))?;
     let families_to_write = selected_families(args.family_filter.as_deref());
 
-    let generator_command = generator_command();
     let preplans = GenerationPreplans::default();
     let indexed_families = families_to_write
         .iter()
@@ -662,7 +640,6 @@ fn main() -> Result<(), String> {
             &preplans,
             args.base_dir.clone(),
             &args.explicit_rows,
-            generator_command,
         )?;
         eprintln!(
             "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
@@ -720,7 +697,7 @@ fn main() -> Result<(), String> {
         }
         if changed_catalog_rows != 0 {
             return Err(format!(
-                "compiled catalog differs from the planner in {changed_catalog_rows} rows"
+                "checked-in artifact differs from the planner in {changed_catalog_rows} row sets"
             ));
         }
     }
@@ -757,11 +734,11 @@ fn main() -> Result<(), String> {
     let publish_started = args.row_progress.then(Instant::now);
     if args.row_progress {
         eprintln!(
-            "schedule generation phase: publish {} generated outputs",
+            "schedule generation phase: publish {} artifacts",
             outputs.len(),
         );
     }
-    let destinations = publish_generated_outputs(outputs)?;
+    let destinations = publish_artifact_outputs(outputs)?;
     if let Some(started) = publish_started {
         eprintln!(
             "schedule generation phase complete: published {} outputs in {:.2?}",
@@ -794,5 +771,5 @@ const fn should_emit_catalog_drift_report(
 }
 
 #[cfg(test)]
-#[path = "gen_schedule_tables_tests.rs"]
+#[path = "gen_schedule_artifacts_tests.rs"]
 mod tests;

@@ -10,7 +10,13 @@ use std::marker::PhantomData;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RecursiveCommitmentConfig<Cfg>(PhantomData<Cfg>);
 
-impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> {
+/// A direct config with a separately generated recursive schedule family.
+pub trait RecursiveScheduleConfig: CommitmentConfig {
+    /// Stable family identity for the recursive companion artifact.
+    const RECURSIVE_SCHEDULE_FAMILY_NAME: &'static str;
+}
+
+impl<Cfg: RecursiveScheduleConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> {
     type Field = Cfg::Field;
     type ExtField = Cfg::ExtField;
 
@@ -18,11 +24,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::RING_DIMENSION_SCHEDULE_MODE;
 
     fn schedule_family_name() -> &'static str {
-        match Cfg::schedule_family_name() {
-            "fp128_onehot" => "fp128_onehot_recursive",
-            "fp128_onehot_multi_chunk" => "fp128_onehot_recursive_multi_chunk_w8r2",
-            _ => std::any::type_name::<Self>(),
-        }
+        Cfg::RECURSIVE_SCHEDULE_FAMILY_NAME
     }
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()
@@ -55,4 +57,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     fn recursive_setup_planning() -> bool {
         true
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl<Cfg> crate::test_support::TestScheduleProvider for RecursiveCommitmentConfig<Cfg> where
+    Cfg: RecursiveScheduleConfig + crate::test_support::TestScheduleProvider
+{
 }

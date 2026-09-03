@@ -47,7 +47,7 @@ pub struct TrustedScheduleCatalog {
     policy_digest: [u8; 32],
     catalog_digest: [u8; 32],
     rows_by_digest: Vec<ResolvedScheduleRow>,
-    rows_by_key: Vec<usize>,
+    rows_by_key: Vec<(AkitaScheduleLookupKey, usize)>,
 }
 
 impl TrustedScheduleCatalog {
@@ -80,28 +80,22 @@ impl TrustedScheduleCatalog {
             )?);
         }
         resolved.sort_by_key(|row| row.selection().row_digest);
-        let mut rows_by_key = (0..resolved.len()).collect::<Vec<_>>();
-        rows_by_key.sort_by(|left_index, right_index| {
-            profiles_key_cmp(
-                resolved[*left_index].profiles(),
-                resolved[*right_index].profiles(),
-            )
-            .then_with(|| {
+        let mut rows_by_key = resolved
+            .iter()
+            .enumerate()
+            .map(|(index, row)| (key_for_profiles(row.profiles()), index))
+            .collect::<Vec<_>>();
+        rows_by_key.sort_by(|(left_key, left_index), (right_key, right_index)| {
+            left_key.canonical_cmp(right_key).then_with(|| {
                 resolved[*left_index]
                     .selection()
                     .row_digest
                     .cmp(&resolved[*right_index].selection().row_digest)
             })
         });
-        let has_duplicate_lookup_key = rows_by_key.windows(2).any(|pair| {
-            let Some(left) = pair.first().and_then(|index| resolved.get(*index)) else {
-                return false;
-            };
-            let Some(right) = pair.get(1).and_then(|index| resolved.get(*index)) else {
-                return false;
-            };
-            profiles_key_cmp(left.profiles(), right.profiles()).is_eq()
-        });
+        let has_duplicate_lookup_key = rows_by_key
+            .windows(2)
+            .any(|pair| pair[0].0.canonical_cmp(&pair[1].0).is_eq());
         if has_duplicate_lookup_key {
             return Err(AkitaError::InvalidSetup(
                 "trusted schedule catalog contains a duplicate prover lookup key".to_string(),
@@ -174,7 +168,7 @@ impl TrustedScheduleCatalog {
                 "schedule artifact policy does not match the runtime config".to_string(),
             ));
         }
-        Self::try_new(
+        let catalog = Self::try_new(
             artifact.family_name,
             artifact
                 .rows
@@ -182,7 +176,13 @@ impl TrustedScheduleCatalog {
                 .map(|row| (row.profiles, row.schedule)),
             policy,
             ring_challenge_config,
-        )
+        )?;
+        if catalog.to_artifact_bytes()? != bytes {
+            return Err(AkitaError::InvalidSetup(
+                "schedule artifact rows are not in canonical digest order".to_string(),
+            ));
+        }
+        Ok(catalog)
     }
 
     /// Encode this validated catalog as the canonical versioned artifact.
@@ -228,6 +228,7 @@ impl TrustedScheduleCatalog {
         &self,
         expected_family_name: &str,
         policy: &PlannerPolicy,
+        ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     ) -> Result<(), AkitaError> {
         if self.family_name != expected_family_name {
             return Err(AkitaError::InvalidSetup(format!(
@@ -239,6 +240,9 @@ impl TrustedScheduleCatalog {
             return Err(AkitaError::InvalidSetup(
                 "trusted schedule policy does not match the runtime config".to_string(),
             ));
+        }
+        for row in &self.rows_by_digest {
+            validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
         }
         Ok(())
     }
@@ -297,42 +301,34 @@ impl TrustedScheduleCatalog {
         key: &AkitaScheduleLookupKey,
         exact_profiles: Option<&CommittedGroupBatchProfile>,
     ) -> Result<ResolvedScheduleRow, AkitaError> {
-        let mut selected: Option<&ResolvedScheduleRow> = None;
         let row_for_index = |row_index: usize| {
             self.rows_by_digest.get(row_index).ok_or_else(|| {
                 AkitaError::InvalidSetup("trusted schedule key index is out of bounds".to_string())
             })
         };
-        let start = self.rows_by_key.partition_point(|&row_index| {
-            row_for_index(row_index)
-                .is_ok_and(|row| profiles_key_cmp_runtime(row.profiles(), key).is_lt())
-        });
-        let end = self.rows_by_key.partition_point(|&row_index| {
-            row_for_index(row_index)
-                .is_ok_and(|row| !profiles_key_cmp_runtime(row.profiles(), key).is_gt())
-        });
-        for &row_index in self.rows_by_key.get(start..end).ok_or_else(|| {
-            AkitaError::InvalidSetup("trusted schedule key range is out of bounds".to_string())
-        })? {
-            let row = self.rows_by_digest.get(row_index).ok_or_else(|| {
-                AkitaError::InvalidSetup("trusted schedule key index is out of bounds".to_string())
-            })?;
-            if exact_profiles.is_none_or(|profiles| row.profiles() == profiles)
-                && selected.is_none_or(|current| {
-                    row.selection().row_digest < current.selection().row_digest
-                })
-            {
-                selected = Some(row);
-            }
+        let start = self
+            .rows_by_key
+            .partition_point(|(row_key, _)| row_key.canonical_cmp(key).is_lt());
+        let (row_key, row_index) = self
+            .rows_by_key
+            .get(start)
+            .ok_or_else(|| unsupported_schedule_lookup(key, exact_profiles.is_some()))?;
+        let row = row_for_index(*row_index)?;
+        if !row_key.canonical_cmp(key).is_eq()
+            || exact_profiles.is_some_and(|profiles| row.profiles() != profiles)
+        {
+            return Err(unsupported_schedule_lookup(key, exact_profiles.is_some()));
         }
-        selected.cloned().ok_or_else(|| {
-            AkitaError::UnsupportedSchedule(if exact_profiles.is_some() {
-                "no trusted schedule row matches the exact committed profiles".to_string()
-            } else {
-                format!("no trusted schedule row for request {key:?}")
-            })
-        })
+        Ok(row.clone())
     }
+}
+
+fn unsupported_schedule_lookup(key: &AkitaScheduleLookupKey, exact_profiles: bool) -> AkitaError {
+    AkitaError::UnsupportedSchedule(if exact_profiles {
+        "no trusted schedule row matches the exact committed profiles".to_string()
+    } else {
+        format!("no trusted schedule row for request {key:?}")
+    })
 }
 
 fn validate_family_name(family_name: &str) -> Result<(), AkitaError> {
@@ -350,62 +346,6 @@ fn key_for_profiles(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLooku
         final_group: profiles.final_group.group,
         precommitteds: profiles.precommitteds.clone(),
     }
-}
-
-fn profiles_key_cmp(
-    left: &CommittedGroupBatchProfile,
-    right: &CommittedGroupBatchProfile,
-) -> std::cmp::Ordering {
-    let left_main = (
-        left.final_group.group.num_vars(),
-        left.final_group.group.num_polynomials(),
-    );
-    let right_main = (
-        right.final_group.group.num_vars(),
-        right.final_group.group.num_polynomials(),
-    );
-    left_main
-        .cmp(&right_main)
-        .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
-        .then_with(|| {
-            left.precommitteds
-                .iter()
-                .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes)
-                .cmp(
-                    right
-                        .precommitteds
-                        .iter()
-                        .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes),
-                )
-        })
-}
-
-fn profiles_key_cmp_runtime(
-    profiles: &CommittedGroupBatchProfile,
-    key: &AkitaScheduleLookupKey,
-) -> std::cmp::Ordering {
-    let left_main = (
-        profiles.final_group.group.num_vars(),
-        profiles.final_group.group.num_polynomials(),
-    );
-    let right_main = (
-        key.final_group.num_vars(),
-        key.final_group.num_polynomials(),
-    );
-    left_main
-        .cmp(&right_main)
-        .then_with(|| profiles.precommitteds.len().cmp(&key.precommitteds.len()))
-        .then_with(|| {
-            profiles
-                .precommitteds
-                .iter()
-                .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes)
-                .cmp(
-                    key.precommitteds
-                        .iter()
-                        .map(akita_types::GroupCommitPhaseParams::canonical_descriptor_bytes),
-                )
-        })
 }
 
 fn catalog_digest(

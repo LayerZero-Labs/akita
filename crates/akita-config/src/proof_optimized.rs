@@ -107,7 +107,7 @@ impl SetupCapacityScan {
 ///
 /// Every admitted row is already expanded and audited. Setup sizing therefore
 /// scans those exact rows instead of consulting the generated-table resolver.
-pub(crate) fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
+pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
     catalog: &akita_schedules::TrustedScheduleCatalog,
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -307,6 +307,9 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@committed_source_class $source);
 
         }
+
+        #[cfg(any(test, feature = "test-support"))]
+        impl $crate::test_support::TestScheduleProvider for $cfg {}
     };
 }
 

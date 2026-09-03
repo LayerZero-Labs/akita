@@ -7,10 +7,9 @@ type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
 fn dense_group_commit_freezes_scalar_s_profile() {
     const NUM_VARS: usize = 16;
 
-    let setup = DenseGroupScheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(NUM_VARS, 1)
-        .expect("dense group setup");
+    let scheme =
+        DenseGroupScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let setup = scheme.setup_prover(NUM_VARS, 1).expect("dense group setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
         .expect("prepared dense group setup");
@@ -29,8 +28,7 @@ fn dense_group_commit_freezes_scalar_s_profile() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = DenseGroupScheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit(
             &setup,
             std::slice::from_ref(&poly),

@@ -2,18 +2,16 @@ use super::*;
 
 #[test]
 fn batched_commit_matches_individual_commits() {
+    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
+    let layout = singleton_layout(&scheme, 16);
     let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
     let len = 1usize << num_vars;
     let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 1) as u64)).collect();
     let evals_b: Vec<F> = (0..len).map(|i| F::from_u64((i * 3 + 7) as u64)).collect();
     let poly_a = DensePoly::<F>::from_field_evals(num_vars, &evals_a).unwrap();
     let poly_b = DensePoly::<F>::from_field_evals(num_vars, &evals_b).unwrap();
-    let setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(num_vars, 2)
-        .unwrap();
+    let setup = scheme.setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -26,14 +24,12 @@ fn batched_commit_matches_individual_commits() {
     let (batched_commitments, batched_hints): (Vec<_>, Vec<_>) = poly_groups
         .iter()
         .map(|group| {
-            Scheme::from_workspace_schedule_artifact()
-                .expect("embedded schedule catalog")
-                .commit::<_, _>(
-                    &setup,
-                    group,
-                    &stack,
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-                )
+            scheme.commit::<_, _>(
+                &setup,
+                group,
+                &stack,
+                akita_prover::GroupContext::scheduler_without_precommitted_groups(),
+            )
         })
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
@@ -43,8 +39,7 @@ fn batched_commit_matches_individual_commits() {
     let akita_prover::CommitOutput {
         committed_group: commitment_a,
         hint: hint_a,
-    } = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly_a),
@@ -55,8 +50,7 @@ fn batched_commit_matches_individual_commits() {
     let akita_prover::CommitOutput {
         committed_group: commitment_b,
         hint: hint_b,
-    } = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly_b),
@@ -71,17 +65,15 @@ fn batched_commit_matches_individual_commits() {
 
 #[test]
 fn commit_rejects_mixed_group_arity() {
-    let layout = singleton_layout::<Cfg>(16);
+    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let layout = singleton_layout(&scheme, 16);
     let num_vars =
         layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
     let evals = vec![F::one(); 1usize << num_vars];
     let smaller_evals = vec![F::one(); 1usize << (num_vars - 1)];
     let poly = DensePoly::<F>::from_field_evals(num_vars, &evals).unwrap();
     let smaller = DensePoly::<F>::from_field_evals(num_vars - 1, &smaller_evals).unwrap();
-    let setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(num_vars, 2)
-        .unwrap();
+    let setup = scheme.setup_prover(num_vars, 2).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -93,8 +85,7 @@ fn commit_rejects_mixed_group_arity() {
     // An empty precommitted group prefix is unrepresentable, so no grouped context
     // can carry one. `PrecommittedGroupProfiles` owns that rejection; see
     // `precommitted_group_profiles_reject_an_empty_prefix`.
-    let error = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    let error = scheme
         .commit(
             &setup,
             &[poly, smaller],

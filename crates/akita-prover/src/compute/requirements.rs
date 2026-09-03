@@ -520,7 +520,7 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 mod tests {
     use super::*;
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    use akita_config::CommitmentConfig;
+    use akita_config::test_support::TestScheduleProvider;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
     #[test]

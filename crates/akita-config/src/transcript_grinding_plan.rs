@@ -32,6 +32,7 @@ where
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    use crate::test_support::TestScheduleProvider;
     use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
     use jolt_field::PseudoMersenne;
 

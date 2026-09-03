@@ -78,7 +78,7 @@ impl OpeningMethod {
 ///
 /// EvaluationTrace decomposes a full A-ring partial. Coefficient packing
 /// decomposes its `k * s` physical base-field coordinates instead. This is the
-/// canonical sizing authority used by planners, generated-row expansion, and
+/// canonical sizing authority used by planners, artifact validation, and
 /// authenticated schedule replay.
 pub fn opening_d_segment_width(
     opening_method: OpeningMethod,

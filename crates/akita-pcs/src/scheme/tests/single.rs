@@ -2,16 +2,14 @@ use super::*;
 
 #[test]
 fn verify_rejects_wrong_opening() {
+    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(16);
+    let layout = singleton_layout(&scheme, 16);
     let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(num_vars, 1)
-        .unwrap();
+    let setup = scheme.setup_prover(num_vars, 1).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -19,16 +17,12 @@ fn verify_rejects_wrong_opening() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_verifier(&setup)
-        .expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
@@ -48,11 +42,16 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    let proof = scheme
         .batched_prove::<_, _, _>(
             &setup,
-            prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            prover_claims(
+                &scheme,
+                &opening_point[..],
+                &poly_refs[..],
+                &commitments[0],
+                hint,
+            ),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -62,15 +61,18 @@ fn verify_rejects_wrong_opening() {
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
-            BasisMode::Lagrange,
-        );
+    let result = scheme.batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims(
+            &scheme,
+            &opening_point[..],
+            &wrong_openings[..],
+            &commitments[0],
+        ),
+        BasisMode::Lagrange,
+    );
 
     assert!(
         result.is_err(),
@@ -80,7 +82,7 @@ fn verify_rejects_wrong_opening() {
 
 #[test]
 fn verify_rejects_malformed_v_dimension_without_panicking() {
-    let (verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
+    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _layout) =
         make_verify_fixture(16);
     let root_fold = &mut proof.root;
     let mut coeffs = root_fold.opening_payload.coeffs().to_vec();
@@ -92,15 +94,13 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
-                BasisMode::Lagrange,
-            )
+        scheme.batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
+            BasisMode::Lagrange,
+        )
     }));
 
     assert!(
@@ -114,7 +114,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
     fn assert_base_direct_witness(_: &akita_types::TerminalResponse<F>) {}
 
-    let (_, _, proof, _, _, _) = make_verify_fixture(16);
+    let (_, _, _, proof, _, _, _) = make_verify_fixture(16);
     let root = &proof.root;
     assert_base_flat_ring_vec(&root.opening_payload);
     if let Some(commitment) = root.stage2.next_witness_binding.outer_payload() {
@@ -132,7 +132,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
 
 #[test]
 fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
-    let (verifier_setup, commitment, mut proof, opening_point, opening, _) =
+    let (scheme, verifier_setup, commitment, mut proof, opening_point, opening, _) =
         make_verify_fixture(16);
     let dummy_sumcheck = akita_sumcheck::SumcheckProof {
         round_polys: proof.root.stage2.sumcheck_proof.round_polys.to_vec(),
@@ -146,13 +146,12 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    scheme
         .batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
+            verifier_claims(&scheme, &opening_point[..], &openings[..], &commitments[0]),
             BasisMode::Lagrange,
         )
         .expect_err("unchecked extension-opening payload must be rejected");

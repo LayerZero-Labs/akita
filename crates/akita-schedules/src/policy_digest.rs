@@ -1,36 +1,48 @@
 //! Stable policy identity shared by trusted artifacts and offline generation.
 
+use akita_types::digest_descriptor_bytes;
+
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
 /// Fixed-width digest of every planner-policy field that affects an admitted row.
 pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let mut h = Fnv64::new();
-    h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
-    h.write_u64(u64::from(policy.sis_security_policy.tag()));
-    h.write_bytes(&policy.sis_table_digest.0);
-    h.write_bytes(&policy.sis_l2_table_digest.0);
-    h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
-    write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
-    write_decomposition(&mut h, policy.decomposition);
-    h.write_u64(policy.claim_ext_degree as u64);
-    h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.inner_basis_range.0));
-    h.write_u64(u64::from(policy.inner_basis_range.1));
-    h.write_u64(u64::from(policy.opening_basis_range.0));
-    h.write_u64(u64::from(policy.opening_basis_range.1));
-    h.write_u64(policy.witness_chunk.num_chunks as u64);
-    h.write_u64(policy.witness_chunk.num_activated_levels as u64);
-    h.write_u64(u64::from(policy.recursive_setup_planning));
-    h.write_u64(u64::from(policy.cost_model.tag()));
-    h.write_u64(u64::from(policy.selection_policy.tag()));
-    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
-    h.write_u64(u64::from(policy.recursive_setup_search_policy.tag()));
-    write_optional_usize(&mut h, policy.setup_field_budget);
-    h.write_u64(policy.min_offloaded_witness_contraction as u64);
-    let digest = h.finish();
-    out[..8].copy_from_slice(&digest.to_le_bytes());
-    out
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"AKITA-PLANNER-POLICY-V1");
+    write_u64(
+        &mut bytes,
+        sis_modulus_profile_tag(policy.sis_modulus_profile),
+    );
+    write_u64(&mut bytes, u64::from(policy.sis_security_policy.tag()));
+    bytes.extend_from_slice(&policy.sis_table_digest.0);
+    bytes.extend_from_slice(&policy.sis_l2_table_digest.0);
+    write_u64(
+        &mut bytes,
+        u64::from(policy.selective_l2_response_model.tag()),
+    );
+    write_ring_dimension_schedule_mode(&mut bytes, policy.ring_dimension_schedule_mode);
+    write_decomposition(&mut bytes, policy.decomposition);
+    write_u64(&mut bytes, policy.claim_ext_degree as u64);
+    write_u64(&mut bytes, policy.chal_ext_degree as u64);
+    write_u64(&mut bytes, u64::from(policy.inner_basis_range.0));
+    write_u64(&mut bytes, u64::from(policy.inner_basis_range.1));
+    write_u64(&mut bytes, u64::from(policy.opening_basis_range.0));
+    write_u64(&mut bytes, u64::from(policy.opening_basis_range.1));
+    write_u64(&mut bytes, policy.witness_chunk.num_chunks as u64);
+    write_u64(&mut bytes, policy.witness_chunk.num_activated_levels as u64);
+    write_u64(&mut bytes, u64::from(policy.recursive_setup_planning));
+    write_u64(&mut bytes, u64::from(policy.cost_model.tag()));
+    write_u64(&mut bytes, u64::from(policy.selection_policy.tag()));
+    write_u64(
+        &mut bytes,
+        u64::from(policy.recursive_split_search_policy.tag()),
+    );
+    write_u64(
+        &mut bytes,
+        u64::from(policy.recursive_setup_search_policy.tag()),
+    );
+    write_optional_usize(&mut bytes, policy.setup_field_budget);
+    write_u64(&mut bytes, policy.min_offloaded_witness_contraction as u64);
+    digest_descriptor_bytes(&bytes)
 }
 
 fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
@@ -41,11 +53,11 @@ fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
     }
 }
 
-fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionScheduleMode) {
+fn write_ring_dimension_schedule_mode(bytes: &mut Vec<u8>, mode: RingDimensionScheduleMode) {
     match mode {
         RingDimensionScheduleMode::UniformDimension { ring_dimension } => {
-            h.write_u64(0);
-            h.write_u64(ring_dimension as u64);
+            write_u64(bytes, 0);
+            write_u64(bytes, ring_dimension as u64);
         }
         RingDimensionScheduleMode::AdaptiveDimension {
             num_search_levels,
@@ -54,74 +66,48 @@ fn write_ring_dimension_schedule_mode(h: &mut Fnv64, mode: RingDimensionSchedule
             potential_b_dimensions,
             potential_d_dimensions,
         } => {
-            h.write_u64(1);
-            h.write_u64(num_search_levels as u64);
-            h.write_u64(suffix_dimensions.len() as u64);
+            write_u64(bytes, 1);
+            write_u64(bytes, num_search_levels as u64);
+            write_u64(bytes, suffix_dimensions.len() as u64);
             for &dimension in suffix_dimensions {
-                h.write_u64(dimension as u64);
+                write_u64(bytes, dimension as u64);
             }
             for dimensions in [
                 potential_a_dimensions,
                 potential_b_dimensions,
                 potential_d_dimensions,
             ] {
-                h.write_u64(dimensions.len() as u64);
+                write_u64(bytes, dimensions.len() as u64);
                 for &dimension in dimensions {
-                    h.write_u64(dimension as u64);
+                    write_u64(bytes, dimension as u64);
                 }
             }
         }
     }
 }
 
-fn write_decomposition(h: &mut Fnv64, decomposition: akita_types::DecompositionParams) {
-    h.write_u64(u64::from(decomposition.log_basis));
-    h.write_u64(u64::from(decomposition.log_commit_bound));
+fn write_decomposition(bytes: &mut Vec<u8>, decomposition: akita_types::DecompositionParams) {
+    write_u64(bytes, u64::from(decomposition.log_basis));
+    write_u64(bytes, u64::from(decomposition.log_commit_bound));
     match decomposition.log_open_bound {
         Some(value) => {
-            h.write_u64(1);
-            h.write_u64(u64::from(value));
+            write_u64(bytes, 1);
+            write_u64(bytes, u64::from(value));
         }
-        None => h.write_u64(0),
+        None => write_u64(bytes, 0),
     }
 }
 
-fn write_optional_usize(h: &mut Fnv64, value: Option<usize>) {
+fn write_optional_usize(bytes: &mut Vec<u8>, value: Option<usize>) {
     match value {
         Some(value) => {
-            h.write_u64(1);
-            h.write_u64(value as u64);
+            write_u64(bytes, 1);
+            write_u64(bytes, value as u64);
         }
-        None => h.write_u64(0),
+        None => write_u64(bytes, 0),
     }
 }
 
-struct Fnv64 {
-    state: u64,
-}
-
-impl Fnv64 {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
-
-    const fn new() -> Self {
-        Self {
-            state: Self::OFFSET,
-        }
-    }
-
-    fn write_bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.state ^= u64::from(*byte);
-            self.state = self.state.wrapping_mul(Self::PRIME);
-        }
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.write_bytes(&value.to_le_bytes());
-    }
-
-    const fn finish(self) -> u64 {
-        self.state
-    }
+fn write_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }

@@ -1,4 +1,5 @@
 use super::*;
+use akita_config::test_support::TestScheduleProvider;
 
 trait WorkspaceScheduleArtifactExt: Sized {
     fn from_workspace_schedule_artifact() -> Result<Self, AkitaError>;
@@ -16,7 +17,6 @@ where
     }
 }
 use akita_config::proof_optimized::fp128;
-use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -113,6 +113,7 @@ mod onehot;
 mod single;
 
 fn selected_prover_data<'a, C, P>(
+    scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
@@ -121,11 +122,16 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    let schedules = akita_config::test_support::workspace_schedule_catalog::<C>()?;
-    SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials, &schedules)
+    SelectedProverOpeningData::from_committed_claims::<C>(
+        claims,
+        hints,
+        polynomials,
+        scheme.schedules.as_ref(),
+    )
 }
 
 fn selected_statement<'a, C>(
+    scheme: &AkitaCommitmentScheme<C>,
     claims: OpeningClaims<'a, C::ExtField, &'a CommittedGroup<C::Field>>,
 ) -> Result<GroupBatchStatement<'a, C::ExtField, C::Field>, AkitaError>
 where
@@ -142,7 +148,7 @@ where
             .map(|group| *group.commitment().profile())
             .collect(),
     };
-    let selection = C::resolve_catalog_row_for_profiles(&profiles)?.selection();
+    let selection = scheme.schedules.resolve_profiles(&profiles)?.selection();
     GroupBatchStatement::new(selection, claims)
 }
 
@@ -154,6 +160,7 @@ fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
 }
 
 fn prover_claims<'a, P>(
+    scheme: &Scheme,
     point: &'a [F],
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<F>,
@@ -169,11 +176,12 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
+    selected_prover_data::<Cfg, _>(scheme, opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
 
 fn verifier_claims<'a>(
+    scheme: &Scheme,
     point: &[F],
     openings: &[F],
     commitment: &'a CommittedGroup<F>,
@@ -185,7 +193,7 @@ fn verifier_claims<'a>(
     )
     .expect("valid verifier claims group")])
     .expect("valid verifier claims");
-    selected_statement::<Cfg>(claims).expect("valid verifier statement")
+    selected_statement::<Cfg>(scheme, claims).expect("valid verifier statement")
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
@@ -195,10 +203,26 @@ fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {
     (poly, evals)
 }
 
-fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
-    let opening_batch = OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-    C::resolve_catalog_row_for_opening(&opening_batch)
-        .expect("singleton commitment layout")
+fn singleton_layout<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    num_vars: usize,
+) -> CommittedGroupParams {
+    catalog_root_layout(scheme, num_vars, 1)
+}
+
+fn catalog_root_layout<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    num_vars: usize,
+    num_polynomials: usize,
+) -> CommittedGroupParams {
+    let key = akita_types::AkitaScheduleLookupKey::single(akita_types::PolynomialGroupLayout::new(
+        num_vars,
+        num_polynomials,
+    ));
+    scheme
+        .schedules
+        .resolve_key(&key)
+        .expect("catalog root layout")
         .schedule()
         .root
         .params
@@ -206,6 +230,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParam
 }
 
 type VerifyFixture = (
+    Scheme,
     AkitaVerifierSetup<F>,
     CommittedGroup<F>,
     AkitaBatchedProof<F, F>,
@@ -215,15 +240,13 @@ type VerifyFixture = (
 );
 
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
+    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let alpha = D.trailing_zeros() as usize;
-    let layout = singleton_layout::<Cfg>(num_vars);
+    let layout = singleton_layout(&scheme, num_vars);
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(full_num_vars, 1)
-        .unwrap();
+    let setup = scheme.setup_prover(full_num_vars, 1).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -231,15 +254,11 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_verifier(&setup)
-        .expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit::<_, _>(
             &setup,
             std::slice::from_ref(&poly),
@@ -261,11 +280,16 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    let proof = scheme
         .batched_prove::<_, _, _>(
             &setup,
-            prover_claims(&opening_point[..], &poly_refs[..], &commitments[0], hint),
+            prover_claims(
+                &scheme,
+                &opening_point[..],
+                &poly_refs[..],
+                &commitments[0],
+                hint,
+            ),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -274,6 +298,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
 
     let [commitment] = commitments;
     (
+        scheme,
         verifier_setup,
         commitment,
         proof,
@@ -307,13 +332,21 @@ fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
 /// Derive the structural proof shape from the schedule. The terminal carries
 /// only optional EOR and the clear terminal response; nonces are proof-level.
 fn expected_same_point_batched_shape(
+    scheme: &OneHotScheme,
     max_num_vars: usize,
     num_claims: usize,
     proof: &AkitaBatchedProof<OneHotF, OneHotF>,
 ) -> AkitaBatchedProofShape {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(max_num_vars, num_claims).expect("opening_batch");
-    let schedule = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+    let key = akita_types::AkitaScheduleLookupKey::single(
+        opening_batch
+            .root_final_group_layout()
+            .expect("batched root group layout"),
+    );
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&key)
         .expect("batched root runtime plan")
         .into_schedule();
     let root_step = &schedule.root;
