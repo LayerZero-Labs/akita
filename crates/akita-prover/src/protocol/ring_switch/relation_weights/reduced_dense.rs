@@ -7,7 +7,7 @@
 //! stream.
 
 use super::*;
-use akita_algebra::ring::{residue_kernel, sparse_residue_kernel};
+use akita_algebra::ring::ResidueKernelPoint;
 use akita_challenges::Challenges;
 use akita_types::{dispatch_for_field, RingMultiplierOpeningPoint};
 use jolt_field::{ExtField, MulBaseUnreduced};
@@ -15,8 +15,7 @@ use jolt_field::{ExtField, MulBaseUnreduced};
 fn sparse_challenge_kernel<F, E>(
     challenges: &Challenges,
     index: usize,
-    dimension: usize,
-    alpha: E,
+    point: &ResidueKernelPoint<E>,
 ) -> Result<Vec<E>, AkitaError>
 where
     F: Field,
@@ -29,28 +28,65 @@ where
     if challenge.positions.len() != challenge.coeffs.len() {
         return Err(AkitaError::InvalidProof);
     }
-    sparse_residue_kernel(
-        dimension,
-        challenge
-            .positions
-            .iter()
-            .zip(&challenge.coeffs)
-            .map(|(&position, &coefficient)| {
-                (
-                    position as usize,
-                    E::lift_base(F::from_i64(i64::from(coefficient))),
-                )
-            }),
-        alpha,
-    )
+    point.sparse_kernel(challenge.positions.iter().zip(&challenge.coeffs).map(
+        |(&position, &coefficient)| {
+            (
+                position as usize,
+                E::lift_base(F::from_i64(i64::from(coefficient))),
+            )
+        },
+    ))
 }
 
-fn position_multiplier_kernels<F, E>(
-    point: &RingMultiplierOpeningPoint<F>,
+enum PositionMultiplierKernels<'a, F, E> {
+    Base {
+        position_weights: &'a [F],
+        alpha_powers: &'a [E],
+    },
+    Subfield(Vec<Vec<E>>),
+}
+
+impl<F, E> PositionMultiplierKernels<'_, F, E>
+where
+    F: Field,
+    E: Field + ExtField<F>,
+{
+    fn add_scaled(
+        &self,
+        destination: &mut [E],
+        physical_start: usize,
+        position: usize,
+        scale: E,
+    ) -> Result<(), AkitaError> {
+        match self {
+            Self::Base {
+                position_weights,
+                alpha_powers,
+            } => add_scaled_kernel(
+                destination,
+                physical_start,
+                alpha_powers,
+                scale.mul_base(
+                    *position_weights
+                        .get(position)
+                        .ok_or(AkitaError::InvalidProof)?,
+                ),
+            ),
+            Self::Subfield(kernels) => add_scaled_kernel(
+                destination,
+                physical_start,
+                kernels.get(position).ok_or(AkitaError::InvalidProof)?,
+                scale,
+            ),
+        }
+    }
+}
+
+fn position_multiplier_kernels<'a, F, E>(
+    point: &'a RingMultiplierOpeningPoint<F>,
     position_count: usize,
-    dimension: usize,
-    alpha: E,
-) -> Result<Vec<Vec<E>>, AkitaError>
+    residue_point: &'a ResidueKernelPoint<E>,
+) -> Result<PositionMultiplierKernels<'a, F, E>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F>,
@@ -60,36 +96,25 @@ where
             if base.position_weights.len() != position_count {
                 return Err(AkitaError::InvalidProof);
             }
-            let mut unit_coefficients = vec![F::zero(); dimension];
-            *unit_coefficients
-                .first_mut()
-                .ok_or(AkitaError::InvalidProof)? = F::one();
-            let unit_kernel = residue_kernel::<F, E>(&unit_coefficients, alpha)?;
-            base.position_weights
-                .iter()
-                .copied()
-                .map(|scalar| {
-                    Ok(unit_kernel
-                        .iter()
-                        .copied()
-                        .map(|coefficient| coefficient.mul_base(scalar))
-                        .collect())
-                })
-                .collect()
+            Ok(PositionMultiplierKernels::Base {
+                position_weights: &base.position_weights,
+                alpha_powers: residue_point.powers(),
+            })
         }
         RingMultiplierOpeningPoint::Subfield(subfield) => dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
-            dimension,
+            residue_point.dimension(),
             |D| {
                 let rings = subfield.materialize_position_rings::<D>()?;
                 if rings.len() != position_count {
                     return Err(AkitaError::InvalidProof);
                 }
-                rings
+                let kernels = rings
                     .iter()
-                    .map(|ring| residue_kernel::<F, E>(ring.coefficients(), alpha))
-                    .collect()
+                    .map(|ring| residue_point.kernel(ring.coefficients()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(PositionMultiplierKernels::Subfield(kernels))
             }
         ),
     }
@@ -107,13 +132,21 @@ fn add_scaled_kernel<E: Field>(
     let physical_end = physical_start
         .checked_add(kernel.len())
         .ok_or_else(|| AkitaError::InvalidSetup("reduced relation address overflow".into()))?;
-    for (weight, &coefficient) in destination
+    let destination = destination
         .get_mut(physical_start..physical_end)
-        .ok_or(AkitaError::InvalidProof)?
-        .iter_mut()
-        .zip(kernel)
-    {
-        *weight += scale * coefficient;
+        .ok_or(AkitaError::InvalidProof)?;
+    if scale == E::one() {
+        for (weight, &coefficient) in destination.iter_mut().zip(kernel) {
+            *weight += coefficient;
+        }
+    } else if scale == -E::one() {
+        for (weight, &coefficient) in destination.iter_mut().zip(kernel) {
+            *weight -= coefficient;
+        }
+    } else {
+        for (weight, &coefficient) in destination.iter_mut().zip(kernel) {
+            *weight += scale * coefficient;
+        }
     }
     Ok(())
 }
@@ -173,20 +206,22 @@ impl<E: Field> EtWeightSink<E> for ReducedEtSink<'_, E> {
     }
 }
 
-struct ReducedZSink<'a, E> {
+struct ReducedZSink<'a, F, E> {
     dense: &'a mut [E],
-    opening_kernels: &'a [Vec<E>],
+    opening_kernels: &'a PositionMultiplierKernels<'a, F, E>,
     a_setup_kernels: &'a SetupColumnValues<E>,
 }
 
-impl<E: Field> ZWeightSink<E> for ReducedZSink<'_, E> {
+impl<F, E> ZWeightSink<E> for ReducedZSink<'_, F, E>
+where
+    F: Field,
+    E: Field + ExtField<F>,
+{
     fn add_z(&mut self, address: ZAddress<E>) -> Result<(), AkitaError> {
-        add_scaled_kernel(
+        self.opening_kernels.add_scaled(
             self.dense,
             address.physical_start,
-            self.opening_kernels
-                .get(address.position)
-                .ok_or(AkitaError::InvalidProof)?,
+            address.position,
             address.constraint_scale,
         )?;
         add_scaled_kernel(
@@ -217,15 +252,18 @@ where
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F>,
 {
     let opening_batch = instance.opening_batch();
-    let compilation = RelationWeightCompilation::new(
-        Some(setup),
-        instance,
-        lp,
-        tau1,
-        opening_source_len,
-        opening_ring_dim,
-        relation_plan,
-    )?;
+    let compilation = {
+        let _span = tracing::info_span!("reduced_weight_plan").entered();
+        RelationWeightCompilation::new(
+            Some(setup),
+            instance,
+            lp,
+            tau1,
+            opening_source_len,
+            opening_ring_dim,
+            relation_plan,
+        )?
+    };
     let setup_sources = compilation.setup_sources.as_ref().ok_or_else(|| {
         AkitaError::InvalidSetup("reduced relation requires direct setup rows".into())
     })?;
@@ -236,36 +274,45 @@ where
         let group_setup = setup_sources.group(group_index)?;
         let group_source = compilation.group_source(group_index)?;
         let group_d_a = group_plan.roles.d_a;
-        let group_d_b = group_plan.roles.d_b;
-        let group_d_d = group_plan.roles.d_d;
         let challenges = group_source.challenges;
+        let a_residue_point = ResidueKernelPoint::new(alpha, group_d_a)?;
+        let b_residue_point = ResidueKernelPoint::new(alpha, group_plan.roles.d_b)?;
+        let d_residue_point = ResidueKernelPoint::new(alpha, group_plan.roles.d_d)?;
         let OpeningFamily::EvaluationTrace(ring_multiplier_point) = group_source.opening else {
             return Err(AkitaError::InvalidSetup(
                 "reduced relation requires evaluation-trace openings".into(),
             ));
         };
         let total_blocks = challenges.len();
-        let challenge_kernels = (0..total_blocks)
-            .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, group_d_a, alpha))
-            .collect::<Result<Vec<_>, _>>()?;
-        let d_setup_kernels = contract_setup_columns(
-            &setup_sources.d,
-            group_plan.rows.d_setup_range.clone(),
-            &compilation.plan.d_row_weights,
-            1,
-            group_d_d,
-            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
-        )?;
-        let b_setup_kernels = contract_setup_columns(
-            &group_setup.b,
-            0..group_plan.witness.b_width,
-            &group_plan.rows.b_setup_row_weights,
-            group_plan.witness.slice_count,
-            group_d_b,
-            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
-        )?;
+        let challenge_kernels = {
+            let _span = tracing::info_span!("reduced_challenge_kernels").entered();
+            (0..total_blocks)
+                .map(|index| sparse_challenge_kernel::<F, E>(challenges, index, &a_residue_point))
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let d_setup_kernels = {
+            let _span = tracing::info_span!("reduced_d_setup_kernels").entered();
+            contract_setup_residue_columns(
+                &setup_sources.d,
+                group_plan.rows.d_setup_range.clone(),
+                &compilation.plan.d_row_weights,
+                1,
+                &d_residue_point,
+            )?
+        };
+        let b_setup_kernels = {
+            let _span = tracing::info_span!("reduced_b_setup_kernels").entered();
+            contract_setup_residue_columns(
+                &group_setup.b,
+                0..group_plan.witness.b_width,
+                &group_plan.rows.b_setup_row_weights,
+                group_plan.witness.slice_count,
+                &b_residue_point,
+            )?
+        };
 
         {
+            let _span = tracing::info_span!("reduced_et_scatter").entered();
             let mut et_sink = ReducedEtSink {
                 dense: &mut dense,
                 plan: group_plan,
@@ -279,29 +326,37 @@ where
         drop(d_setup_kernels);
         drop(b_setup_kernels);
 
-        let opening_kernels = position_multiplier_kernels::<F, E>(
-            ring_multiplier_point,
-            group_plan.witness.num_positions,
-            group_d_a,
-            alpha,
-        )?;
-        let a_setup_kernels = contract_setup_columns(
-            &group_setup.a,
-            0..group_plan.witness.inner_width,
-            &group_plan.rows.a_setup_row_weights,
-            1,
-            group_d_a,
-            |coefficients| residue_kernel::<F, E>(coefficients, alpha),
-        )?;
-        let mut z_sink = ReducedZSink {
-            dense: &mut dense,
-            opening_kernels: &opening_kernels,
-            a_setup_kernels: &a_setup_kernels,
+        let opening_kernels = {
+            let _span = tracing::info_span!("reduced_opening_kernels").entered();
+            position_multiplier_kernels::<F, E>(
+                ring_multiplier_point,
+                group_plan.witness.num_positions,
+                &a_residue_point,
+            )?
         };
-        compile_group_z_addresses(group_plan, &compilation.witness_layout, &mut z_sink)?;
+        let a_setup_kernels = {
+            let _span = tracing::info_span!("reduced_a_setup_kernels").entered();
+            contract_setup_residue_columns(
+                &group_setup.a,
+                0..group_plan.witness.inner_width,
+                &group_plan.rows.a_setup_row_weights,
+                1,
+                &a_residue_point,
+            )?
+        };
+        {
+            let _span = tracing::info_span!("reduced_z_scatter").entered();
+            let mut z_sink = ReducedZSink {
+                dense: &mut dense,
+                opening_kernels: &opening_kernels,
+                a_setup_kernels: &a_setup_kernels,
+            };
+            compile_group_z_addresses(group_plan, &compilation.witness_layout, &mut z_sink)?;
+        }
     }
 
     if lp.payload_mode.is_compressed() {
+        let _span = tracing::info_span!("reduced_compression_weights").entered();
         let compression = akita_types::build_reduced_compression_relation_weights::<F, E>(
             alpha,
             lp,

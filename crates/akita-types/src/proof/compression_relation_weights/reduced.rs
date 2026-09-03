@@ -1,6 +1,10 @@
 use super::*;
-use akita_algebra::ring::residue_kernel;
-use jolt_field::ExtField;
+use akita_algebra::{
+    eq_poly::EqPolynomial,
+    offset_eq::OffsetEqWindow,
+    ring::{eval_flat_ring_at_pows_fast, ResidueKernelPoint},
+};
+use jolt_field::{ExtField, Unreduced, Zero};
 
 #[derive(Clone, Debug)]
 struct ReducedCompressionMapEvent<E: Field> {
@@ -23,6 +27,14 @@ impl<'a, F: Field> CompressionMapColumns<'a, F> {
         physical_field_len: usize,
     ) -> Result<Self, AkitaError> {
         let map = span.map();
+        if map.input_width() == 0
+            || map.ring_dimension() == 0
+            || !map.ring_dimension().is_power_of_two()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "compression map has invalid ring geometry".into(),
+            ));
+        }
         let digit_span = span.range();
         let expected_len = map
             .input_width()
@@ -75,6 +87,173 @@ impl<'a, F: Field> CompressionMapColumns<'a, F> {
     }
 }
 
+enum ReducedCompressionColumnEvaluations<E> {
+    Aligned(Vec<E>),
+    Split(Vec<[E; 2]>),
+}
+
+/// One public compression matrix contracted against the low-coordinate part
+/// of a Stage-2 point.
+///
+/// A length-`d` physical column beginning at offset `u mod d` meets at most two
+/// aligned coefficient blocks. Its equality weights therefore split into two
+/// shared low-coordinate vectors, scaled by adjacent high-coordinate equality
+/// values. Preparing their residue kernels once removes the former kernel and
+/// equality-window rebuild for every matrix column.
+struct EvaluatedReducedCompressionMatrix<E: Field> {
+    input_width: usize,
+    ring_dimension: usize,
+    low_offset: usize,
+    high_equality: OffsetEqWindow<E>,
+    columns: ReducedCompressionColumnEvaluations<E>,
+}
+
+impl<E: Field> EvaluatedReducedCompressionMatrix<E> {
+    fn prepare<F>(
+        columns: &CompressionMapColumns<'_, F>,
+        point: &[E],
+        alpha: E,
+    ) -> Result<Self, AkitaError>
+    where
+        F: Field,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let ring_dimension = columns.ring_dimension;
+        let coefficient_bits = ring_dimension.trailing_zeros() as usize;
+        let low_point = point
+            .get(..coefficient_bits)
+            .ok_or(AkitaError::InvalidProof)?;
+        let high_point = point
+            .get(coefficient_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
+        let low_equality = EqPolynomial::evals(low_point)?;
+        let high_equality = OffsetEqWindow::new(high_point)?;
+        if low_equality.len() != ring_dimension {
+            return Err(AkitaError::InvalidProof);
+        }
+        let residue_point = ResidueKernelPoint::new(alpha, ring_dimension)?;
+        let low_offset = columns.physical_start % ring_dimension;
+        // Compression maps have few columns, while each column already uses a
+        // tight residue dot product. Dispatching these short loops through
+        // Rayon costs more than it saves in multi-threaded verification.
+        let column_evaluations = if low_offset == 0 {
+            let kernel = residue_point.field_kernel(&low_equality)?;
+            let values = (0..columns.input_width)
+                .map(|column| {
+                    let (_, coefficients) = columns.column(column)?;
+                    Ok(eval_flat_ring_at_pows_fast(coefficients, &kernel))
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            ReducedCompressionColumnEvaluations::Aligned(values)
+        } else {
+            let first_len = ring_dimension
+                .checked_sub(low_offset)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut first_equality = vec![E::zero(); ring_dimension];
+            let mut second_equality = vec![E::zero(); ring_dimension];
+            first_equality
+                .get_mut(..first_len)
+                .ok_or(AkitaError::InvalidProof)?
+                .copy_from_slice(
+                    low_equality
+                        .get(low_offset..)
+                        .ok_or(AkitaError::InvalidProof)?,
+                );
+            second_equality
+                .get_mut(first_len..)
+                .ok_or(AkitaError::InvalidProof)?
+                .copy_from_slice(
+                    low_equality
+                        .get(..low_offset)
+                        .ok_or(AkitaError::InvalidProof)?,
+                );
+            let first_kernel = residue_point.field_kernel(&first_equality)?;
+            let second_kernel = residue_point.field_kernel(&second_equality)?;
+            let values = (0..columns.input_width)
+                .map(|column| {
+                    let (_, coefficients) = columns.column(column)?;
+                    Ok([
+                        eval_flat_ring_at_pows_fast(coefficients, &first_kernel),
+                        eval_flat_ring_at_pows_fast(coefficients, &second_kernel),
+                    ])
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            ReducedCompressionColumnEvaluations::Split(values)
+        };
+        Ok(Self {
+            input_width: columns.input_width,
+            ring_dimension,
+            low_offset,
+            high_equality,
+            columns: column_evaluations,
+        })
+    }
+
+    fn matches<F>(&self, columns: &CompressionMapColumns<'_, F>) -> bool {
+        self.input_width == columns.input_width
+            && self.ring_dimension == columns.ring_dimension
+            && self.low_offset == columns.physical_start % columns.ring_dimension
+    }
+
+    fn evaluate(&self, physical_start: usize) -> Result<E, AkitaError>
+    where
+        E: Unreduced,
+    {
+        if physical_start % self.ring_dimension != self.low_offset {
+            return Err(AkitaError::InvalidProof);
+        }
+        let high_start = physical_start / self.ring_dimension;
+        if E::SUM_IS_EXACT {
+            let mut evaluation = E::Product::zero();
+            match &self.columns {
+                ReducedCompressionColumnEvaluations::Aligned(columns) => {
+                    for (column, &value) in columns.iter().enumerate() {
+                        let high_index = high_start
+                            .checked_add(column)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        evaluation += value.mul_unreduced(self.high_equality.eval(high_index));
+                    }
+                }
+                ReducedCompressionColumnEvaluations::Split(columns) => {
+                    for (column, &[first, second]) in columns.iter().enumerate() {
+                        let high_index = high_start
+                            .checked_add(column)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let next_high =
+                            high_index.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                        evaluation += first.mul_unreduced(self.high_equality.eval(high_index));
+                        evaluation += second.mul_unreduced(self.high_equality.eval(next_high));
+                    }
+                }
+            }
+            return Ok(E::reduce_product(evaluation));
+        }
+        match &self.columns {
+            ReducedCompressionColumnEvaluations::Aligned(columns) => columns
+                .iter()
+                .enumerate()
+                .try_fold(E::zero(), |evaluation, (column, &value)| {
+                    let high_index = high_start
+                        .checked_add(column)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    Ok(evaluation + value * self.high_equality.eval(high_index))
+                }),
+            ReducedCompressionColumnEvaluations::Split(columns) => columns
+                .iter()
+                .enumerate()
+                .try_fold(E::zero(), |evaluation, (column, &[first, second])| {
+                    let high_index = high_start
+                        .checked_add(column)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let next_high = high_index.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+                    Ok(evaluation
+                        + first * self.high_equality.eval(high_index)
+                        + second * self.high_equality.eval(next_high))
+                }),
+        }
+    }
+}
+
 /// Complete reduced-evaluation weights for the retained F/H compression
 /// digits.
 ///
@@ -94,8 +273,10 @@ pub struct ReducedCompressionRelationWeights<E: Field> {
 ///
 /// This is the checked boundary between [`crate::CompressionMapPlan`] geometry
 /// and the public setup prefix. It reads map coefficients from that authority
-/// instead of reconstructing them from witness offsets. Each setup coefficient
-/// is consumed once while one native terminal kernel is retained at a time.
+/// instead of reconstructing them from witness offsets. The full equality
+/// interval is factored into its low coefficient coordinates and high column
+/// coordinates, so each setup coefficient is consumed once after at most two
+/// shared native terminal kernels are prepared.
 pub fn evaluate_reduced_compression_map<F, E>(
     setup: &AkitaExpandedSetup<F>,
     span: &CompressionWitnessSpan,
@@ -120,18 +301,8 @@ where
         });
     }
     let columns = CompressionMapColumns::new(setup, span, physical_field_len)?;
-    let equality = OffsetEqWindow::new(point)?;
-    (0..columns.input_width).try_fold(E::zero(), |evaluation, column| {
-        let (physical, coefficients) = columns.column(column)?;
-        let functional = crate::ReducedCoefficientFunctional::prepare(
-            &equality,
-            physical_field_len,
-            physical.start,
-            columns.ring_dimension,
-            alpha,
-        )?;
-        Ok(evaluation + functional.evaluate_multiplier(coefficients)?)
-    })
+    EvaluatedReducedCompressionMatrix::prepare(&columns, point, alpha)?
+        .evaluate(columns.physical_start)
 }
 
 impl<E: Field> ReducedCompressionRelationWeights<E> {
@@ -158,14 +329,13 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
                 actual: destination.len(),
             });
         }
-        for (weight, addition) in destination.iter_mut().zip(self.linear.materialize_dense()?) {
-            *weight += addition;
-        }
+        self.linear.accumulate_dense(destination)?;
         for event in &self.maps {
             let columns = CompressionMapColumns::new(setup, &event.span, destination.len())?;
+            let point = ResidueKernelPoint::new(self.alpha, columns.ring_dimension)?;
             for column in 0..columns.input_width {
                 let (physical, coefficients) = columns.column(column)?;
-                let kernel = residue_kernel::<F, E>(coefficients, self.alpha)?;
+                let kernel = point.kernel(coefficients)?;
                 for (weight, kernel) in destination
                     .get_mut(physical)
                     .ok_or(AkitaError::InvalidProof)?
@@ -191,15 +361,31 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let mut evaluation = self.linear.evaluate_at_point(point)?;
+        let _span = tracing::info_span!(
+            "reduced_compression_maps",
+            events = self.maps.len(),
+            physical_field_len = self.linear.physical_field_len
+        )
+        .entered();
+        let mut evaluated_matrices = Vec::new();
         for event in &self.maps {
-            evaluation += event.row_weight
-                * evaluate_reduced_compression_map(
-                    setup,
-                    &event.span,
-                    point,
-                    self.linear.physical_field_len,
-                    self.alpha,
-                )?;
+            let columns =
+                CompressionMapColumns::new(setup, &event.span, self.linear.physical_field_len)?;
+            let matrix_index = if let Some(index) = evaluated_matrices
+                .iter()
+                .position(|matrix: &EvaluatedReducedCompressionMatrix<E>| matrix.matches(&columns))
+            {
+                index
+            } else {
+                evaluated_matrices.push(EvaluatedReducedCompressionMatrix::prepare(
+                    &columns, point, self.alpha,
+                )?);
+                evaluated_matrices.len() - 1
+            };
+            let matrix = evaluated_matrices
+                .get(matrix_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            evaluation += event.row_weight * matrix.evaluate(columns.physical_start)?;
         }
         Ok(evaluation)
     }
