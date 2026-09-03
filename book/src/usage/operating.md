@@ -1,32 +1,32 @@
 # Operating Akita
 
-Akita exposes its deployment choices through explicit Cargo features, prepared
-compute state, and one end to end profile harness. A host can build the exact
-prover or verifier it needs and measure the resulting proof under the same
-generated schedule used in production.
+Akita exposes its deployment choices through external schedule artifacts,
+explicit Cargo features, prepared compute state, and one end to end profile
+harness. A host loads the exact catalog it approves and measures proofs under
+that same catalog.
 
 The operating path has three layers:
 
-1. Choose the feature set and generated catalogs that belong in the binary.
+1. Choose the feature set and load approved catalog bytes from normal storage.
 2. Run a complete proof workload and inspect time, memory, and proof size.
 3. Use focused reports or kernel benchmarks when a complete run identifies a
    component that needs deeper analysis.
 
 ## Start with the complete build
 
-The default `akita-pcs` features provide parallel CPU execution, the standard
-generated schedule catalogs, and the Blake2b transcript backend. This is the
-right build for the [first proof](./quickstart.md) and most local development.
+The default `akita-pcs` features provide parallel CPU execution and the Blake2b
+transcript backend. Schedule rows are not Cargo features and are never linked
+into the binary; the [first proof](./quickstart.md) loads an artifact explicitly.
 
-Use [Feature flags](./feature-flags.md) when the host needs a smaller schedule
-set, sequential execution, disk persistence, another transcript backend, or
+Use [Feature flags](./feature-flags.md) when the host needs sequential execution,
+disk persistence, another transcript backend, or
 diagnostic instrumentation.
 
 ## Measure a real proof first
 
 Akita's profile harness runs setup, commitment, proof generation, encoding, and
-verification. It reports the complete public statement and the generated
-schedule selected for that statement.
+verification. It reports the complete public statement and the trusted schedule
+selected for that statement.
 
 Start with [Profiling a workload](./profiling.md). It gives one canonical
 command and explains every output. This complete run shows whether a local
@@ -57,6 +57,5 @@ setup cache recovery, equality table limits, thread selection, verification
 rejection, and the Jolt guest path. Each entry begins with the public error or
 observable behavior and gives the next concrete check.
 
-Akita treats these operating tools as part of the PCS. The same generated
-schedule identity connects setup, proving, verification, profiling, and CI
-comparison.
+Akita treats these operating tools as part of the PCS. The same external catalog
+identity connects setup, proving, verification, profiling, and CI comparison.

@@ -43,7 +43,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .map(|poly| opening_from_poly_for_layout(*poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup = Scheme::from_embedded_schedule_catalog()
+    let setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(num_vars, total_claims)
         .unwrap();
@@ -54,7 +54,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+    let verifier_setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
@@ -62,7 +62,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_embedded_schedule_catalog()
+    } = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit(
             &setup,
@@ -73,7 +73,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .expect("commit");
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    let proof = Scheme::from_embedded_schedule_catalog()
+    let proof = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove(
             &setup,
@@ -86,7 +86,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
 
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    Scheme::from_embedded_schedule_catalog()
+    Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &proof,

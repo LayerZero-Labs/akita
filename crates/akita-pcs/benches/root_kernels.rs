@@ -1,5 +1,9 @@
 #![allow(missing_docs)]
 
+#[path = "../examples/support/workspace_schedules.rs"]
+mod workspace_schedules;
+use workspace_schedules::WorkspaceScheduleArtifactExt as _;
+
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
@@ -46,7 +50,7 @@ fn bench_dense_root_matvec_full_nv24_d256(c: &mut Criterion) {
     .root
     .params
     .clone();
-    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(NV, 1)
         .unwrap();

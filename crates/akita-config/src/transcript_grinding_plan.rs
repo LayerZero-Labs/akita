@@ -30,14 +30,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    #[cfg(any(feature = "all-schedules", feature = "schedules-default"))]
     use super::*;
     use crate::proof_optimized::fp128;
-    #[cfg(any(feature = "all-schedules", feature = "schedules-default"))]
     use akita_types::{GrindingQueryKind, GrindingSite, GRINDING_NONCE_SLACK_BITS};
     use jolt_field::PseudoMersenne;
 
-    #[cfg(feature = "schedules-default")]
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
@@ -90,7 +87,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "schedules-default")]
     #[test]
     fn stage1_prices_the_full_eq_factored_round_degree() {
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
@@ -144,7 +140,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "all-schedules")]
     #[test]
     fn every_generated_production_row_derives_a_complete_plan() {
         use crate::proof_optimized::{fp32, fp64};
@@ -154,9 +149,9 @@ mod tests {
             Cfg::Field: CanonicalEncoding,
             Cfg::ExtField: ExtField<Cfg::Field>,
         {
-            for entry in Cfg::schedule_catalog().expect("production catalog").entries {
-                let row = Cfg::resolve_catalog_row_for_key(&entry.to_runtime_lookup_key())
-                    .expect("admitted production row");
+            let catalog = crate::test_support::workspace_schedule_catalog::<Cfg>()
+                .expect("workspace schedule catalog");
+            for row in catalog.rows() {
                 let layout = row.profiles().opening_layout().expect("opening layout");
                 let plan = derive_transcript_grinding_plan::<Cfg>(row.schedule(), &layout)
                     .expect("complete grinding plan");

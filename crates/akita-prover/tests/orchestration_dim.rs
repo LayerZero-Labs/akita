@@ -1,6 +1,5 @@
 //! Schedule-authority and role-dispatch orchestration gates.
 
-#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};

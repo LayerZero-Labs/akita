@@ -11,7 +11,7 @@ use akita_types::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::catalog_identity::policy_digest;
+use crate::policy_digest::policy_digest;
 use crate::resolve::ResolvedScheduleRow;
 use crate::PlannerPolicy;
 
@@ -507,108 +507,4 @@ fn validate_schedule_challenge_hooks(
         ),
         "terminal fold",
     )
-}
-
-#[cfg(all(test, feature = "fp128-dense"))]
-mod tests {
-    use super::*;
-    use crate::generated::fp128_dense_table;
-    use crate::resolve::trusted_catalog_from_generated;
-    fn policy() -> PlannerPolicy {
-        let identity = fp128_dense_table().identity;
-        PlannerPolicy {
-            cost_model: identity.cost_model,
-            selective_l2_response_model: identity.selective_l2_response_model,
-            selection_policy: identity.selection_policy,
-            recursive_split_search_policy: identity.recursive_split_search_policy,
-            recursive_setup_search_policy: identity.recursive_setup_search_policy,
-            setup_field_budget: identity.setup_field_budget,
-            min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
-            ring_dimension_schedule_mode: identity.ring_dimension_schedule_mode,
-            decomposition: identity.decomposition,
-            sis_modulus_profile: identity.sis_modulus_profile,
-            sis_security_policy: identity.sis_security_policy,
-            sis_table_digest: identity.sis_table_digest,
-            sis_l2_table_digest: identity.sis_l2_table_digest,
-            claim_ext_degree: identity.claim_ext_degree,
-            chal_ext_degree: identity.chal_ext_degree,
-            inner_basis_range: identity.inner_basis_range,
-            opening_basis_range: identity.opening_basis_range,
-            witness_chunk: identity.witness_chunk,
-            recursive_setup_planning: identity.recursive_setup_planning,
-        }
-    }
-
-    #[test]
-    fn artifact_round_trip_preserves_catalog_identity_and_selection() {
-        let policy = policy();
-        let challenge = |d| {
-            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
-            })
-        };
-        let catalog = trusted_catalog_from_generated(fp128_dense_table(), &policy, challenge)
-            .expect("materialize generated catalog");
-        let bytes = catalog.to_artifact_bytes().expect("encode artifact");
-        let decoded = TrustedScheduleCatalog::from_artifact_bytes(
-            &bytes,
-            catalog.family_name(),
-            &policy,
-            challenge,
-        )
-        .expect("decode artifact");
-        assert_eq!(decoded.family_name(), catalog.family_name());
-        assert_eq!(decoded.catalog_digest(), catalog.catalog_digest());
-        assert_eq!(decoded.len(), catalog.len());
-        let selection = catalog.rows_by_digest[0].selection();
-        assert_eq!(
-            decoded
-                .resolve_selection(selection)
-                .expect("resolve row")
-                .selection(),
-            selection
-        );
-    }
-
-    #[test]
-    fn catalog_rejects_duplicate_prover_lookup_keys() {
-        let policy = policy();
-        let challenge = |d| {
-            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
-            })
-        };
-        let catalog = trusted_catalog_from_generated(fp128_dense_table(), &policy, challenge)
-            .expect("materialize generated catalog");
-        let row = catalog.rows().next().expect("generated catalog row");
-        let duplicate = (row.profiles().clone(), row.schedule().clone());
-        let error = TrustedScheduleCatalog::try_new(
-            "duplicate-key-test",
-            [duplicate.clone(), duplicate],
-            &policy,
-            challenge,
-        )
-        .expect_err("a prover lookup key must identify exactly one row");
-        assert!(error.to_string().contains("duplicate prover lookup key"));
-    }
-
-    #[test]
-    fn artifact_rejects_trailing_bytes() {
-        let artifact = ScheduleCatalogArtifactV1 {
-            magic: ARTIFACT_MAGIC,
-            version: ARTIFACT_VERSION,
-            protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
-            policy_digest: policy_digest(&policy()),
-            family_name: "test".to_string(),
-            rows: Vec::new(),
-        };
-        let mut bytes = serde_json::to_vec(&artifact).expect("encode fixture");
-        bytes.push(0);
-        assert!(
-            TrustedScheduleCatalog::from_artifact_bytes(&bytes, "test", &policy(), |_| {
-                Ok(SparseChallengeConfig::pm1_only(1))
-            })
-            .is_err()
-        );
-    }
 }

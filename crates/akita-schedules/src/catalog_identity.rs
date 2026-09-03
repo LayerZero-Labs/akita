@@ -1,4 +1,4 @@
-//! Catalog identity validation for generated schedule tables.
+//! Catalog policy identity validation for offline materialization and artifacts.
 //!
 //! Each generated table embeds a [`GeneratedScheduleCatalogIdentity`] that must
 //! match the runtime [`PlannerPolicy`] and hook closures before lookup proceeds.
@@ -21,6 +21,7 @@ use crate::generated::{
     GeneratedFrozenGroup, GeneratedGroup, GeneratedMatrix, GeneratedRecursiveFold,
     GeneratedRootFold, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
+use crate::policy_digest::policy_digest;
 use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
@@ -39,37 +40,6 @@ struct CatalogValidationCacheKey {
     entries_len: usize,
     identity_digest: [u8; 32],
     policy_digest: [u8; 32],
-}
-
-/// Fixed-width digest of a [`PlannerPolicy`] for catalog validation caching.
-pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let mut h = Fnv64::new();
-    h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
-    h.write_u64(u64::from(policy.sis_security_policy.tag()));
-    h.write_bytes(&policy.sis_table_digest.0);
-    h.write_bytes(&policy.sis_l2_table_digest.0);
-    h.write_u64(u64::from(policy.selective_l2_response_model.tag()));
-    write_ring_dimension_schedule_mode(&mut h, policy.ring_dimension_schedule_mode);
-    write_decomposition(&mut h, policy.decomposition);
-    h.write_u64(policy.claim_ext_degree as u64);
-    h.write_u64(policy.chal_ext_degree as u64);
-    h.write_u64(u64::from(policy.inner_basis_range.0));
-    h.write_u64(u64::from(policy.inner_basis_range.1));
-    h.write_u64(u64::from(policy.opening_basis_range.0));
-    h.write_u64(u64::from(policy.opening_basis_range.1));
-    h.write_u64(policy.witness_chunk.num_chunks as u64);
-    h.write_u64(policy.witness_chunk.num_activated_levels as u64);
-    h.write_u64(u64::from(policy.recursive_setup_planning));
-    h.write_u64(u64::from(policy.cost_model.tag()));
-    h.write_u64(u64::from(policy.selection_policy.tag()));
-    h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
-    h.write_u64(u64::from(policy.recursive_setup_search_policy.tag()));
-    write_optional_usize(&mut h, policy.setup_field_budget);
-    h.write_u64(policy.min_offloaded_witness_contraction as u64);
-    let digest = h.finish();
-    out[..8].copy_from_slice(&digest.to_le_bytes());
-    out
 }
 
 /// Fixed-width digest of an identity for wiring guards (not a security primitive).
@@ -810,106 +780,5 @@ mod terminal_dimension_tests {
         assert!(terminal_dimension_is_admitted(mode, 1, 128));
         assert!(!terminal_dimension_is_admitted(mode, 2, 128));
         assert!(terminal_dimension_is_admitted(mode, 2, 64));
-    }
-}
-
-#[cfg(all(test, feature = "fp128-onehot-recursive"))]
-mod tests {
-    use super::*;
-    use akita_challenges::SparseChallengeConfig;
-
-    #[test]
-    fn full_prefix_catalog_identity_rejects_old_zero_padded_digest() {
-        let table = crate::generated::fp128_onehot_recursive_table();
-        let old_digest = entries_key_digest_with_setup_prefix_content_mode(table.entries, false);
-        assert_ne!(
-            old_digest, table.identity.key_digest,
-            "full-prefix setup content mode must change the generated key digest"
-        );
-
-        let stale = GeneratedScheduleTable {
-            identity: GeneratedScheduleCatalogIdentity {
-                key_digest: old_digest,
-                ..table.identity
-            },
-            ..table
-        };
-        let policy = PlannerPolicy {
-            cost_model: stale.identity.cost_model,
-            selective_l2_response_model: stale.identity.selective_l2_response_model,
-            selection_policy: stale.identity.selection_policy,
-            recursive_split_search_policy: stale.identity.recursive_split_search_policy,
-            recursive_setup_search_policy: stale.identity.recursive_setup_search_policy,
-            setup_field_budget: stale.identity.setup_field_budget,
-            min_offloaded_witness_contraction: stale.identity.min_offloaded_witness_contraction,
-            sis_modulus_profile: stale.identity.sis_modulus_profile,
-            sis_security_policy: stale.identity.sis_security_policy,
-            sis_table_digest: stale.identity.sis_table_digest,
-            sis_l2_table_digest: stale.identity.sis_l2_table_digest,
-            decomposition: stale.identity.decomposition,
-            claim_ext_degree: stale.identity.claim_ext_degree,
-            chal_ext_degree: stale.identity.chal_ext_degree,
-            inner_basis_range: stale.identity.inner_basis_range,
-            opening_basis_range: stale.identity.opening_basis_range,
-            witness_chunk: stale.identity.witness_chunk,
-            recursive_setup_planning: stale.identity.recursive_setup_planning,
-            ring_dimension_schedule_mode: stale.identity.ring_dimension_schedule_mode,
-        };
-        let err = validate_catalog_identity(&stale, &policy, |d| {
-            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
-            })
-        })
-        .expect_err("old zero-padded catalog identity must reject");
-        assert!(err
-            .to_string()
-            .contains("schedule catalog identity mismatch"));
-    }
-
-    #[test]
-    fn recursive_setup_search_policy_is_catalog_bound() {
-        let table = crate::generated::fp128_onehot_recursive_table();
-        let mut policy = PlannerPolicy {
-            cost_model: table.identity.cost_model,
-            selective_l2_response_model: table.identity.selective_l2_response_model,
-            selection_policy: table.identity.selection_policy,
-            recursive_split_search_policy: table.identity.recursive_split_search_policy,
-            recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
-            setup_field_budget: table.identity.setup_field_budget,
-            min_offloaded_witness_contraction: table.identity.min_offloaded_witness_contraction,
-            sis_modulus_profile: table.identity.sis_modulus_profile,
-            sis_security_policy: table.identity.sis_security_policy,
-            sis_table_digest: table.identity.sis_table_digest,
-            sis_l2_table_digest: table.identity.sis_l2_table_digest,
-            decomposition: table.identity.decomposition,
-            claim_ext_degree: table.identity.claim_ext_degree,
-            chal_ext_degree: table.identity.chal_ext_degree,
-            inner_basis_range: table.identity.inner_basis_range,
-            opening_basis_range: table.identity.opening_basis_range,
-            witness_chunk: table.identity.witness_chunk,
-            recursive_setup_planning: table.identity.recursive_setup_planning,
-            ring_dimension_schedule_mode: table.identity.ring_dimension_schedule_mode,
-        };
-        assert_ne!(
-            policy.recursive_setup_search_policy,
-            table.identity.recursive_setup_search_policy
-        );
-        let err = validate_catalog_identity(&table, &policy, |d| {
-            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
-            })
-        })
-        .expect_err("recursive setup search policy mismatch must reject");
-        assert!(err
-            .to_string()
-            .contains("schedule catalog identity mismatch"));
-
-        policy.recursive_setup_search_policy = table.identity.recursive_setup_search_policy;
-        validate_catalog_identity(&table, &policy, |d| {
-            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
-            })
-        })
-        .expect("matching recursive setup search policy");
     }
 }

@@ -22,7 +22,7 @@ use akita_types::{
     CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::{
     level_proof_bytes, try_extension_opening_reduction_level_bytes, PlannedFoldSchedule,
 };
@@ -34,7 +34,7 @@ mod objective;
 mod pareto;
 mod setup_score;
 mod suffix_dp;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 #[path = "test/unpruned_search.rs"]
 mod unpruned_search;
 pub(crate) use akita_schedules::planner_support::{
@@ -175,7 +175,7 @@ fn suffix_dimension_ceiling(
         .find(|&dimension| dimension <= role_ceiling)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 pub(crate) const ADAPTIVE_SUFFIX_RING_DIMENSION: usize = 64;
 
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
@@ -212,6 +212,7 @@ impl RingDimensionSearchDomain {
     }
 
     /// Construct the explicit singleton domain used by a uniform policy.
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
         Self::new([CommitmentRingDims::uniform(ring_dimension)])
     }
@@ -221,13 +222,13 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    #[cfg(all(test, feature = "catalog-gen"))]
+    #[cfg(feature = "catalog-gen")]
     pub(crate) fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
         akita_schedules::planner_support::validate_policy(policy)
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 fn componentwise_dimensions_at_most(
     dimensions: CommitmentRingDims,
     ceiling: CommitmentRingDims,
@@ -358,7 +359,7 @@ impl PackedProofCost {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "catalog-gen"))]
     pub(crate) fn with_nonce_bits(self, nonce_bits: usize) -> Result<Self, AkitaError> {
         Self::new(self.payload_bytes, nonce_bits)
     }

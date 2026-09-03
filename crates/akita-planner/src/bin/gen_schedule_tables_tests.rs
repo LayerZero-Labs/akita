@@ -395,13 +395,13 @@ fn generated_w8r2_row_preserves_the_two_level_packing_boundary() {
 }
 
 #[test]
-fn explicit_sweeps_reject_the_checked_in_generated_tree() {
+fn explicit_sweeps_reject_the_checked_in_artifact_directory() {
     let explicit_rows = ExplicitRows {
         final_group: Some(parse_explicit_group("fp128_onehot:14:1").expect("explicit group")),
         precommitted_groups: Vec::new(),
     };
     let checked_in_generated_dir =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../akita-schedules/src/generated");
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../artifacts/schedules");
 
     let error = validate_explicit_output_isolation(
         &checked_in_generated_dir.join("diagnostic"),

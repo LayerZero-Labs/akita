@@ -39,6 +39,7 @@ pub(crate) enum RecursiveSetupPrefix<'a> {
 pub(crate) enum SplitBoundPolicy {
     Enabled,
     #[cfg(test)]
+    #[allow(dead_code)]
     DisabledForOracle,
 }
 

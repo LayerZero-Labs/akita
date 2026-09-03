@@ -11,7 +11,7 @@
 //! the policy-bound ring-dimension domain.
 //!
 //! With the `catalog-gen` feature enabled, this crate also owns the offline
-//! generated-table family list and `gen_schedule_tables` binary. That feature
+//! generated-table family list and `gen_schedule_artifacts` binary. That feature
 //! is allowed to name `akita-config` presets; normal planner use remains
 //! preset-free.
 
@@ -40,7 +40,8 @@ pub use akita_schedules::{
 };
 pub use emit::{
     publish_generated_outputs, render_generated_outputs, render_generated_outputs_with_validation,
-    EmitSpec, GeneratedOutput, MaterializationDiagnostics,
+    render_schedule_artifact_outputs_with_validation, EmitSpec, GeneratedOutput,
+    MaterializationDiagnostics,
 };
 pub use planner::find_schedule;
 pub use policy::InnerBasisSource;

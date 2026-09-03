@@ -258,7 +258,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Number of warm-up runs executed per case before the measured "
             "runs. Warm-ups prime CPU caches, the allocator, and any "
-            "lazily-initialized statics (NTT roots, schedule tables) so the "
+            "lazily-initialized state (NTT roots and decoded schedule catalogs) so the "
             "first measured run is not penalized. Their output is discarded "
             "and they do not contribute to the reported median."
         ),

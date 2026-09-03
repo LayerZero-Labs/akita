@@ -45,7 +45,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         BasisMode::Lagrange,
     );
 
-    let setup = Scheme::from_embedded_schedule_catalog()
+    let setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(num_vars, 1)
         .expect("setup");
@@ -58,14 +58,14 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+    let verifier_setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_embedded_schedule_catalog()
+    } = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -76,7 +76,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         .expect("commit");
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    let proof = Scheme::from_embedded_schedule_catalog()
+    let proof = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(
             &setup,
@@ -88,7 +88,7 @@ fn prove_fold_linf_grind_onehot_fixture(num_vars: usize, seed: u64) -> FoldLinfG
         .expect("prove");
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-    Scheme::from_embedded_schedule_catalog()
+    Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &proof,
@@ -140,7 +140,7 @@ fn packed_fold_response_nonce_tampering_rejects() {
             AkitaBatchedProof::<F, F>::deserialize_compressed(&bytes[..], &shape).expect("decode");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        Scheme::from_embedded_schedule_catalog()
+        Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &roundtrip,
@@ -160,7 +160,7 @@ fn packed_fold_response_nonce_tampering_rejects() {
         .expect("used-bit mutation preserves canonical padding");
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
-        let err = Scheme::from_embedded_schedule_catalog()
+        let err = Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &roundtrip,
@@ -302,7 +302,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
         let point = random_point(num_vars, 0x71_71);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::from_embedded_schedule_catalog()
+        let setup = Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(num_vars, 1)
             .expect("setup");
@@ -315,14 +315,14 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::from_embedded_schedule_catalog()
+        let verifier_setup = Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::from_embedded_schedule_catalog()
+        } = Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -334,7 +334,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
-        let proof = Scheme::from_embedded_schedule_catalog()
+        let proof = Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -349,7 +349,7 @@ fn logging_transcript_event_stream_equality_with_fold_linf_grind() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        Scheme::from_embedded_schedule_catalog()
+        Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,

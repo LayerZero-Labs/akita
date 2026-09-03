@@ -179,7 +179,7 @@ commitment, direct witness, or transcript input must be rejected with
 - `akita-verifier`
 - Verifier-reachable paths in `akita-types`, `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` code
 - `akita-config` (every `CommitmentConfig` method reachable from `batched_verify`)
-- `akita-schedules` generated-catalog identity, row resolution, and canonical
+- `akita-schedules` artifact identity, row resolution, and canonical
   resolved-row audit paths
 
 ### Rules for contributors

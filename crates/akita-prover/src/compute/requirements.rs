@@ -519,11 +519,8 @@ const fn domain_order(domain: NttTransformDomain) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "schedules-default")]
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    #[cfg(feature = "schedules-default")]
     use akita_config::CommitmentConfig;
-    #[cfg(feature = "schedules-default")]
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
     #[test]
@@ -750,7 +747,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn generated_schedule_excludes_prior_root_commitment() {
         let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(32, 1),
@@ -804,7 +800,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn complete_execution_includes_the_root_commitment() {
         let schedule = fp128::OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::new(32, 1),
@@ -823,7 +818,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn fp128_dense_prewarms_the_selected_centered_quotient_profile() {
         let schedule = fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
@@ -860,7 +854,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn fp128_dense_root_commit_prewarms_selected_i8_accumulation() {
         for num_vars in [26, 28, 30] {
             let schedule = fp128::Dense::resolve_catalog_row_for_key(
@@ -897,7 +890,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "schedules-default")]
     fn dense_small_field_nv26_cache_plan_matches_selected_geometry() {
         for schedule in [
             fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(

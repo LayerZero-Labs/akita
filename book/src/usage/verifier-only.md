@@ -23,9 +23,10 @@ akita-transcript = { git = "https://github.com/LayerZero-Labs/akita", rev = "<co
 akita-serialization = { git = "https://github.com/LayerZero-Labs/akita", rev = "<commit>" }
 ```
 
-The default `akita-verifier` features enable the standard generated schedule
-catalogs and the Blake2b transcript backend. A host that disables defaults must
-enable one transcript backend and the exact schedule catalogs it accepts.
+The default `akita-verifier` features enable the Blake2b transcript backend.
+Schedule rows are external data, not features. The host loads approved artifact
+bytes, constructs a `TrustedScheduleCatalog`, and supplies that catalog to every
+verification call.
 
 The verifier package stays small when the consumer depends only on the crates
 above. The repository checks in CI that `akita-verifier` has no dependency on
@@ -36,6 +37,7 @@ above. The repository checks in CI that `akita-verifier` has no dependency on
 The verifier receives these public values:
 
 - An `AkitaVerifierSetup` for the configuration and supported schedule.
+- The approved external schedule artifact or its validated catalog.
 - A schedule selection produced with the proof.
 - Ordered commitments, points, and claimed values.
 - An expected proof shape.
@@ -55,9 +57,9 @@ let proof = AkitaBatchedProof::<F, E>::deserialize_compressed(
 )?;
 ```
 
-The expected shape must come from the host's approved configuration and
-schedule policy. It gives the decoder concrete bounds before it allocates
-nested proof objects.
+The expected shape must come from the selected row in the host's approved
+catalog. It gives the decoder concrete bounds before it allocates nested proof
+objects.
 
 Commitments and verifier setup use their own canonical decoders and validation
 rules. Decode every public object before constructing the statement.
@@ -96,13 +98,14 @@ let mut transcript =
 akita_verifier::batched_verify::<Config, _>(
     &proof,
     &verifier_setup,
+    &catalog,
     &mut transcript,
     statement,
     BasisMode::Lagrange,
 )?;
 ```
 
-The verifier resolves the explicit schedule selection in the generated catalog.
+The verifier resolves the explicit schedule selection in the supplied catalog.
 It does not run the planner. It then binds the instance descriptor, validates
 the public claims, and replays every fold through terminal verification.
 
@@ -118,8 +121,7 @@ serving proofs.
 For a first integration, use:
 
 ```rust
-let verifier_setup =
-    AkitaCommitmentScheme::<Config>::setup_verifier(&prover_setup)?;
+let verifier_setup = scheme.setup_verifier(&prover_setup)?;
 ```
 
 For a fixed production schedule, use

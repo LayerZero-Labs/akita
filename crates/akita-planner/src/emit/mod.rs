@@ -1,6 +1,6 @@
-//! Reusable schedule-table emitter for `akita-schedules` and downstream catalogs.
+//! Reusable external schedule-artifact emitter and audit helpers.
 //!
-//! The `akita-config` `gen_schedule_tables` binary adapts preset metadata into
+//! The `akita-config` `gen_schedule_artifacts` binary adapts preset metadata into
 //! [`EmitSpec`] values and calls this module. Jolt can invoke the same API with
 //! an explicit [`PlannerPolicy`] and hook function pointers.
 
@@ -12,8 +12,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule, GroupCommitPhaseParams,
-    GroupOpenPhaseParams, OpenCommitMatrixParams, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule,
+    GroupCommitPhaseParams, GroupOpenPhaseParams, OpenCommitMatrixParams, PolynomialGroupLayout,
 };
 
 use crate::PlannerPolicy;
@@ -31,7 +31,8 @@ pub(super) use materialize::materialized_entries_for_specs;
 pub use materialize::MaterializedEntry;
 pub use publish::publish_generated_outputs;
 pub use render::{
-    render_generated_outputs, render_generated_outputs_with_validation, GeneratedOutput,
+    render_generated_outputs, render_generated_outputs_with_validation,
+    render_schedule_artifact_outputs_with_validation, GeneratedOutput,
 };
 use source_annotations::{emit_bounded_source_banner, precommitted_source_note};
 
@@ -131,7 +132,7 @@ impl GroupedGenerationRequest {
     }
 }
 
-/// One family the emitter writes to `akita-schedules/src/generated/`.
+/// One schedule family emitted as a canonical external artifact.
 #[derive(Clone)]
 pub struct EmitSpec {
     pub module_name: &'static str,

@@ -1,20 +1,16 @@
 //! Proof-optimized commitment config presets.
 //!
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
-//! [`akita_types`] SIS primitives and generated schedule tables.
+//! [`akita_types`] SIS primitives and external schedule families.
 
 use super::CommitmentConfig;
 use akita_error::AkitaError;
 use akita_types::{
     setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     verifier_setup_matrix_capacity_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    SetupMatrixCapacity,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
 };
 use jolt_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
 
 /// Minimum proof-optimized log-basis.
 ///
@@ -51,13 +47,6 @@ const fn proof_optimized_inner_basis_range(
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
     akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
-/// Bound setup preprocessing work before schedule resolution.
-///
-/// This is a verifier-facing allocation/CPU guard for untrusted serialized
-/// setup capacity metadata. Production families currently scan at most a few
-/// hundred scalar shapes.
-const MAX_VERIFIER_SETUP_SCHEDULE_SCANS: usize = 1 << 14;
-
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
@@ -75,63 +64,6 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     cfg.validate_for_ring_dim(d)
         .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
     Ok(cfg)
-}
-
-pub(crate) fn proof_optimized_schedule_key(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    layout.check()?;
-    let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() != 1 {
-        return Err(AkitaError::InvalidInput(
-            "grouped schedule selection requires exact committed-group descriptors".to_string(),
-        ));
-    }
-    Ok(AkitaScheduleLookupKey::single(final_group))
-}
-
-// ---------------------------------------------------------------------------
-// `<Cfg>`-generic policy helpers for the planner and materializer.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Trait-shaped wrappers consumed by the macros below.
-// ---------------------------------------------------------------------------
-
-/// Size the shared setup matrix from the planned schedule.
-///
-/// Planned role footprints are not monotone across shapes, so scan all
-/// supported sub-shapes and keep the largest packed setup length.
-type SetupMatrixCapacityCache =
-    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixCapacity>>>;
-
-static SETUP_MATRIX_CAPACITY_CACHE: SetupMatrixCapacityCache =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-pub(crate) fn proof_optimized_setup_matrix_capacity<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<SetupMatrixCapacity, AkitaError> {
-    validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
-    let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
-    if let Some(cached) = SETUP_MATRIX_CAPACITY_CACHE
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("setup capacity cache lock poisoned".into()))?
-        .get(&cache_key)
-        .cloned()
-    {
-        return Ok(cached);
-    }
-
-    let envelope =
-        proof_optimized_setup_matrix_capacity_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
-
-    SETUP_MATRIX_CAPACITY_CACHE
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("setup capacity cache lock poisoned".into()))?
-        .insert(cache_key, envelope);
-
-    Ok(envelope)
 }
 
 /// Running maximum over every setup matrix a sizing request can reach.
@@ -208,70 +140,6 @@ pub(crate) fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
     scan.finish(max_num_vars)
 }
 
-fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<SetupMatrixCapacity, AkitaError> {
-    let layouts = setup_capacity_scan_layouts(max_num_vars, max_num_batched_polys)?;
-    let mut scan = SetupCapacityScan::new();
-    for layout in &layouts {
-        let Ok(schedule) = Cfg::resolve_catalog_row_for_opening(layout) else {
-            continue;
-        };
-        scan.observe_schedule(schedule.schedule())?;
-    }
-
-    // Generated multi-group rows can exceed every scalar row's matrix envelope.
-    if let Some(catalog) = Cfg::schedule_catalog() {
-        for entry in catalog.entries {
-            if entry.root.precommitted_groups.is_empty() {
-                continue;
-            }
-            // An independent precommit only needs its own frozen A/B matrices
-            // resident, so it is provisionable at its own polynomial count even
-            // when the grouped root it later feeds is not.
-            for group in entry.root.precommitted_groups {
-                let profile = group.group.profile;
-                if profile.group.num_vars() <= max_num_vars
-                    && profile.group.num_polynomials() <= max_num_batched_polys
-                {
-                    scan.observe(akita_types::commit_only_setup_field_elements(
-                        &profile.inner.matrix,
-                        &profile.outer.matrix,
-                        profile.outer_slice_count,
-                    )?);
-                }
-            }
-            let key = AkitaScheduleLookupKey {
-                final_group: entry.final_group,
-                precommitteds: entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .map(|group| group.group.profile)
-                    .collect(),
-            };
-            if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
-                continue;
-            }
-            scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
-        }
-    }
-
-    // Prefix-slot materialization is driven by these bounded exact recursive
-    // keys. Size their shared matrices from the same keys directly: converting
-    // through `OpeningClaimsLayout` would discard frozen precommitted params
-    // and could resolve a different schedule.
-    for key in crate::setup_prefix_slots::recursive_group_batch_candidates_for_capacity::<Cfg>(
-        max_num_vars,
-        max_num_batched_polys,
-    )? {
-        scan.observe_schedule(Cfg::resolve_catalog_row_for_key(&key)?.schedule())?;
-    }
-
-    scan.finish(max_num_vars)
-}
-
 fn validate_setup_capacity_metadata(
     max_num_vars: usize,
     max_num_batched_polys: usize,
@@ -288,40 +156,6 @@ fn validate_setup_capacity_metadata(
         )));
     }
     Ok(())
-}
-
-/// Single-group opening layouts a setup-capacity request can reach.
-///
-/// Grouped rows are priced from the generated catalog directly by the caller,
-/// both for their standalone precommits and for the grouped root they feed.
-fn setup_capacity_scan_layouts(
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
-    let mut layouts = Vec::new();
-
-    let mut push_layout = |layout| {
-        if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
-            return Err(AkitaError::InvalidSetup(format!(
-                "verifier setup capacity ({max_num_vars} vars, {max_num_batched_polys} polynomials) \
-                 exceeds preprocessing limits"
-            )));
-        }
-        layouts.push(layout);
-        Ok(())
-    };
-
-    for main_num_vars in 1..=max_num_vars {
-        for main_num_polys in 1..=max_num_batched_polys {
-            let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
-            if main_group.validate().is_err() {
-                continue;
-            }
-            push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
-        }
-    }
-
-    Ok(layouts)
 }
 
 /// Extract setup-level params from a `FoldSchedule`.
@@ -404,18 +238,6 @@ fn ensure_required_setup_field_elements(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
-        fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
-            #[cfg(feature = $feat)]
-            {
-                Some(akita_schedules::$table())
-            }
-            #[cfg(not(feature = $feat))]
-            {
-                None
-            }
-        }
-    };
     (@ring_dimension_schedule_mode $mode:expr) => {
         const RING_DIMENSION_SCHEDULE_MODE: akita_schedules::RingDimensionScheduleMode = $mode;
     };
@@ -431,13 +253,13 @@ macro_rules! impl_proof_optimized_preset {
             akita_types::sis::CommittedSourceClass::BalancedSignedDigit
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedules = ($feat:literal, $family_name:literal, $table:ident), ring_dimension_schedule_mode = $mode:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, table, $feat, $family_name, $table, ring_dimension_schedule_mode = $mode);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, source = $source:ident, schedule_family = $family_name:literal, ring_dimension_schedule_mode = $mode:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $field_bits, $log_commit_bound, $source, $family_name, ring_dimension_schedule_mode = $mode);
     };
     (@options ring_dimension_schedule_mode = $mode:expr) => {
         impl_proof_optimized_preset!(@ring_dimension_schedule_mode $mode);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, table, $feat:literal, $family_name:literal, $table:ident, $($options:tt)*) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $field_bits:expr, $log_commit_bound:expr, $source:ident, $family_name:literal, $($options:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -468,15 +290,6 @@ macro_rules! impl_proof_optimized_preset {
                 $family
             }
 
-            fn setup_matrix_capacity(
-                max_num_vars: usize,
-                max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixCapacity, akita_error::AkitaError> {
-                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
-                    max_num_vars,
-                    max_num_batched_polys,
-                )
-            }
 
             fn opening_basis_range() -> (u32, u32) {
                 (
@@ -493,13 +306,9 @@ macro_rules! impl_proof_optimized_preset {
 
             impl_proof_optimized_preset!(@committed_source_class $source);
 
-            impl_proof_optimized_preset!(@schedule_catalog ($feat, $family_name, $table));
         }
     };
 }
-
-#[cfg(all(test, feature = "schedules-default"))]
-mod tests;
 
 // ---------------------------------------------------------------------------
 // Public preset structs

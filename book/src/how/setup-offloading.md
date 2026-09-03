@@ -122,7 +122,7 @@ The exact mixed dimension evaluation rules are in
 ## How the planner chooses offloading
 
 The ordinary configuration catalogs use direct setup evaluation. A supported
-`RecursiveCommitmentConfig<Cfg>` selects a separate generated catalog in which
+`RecursiveCommitmentConfig<Cfg>` expects a separate external catalog in which
 the planner may use setup offloading.
 
 For each nonterminal edge, the planner retains a direct successor. At producer
@@ -156,7 +156,7 @@ not force the choice. The successor's `incoming_setup_prefix` field records the
 selected edge. There is no second producer-side mode bit that can disagree
 with it.
 
-Planner search happens offline. The generated row records the exact choices,
+Planner search happens offline. The artifact row records the exact choices,
 and the verifier resolves and audits that row. It never searches for a cheaper
 schedule while checking a proof.
 
@@ -172,7 +172,7 @@ catalogs. The current build can expose recursive setup schedules for:
 Setup offloading currently uses the supported uniform $D = 64$ shape. Other
 setup ring dimensions do not expose a recursive offloading catalog.
 
-Support depends on the matching schedule features being enabled. Other base
+Support depends on supplying the matching recursive family artifact. Other base
 configurations have no recursive catalog and are rejected rather than silently
 falling back to a direct schedule under the recursive adapter.
 

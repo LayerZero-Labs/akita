@@ -8,7 +8,7 @@
 //! macro.
 //!
 //! Legend:
-//!   ✓   — runs in default `cargo test` (schedules-default feature)
+//!   ✓   — runs in default `cargo test` using checked-in external artifacts
 //!   ign — supported, but production-sized nv; run with `-- --ignored`
 //!   NA  — no production schedule row exists; cell is intentionally absent
 //!
@@ -44,7 +44,6 @@
 //! multi-group code path with a small field.
 
 #![allow(missing_docs)]
-#![cfg(feature = "schedules-default")]
 
 mod common;
 mod small_field_drivers;
@@ -153,7 +152,7 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let setup = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").setup_prover(
+                    let setup = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").setup_prover(
                         final_nv.max(PRE_NV),
                         2,
                     )
@@ -167,7 +166,7 @@ macro_rules! small_field_test {
                     )
                     .expect("stack");
                     let verifier_setup =
-                        AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").setup_verifier(&setup)
+                        AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").setup_verifier(&setup)
                             .expect("verifier setup");
 
                     let pre_poly = akita_prover::DensePoly::<$sf>::from_field_evals(
@@ -178,7 +177,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
                         hint: pre_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").commit(
+                    } = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
                         &stack,
@@ -200,7 +199,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").commit(
+                    } = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
                         &stack,
@@ -248,7 +247,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").batched_prove::<_, _, _>(
+                    let proof = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -334,7 +333,7 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let setup = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").setup_prover(
+                    let setup = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").setup_prover(
                         final_nv.max(PRE_NV),
                         2,
                     )
@@ -348,7 +347,7 @@ macro_rules! small_field_test {
                     )
                     .expect("stack");
                     let verifier_setup =
-                        AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").setup_verifier(&setup)
+                        AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").setup_verifier(&setup)
                             .expect("verifier setup");
 
                     let pre_poly = akita_prover::OneHotPoly::<$sf, u8>::new(
@@ -359,7 +358,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: pre_commitment,
                         hint: pre_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").commit(
+                    } = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").commit(
                         &setup,
                         std::slice::from_ref(&pre_poly),
                         &stack,
@@ -381,7 +380,7 @@ macro_rules! small_field_test {
                     let akita_prover::CommitOutput {
                         committed_group: final_commitment,
                         hint: final_hint,
-                    } = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").commit(
+                    } = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").commit(
                         &setup,
                         std::slice::from_ref(&final_poly),
                         &stack,
@@ -439,7 +438,7 @@ macro_rules! small_field_test {
                     let selection = prover_data.selection();
 
                     let mut pt = AkitaTranscript::<$sf>::new(label);
-                    let proof = AkitaCommitmentScheme::<$cfg>::from_embedded_schedule_catalog().expect("embedded schedule catalog").batched_prove::<_, _, _>(
+                    let proof = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact().expect("embedded schedule catalog").batched_prove::<_, _, _>(
                         &setup,
                         prover_data,
                         &stack,
@@ -492,7 +491,7 @@ small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::
 
 // ----------------------------------------------------------------------------
 // fp64  (Field = Prime64Offset59, ExtField = Ext2)
-// Also covered by schedules-default; no extra feature gate needed.
+// The checked-in fp64 artifact covers this row without a feature gate.
 // ----------------------------------------------------------------------------
 
 // fp64 × Dense × direct              catalog: single(20,1)
@@ -555,7 +554,7 @@ fn fp32_onehot_multi_group() {
         let pre_params = &pre_group_schedule.root.params;
         let pre_poly = grouped_poly(pre_params, 1);
 
-        let pre_setup = SmallScheme::from_embedded_schedule_catalog()
+        let pre_setup = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(PRE_NV, 1)
             .expect("pre setup");
@@ -571,7 +570,7 @@ fn fp32_onehot_multi_group() {
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
-        } = SmallScheme::from_embedded_schedule_catalog()
+        } = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &pre_setup,
@@ -590,7 +589,7 @@ fn fp32_onehot_multi_group() {
         let final_params = &multi_schedule.root.params;
         let final_poly = grouped_poly(final_params, 2);
 
-        let setup = SmallScheme::from_embedded_schedule_catalog()
+        let setup = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(FINAL_NV, 2)
             .expect("setup");
@@ -598,7 +597,7 @@ fn fp32_onehot_multi_group() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = SmallScheme::from_embedded_schedule_catalog()
+        let verifier_setup = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
@@ -608,7 +607,7 @@ fn fp32_onehot_multi_group() {
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = SmallScheme::from_embedded_schedule_catalog()
+        } = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &setup,
@@ -653,7 +652,7 @@ fn fp32_onehot_multi_group() {
 
         let mut prover_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
-        let proof = SmallScheme::from_embedded_schedule_catalog()
+        let proof = SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove(
                 &setup,
@@ -680,7 +679,7 @@ fn fp32_onehot_multi_group() {
         .expect("verifier claims");
         let mut verifier_transcript =
             AkitaTranscript::<SmallF>::new(b"completeness/fp32_onehot_multi_group");
-        SmallScheme::from_embedded_schedule_catalog()
+        SmallScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,

@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
 mod opening_oracles;
+#[path = "../../examples/support/workspace_schedules.rs"]
+mod workspace_schedules;
 
 pub(super) use opening_oracles::*;
+pub(super) use workspace_schedules::WorkspaceScheduleArtifactExt;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
@@ -335,7 +338,7 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("trusted schedule catalog");
     SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
@@ -360,7 +363,7 @@ where
     Cfg: CommitmentConfig,
     P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("trusted schedule catalog");
     SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, hints, polynomials, &schedules)
         .expect("valid selected prover data")

@@ -15,25 +15,23 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitOutput, ComputeBackendSetup, CpuBackend,
     GroupContext, OneHotPoly, SelectedProverOpeningData,
 };
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
-use akita_serialization::Valid;
+use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     dispatch_for_field, lagrange_weights, AkitaScheduleLookupKey, BasisMode, CommittedGroup,
-    GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    FpExtEncoding, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout, PrecommittedGroupProfiles,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
-use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -41,6 +39,32 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
+
+trait WorkspaceScheduleArtifactExt: Sized {
+    fn from_workspace_schedule_artifact() -> Result<Self, akita_error::AkitaError>;
+}
+
+impl<Cfg> WorkspaceScheduleArtifactExt for AkitaCommitmentScheme<Cfg>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    fn from_workspace_schedule_artifact() -> Result<Self, akita_error::AkitaError> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .join("artifacts/schedules")
+            .join(format!("{}.aks", Cfg::schedule_family_name()));
+        let bytes = fs::read(&path).map_err(|error| {
+            akita_error::AkitaError::InvalidSetup(format!(
+                "failed to read workspace schedule artifact {}: {error}",
+                path.display()
+            ))
+        })?;
+        Self::from_schedule_artifact(&bytes)
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -335,7 +359,7 @@ macro_rules! generate_scalar_case {
 
         let case = $case;
         let num_vars = $nv;
-        let scheme = AkitaCommitmentScheme::<ScalarCfg>::from_embedded_schedule_catalog()
+        let scheme = AkitaCommitmentScheme::<ScalarCfg>::from_workspace_schedule_artifact()
             .map_err(|err| format!("{} trusted schedule catalog: {err}", case))?;
         let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
             .map_err(|err| format!("{} opening layout: {err}", case))?;
@@ -477,11 +501,11 @@ macro_rules! generate_scalar_case {
             proof_shape,
             proof,
         };
-        let blob = inputs
+        let inner_blob = inputs
             .write_to_bytes()
             .map_err(|err| format!("{} encode blob: {err}", case))?;
         let decoded = AkitaJoltInputs::<ScalarField, $d, ScalarExt>::read_from_bytes::<ScalarCfg>(
-            &blob,
+            &inner_blob,
             scheme.schedules(),
         )
         .map_err(|err| format!("{} strict blob round-trip: {err}", case))?;
@@ -498,6 +522,11 @@ macro_rules! generate_scalar_case {
             BasisMode::Lagrange,
         )
         .map_err(|err| format!("{} decoded blob verify: {err}", case))?;
+        let blob = akita_recursion_glue::frame_with_schedule_catalog::<ScalarCfg>(
+            &inner_blob,
+            scheme.schedules(),
+        )
+        .map_err(|err| format!("{} frame schedule catalog: {err}", case))?;
         publish_blob($output_path, &blob)?;
         eprintln!(
             "wrote {} bytes ({:.2} MiB) for {} to {}",
@@ -600,9 +629,9 @@ fn run() -> Result<(), String> {
         ));
     }
     let onehot_k = onehot_k_for_num_vars(nv);
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .map_err(|err| format!("failed to load trusted recursive schedule catalog: {err}"))?;
-    let base_scheme = AkitaCommitmentScheme::<BaseCfg>::from_embedded_schedule_catalog()
+    let base_scheme = AkitaCommitmentScheme::<BaseCfg>::from_workspace_schedule_artifact()
         .map_err(|err| format!("failed to load trusted base schedule catalog: {err}"))?;
 
     let prime = fp128_prime_label();
@@ -809,11 +838,9 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
-    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
-        schedule.schedule(),
-        &opening_layout,
-    )
-    .map_err(|err| format!("derive grinding plan failed: {err}"))?;
+    let grinding_plan =
+        derive_transcript_grinding_plan::<Cfg>(schedule.schedule(), &opening_layout)
+            .map_err(|err| format!("derive grinding plan failed: {err}"))?;
     let proof_shape = proof.shape();
     proof_shape
         .validate_grinding_plan(&grinding_plan)
@@ -843,14 +870,16 @@ fn run() -> Result<(), String> {
         proof,
     };
 
-    let blob = inputs
+    let inner_blob = inputs
         .write_to_bytes()
         .map_err(|err| format!("encode jolt inputs blob failed: {err}"))?;
     // Round-trip before publishing so a buggy encoding fails on the host
     // instead of leaving a trusted benchmark artifact on disk.
-    let decoded =
-        AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(&blob, scheme.schedules())
-            .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
+    let decoded = AkitaJoltInputs::<F, SOURCE_VIEW_D>::read_from_bytes::<Cfg>(
+        &inner_blob,
+        scheme.schedules(),
+    )
+    .map_err(|err| format!("decode jolt inputs blob (round-trip) failed: {err}"))?;
     let mut roundtrip_transcript =
         AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     verify_proof(
@@ -864,6 +893,10 @@ fn run() -> Result<(), String> {
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;
     tracing::info!("decoded-blob verify OK");
+
+    let blob =
+        akita_recursion_glue::frame_with_schedule_catalog::<Cfg>(&inner_blob, scheme.schedules())
+            .map_err(|err| format!("frame schedule catalog failed: {err}"))?;
 
     publish_blob(&output_path, &blob)?;
 

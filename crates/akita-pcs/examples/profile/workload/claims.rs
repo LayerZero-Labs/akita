@@ -29,7 +29,7 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("trusted schedule catalog");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,

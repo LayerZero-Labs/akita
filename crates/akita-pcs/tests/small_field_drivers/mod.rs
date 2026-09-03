@@ -10,6 +10,7 @@
 //! and how its opening is computed from an independent oracle — stays at the
 //! call site, which is the only part worth reading per cell.
 
+use crate::common::WorkspaceScheduleArtifactExt as _;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, UniformProverStack};
@@ -60,7 +61,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
-    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(nv, 1)
         .expect("setup");
@@ -68,7 +69,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     let stack =
         UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
@@ -76,7 +77,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -94,7 +95,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     )
     .expect("prover group")])
     .expect("prover claims");
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("trusted schedule catalog");
     let prover_data = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         prover_claims,
@@ -106,7 +107,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     let selection = prover_data.selection();
 
     let mut pt = AkitaTranscript::<Cfg::Field>::new(label);
-    let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(&setup, prover_data, &stack, &mut pt, BasisMode::Lagrange)
         .expect("prove");
@@ -128,7 +129,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
     .expect("verifier group")])
     .expect("verifier claims");
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &decoded,
@@ -212,7 +213,7 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     .expect("verifier claims");
 
     let mut vt = AkitaTranscript::<Cfg::Field>::new(label);
-    AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &decoded,

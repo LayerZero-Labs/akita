@@ -1029,10 +1029,6 @@ where
         Envelope::committed_source_class()
     }
 
-    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
-        Envelope::schedule_catalog()
-    }
-
     fn resolve_catalog_row_for_key(
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {

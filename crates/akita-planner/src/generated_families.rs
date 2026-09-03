@@ -1,7 +1,7 @@
 //! Shared metadata describing every `Cfg` family that ships with a
 //! generated schedule table in `akita-schedules`.
 //!
-//! Both the `gen_schedule_tables` binary (the offline table emitter) and
+//! Both the `gen_schedule_artifacts` binary (the offline table emitter) and
 //! the drift-guard test consume [`ALL_GENERATED_FAMILIES`] so the two
 //! cannot drift apart: a missing `Cfg` here is missing in both the emitted
 //! artifact and the regression guard.
@@ -18,7 +18,6 @@ pub use crate::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_schedules::GeneratedScheduleTable;
 use akita_types::sis::{CommittedSourceContract, HonestFoldPolicySpec};
 use akita_types::{
     AkitaScheduleLookupKey, FoldSchedule, GroupCommitPhaseParams, PolynomialGroupLayout,
@@ -232,11 +231,6 @@ pub struct GeneratedFamily {
     pub regen_group_batch: fn(GroupedGenerationRequest) -> Result<FoldSchedule, AkitaError>,
     /// Grouped-root keys enumerated for this generated family.
     pub grouped_requests: GroupedRequestGenerator,
-    /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub resolve_catalog_row_for_key:
-        fn(AkitaScheduleLookupKey) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>,
-    /// The generated catalog linked for this family, when its feature is active.
-    pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
     /// The family config's declared producer contract (class plus bound).
     pub source_contract: fn() -> Result<CommittedSourceContract, AkitaError>,
@@ -316,16 +310,6 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     // the descriptor so the two can never drift apart by index.
     let policies = request.fold_policies();
     plan_regen::<Cfg>(&request.key(), &policies)
-}
-
-fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
-    key: AkitaScheduleLookupKey,
-) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
-    Cfg::resolve_catalog_row_for_key(&key)
-}
-
-fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
-    Cfg::schedule_catalog()
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -574,8 +558,6 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             grouped_requests: $group_keys,
-            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
-            schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -594,8 +576,6 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             grouped_requests: $group_keys,
-            resolve_catalog_row_for_key: resolve_catalog_row_for_key::<$cfg>,
-            schedule_catalog: schedule_catalog::<$cfg>,
             policy: family_policy::<$cfg>,
             source_contract: <$cfg as CommitmentConfig>::committed_source_contract,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,

@@ -62,8 +62,8 @@ where
         + Valid,
 {
     start_cycle_tracking("deserialize_input");
-    let schedules = match akita_config::trusted_schedule_catalog_from_embedded::<Cfg>() {
-        Ok(schedules) => schedules,
+    let (schedules, input) = match akita_recursion_glue::split_schedule_catalog::<Cfg>(input) {
+        Ok(decoded) => decoded,
         Err(_) => {
             end_cycle_tracking("deserialize_input");
             return GuestStatus::InputRejected.code();

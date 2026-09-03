@@ -38,7 +38,7 @@ Book. Individual chapters introduce each idea in more detail.
 
 ## Scalar and grouped catalog rows
 
-A generated catalog ships one row for each supported request shape.
+A trusted external catalog ships one row for each supported request shape.
 
 - A **scalar row** describes a polynomial group opened without precommitted
   groups. An independent commitment always uses this row, including a

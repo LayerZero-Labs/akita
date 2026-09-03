@@ -9,6 +9,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
+use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
@@ -65,7 +66,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     let setup_contribution_mode = SetupContributionMode::Direct;
     let (commitments, proof, setup) = {
         let t0 = Instant::now();
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(nv, num_polys)
             .unwrap();
@@ -104,7 +105,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -131,7 +132,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -232,7 +233,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier_for_schedule(&setup, &schedule, &opening_batch)
             .expect("verifier setup")
@@ -257,7 +258,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,

@@ -17,9 +17,9 @@ cache expensive transforms without changing commitments or proof bytes.
 | Setup prefix registry | Public commitments used by recursive setup offloading | It must cover the same supported schedules |
 | Prepared backend state | Local transformed matrix prefixes and compute resources | Yes |
 
-The public matrix stream has one identity across ring dimensions. A generated
-schedule takes the exact rows, widths, and dimensions needed by each operation
-from a prefix of that stream.
+The public matrix stream has one identity across ring dimensions. A trusted
+schedule row takes the exact widths and dimensions needed by each operation from
+a prefix of that stream.
 
 ## Build prover setup once
 
@@ -27,7 +27,9 @@ The normal entry point takes the largest number of variables and largest group
 size that the host plans to support.
 
 ```rust
-let setup = AkitaCommitmentScheme::<Config>::setup_prover(
+let catalog = trusted_schedule_catalog_from_bytes::<Config>(&artifact_bytes)?;
+let scheme = AkitaCommitmentScheme::<Config>::new(catalog)?;
+let setup = scheme.setup_prover(
     max_num_vars,
     max_polynomials_in_one_group,
 )?;
@@ -38,7 +40,7 @@ The commitment and proof bind the public setup identity, not the amount of
 matrix data that one prover happened to store.
 
 For a recursive configuration, setup construction also prepares the setup
-prefix commitments required by its generated catalogs. The host should build
+prefix commitments required by its supplied catalog. The host should build
 setup with the configuration that will produce the final proofs.
 
 ## Prepare the compute backend
@@ -68,8 +70,7 @@ first one.
 The simplest conversion keeps the complete materialized public matrix prefix.
 
 ```rust
-let verifier_setup =
-    AkitaCommitmentScheme::<Config>::setup_verifier(&setup)?;
+let verifier_setup = scheme.setup_verifier(&setup)?;
 ```
 
 This is a good starting point for local verification and the first integration.
@@ -78,10 +79,10 @@ A deployment that knows the exact proof schedule can derive a smaller verifier
 setup:
 
 ```rust
-let resolved = Config::resolve_schedule_selection(selection)?;
+let resolved = scheme.schedules().resolve_selection(selection)?;
 let opening_layout = verifier_claims.committed_layout()?;
 let verifier_setup =
-    AkitaCommitmentScheme::<Config>::setup_verifier_for_schedule(
+    scheme.setup_verifier_for_schedule(
         &setup,
         resolved.schedule(),
         &opening_layout,

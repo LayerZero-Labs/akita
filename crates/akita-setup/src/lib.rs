@@ -575,8 +575,8 @@ mod tests {
     type TestF = fp128::Field;
 
     fn schedules() -> TrustedScheduleCatalog {
-        akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
-            .expect("embedded schedule catalog")
+        akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+            .expect("workspace schedule catalog")
     }
 
     #[derive(Clone)]

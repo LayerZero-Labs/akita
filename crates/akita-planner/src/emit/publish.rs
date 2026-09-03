@@ -135,21 +135,33 @@ pub fn publish_generated_outputs(outputs: Vec<GeneratedOutput>) -> Result<Vec<Pa
         return Ok(Vec::new());
     }
 
-    let mut rustfmt = Command::new("rustfmt");
-    rustfmt.args(["--edition", "2021"]);
-    rustfmt.args(staged.iter().map(|output| &output.staged));
-    let status = match rustfmt.status() {
-        Ok(status) => status,
-        Err(error) => {
+    let rust_outputs = staged
+        .iter()
+        .filter(|output| {
+            output
+                .destination
+                .extension()
+                .is_some_and(|ext| ext == "rs")
+        })
+        .map(|output| &output.staged)
+        .collect::<Vec<_>>();
+    if !rust_outputs.is_empty() {
+        let mut rustfmt = Command::new("rustfmt");
+        rustfmt.args(["--edition", "2021"]);
+        rustfmt.args(rust_outputs);
+        let status = match rustfmt.status() {
+            Ok(status) => status,
+            Err(error) => {
+                cleanup_staged_outputs(&staged);
+                return Err(format!("format staged generated outputs: {error}"));
+            }
+        };
+        if !status.success() {
             cleanup_staged_outputs(&staged);
-            return Err(format!("format staged generated outputs: {error}"));
+            return Err(format!(
+                "format staged generated outputs failed with {status}"
+            ));
         }
-    };
-    if !status.success() {
-        cleanup_staged_outputs(&staged);
-        return Err(format!(
-            "format staged generated outputs failed with {status}"
-        ));
     }
     for output in &staged {
         let sync_result = fs::OpenOptions::new()

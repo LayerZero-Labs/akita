@@ -11,11 +11,11 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - Jolt's `jolt-field` package owns shared field arithmetic; `akita-serialization` and `akita-algebra` own Akita encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
-- `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
-- `akita-schedules` owns versioned schedule artifacts, validated owned catalogs, and the tracked generated tables used during migration.
-- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`resolve_catalog_row_for_key` delegates to strict generated-catalog resolution).
+- `akita-planner` is the `Cfg`-free offline schedule engine: candidate expansion, schedule-search DP, and external artifact emitter. It sits *below* `akita-config`.
+- `akita-schedules` owns versioned schedule artifacts, semantic row validation, and validated owned runtime catalogs.
+- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. A config identifies the expected artifact family and policy but does not own rows.
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
-- `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches generated schedule expansion transitively.
+- `akita-verifier` owns verifier replay without prover-only polynomial backends. It receives the validated schedule catalog explicitly.
 - `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.
 - `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the broad public surface, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
 
@@ -41,7 +41,7 @@ verifier contract, CI timing). `specs/` holds design records (lifecycle in
 [`specs/PRUNING.md`](specs/PRUNING.md)). Documentation guardrails (CI + PR
 comments) are in [`docs/documentation.md`](docs/documentation.md).
 
-## Generated Schedules
+## External schedule artifacts
 
 The runtime schedule contract is `TrustedScheduleCatalog`. A versioned JSON
 artifact stores complete expanded rows. The application loads that artifact as
@@ -54,41 +54,32 @@ runtime challenge hooks, every expanded schedule invariant, every committed
 profile, and every row digest. Honest prover key selection and verifier digest
 selection then use the same owned catalog.
 
-The checked in Rust tables below remain a migration source. An
 `AkitaCommitmentScheme<Cfg>` instance owns one validated catalog and uses it
 for setup, commitment, proving, and verification. Direct verifier and prover
 orchestration accept `&TrustedScheduleCatalog`, so an integration can load an
 external trusted artifact without compiling its rows into Akita.
 
-Export one currently compiled migration catalog with:
+Load artifact bytes from application-owned storage and construct the scheme:
 
-```bash
-cargo run -p akita-config --example export_schedule_artifact -- \
-  fp128_onehot ./fp128_onehot.aks
+```rust
+let bytes = std::fs::read("parameters/fp128_onehot.aks")?;
+let scheme = AkitaCommitmentScheme::<fp128::OneHot>::from_schedule_artifact(&bytes)?;
 ```
 
-Load those bytes with
-`akita_config::trusted_schedule_catalog_from_bytes::<Cfg>()`. The application
-is responsible for distributing the artifact through its trusted setup or
-parameter channel.
-
-Builds that use schedules read generated family modules from
-`crates/akita-schedules/src/generated/`. Git tracks these deterministic planner
-outputs. Ordinary builds, formatting, Clippy, tests, and profile jobs use them
-as checked in. Regenerate them after changing planner policy, candidate search,
-or generated catalog structure:
+Git tracks deterministic family artifacts under `artifacts/schedules/`.
+Regenerate them after changing planner policy, candidate search, or artifact
+structure:
 
 ```bash
-scripts/generate-schedule-tables.sh
+scripts/generate-schedule-artifacts.sh
 ```
 
-For a faster planner iteration loop, pass one or more generated family module
-names, for example `scripts/generate-schedule-tables.sh fp32_dense`. This writes
-only the selected family rows while preserving the complete shared module
-wiring. Run the unfiltered command before committing planner changes.
+For a faster planner iteration loop, pass one or more family names, for example
+`scripts/generate-schedule-artifacts.sh fp32_dense`. Run the unfiltered command
+before committing planner changes.
 
-The dedicated all-schedules drift job regenerates the complete catalog and
-rejects any byte difference from the tracked files.
+The schedule-artifact drift job regenerates every family into a temporary
+directory and rejects any byte difference from the tracked artifacts.
 
 ## Lineage
 

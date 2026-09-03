@@ -8,7 +8,7 @@ fn verify_rejects_wrong_opening() {
 
     let (poly, evals) = make_dense_poly(num_vars);
 
-    let setup = Scheme::from_embedded_schedule_catalog()
+    let setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(num_vars, 1)
         .unwrap();
@@ -19,7 +19,7 @@ fn verify_rejects_wrong_opening() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+    let verifier_setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
@@ -27,7 +27,7 @@ fn verify_rejects_wrong_opening() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_embedded_schedule_catalog()
+    } = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -48,7 +48,7 @@ fn verify_rejects_wrong_opening() {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::from_embedded_schedule_catalog()
+    let proof = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(
             &setup,
@@ -62,7 +62,7 @@ fn verify_rejects_wrong_opening() {
     let wrong_opening = opening + F::one();
     let wrong_openings = [wrong_opening];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let result = Scheme::from_embedded_schedule_catalog()
+    let result = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &proof,
@@ -92,7 +92,7 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-        Scheme::from_embedded_schedule_catalog()
+        Scheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -146,7 +146,7 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    Scheme::from_embedded_schedule_catalog()
+    Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &proof,

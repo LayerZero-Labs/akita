@@ -11,7 +11,10 @@ mod wire;
 
 pub use case::AkitaJoltCase;
 pub use statement::{AkitaJoltInputs, AkitaJoltOpeningGroup};
-pub use wire::{read_blob_case, BLOB_COMPRESS, BLOB_VALIDATE, MAX_JOLT_BLOB_BYTES};
+pub use wire::{
+    frame_with_schedule_catalog, read_blob_case, split_schedule_catalog, BLOB_COMPRESS,
+    BLOB_VALIDATE, MAX_JOLT_BLOB_BYTES,
+};
 
 // `akita-algebra` is pulled in only so downstream consumers can rely on
 // `CommittedGroup<F>` having all of its trait bounds satisfied.

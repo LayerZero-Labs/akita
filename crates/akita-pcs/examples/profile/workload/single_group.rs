@@ -10,6 +10,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
+use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
@@ -92,7 +93,7 @@ fn run_prove<
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 setup,
@@ -112,7 +113,7 @@ fn run_prove<
         .selection();
         let t0 = Instant::now();
         let mut prover_transcript = AkitaTranscript::<FF>::new(b"profile");
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove(
                 setup,
@@ -215,12 +216,12 @@ fn run_prove<
         if let Some(schedule) = plan {
             let opening_layout = OpeningClaimsLayout::from_root_groups(&[], group_layout)
                 .expect("singleton opening layout");
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .setup_verifier_for_schedule(setup, schedule, &opening_layout)
                 .expect("schedule verifier setup")
         } else {
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .setup_verifier(setup)
                 .expect("verifier setup")
@@ -246,7 +247,7 @@ fn run_prove<
     };
     let verify = |claims| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -353,7 +354,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         statement_prepare_start.elapsed().as_secs_f64(),
     );
     let t0 = Instant::now();
-    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(RootPolyShape::<FF, D>::num_vars(&poly), 1)
         .unwrap();
@@ -440,7 +441,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
     let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
     let t0 = Instant::now();
-    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(nv, 1)
         .unwrap();

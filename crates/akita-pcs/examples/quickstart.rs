@@ -1,5 +1,9 @@
 #![allow(missing_docs)]
 
+#[path = "support/workspace_schedules.rs"]
+mod workspace_schedules;
+use workspace_schedules::WorkspaceScheduleArtifactExt as _;
+
 use akita_config::proof_optimized::fp128;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -28,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let evaluation = evaluate_multilinear(&evaluations, &point);
 
-    let scheme = AkitaCommitmentScheme::<Config>::from_embedded_schedule_catalog()?;
+    let scheme = AkitaCommitmentScheme::<Config>::from_workspace_schedule_artifact()?;
     let setup = scheme.setup_prover(NUM_VARS, 1)?;
     let backend = CpuBackend::DEFAULT;
     let prepared = backend.prepare_setup(&setup)?;

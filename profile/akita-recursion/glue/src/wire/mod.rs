@@ -8,9 +8,7 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::{
-    derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::checked;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -48,6 +46,9 @@ pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
 const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv5";
+const CATALOG_FRAME_MAGIC: [u8; 8] = *b"AKCATF01";
+const CATALOG_FRAME_HEADER_BYTES: usize = CATALOG_FRAME_MAGIC.len() + 8;
+const MAX_SCHEDULE_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 const MAX_BLOB_GROUPS: usize = 16;
@@ -71,6 +72,7 @@ fn reject_trailing_bytes(rest: &[u8]) -> Result<(), SerializationError> {
 
 /// Read the case identity without decoding the full verifier artifact.
 pub fn read_blob_case(bytes: &[u8]) -> Result<AkitaJoltCase, SerializationError> {
+    let bytes = inner_blob_bytes(bytes)?;
     if bytes.len() < BLOB_MAGIC.len() + 1 {
         return Err(SerializationError::InvalidData(
             "akita-jolt blob is too short to contain a case identity".to_string(),
@@ -89,6 +91,93 @@ pub fn read_blob_case(bytes: &[u8]) -> Result<AkitaJoltCase, SerializationError>
         ));
     }
     AkitaJoltCase::from_tag(payload[0])
+}
+
+fn inner_blob_bytes(bytes: &[u8]) -> Result<&[u8], SerializationError> {
+    if !bytes.starts_with(&CATALOG_FRAME_MAGIC) {
+        return Ok(bytes);
+    }
+    if bytes.len() < CATALOG_FRAME_HEADER_BYTES {
+        return Err(SerializationError::InvalidData(
+            "akita-jolt catalog frame is truncated".to_string(),
+        ));
+    }
+    let mut len_bytes = [0u8; 8];
+    len_bytes.copy_from_slice(&bytes[CATALOG_FRAME_MAGIC.len()..CATALOG_FRAME_HEADER_BYTES]);
+    let artifact_len_u64 = u64::from_le_bytes(len_bytes);
+    let artifact_len =
+        usize::try_from(artifact_len_u64).map_err(|_| SerializationError::LengthLimitExceeded {
+            len: artifact_len_u64,
+            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+        })?;
+    if artifact_len == 0 || artifact_len > MAX_SCHEDULE_ARTIFACT_BYTES {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: artifact_len_u64,
+            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+        });
+    }
+    let inner_offset = CATALOG_FRAME_HEADER_BYTES
+        .checked_add(artifact_len)
+        .ok_or_else(|| SerializationError::InvalidData("catalog frame length overflow".into()))?;
+    if inner_offset >= bytes.len() {
+        return Err(SerializationError::InvalidData(
+            "akita-jolt catalog frame has no complete inner blob".to_string(),
+        ));
+    }
+    Ok(&bytes[inner_offset..])
+}
+
+/// Frame one verifier-input blob with a full external schedule artifact.
+///
+/// This is a benchmark bring-up format, not an authenticated production
+/// recursion format. It keeps schedule rows out of the guest executable.
+pub fn frame_with_schedule_catalog<Cfg: CommitmentConfig>(
+    inner_blob: &[u8],
+    schedules: &TrustedScheduleCatalog,
+) -> Result<Vec<u8>, SerializationError> {
+    akita_config::validate_trusted_schedule_catalog::<Cfg>(schedules)
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+    let artifact = schedules
+        .to_artifact_bytes()
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+    if artifact.is_empty() || artifact.len() > MAX_SCHEDULE_ARTIFACT_BYTES {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: artifact.len() as u64,
+            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+        });
+    }
+    let framed_len =
+        checked::sum([CATALOG_FRAME_HEADER_BYTES, artifact.len(), inner_blob.len()])
+            .ok_or_else(|| SerializationError::InvalidData("catalog frame size overflow".into()))?;
+    if framed_len as u64 > MAX_JOLT_BLOB_BYTES {
+        return Err(SerializationError::LengthLimitExceeded {
+            len: framed_len as u64,
+            max: MAX_JOLT_BLOB_BYTES as usize,
+        });
+    }
+    let mut framed = Vec::with_capacity(framed_len);
+    framed.extend_from_slice(&CATALOG_FRAME_MAGIC);
+    framed.extend_from_slice(&(artifact.len() as u64).to_le_bytes());
+    framed.extend_from_slice(&artifact);
+    framed.extend_from_slice(inner_blob);
+    Ok(framed)
+}
+
+/// Decode the full benchmark catalog and return the inner verifier-input blob.
+pub fn split_schedule_catalog<Cfg: CommitmentConfig>(
+    bytes: &[u8],
+) -> Result<(TrustedScheduleCatalog, &[u8]), SerializationError> {
+    if !bytes.starts_with(&CATALOG_FRAME_MAGIC) {
+        return Err(SerializationError::InvalidData(
+            "akita-jolt input is missing the external schedule catalog frame".to_string(),
+        ));
+    }
+    let inner = inner_blob_bytes(bytes)?;
+    let artifact_end = bytes.len() - inner.len();
+    let artifact = &bytes[CATALOG_FRAME_HEADER_BYTES..artifact_end];
+    let schedules = akita_config::trusted_schedule_catalog_from_bytes::<Cfg>(artifact)
+        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+    Ok((schedules, inner))
 }
 
 impl<F: Field, const D: usize, E: Field> AkitaJoltInputs<F, D, E> {
@@ -650,11 +739,9 @@ where
             .profiles()
             .opening_layout()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
-            resolved.schedule(),
-            &root_opening_layout,
-        )
-        .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
+        let grinding_plan =
+            derive_transcript_grinding_plan::<Cfg>(resolved.schedule(), &root_opening_layout)
+                .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
         proof_shape.validate_grinding_plan(&grinding_plan)?;
         let expected_shape = canonical_proof_shape(
             resolved.schedule(),

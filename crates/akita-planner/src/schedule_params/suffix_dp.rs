@@ -30,6 +30,7 @@ mod state;
 mod terminal;
 
 #[cfg(test)]
+#[allow(unused_imports)]
 pub(super) use candidates::{packing_precommit_opening_products, state_allows_terminal_seed};
 use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
 use state::*;

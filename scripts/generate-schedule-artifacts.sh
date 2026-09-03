@@ -18,5 +18,5 @@ for arg in "$@"; do
     fi
 done
 
-cargo run --release -p akita-planner --features "$planner_features" --bin gen_schedule_tables -- \
-    crates/akita-schedules/src/generated "$@"
+cargo run --release -p akita-planner --features "$planner_features" --bin gen_schedule_artifacts -- \
+    artifacts/schedules "$@"

@@ -1,31 +1,45 @@
 //! Strict runtime schedule resolution.
 
+#[cfg(feature = "planner-support")]
 use std::collections::HashMap;
+#[cfg(feature = "planner-support")]
 use std::sync::{Arc, LazyLock, Mutex};
 
+#[cfg(feature = "planner-support")]
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
 use akita_types::{
     root_input_witness_len, schedule_row_digest, validate_schedule_ring_dims,
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
-    OpeningScheduleSelection,
+    CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
 };
+#[cfg(feature = "planner-support")]
+use akita_types::{AkitaScheduleLookupKey, GroupCommitPhaseParams};
 
+#[cfg(feature = "planner-support")]
 use crate::artifact::TrustedScheduleCatalog;
 use crate::audit::audit_resolved_schedule;
-use crate::catalog_identity::{identity_digest, policy_digest, validate_catalog_identity};
+#[cfg(feature = "planner-support")]
+use crate::catalog_identity::{identity_digest, validate_catalog_identity};
+#[cfg(feature = "planner-support")]
 use crate::generated::walk::walk_generated_schedule_entry;
+#[cfg(feature = "planner-support")]
 use crate::generated::{table_entry_range, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
+#[cfg(feature = "planner-support")]
+use crate::policy_digest::policy_digest;
 use crate::runtime::planned_next_witness_len;
+#[cfg(feature = "planner-support")]
 use crate::runtime::validate_policy;
 use crate::PlannerPolicy;
 
+#[cfg(feature = "planner-support")]
 const MAX_RESOLVED_CATALOG_ROWS: usize = 1 << 14;
 
+#[cfg(feature = "planner-support")]
 static MATERIALIZED_CATALOGS: LazyLock<
     Mutex<HashMap<MaterializedCatalogCacheKey, Arc<MaterializedCatalog>>>,
 > = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(feature = "planner-support")]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct MaterializedCatalogCacheKey {
     entries_ptr: usize,
@@ -34,11 +48,13 @@ struct MaterializedCatalogCacheKey {
     policy_digest: [u8; 32],
 }
 
+#[cfg(feature = "planner-support")]
 struct MaterializedCatalog {
     rows_by_digest: Vec<ResolvedScheduleRow>,
     entry_row_digests: Vec<akita_types::ScheduleRowDigest>,
 }
 
+#[cfg(feature = "planner-support")]
 fn lock_materialized_catalogs() -> Result<
     std::sync::MutexGuard<'static, HashMap<MaterializedCatalogCacheKey, Arc<MaterializedCatalog>>>,
     AkitaError,
@@ -182,6 +198,7 @@ fn validate_canonical_transition_lengths(
     Ok(())
 }
 
+#[cfg(feature = "planner-support")]
 fn profiles_for_entry(
     entry: &GeneratedFoldScheduleEntry,
     schedule: &FoldSchedule,
@@ -200,6 +217,7 @@ fn profiles_for_entry(
     })
 }
 
+#[cfg(feature = "planner-support")]
 fn materialize_catalog_rows_uncached(
     table: GeneratedScheduleTable,
     policy: &PlannerPolicy,
@@ -241,6 +259,7 @@ fn materialize_catalog_rows_uncached(
     })
 }
 
+#[cfg(feature = "planner-support")]
 fn materialized_catalog(
     table: GeneratedScheduleTable,
     policy: &PlannerPolicy,
@@ -281,6 +300,7 @@ fn materialized_catalog(
 
 /// Materialize one compact generated table into the owned trusted catalog used
 /// by prover and verifier schedule resolution.
+#[cfg(feature = "planner-support")]
 pub fn trusted_catalog_from_generated(
     table: GeneratedScheduleTable,
     policy: &PlannerPolicy,
@@ -303,6 +323,7 @@ pub fn trusted_catalog_from_generated(
 /// Row identities are recomputed from exact expanded rows. The final lookup is
 /// a bounded binary search over fixed-width digests in the configured catalog.
 ///
+#[cfg(feature = "planner-support")]
 pub fn resolve_generated_schedule_selection(
     selection: OpeningScheduleSelection,
     policy: &PlannerPolicy,
@@ -327,6 +348,7 @@ pub fn resolve_generated_schedule_selection(
     })
 }
 
+#[cfg(feature = "planner-support")]
 fn resolve_generated_catalog_row_matching(
     key: &AkitaScheduleLookupKey,
     exact_profiles: Option<&CommittedGroupBatchProfile>,
@@ -403,6 +425,7 @@ fn resolve_generated_catalog_row_matching(
 /// This is the pre-commit counterpart of
 /// [`resolve_generated_schedule_selection`]: it returns the same resolved
 /// handle so the caller can retain its public selection for proving.
+#[cfg(feature = "planner-support")]
 pub fn resolve_generated_catalog_row_for_key(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
@@ -421,6 +444,7 @@ pub fn resolve_generated_catalog_row_for_key(
 }
 
 /// Resolve the canonical generated row matching exact committed profiles.
+#[cfg(feature = "planner-support")]
 pub fn resolve_generated_catalog_row_for_profiles(
     key: &AkitaScheduleLookupKey,
     profiles: &CommittedGroupBatchProfile,
@@ -447,6 +471,7 @@ pub fn resolve_generated_catalog_row_for_profiles(
 }
 
 /// Build the runtime [`FoldSchedule`] for a compact generated entry.
+#[cfg(feature = "planner-support")]
 pub fn schedule_from_entry(
     entry: &GeneratedFoldScheduleEntry,
     key: &AkitaScheduleLookupKey,
@@ -461,6 +486,7 @@ pub fn schedule_from_entry(
 }
 
 /// Estimate proof bytes for a generated row without planner search.
+#[cfg(feature = "planner-support")]
 pub fn estimate_proof_bytes(
     entry: &GeneratedFoldScheduleEntry,
     key: &AkitaScheduleLookupKey,

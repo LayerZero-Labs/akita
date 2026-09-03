@@ -1,8 +1,9 @@
 # Choosing a configuration
 
 An Akita configuration defines the field, committed data shape, security
-policy, and schedule catalog for a family of proofs. The application chooses
-the family. Akita chooses the detailed proof plan from generated tables.
+policy, and expected schedule-artifact family. The application chooses the
+family and supplies its approved artifact. Akita selects the exact row from the
+validated catalog.
 
 This split is one of Akita's strengths. Applications make decisions about their
 own data. They do not tune ring dimensions or search for cryptographic
@@ -37,7 +38,7 @@ The next choice is the representation of the table.
 
 The direct fp128 types are `fp128::Dense` and `fp128::OneHot`.
 `fp128::DenseBounded` accepts every `u64` value and the corresponding negative
-range. It is available through the `schedules-fp128-dense-bounded` feature.
+range. It uses the `fp128_dense_bounded` artifact family.
 
 The bounded configuration enforces its range during commitment. This is useful
 because the tighter range becomes part of the commitment profile and the
@@ -95,10 +96,10 @@ large work across a controlled partition without changing the public claim.
 
 Multi chunk configurations are deployment choices for measured large
 workloads. Begin with `Dense` or `OneHot`. Move to a multi chunk companion after
-profiling the complete host application and confirming that its generated
-catalog contains the required row.
+profiling the complete host application and confirming that its trusted
+external catalog contains the required row.
 
-## Let the generated catalog choose dimensions
+## Let the trusted catalog choose dimensions
 
 Akita may use different ring dimensions for the commitment matrix, later
 relations, and different fold levels. The offline planner searches these
@@ -107,11 +108,11 @@ row records the result.
 
 Application code should not choose a fixed ring dimension. It should describe
 the field, data representation, and opening batch. This lets Akita improve
-generated schedules without changing the high level integration model.
+offline schedules without changing the high level integration model.
 
 Normal proving and verification never run the planner. They resolve a row from
-the compiled catalog. `AkitaError::UnsupportedSchedule` means that the enabled
-catalog does not contain the exact request. The
+the catalog supplied to the scheme instance. `AkitaError::UnsupportedSchedule`
+means that catalog does not contain the exact request. The
 [troubleshooting guide](./troubleshooting.md#the-requested-schedule-is-unsupported)
 lists the information needed to diagnose that result.
 

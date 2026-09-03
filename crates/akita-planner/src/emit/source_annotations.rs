@@ -1,9 +1,9 @@
-//! Human-readable committed-source annotations for generated schedule tables.
+//! Human-readable committed-source annotations for the legacy Rust renderer.
 //!
 //! A [`GroupCommitPhaseParams`] and a `CATALOG_IDENTITY` record only the
 //! *consequence* of a committed-source class (digit depth at a basis), never the
 //! class or the declared bound. These emitters regenerate that context as
-//! comments so a reader of `akita-schedules/src/generated/` can see why a bounded
+//! comments so a renderer test can explain why a bounded
 //! family's root rows carry a shallow `num_digits_inner`, and tell a one-hot
 //! precommit from a bounded or full-width dense one, without decoding the
 //! identity by hand. They are comments only: `CATALOG_IDENTITY.decomposition`

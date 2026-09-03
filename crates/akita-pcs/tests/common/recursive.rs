@@ -17,9 +17,9 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
 
     init_rayon_pool();
     run_on_large_stack(move || {
-        let base_scheme = AkitaCommitmentScheme::<BaseCfg>::from_embedded_schedule_catalog()
+        let base_scheme = AkitaCommitmentScheme::<BaseCfg>::from_workspace_schedule_artifact()
             .expect("embedded base schedule catalog");
-        let recursive_scheme = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
+        let recursive_scheme = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
             .expect("embedded recursive schedule catalog");
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
         let pre_frozen =

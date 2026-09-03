@@ -1,6 +1,20 @@
-#![cfg(any(feature = "schedules-default", feature = "profile-ci"))]
-
 use super::*;
+
+trait WorkspaceScheduleArtifactExt: Sized {
+    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError>;
+}
+
+impl<C> WorkspaceScheduleArtifactExt for AkitaCommitmentScheme<C>
+where
+    C: CommitmentConfig,
+    C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    C::ExtField: FpExtEncoding<C::Field>,
+    C::ExtField: ExtField<C::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError> {
+        Self::new(akita_config::test_support::workspace_schedule_catalog::<C>()?)
+    }
+}
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
@@ -39,7 +53,7 @@ type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 
 #[test]
 fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
-    let embedded = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let embedded = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("embedded schedule catalog");
     let artifact = embedded.to_artifact_bytes().expect("schedule artifact");
     let scheme = Scheme::from_schedule_artifact(&artifact).expect("artifact-backed scheme");
@@ -74,7 +88,7 @@ fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
 
 #[test]
 fn scheme_rejects_a_catalog_bound_to_another_config() {
-    let dense = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let dense = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("dense schedule catalog");
     let error = OneHotScheme::new(dense).expect_err("one-hot scheme must reject dense catalog");
     assert!(error.to_string().contains("family"));
@@ -107,7 +121,7 @@ where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<C>()?;
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<C>()?;
     SelectedProverOpeningData::from_committed_claims::<C>(claims, hints, polynomials, &schedules)
 }
 
@@ -206,7 +220,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
 
     let (poly, evals) = make_dense_poly(full_num_vars);
-    let setup = Scheme::from_embedded_schedule_catalog()
+    let setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(full_num_vars, 1)
         .unwrap();
@@ -217,14 +231,14 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_embedded_schedule_catalog()
+    let verifier_setup = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_embedded_schedule_catalog()
+    } = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -247,7 +261,7 @@ fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
     let commitments = [commitment];
 
     let mut prover_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let proof = Scheme::from_embedded_schedule_catalog()
+    let proof = Scheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(
             &setup,

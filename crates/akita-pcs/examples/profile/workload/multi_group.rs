@@ -9,6 +9,7 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
+use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -198,7 +199,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         setup,
     ) = {
         let t0 = Instant::now();
-        let mut setup = AkitaCommitmentScheme::<ProofCfg>::from_embedded_schedule_catalog()
+        let mut setup = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(final_num_vars, total_polys)
             .unwrap();
@@ -257,7 +258,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let akita_prover::CommitOutput {
                 committed_group: commitment,
                 hint,
-            } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .commit(
                     &setup,
@@ -291,7 +292,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<ProofCfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &setup,
@@ -342,7 +343,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let schedules = akita_config::trusted_schedule_catalog_from_embedded::<ProofCfg>()
+        let schedules = akita_config::test_support::workspace_schedule_catalog::<ProofCfg>()
             .expect("trusted schedule catalog");
         let prover_data =
             akita_prover::SelectedProverOpeningData::from_committed_claims::<ProofCfg>(
@@ -353,7 +354,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             )
             .expect("multi-group prover data");
         let selection = prover_data.selection();
-        let proof = AkitaCommitmentScheme::<ProofCfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -427,7 +428,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<ProofCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
             .expect("verifier setup")
@@ -465,7 +466,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
     let verify = |statement| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<ProofCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,

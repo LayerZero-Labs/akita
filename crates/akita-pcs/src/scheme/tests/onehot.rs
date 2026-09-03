@@ -13,7 +13,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::from_embedded_schedule_catalog()
+    let setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(NV, GROUP_SIZE)
         .expect("setup");
@@ -29,7 +29,7 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit(
             &setup,
@@ -76,7 +76,7 @@ fn with_precommit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = OneHotScheme::from_embedded_schedule_catalog()
+    let setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(max_num_vars, max_num_polys)
         .expect("setup");
@@ -117,7 +117,7 @@ fn profile_native_commit_group_allows_independent_groups() {
         let akita_prover::CommitOutput {
             committed_group: pre_a_commitment,
             hint: _pre_a_hint,
-        } = OneHotScheme::from_embedded_schedule_catalog()
+        } = OneHotScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 setup,
@@ -129,7 +129,7 @@ fn profile_native_commit_group_allows_independent_groups() {
         let akita_prover::CommitOutput {
             committed_group: pre_b_commitment,
             hint: _pre_b_hint,
-        } = OneHotScheme::from_embedded_schedule_catalog()
+        } = OneHotScheme::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 setup,
@@ -234,7 +234,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         0x0bee_fcaf_9a77_6001,
     )];
 
-    let setup = OneHotScheme::from_embedded_schedule_catalog()
+    let setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
@@ -250,7 +250,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let akita_prover::CommitOutput {
         committed_group: pre_a_commitment,
         hint: _pre_a_hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -262,7 +262,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let akita_prover::CommitOutput {
         committed_group: pre_b_commitment,
         hint: _pre_b_hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -297,7 +297,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     let akita_prover::CommitOutput {
         committed_group: final_commitment,
         hint: final_hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit(
             &setup,
@@ -306,7 +306,7 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
             akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
         )
         .expect("final multi-group commitment");
-    let explicit_output = OneHotScheme::from_embedded_schedule_catalog()
+    let explicit_output = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit(
             &setup,
@@ -364,7 +364,7 @@ fn commit_group_returns_frozen_exact_layout() {
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::from_embedded_schedule_catalog()
+    let setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(NV, GROUP_SIZE)
         .expect("setup");
@@ -380,7 +380,7 @@ fn commit_group_returns_frozen_exact_layout() {
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint: _hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit(
             &setup,
@@ -454,7 +454,7 @@ where
     // Synthetic test configs may generate a row that is intentionally absent
     // from the shipped table. Install that row into one trusted catalog before
     // exercising setup, commitment, proving, and verification.
-    let embedded = akita_config::trusted_schedule_catalog_from_embedded::<ProtocolCfg>()
+    let embedded = akita_config::test_support::workspace_schedule_catalog::<ProtocolCfg>()
         .expect("embedded schedule catalog");
     let requested_is_embedded = embedded
         .rows()
@@ -882,7 +882,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         })
         .collect();
 
-    let setup = OneHotScheme::from_embedded_schedule_catalog()
+    let setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(NV, BATCH_SIZE)
         .unwrap();
@@ -898,14 +898,14 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = OneHotScheme::from_embedded_schedule_catalog()
+    let verifier_setup = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = OneHotScheme::from_embedded_schedule_catalog()
+    } = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -922,7 +922,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         commitments[0].clone(),
     )
     .expect("valid one-hot prover group");
-    let proof = OneHotScheme::from_embedded_schedule_catalog()
+    let proof = OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(
             &setup,
@@ -983,7 +983,7 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert_eq!(decoded, proof);
 
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
-    OneHotScheme::from_embedded_schedule_catalog()
+    OneHotScheme::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_verify(
             &decoded,

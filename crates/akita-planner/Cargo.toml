@@ -20,7 +20,9 @@ readme = "../../README.md"
 akita-error = { version = "0.1.0", path = "../akita-error" }
 akita-challenges = { version = "0.1.0", path = "../akita-challenges", default-features = false }
 akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false }
-akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false, features = [
+  "planner-support",
+] }
 akita-sis-estimator = { version = "0.1.0", path = "../akita-sis-estimator", optional = true }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
 libm = "0.2"
@@ -40,14 +42,14 @@ transcript-keccak = [
   "akita-types/transcript-keccak",
 ]
 catalog-gen = ["dep:akita-config"]
-catalog-check = ["catalog-gen", "akita-config/all-schedules"]
+catalog-check = ["catalog-gen"]
 catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 
 [dev-dependencies]
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
 
 [[bin]]
-name = "gen_schedule_tables"
+name = "gen_schedule_artifacts"
 path = "src/bin/gen_schedule_tables.rs"
 required-features = ["catalog-gen"]
 

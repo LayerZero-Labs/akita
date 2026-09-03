@@ -603,7 +603,7 @@ impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
 
     /// Assemble a matrix identity without auditing it.
     ///
-    /// `const` because the generated schedule tables construct these in `static`
+    /// `const` so offline generators and fixed test fixtures can construct it
     /// position. `PhantomData` is zero-sized and `const`-constructible, so the
     /// emitted literals keep the shape the emitter already writes.
     #[allow(clippy::too_many_arguments)]

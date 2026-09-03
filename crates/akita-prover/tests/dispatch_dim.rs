@@ -1,6 +1,5 @@
 //! Runtime ring-dimension dispatch against real typed schedules.
 
-#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};

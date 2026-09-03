@@ -13,6 +13,7 @@ policy and the checker use the same live set in
 |------|--------|---------------------|
 | [`akita-compute-backend-metal`](../../../specs/akita-compute-backend-metal.md) | active | Metal and hybrid backend work remains open. |
 | [`dyadic-chunk-partition`](../../../specs/dyadic-chunk-partition.md) | implemented | Defines the current witness chunk partition contract. |
+| [`external-schedule-catalog-ownership`](../../../specs/external-schedule-catalog-ownership.md) | active | Owns the in-flight cut from compiled schedule rows to explicitly supplied full-catalog artifacts. |
 | [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
 | [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | implemented | Defines current source-free group and fold-admission rules. |

@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 
 mod common;
-use common::opening_from_poly_for_layout;
+use common::{opening_from_poly_for_layout, WorkspaceScheduleArtifactExt as _};
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
@@ -125,7 +125,7 @@ fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Fie
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("trusted schedule catalog");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
@@ -210,7 +210,7 @@ where
     #[cfg(feature = "disk-persistence")]
     purge_setup_cache(nv);
 
-    let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_prover(nv, 1)
         .unwrap();
@@ -221,14 +221,14 @@ where
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .setup_verifier(&setup)
         .expect("verifier setup");
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .commit::<_, _>(
             &setup,
@@ -244,7 +244,7 @@ where
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<FField>::new(transcript_label);
-    let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+    let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
         .expect("embedded schedule catalog")
         .batched_prove::<_, _, _>(
             &setup,
@@ -358,7 +358,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/root-trace-tamper");
-        let result = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let result = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &malformed,
@@ -421,7 +421,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(NV);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(NV, 2)
             .unwrap();
@@ -432,14 +432,14 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -452,7 +452,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
         let selection = selection_for::<Cfg>(&commitments[0]);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -472,7 +472,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/recursive-trace-tamper");
-        let result = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let result = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &malformed,
@@ -501,7 +501,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
         let commitments = [commitment];
         let openings = [opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/terminal-trace-tamper");
-        let result = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let result = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &malformed,
@@ -551,7 +551,7 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
             err,
             akita_error::AkitaError::UnsupportedSchedule(_)
         ));
-        let setup_err = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup_err = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(nv, 1)
             .expect_err("tiny capacity must not produce a prover setup");
@@ -605,7 +605,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         #[cfg(feature = "disk-persistence")]
         purge_setup_cache(nv);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(nv, SAME_POINT_ONEHOT_BATCH_SIZE)
             .unwrap();
@@ -616,14 +616,14 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -638,7 +638,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -661,7 +661,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
         let opening_groups = [&openings[..]];
-        let result = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let result = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &malformed,
@@ -740,7 +740,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             })
             .collect();
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(EXT4_NV, EXT4_BATCH)
             .expect("fp32 prover setup");
@@ -751,14 +751,14 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &setup,
@@ -774,7 +774,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
         #[cfg(not(feature = "logging-transcript"))]
         let mut prover_transcript = AkitaTranscript::<SF>::new(LABEL);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -825,7 +825,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let mut vt = akita_transcript::LoggingTranscript::wrap(AkitaTranscript::<SF>::new(LABEL));
         #[cfg(not(feature = "logging-transcript"))]
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        let honest_result = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let honest_result = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -935,7 +935,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let mut wrong = openings.clone();
         wrong[1] += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -957,7 +957,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             .first_mut()
             .expect("terminal EOR must carry a partial evaluation") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &tampered,
@@ -980,7 +980,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             .first_mut()
             .expect("terminal EOR must carry a terminal handle") += SE::one();
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &tampered,
@@ -995,7 +995,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         let mut stripped = proof.clone();
         stripped.terminal.extension_opening_reduction = None;
         let mut vt = AkitaTranscript::<SF>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &stripped,
@@ -1031,7 +1031,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
             dense_lagrange_opening_from_evals(&evals_b, &point),
         ];
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(NV, 2)
             .expect("setup");
@@ -1042,14 +1042,14 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &setup,
@@ -1062,7 +1062,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let poly_group = [&poly_a, &poly_b];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -1074,7 +1074,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
             .expect("prove");
 
         let mut vt = AkitaTranscript::<F>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -1091,7 +1091,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "wrong second batched opening",
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .batched_verify(
                     &proof,
@@ -1114,7 +1114,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "oversized opening payload",
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .batched_verify(
                     &oversized,
@@ -1200,7 +1200,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             })
             .collect();
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(NV, 2)
             .expect("setup");
@@ -1211,14 +1211,14 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit(
                 &setup,
@@ -1230,7 +1230,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         let selection = selection_for::<Cfg>(&commitment);
 
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -1262,7 +1262,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
             .expect("terminal witness must split into canonical transcript segments");
 
         let mut vt = AkitaTranscript::<F>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,
@@ -1282,7 +1282,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         truncated.recursive_folds.remove(0);
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert!(
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .batched_verify(
                     &truncated,
@@ -1315,7 +1315,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
 
         // Sanity: the honest statement verifies.
         let mut vt = AkitaTranscript::<F>::new(LABEL);
-        AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &proof,
@@ -1332,7 +1332,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         let mut vt = AkitaTranscript::<F>::new(LABEL);
         assert_invalid_proof(
             "mismatched committed-group profile geometry",
-            AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
+            AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
                 .expect("embedded schedule catalog")
                 .batched_verify(
                     &proof,

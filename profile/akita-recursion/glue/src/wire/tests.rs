@@ -17,8 +17,8 @@ const TEST_D: usize = 256;
 const PREFIX_D: usize = 64;
 
 fn schedules<Cfg: CommitmentConfig>() -> TrustedScheduleCatalog {
-    akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
-        .expect("embedded trusted schedule catalog")
+    akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace trusted schedule catalog")
 }
 
 fn blob_prefix() -> Vec<u8> {
@@ -29,6 +29,52 @@ fn blob_prefix() -> Vec<u8> {
         .serialize_with_mode(&mut bytes, BLOB_COMPRESS)
         .unwrap();
     bytes
+}
+
+#[test]
+fn full_catalog_frame_round_trips_without_compiled_rows() {
+    let catalog = schedules::<TestCfg>();
+    let inner = blob_prefix();
+    let framed = frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
+
+    assert_eq!(
+        read_blob_case(&framed).expect("framed case"),
+        AkitaJoltCase::OneHotFp128Direct
+    );
+    let (decoded, decoded_inner) =
+        split_schedule_catalog::<TestCfg>(&framed).expect("split catalog frame");
+    assert_eq!(decoded.catalog_digest(), catalog.catalog_digest());
+    assert_eq!(decoded_inner, inner);
+}
+
+#[test]
+fn catalog_frame_rejects_missing_truncated_and_tampered_artifacts() {
+    let inner = blob_prefix();
+    let missing = split_schedule_catalog::<TestCfg>(&inner)
+        .expect_err("guest entry requires the benchmark catalog frame");
+    assert!(missing.to_string().contains("missing"));
+
+    let mut truncated = CATALOG_FRAME_MAGIC.to_vec();
+    truncated.extend_from_slice(&1u64.to_le_bytes());
+    let truncated = split_schedule_catalog::<TestCfg>(&truncated)
+        .expect_err("catalog frame must contain an inner blob");
+    assert!(truncated.to_string().contains("complete inner blob"));
+
+    let catalog = schedules::<TestCfg>();
+    let mut tampered =
+        frame_with_schedule_catalog::<TestCfg>(&inner, &catalog).expect("catalog frame");
+    let artifact_start = CATALOG_FRAME_HEADER_BYTES;
+    let marker = b"\"policy_digest\":[";
+    let digest_start = tampered[artifact_start..]
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .map(|offset| artifact_start + offset + marker.len())
+        .expect("policy digest marker");
+    let digit = tampered[digest_start];
+    tampered[digest_start] = if digit == b'9' { b'8' } else { digit + 1 };
+    let tampered = split_schedule_catalog::<TestCfg>(&tampered)
+        .expect_err("tampered catalog identity must reject");
+    assert!(tampered.to_string().contains("policy"));
 }
 
 fn prefix_commitment_params() -> GroupOpenPhaseParams {
@@ -258,11 +304,8 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
     )
     .expect("generated singleton row");
     let opening_layout = row.profiles().opening_layout().expect("opening layout");
-    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
-        row.schedule(),
-        &opening_layout,
-    )
-    .expect("grinding plan");
+    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(row.schedule(), &opening_layout)
+        .expect("grinding plan");
     let canonical = canonical_proof_shape(row.schedule(), &opening_layout, 1, &grinding_plan)
         .expect("canonical shape");
 
@@ -301,11 +344,8 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     let row =
         ExtCfg::resolve_catalog_row_for_opening(&layout).expect("generated fp32 singleton row");
     let opening_layout = row.profiles().opening_layout().expect("catalog layout");
-    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(
-        row.schedule(),
-        &opening_layout,
-    )
-    .expect("grinding plan");
+    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(row.schedule(), &opening_layout)
+        .expect("grinding plan");
     let mut noncanonical = canonical_proof_shape(
         row.schedule(),
         &opening_layout,

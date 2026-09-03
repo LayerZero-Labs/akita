@@ -65,17 +65,6 @@ where
         )?)
     }
 
-    /// Materialize the feature-gated generated table as a migration catalog.
-    ///
-    /// Production applications can instead call [`Self::from_schedule_artifact`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the generated table is unavailable or invalid.
-    pub fn from_embedded_schedule_catalog() -> Result<Self, AkitaError> {
-        Self::new(akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()?)
-    }
-
     /// The single validated catalog used by setup, commitment, proving, and verification.
     pub fn schedules(&self) -> &TrustedScheduleCatalog {
         &self.schedules

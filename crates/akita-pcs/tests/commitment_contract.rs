@@ -6,7 +6,6 @@
 //! for local views (orphan-rule-safe: the backend type is local to this test
 //! crate).
 
-#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
@@ -198,7 +197,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
     let contract =
         ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
-    let schedules = akita_config::trusted_schedule_catalog_from_embedded::<Cfg>()
+    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
         .expect("embedded schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");

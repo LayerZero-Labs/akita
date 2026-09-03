@@ -36,7 +36,7 @@ pub struct BlockGeometry {
 impl BlockGeometry {
     /// Assemble a block triple without checking it.
     ///
-    /// `const` because the generated schedule tables construct these in `static`
+    /// `const` so offline generators and fixed test fixtures can construct it
     /// position. Call [`Self::validate`] on any triple that did not come from a
     /// checked-in table.
     #[must_use]

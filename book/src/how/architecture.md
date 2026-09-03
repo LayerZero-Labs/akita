@@ -20,8 +20,8 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Fiat-Shamir challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
 | `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS floors; layout and proof-size helpers |
-| `akita-planner` | `Cfg`-free offline schedule search and table emission |
-| `akita-schedules` | Versioned schedule artifacts, validated owned catalogs, and migration support for shipped generated tables |
+| `akita-planner` | `Cfg`-free offline schedule search and artifact emission |
+| `akita-schedules` | Versioned schedule artifacts, semantic row audit, and validated owned catalogs |
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, trusted artifact loading, `policy_of::<Cfg>()`, and transcript binding |
 | `akita-setup` | Config-backed setup construction and optional setup cache |
 | `akita-verifier` | Verifier replay without prover-only polynomial backends; directly `<Cfg>`-generic |
@@ -38,9 +38,9 @@ Key structural facts:
   return `Option`; each caller maps failure to the `AkitaError` variant that
   describes its protocol boundary. Field arithmetic lives in the shared
   external `jolt-field` crate.
-- `akita-planner` owns offline schedule search and table emission. Normal
+- `akita-planner` owns offline schedule search and artifact emission. Normal
   search is `Cfg`-free and is not on the verifier runtime dependency path. The
-  optional `catalog-gen` feature enables `akita-config`, so table-emission
+  optional `catalog-gen` feature enables `akita-config`, so artifact-emission
   binaries may name concrete `CommitmentConfig` presets.
 - `akita-verifier` depends on `akita-config`, `akita-schedules`, and
   `akita-types`. It receives a validated trusted catalog and never reaches

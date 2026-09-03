@@ -14,14 +14,9 @@
 //! declared below.
 //!
 //! Legend:
-//!   ✓        — runs in default `cargo test`  (schedules-default feature, small nv)
-//!   cfg      — requires an extra feature flag to compile the schedule tables
+//!   ✓        — runs in default `cargo test` using checked-in external artifacts
 //!   ign      — skipped in default `cargo test` due to production-sized nv; needs `-- --ignored`
 //!   NA       — no production schedule exists for this combination; cell is intentionally absent
-//!
-//! cfg and ign are independent: a cell can be cfg-only (schedule tables must be opted in, but
-//! the test is fast once compiled), ign-only (default tables, but nv is too large for CI), or
-//! both (large tables AND large nv).
 //!
 //! Non-recursive `pre` cells use one 14-variable pre-group; recursive `pre`
 //! cells use the shared recursive profile's two 16-variable pre-groups. Every ✓
@@ -34,13 +29,13 @@
 //! ║ poly     ║ rec?     ╠═══════════════╦═══════════════╬═══════════════╦═══════════════╣
 //! ║          ║          ║    direct     ║      pre      ║    direct     ║      pre      ║
 //! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓cfg [16]     ║      NA       ║
+//! ║ Dense    ║ nonrec   ║ ✓ [14,16,     ║ ✓ final=16    ║ ✓ [16]        ║      NA       ║
 //! ║          ║          ║    24,26]     ║               ║               ║               ║
 //! ║ Dense    ║ rec      ║      NA       ║      NA       ║      NA       ║      NA       ║
 //! ╠══════════╬══════════╬═══════════════╬═══════════════╬═══════════════╬═══════════════╣
-//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║   cfg+ign     ║      NA       ║
+//! ║ OneHot   ║ nonrec   ║ ✓ [12,15,     ║ ✓ final=      ║      ign      ║      NA       ║
 //! ║          ║          ║    20,28]     ║   [16,20]     ║               ║               ║
-//! ║ OneHot   ║ rec      ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║   cfg+ign     ║
+//! ║ OneHot   ║ rec      ║      ign      ║      ign      ║      ign      ║      ign      ║
 //! ╚══════════╩══════════╩═══════════════╩═══════════════╩═══════════════╩═══════════════╝
 //! ```
 //!
@@ -48,16 +43,16 @@
 //! Dense mc pre: NA. The multi-chunk family ships only nv=16, and the DP finds
 //! no multi-group multi-chunk schedule below final_nv=20, so backing this cell
 //! would mean adding a production size purely for a test.
-//! OneHot mc nonrec direct: cfg=schedules-fp128-onehot-multi-chunk; nv=32 is production-sized (ign).
+//! OneHot mc nonrec direct: nv=32 is production-sized (ign).
 //!   `fp128_onehot_mc_catalog_resolves` is the cheap always-run companion that
 //!   checks the same catalog row without proving at nv=32.
 //! OneHot mc nonrec pre: NA. The catalog has no combined final=32, pre=14 row.
-//! OneHot sc rec:     cfg=schedules-fp128-onehot-recursive; nv=32 is production-sized (ign).
-//!   direct = RecursiveCommitmentConfig only, no user precommit (fp128_onehot_recursive.rs).
+//! OneHot sc rec: nv=32 is production-sized (ign).
+//!   direct = RecursiveCommitmentConfig only, no user precommit.
 //!   pre    = RecursiveCommitmentConfig + two 16-variable user precommits,
 //!            committed under the base config's scalar row.
-//! OneHot mc rec:     cfg=schedules-fp128-onehot-recursive-multi-chunk; nv=32 is production-sized (ign).
-//!   direct = RecursiveCommitmentConfig<OneHotMultiChunk> (fp128_onehot_recursive_multi_chunk_w8r2.rs).
+//! OneHot mc rec: nv=32 is production-sized (ign).
+//!   direct = RecursiveCommitmentConfig<OneHotMultiChunk>.
 //!   pre    = same + two 16-variable user precommits, committed under the
 //!            base config's scalar row.
 //!
@@ -72,21 +67,20 @@
 //! (`log_commit_bound = 1`); a bounded source is any value in between. Group E
 //! carries the mixed-bound cell:
 //!
-//! - `bounded_dense_precommit_with_onehot_final_group` — cfg=schedules-fp128-dense-bounded.
+//! - `bounded_dense_precommit_with_onehot_final_group`.
 //!   A `fp128::DenseBounded` precommit (bound 65 inside the 128-bit field) opened
 //!   jointly with a `fp128::OneHot` final group, so the two groups in one root
 //!   disagree on their committed-source bound.
 //! - `bounded_dense_roundtrip_over_u64_coefficients_at_every_catalog_size` —
-//!   cfg=same. The bounded family's own scalar rows [14, 24, 26] over the workload
+//!   The bounded family's own scalar rows [14, 24, 26] over the workload
 //!   the preset exists for: full-width `u64` coefficients on both signs.
-//! - `bounded_dense_declares_a_bound_that_contains_every_u64` — cfg=same. The
+//! - `bounded_dense_declares_a_bound_that_contains_every_u64`. The
 //!   bound is a *signed* bit width, so covering `u64::MAX` takes 65, not 64.
-//! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound` —
-//!   cfg=same. The producer-side guard enforces the *declared* interval, which is
+//! - `bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound`. The
+//!   producer-side guard enforces the *declared* interval, which is
 //!   strictly tighter than what the digits can represent.
 
 #![allow(missing_docs)]
-#![cfg(feature = "schedules-default")]
 
 mod common;
 #[path = "akita_fp128_e2e/heterogeneous.rs"]
@@ -213,7 +207,6 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 // ----------------------------------------------------------------------------
 // Dense × multi-chunk × direct × non-recursive    [16]  (feature-gated)
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-dense-multi-chunk")]
 #[test]
 fn fp128_dense_mc() {
     init_rayon_pool();
@@ -272,21 +265,18 @@ matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=
 // OneHot × single-chunk × direct × recursive    (production-sized, ignored)
 // RecursiveCommitmentConfig, no user precommit; uses fp128_onehot_recursive.rs schedule.
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-recursive")]
 matrix_test!(recursive_direct; fp128_onehot_rec; fp128::OneHot);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × precommitted × recursive    (production-sized, ignored)
 // RecursiveCommitmentConfig + user precommit; profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-recursive")]
 matrix_test!(recursive_pre; fp128_onehot_rec_pre; fp128::OneHot);
 
 // ----------------------------------------------------------------------------
 // OneHot × multi-chunk × direct × recursive    (production-sized, ignored)
 // RecursiveCommitmentConfig<OneHotMultiChunk>; uses fp128_onehot_recursive_multi_chunk_w8r2.rs.
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
 matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk);
 
 // ----------------------------------------------------------------------------
@@ -294,7 +284,6 @@ matrix_test!(recursive_direct; fp128_onehot_mc_rec; fp128::OneHotMultiChunk);
 // RecursiveCommitmentConfig<OneHotMultiChunk> + user precommit;
 // profiles from the base config's scalar row.
 // ----------------------------------------------------------------------------
-#[cfg(feature = "schedules-fp128-onehot-recursive-multi-chunk")]
 matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 
 // ----------------------------------------------------------------------------
@@ -304,7 +293,6 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 // Catalog-only companion of `fp128_onehot_mc`: the roundtrip below is
 // production-sized and stays ignored, so this cheap check is what CI runs to
 // keep the W8R2 feature graph wired to a real catalog row.
-#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
@@ -312,7 +300,6 @@ fn fp128_onehot_mc_catalog_resolves() {
         .expect("W8R2 multi-chunk catalog row");
 }
 
-#[cfg(feature = "schedules-fp128-onehot-multi-chunk")]
 #[test]
 #[ignore = "production-sized; run explicitly with --release"]
 fn fp128_onehot_mc() {
@@ -352,7 +339,7 @@ fn fp128_onehot_batched() {
             .map(|p| onehot_opening_lagrange(p, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(nv, batch_size)
             .unwrap();
@@ -360,7 +347,7 @@ fn fp128_onehot_batched() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
@@ -368,7 +355,7 @@ fn fp128_onehot_batched() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -380,7 +367,7 @@ fn fp128_onehot_batched() {
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -402,7 +389,7 @@ fn fp128_onehot_batched() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_batched");
-        AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,
@@ -437,7 +424,7 @@ fn fp128_dense_batched() {
             .map(|e| dense_opening_lagrange(e, &pt))
             .collect();
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(nv, batch_size)
             .unwrap();
@@ -445,7 +432,7 @@ fn fp128_dense_batched() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
@@ -453,7 +440,7 @@ fn fp128_dense_batched() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -465,7 +452,7 @@ fn fp128_dense_batched() {
         let poly_refs: Vec<_> = polys.iter().collect();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -487,7 +474,7 @@ fn fp128_dense_batched() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_batched");
-        AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,
@@ -547,7 +534,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             MultilinearPolynomial::onehot(onehot_b),
         ];
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(NV, BATCH)
             .unwrap();
@@ -555,7 +542,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let output = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let output = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -603,7 +590,7 @@ fn fp128_onehot_oversized_setup() {
         let pt = random_point(poly_nv, 0xcafe_0000 + poly_nv as u64);
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(setup_nv, 1)
             .unwrap();
@@ -611,7 +598,7 @@ fn fp128_onehot_oversized_setup() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
@@ -619,7 +606,7 @@ fn fp128_onehot_oversized_setup() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -632,7 +619,7 @@ fn fp128_onehot_oversized_setup() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -655,7 +642,7 @@ fn fp128_onehot_oversized_setup() {
         let openings = [expected_opening];
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_onehot_oversized_setup");
-        AkitaCommitmentScheme::<OneHotCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,
@@ -686,7 +673,7 @@ fn fp128_dense_monomial_basis() {
         let pt = random_point(NV, 0xc0de_0000);
         let expected_opening = dense_opening_monomial(&evals, &pt);
 
-        let setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_prover(NV, 1)
             .unwrap();
@@ -694,7 +681,7 @@ fn fp128_dense_monomial_basis() {
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .setup_verifier(&setup)
             .expect("verifier setup");
@@ -702,7 +689,7 @@ fn fp128_dense_monomial_basis() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        } = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .commit::<_, _>(
                 &setup,
@@ -715,7 +702,7 @@ fn fp128_dense_monomial_basis() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
-        let proof = AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        let proof = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_prove::<_, _, _>(
                 &setup,
@@ -738,7 +725,7 @@ fn fp128_dense_monomial_basis() {
         let openings = [expected_opening];
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/fp128_dense_monomial_basis");
-        AkitaCommitmentScheme::<DenseCfg>::from_embedded_schedule_catalog()
+        AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
             .expect("embedded schedule catalog")
             .batched_verify(
                 &decoded,
