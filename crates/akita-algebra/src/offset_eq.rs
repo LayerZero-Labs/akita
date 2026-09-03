@@ -5,7 +5,7 @@
 //! carries from arbitrary physical offsets. [`eq_eval_at_index`] is the scalar
 //! equality primitive shared by the kernel and direct callers.
 
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 
 use crate::Field;
 use jolt_field::solinas::parallel::*;
@@ -549,7 +549,7 @@ where
     } else {
         None
     };
-    let mut high_window = None;
+    let mut high_equality = AmortizedOffsetEq::new(high_challenges);
     let mut accumulate_group = |address_low: usize,
                                 addresses: &[AffineAddress<F>]|
      -> Result<(), AkitaError> {
@@ -615,12 +615,7 @@ where
             return Ok(());
         }
 
-        let high_window = if let Some(window) = &high_window {
-            window
-        } else {
-            high_window = Some(OffsetEqWindow::new(high_challenges)?);
-            high_window.as_ref().ok_or(AkitaError::InvalidProof)?
-        };
+        high_equality.prepare_for_product(addresses.len(), rows, summaries.len())?;
 
         for &AffineAddress {
             first: first_address,
@@ -647,7 +642,7 @@ where
                 high_weights
                     .with_weight(high_index, |high_factor| {
                         for (carry, summary) in summaries.iter().enumerate() {
-                            let eq_high = high_window.eval(
+                            let eq_high = high_equality.eval(
                                 address_high.checked_add(carry).ok_or_else(|| {
                                     AkitaError::InvalidInput("affine high address overflow".into())
                                 })?,
@@ -1178,6 +1173,42 @@ pub const OFFSET_EQ_LOW_BITS_CAP: usize = 16;
 /// `O(high_bits)` evaluation.
 pub const OFFSET_EQ_HIGH_BITS_CAP: usize = 16;
 
+struct AmortizedOffsetEq<'a, F: Field> {
+    challenges: &'a [F],
+    window: Option<OffsetEqWindow<F>>,
+}
+
+impl<'a, F: Field> AmortizedOffsetEq<'a, F> {
+    fn new(challenges: &'a [F]) -> Self {
+        Self {
+            challenges,
+            window: None,
+        }
+    }
+
+    fn prepare_for_product(
+        &mut self,
+        families: usize,
+        rows: usize,
+        carries: usize,
+    ) -> Result<(), AkitaError> {
+        if self.window.is_none() {
+            let evaluations = checked::product([families, rows, carries])
+                .ok_or_else(|| AkitaError::InvalidInput("affine high work overflow".into()))?;
+            self.window = OffsetEqWindow::new_if_amortized(self.challenges, evaluations)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn eval(&self, index: usize) -> F {
+        self.window.as_ref().map_or_else(
+            || eq_eval_at_index(self.challenges, index),
+            |window| window.eval(index),
+        )
+    }
+}
+
 /// Bounded checked equality-window evaluator.
 ///
 /// An `n`-coordinate equality point is split into a low block of at most
@@ -1202,6 +1233,45 @@ pub struct OffsetEqWindow<F: Field> {
 }
 
 impl<F: Field> OffsetEqWindow<F> {
+    fn split_low_bits(challenge_count: usize, low_bits_cap: usize) -> usize {
+        let low_cap = low_bits_cap.min(OFFSET_EQ_LOW_BITS_CAP);
+        if challenge_count <= low_cap + OFFSET_EQ_HIGH_BITS_CAP {
+            challenge_count
+                .div_ceil(2)
+                .max(challenge_count.saturating_sub(OFFSET_EQ_HIGH_BITS_CAP))
+                .min(low_cap)
+        } else {
+            challenge_count.min(low_cap)
+        }
+    }
+
+    /// Construct a window only when the requested evaluations match or exceed
+    /// the number of materialized table entries.
+    fn new_if_amortized(
+        challenges: &[F],
+        evaluation_count: usize,
+    ) -> Result<Option<Self>, AkitaError> {
+        if challenges.is_empty() {
+            return Ok(None);
+        }
+        let low_bits = Self::split_low_bits(challenges.len(), OFFSET_EQ_LOW_BITS_CAP);
+        let high_bits = challenges.len() - low_bits;
+        let low_len = checked::pow2(low_bits)
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
+        let high_len = if high_bits <= OFFSET_EQ_HIGH_BITS_CAP {
+            checked::pow2(high_bits)
+                .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?
+        } else {
+            0
+        };
+        let materialized_values = checked::sum([low_len, high_len])
+            .ok_or_else(|| AkitaError::InvalidInput("eq table dimension overflow".into()))?;
+        if evaluation_count < materialized_values {
+            return Ok(None);
+        }
+        Self::new(challenges).map(Some)
+    }
+
     /// Build a window over `challenges` using the default low-bit cap.
     ///
     /// # Errors
@@ -1219,17 +1289,7 @@ impl<F: Field> OffsetEqWindow<F> {
     ///
     /// Returns an error if the low equality table cannot be constructed.
     pub fn with_low_bits(challenges: &[F], low_bits_cap: usize) -> Result<Self, AkitaError> {
-        let low_cap = low_bits_cap.min(OFFSET_EQ_LOW_BITS_CAP);
-        let low_bits = if challenges.len() <= low_cap + OFFSET_EQ_HIGH_BITS_CAP {
-            let minimum_for_bounded_high = challenges.len().saturating_sub(OFFSET_EQ_HIGH_BITS_CAP);
-            challenges
-                .len()
-                .div_ceil(2)
-                .max(minimum_for_bounded_high)
-                .min(low_cap)
-        } else {
-            challenges.len().min(low_cap)
-        };
+        let low_bits = Self::split_low_bits(challenges.len(), low_bits_cap);
         let eq_low = crate::eq_poly::EqPolynomial::evals(&challenges[..low_bits])?;
         let low_mask = if low_bits == 0 {
             0
@@ -1392,3 +1452,28 @@ pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod amortization_tests {
+    use super::*;
+    use jolt_field::{Fp64, Ring};
+
+    type F = Fp64<4294967197>;
+
+    #[test]
+    fn materialization_requires_table_reuse() {
+        let challenges = vec![F::from_u64(3); 8];
+        assert!(OffsetEqWindow::new_if_amortized(&challenges, 31)
+            .unwrap()
+            .is_none());
+
+        let window = OffsetEqWindow::new_if_amortized(&challenges, 32)
+            .unwrap()
+            .unwrap();
+        assert_eq!(window.eq_low.len(), 16);
+        assert_eq!(window.eq_high.as_ref().unwrap().len(), 16);
+        assert!(OffsetEqWindow::<F>::new_if_amortized(&[], usize::MAX)
+            .unwrap()
+            .is_none());
+    }
+}
