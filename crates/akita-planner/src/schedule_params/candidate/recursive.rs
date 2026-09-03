@@ -514,6 +514,29 @@ fn best_linf_candidates_for(
         .collect())
 }
 
+fn all_linf_candidates_for(
+    context: &RecursiveCandidateContext<'_, '_>,
+    relation_domain: RelationSearchDomain,
+) -> Result<Vec<BestLinfCandidate>, AkitaError> {
+    let mut candidates = Vec::new();
+    context.walk_splits(
+        relation_domain,
+        |_, _| true,
+        |_, split, candidate, next_witness_len| {
+            if context
+                .successor_policy
+                .admits(context.search.current_witness_len, next_witness_len)
+                && !candidates
+                    .iter()
+                    .any(|(_, existing, next)| existing == &candidate && *next == next_witness_len)
+            {
+                candidates.push((split, candidate, next_witness_len));
+            }
+        },
+    )?;
+    Ok(candidates)
+}
+
 fn append_selective_l2_candidates(
     candidates: &mut Vec<(RecursiveRelationCandidate, usize)>,
     best_modeled: Option<&BestLinfCandidate>,
@@ -710,9 +733,17 @@ pub(crate) fn derive_terminal_candidates(
         source_moment: request.source_moment,
         successor_policy: SuccessorPolicy::AllowNonContracting,
     };
-    let best_modeled =
-        best_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?;
-    let mut candidates = best_modeled
+    let retain_setup_frontier = matches!(
+        request.policy.selection_policy,
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    );
+    let modeled = if retain_setup_frontier {
+        all_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?
+    } else {
+        best_linf_candidates_for(&modeled_context, RelationSearchDomain::QuotientOnly)?
+    };
+    let mut candidates = modeled
         .iter()
         .map(|(_, candidate, next)| (candidate.clone(), *next))
         .collect::<Vec<_>>();
@@ -721,16 +752,19 @@ pub(crate) fn derive_terminal_candidates(
             source_moment: None,
             ..modeled_context
         };
-        for (_, candidate, next) in
+        let universal = if retain_setup_frontier {
+            all_linf_candidates_for(&universal_context, RelationSearchDomain::QuotientOnly)?
+        } else {
             best_linf_candidates_for(&universal_context, RelationSearchDomain::QuotientOnly)?
-        {
+        };
+        for (_, candidate, next) in universal {
             let universal = (candidate, next);
             if !candidates.contains(&universal) {
                 candidates.push(universal);
             }
         }
     }
-    for best in &best_modeled {
+    for best in &modeled {
         append_selective_l2_candidates(
             &mut candidates,
             Some(best),

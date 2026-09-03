@@ -20,6 +20,20 @@ pub(crate) fn derive_recursive_candidate_views(
             "combined terminal/fold search requires EvaluationTrace".into(),
         ));
     }
+    if matches!(
+        request.policy.selection_policy,
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
+        return Ok(RecursiveCandidateViews {
+            terminal: derive_terminal_candidates(request)?,
+            folds: derive_fold_candidates(
+                request,
+                RecursiveFoldWork::direct(relation_domain),
+                fold_policy,
+            )?,
+        });
+    }
     let (retain_split_frontier, split_bounds) = match fold_policy {
         FoldCandidatePolicy::Best => (false, SplitBoundPolicy::Enabled),
         FoldCandidatePolicy::Frontier(bounds) => (true, bounds),

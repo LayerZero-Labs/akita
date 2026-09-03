@@ -577,7 +577,18 @@ pub(crate) fn prune_locally_unprofitable_slices(
     let mut best_setup = None;
     let mut retained = Vec::new();
     for params in candidates {
-        let setup_score = padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?);
+        let setup_score = match policy.selection_policy {
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
+                padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
+            }
+            crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+                level_setup_field_elements(&params)?
+            }
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+                padded_setup_prefix_len(level_setup_field_elements(&params)?)
+            }
+            crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => unreachable!(),
+        };
         match best_setup.map(|best| setup_score.cmp(&best)) {
             None | Some(std::cmp::Ordering::Less) => {
                 best_setup = Some(setup_score);

@@ -189,7 +189,12 @@ impl GuideScope {
         if is_complete_root {
             Some(Self::CompleteRoot)
         } else if incoming_setup_prefix.is_some()
-            && policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            && matches!(
+                policy.selection_policy,
+                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+                    | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            )
         {
             Some(Self::RecursivePrefix)
         } else {
@@ -387,7 +392,28 @@ fn complete_root_bound_is_strictly_worse(
             .values()
             .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
             .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => frontier
+            .by_parent_cost
+            .values()
+            .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+            .any(|candidate| lower_bound.is_strictly_worse_than(candidate.metrics())),
     }
+}
+
+fn complete_root_setup_bound_is_strictly_worse(
+    lower_bound: CompleteObjectiveBound,
+    frontier: &ProjectedFrontier,
+) -> bool {
+    frontier
+        .by_parent_cost
+        .values()
+        .flat_map(frontier::ProjectedObjectiveChoices::setup_candidates)
+        .any(|candidate| lower_bound.setup_envelope_is_strictly_worse_than(candidate.metrics()))
 }
 
 fn direct_edge_bound_is_strictly_worse(
@@ -427,10 +453,14 @@ fn candidate_traversal(
     let mut guided = candidates
         .into_iter()
         .map(|candidate| {
-            let natural_len = (policy.selection_policy
-                == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2)
-                .then(|| active_setup_field_len(&candidate.params, opening_layout))
-                .transpose()?;
+            let natural_len = (matches!(
+                policy.selection_policy,
+                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+                    | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            ))
+            .then(|| active_setup_field_len(&candidate.params, opening_layout))
+            .transpose()?;
             let lower_bound = direct_edge_lower_bound(
                 policy,
                 &candidate.params,

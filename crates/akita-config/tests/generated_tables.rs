@@ -222,11 +222,14 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
 
     for expected in [
         (1, 1),
+        (1, 2),
+        (2, 1),
         (2, 2),
+        (4, 1),
         (4, 2),
-        (8, 2),
-        (2, 8),
         (4, 8),
+        (8, 1),
+        (8, 2),
         (8, 4),
         (8, 8),
     ] {

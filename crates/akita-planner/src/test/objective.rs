@@ -41,6 +41,38 @@ fn setup_first(
     )
 }
 
+fn setup_envelope_first(
+    setup_field_elements: usize,
+    first_direct_setup_capacity: usize,
+    proof_bytes: usize,
+    descriptor: u8,
+) -> CompleteScheduleScore {
+    score(
+        CompleteObjectiveBound::SetupEnvelopeFirst {
+            setup_field_elements,
+            first_direct_setup_capacity,
+            proof_bytes,
+        },
+        descriptor,
+    )
+}
+
+fn padded_setup_envelope_first(
+    setup_field_elements: usize,
+    first_direct_setup_capacity: usize,
+    proof_bytes: usize,
+    descriptor: u8,
+) -> CompleteScheduleScore {
+    score(
+        CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
+            setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
+            first_direct_setup_capacity,
+            proof_bytes,
+        },
+        descriptor,
+    )
+}
+
 #[test]
 fn direct_score_prefers_setup_only_after_proof_ties() {
     let smaller_proof = direct(99, 1_000, 2);
@@ -62,6 +94,30 @@ fn setup_first_score_uses_total_setup_only_after_primary_coordinates() {
 
     let same_proof_smaller_total_setup = setup_first(16, 99, 999, 3);
     assert!(same_proof_smaller_total_setup < smaller_proof);
+}
+
+#[test]
+fn setup_envelope_first_score_uses_setup_before_direct_capacity_and_proof() {
+    let smaller_setup = setup_envelope_first(999, 32, 101, 2);
+    let smaller_direct_capacity = setup_envelope_first(1_000, 16, 99, 1);
+    assert!(smaller_setup < smaller_direct_capacity);
+
+    let same_setup_smaller_direct_capacity = setup_envelope_first(999, 16, 101, 3);
+    assert!(same_setup_smaller_direct_capacity < smaller_setup);
+
+    let same_setup_and_capacity_smaller_proof = setup_envelope_first(999, 16, 100, 4);
+    assert!(same_setup_and_capacity_smaller_proof < same_setup_smaller_direct_capacity);
+}
+
+#[test]
+fn padded_setup_envelope_tolerates_raw_setup_within_one_capacity() {
+    let smaller_direct_capacity = padded_setup_envelope_first(5_680_128, 2_097_152, 101, 2);
+    let smaller_raw_setup = padded_setup_envelope_first(8_388_608, 8_388_608, 99, 1);
+    assert_eq!(akita_types::padded_setup_prefix_len(5_680_128), 8_388_608);
+    assert!(smaller_direct_capacity < smaller_raw_setup);
+
+    let next_capacity = padded_setup_envelope_first(8_388_609, 1, 1, 1);
+    assert!(smaller_direct_capacity < next_capacity);
 }
 
 #[test]
@@ -139,6 +195,33 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         setup_field_elements: 0,
     }
     .is_strictly_worse_for_recursive_payload(incumbent));
+
+    let envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
+        CompleteObjectiveBound::SetupEnvelopeFirst {
+            setup_field_elements,
+            first_direct_setup_capacity,
+            proof_bytes,
+        }
+    };
+    assert!(envelope_bound(31, 1, 1).is_strictly_worse_than(incumbent));
+    assert!(!envelope_bound(29, usize::MAX, usize::MAX).is_strictly_worse_than(incumbent));
+    assert!(envelope_bound(30, 16, 21).is_strictly_worse_for_recursive_parent(incumbent));
+    assert!(!envelope_bound(29, 16, 21).is_strictly_worse_for_recursive_parent(incumbent));
+    assert!(envelope_bound(30, 1, 21).is_strictly_worse_for_recursive_payload(incumbent));
+    assert!(!envelope_bound(29, 1, 21).is_strictly_worse_for_recursive_payload(incumbent));
+
+    let padded_envelope_bound = |setup_field_elements, first_direct_setup_capacity, proof_bytes| {
+        CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
+            setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
+            first_direct_setup_capacity,
+            proof_bytes,
+        }
+    };
+    assert!(padded_envelope_bound(31, 32, 1).is_strictly_worse_than(incumbent));
+    assert!(!padded_envelope_bound(31, 8, usize::MAX).is_strictly_worse_than(incumbent));
+    assert!(padded_envelope_bound(33, 1, 1).is_strictly_worse_than(incumbent));
+    assert!(!padded_envelope_bound(31, 1, 1).setup_envelope_is_strictly_worse_than(incumbent));
+    assert!(padded_envelope_bound(33, 1, 1).setup_envelope_is_strictly_worse_than(incumbent));
 }
 
 fn complete_candidate(

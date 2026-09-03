@@ -11,6 +11,16 @@ enum OracleObjective {
         proof_bytes: usize,
         setup_field_elements: usize,
     },
+    SetupEnvelopeFirst {
+        setup_field_elements: usize,
+        first_direct_setup_capacity: usize,
+        proof_bytes: usize,
+    },
+    PaddedSetupEnvelopeFirst {
+        setup_envelope_capacity: usize,
+        first_direct_setup_capacity: usize,
+        proof_bytes: usize,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -71,6 +81,29 @@ pub(super) fn score(
             proof_bytes: candidate.cost.proof_bytes(),
             setup_field_elements: candidate.setup_field_elements,
         },
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+            OracleObjective::SetupEnvelopeFirst {
+                setup_field_elements: candidate.setup_field_elements,
+                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unpruned envelope-first candidate is missing direct setup size".into(),
+                    )
+                })?,
+                proof_bytes: candidate.cost.proof_bytes(),
+            }
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+            OracleObjective::PaddedSetupEnvelopeFirst {
+                setup_envelope_capacity: padded_setup_prefix_len(candidate.setup_field_elements),
+                first_direct_setup_capacity: first_direct_setup_capacity.ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "unpruned padded-envelope-first candidate is missing direct setup size"
+                            .into(),
+                    )
+                })?,
+                proof_bytes: candidate.cost.proof_bytes(),
+            }
+        }
     };
     Ok(OracleScore {
         objective,

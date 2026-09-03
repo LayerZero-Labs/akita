@@ -635,9 +635,12 @@ pub(crate) fn find_schedule_in_relation_order(
     } else {
         policy
     };
-    let setup_field_budget = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-    {
+    let setup_field_budget = if matches!(
+        active_policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
         active_policy.setup_field_budget
     } else {
         None
@@ -693,6 +696,12 @@ pub(crate) fn find_schedule_in_relation_order(
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
             select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
         }
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
+        }
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+            select_complete_candidate(active_policy, suffix.setup_candidates(), diagnostics)?
+        }
     };
 
     let Some(best) = best.cloned() else {
@@ -713,9 +722,12 @@ pub(crate) fn find_schedule_in_relation_order(
             key.final_group.num_vars()
         )));
     };
-    let first_direct_setup_field_len = if active_policy.selection_policy
-        == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-    {
+    let first_direct_setup_field_len = if matches!(
+        active_policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
         Some(
             best.first_direct_setup_field_len
                 .ok_or_else(|| {

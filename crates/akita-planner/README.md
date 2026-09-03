@@ -107,6 +107,9 @@ Conceptually, a candidate level answers three questions:
   the total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
+Adaptive direct planning minimizes the exact setup envelope first. Recursive
+setup planning compares that envelope at next-power-of-two setup-prefix
+capacity, then minimizes the first direct capacity within the winning bucket.
 
 ## Root Level Search
 
@@ -147,9 +150,11 @@ After that candidate is chosen, the suffix DP still performs the important globa
 The memoized suffix state tracks the level, current witness length, active
 basis choices, and parent-visible geometry. Uniform direct search keeps its
 proof-first frontier. Adaptive direct and recursive search share one projected
-frontier: a first-direct setup projection and a proof-payload projection. A
-candidate is pruned only when both projections make it irrelevant to every
-parent transition. Ordinary recursive folds construct the single canonical
+frontier: a setup-aware first-direct projection and a setup-aware proof-payload
+projection. A candidate is pruned only when both projections make it irrelevant
+to every parent transition. At a complete root, a level setup bound larger than
+the best complete envelope rejects both its direct and offloaded branches.
+Ordinary recursive folds construct the single canonical
 consistency/A/B/D relation and produce another recursive witness. The typed
 terminal fold constructs no relation matrix or quotient: it receives
 transcript-bound inner `t` from its predecessor and checks raw `e`, `t`, and

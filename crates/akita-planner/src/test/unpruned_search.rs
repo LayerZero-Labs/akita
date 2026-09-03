@@ -264,12 +264,16 @@ pub(super) fn find_schedule(
             "unpruned traversal found no complete schedule".into(),
         ));
     };
-    let cached_first_direct_setup_field_len =
-        if policy.selection_policy == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 {
-            selected.first_direct_setup_field_len.map(NonZeroUsize::get)
-        } else {
-            None
-        };
+    let cached_first_direct_setup_field_len = if matches!(
+        policy.selection_policy,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
+        selected.first_direct_setup_field_len.map(NonZeroUsize::get)
+    } else {
+        None
+    };
     let selected_descriptor = schedule_descriptor_bytes(&selected)?;
     let planned = materialize_candidate_schedule(
         selected.cost.proof_bytes(),

@@ -1250,7 +1250,8 @@ geometry. It does not enlarge the partial opening or quotient.
 The planner enumerates every admitted `(d_A, s)` pair at levels 0 and 1 under
 the incoming dimension ceiling. It preserves the selective L2 branch's current
 dimension policy and uniform suffix after level 1. This feature does not add A
-dimension search to later folds or the terminal.
+dimension search beyond level 1. A terminal reached inside that adaptive
+prefix may use an admitted adaptive dimension.
 
 B and D remain independent role dimensions and may stay below `d_A`. The
 planner does not raise them merely because a larger A ring has a lower rank.
@@ -1258,11 +1259,15 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct and recursive catalogs use the shared
-`MinFirstDirectSetupThenPayloadV2` objective. They minimize first-direct padded
-setup capacity, proof payload, total setup, root output-witness length, and the
-canonical descriptor in that order. No objective component for `s`, `d_A`,
-rank, fold count, or prover time is added.
+Adaptive direct catalogs use
+`MinSetupEnvelopeThenFirstDirectThenPayloadV3`: exact total setup field
+elements, first-direct padded setup capacity, proof payload, root
+output-witness length, and the canonical descriptor. Recursive catalogs use
+`MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4`, which replaces the first
+coordinate with the next-power-of-two capacity covering the total setup
+envelope. Exact setup differences within one recursive capacity bucket are
+tolerated before comparing first-direct capacity. No objective component for
+`s`, `d_A`, rank, fold count, or prover time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1295,40 +1300,38 @@ The checked revision report compares base
 [base snapshot](evidence/subring-coefficient-packing/base.tsv),
 [head snapshot](evidence/subring-coefficient-packing/head.tsv), and
 [complete comparison](evidence/subring-coefficient-packing/comparison.tsv)
-contain a 68-row base and a 71-row head across all 13 generated families. The
-logical-key union has four additions and one intentional removal. The additions
-are the three bounded-dense scalar rows and the grouped one-hot row with a
-bounded-dense precommit merged from PR 407. The removed row is the unsupported
-fp128 dense `final=44:1` catalog stress point. All 67 retained rows change exact
-schedule identity, as expected for this breaking protocol and planner-policy
-cutover.
+contain a 68-row base and an 83-row head across all 13 generated families. The
+logical-key union has 16 additions and one intentional removal. The additions
+are three bounded-dense rows, one grouped one-hot row with a bounded-dense
+precommit, four fp128 grouped nv34 rows, and eight fp32/fp64 scalar coverage
+rows. The removed row is the unsupported fp128 dense `final=44:1` catalog
+stress point. All 67 retained rows change exact schedule identity, as expected
+for this breaking protocol and planner-policy cutover.
 
-Across the 67 retained logical keys, setup improves on 32 rows, is equal on
-five, and regresses on 30. Its sum falls from 7,022,341,504 to 3,496,910,272
-field elements, a 50.20% reduction. Proof payload improves on 44 rows, is equal
-on 15, and regresses on eight. Its sum falls from 4,965,430 to 4,681,064 bytes,
-a 5.73% reduction. Fifteen rows use fewer fold levels, 42 retain their count,
-and ten use more levels.
+Across the 67 retained logical keys, setup improves on every row. Its sum falls
+from 7,022,341,504 to 3,474,665,600 field elements, a 50.52% reduction. Proof
+payload improves on 32 rows and regresses on 35. Its sum rises from 4,965,430
+to 44,962,951 bytes because setup-primary adaptive rows may select substantially
+larger proofs. Thirty-six rows use fewer fold levels, 27 retain their count,
+and four use more levels.
 
-The primary first-direct setup capacity improves on 65 retained rows, is equal
-on two, and regresses on none. Its sum falls from 10,278,666,240 to
-5,119,311,872 field elements, a 50.19% reduction. These baseline values were
+The first-direct setup capacity improves on 63 retained rows, is equal on four,
+and regresses on none. Its sum falls from 10,278,666,240 to 5,088,002,048 field
+elements, a 50.50% reduction. These baseline values were
 reconstructed at the pinned base commit from each exact materialized schedule;
-the comparator treats a missing primary coordinate as drift rather than a
-wildcard.
+the comparator treats a missing coordinate as drift rather than a wildcard.
 
-This closes the missing-row, primary-objective, and comparison-report evidence
-gaps. The retained catalog improves in aggregate under both reported resource
-coordinates. The eight proof regressions remain explicit per-row review data;
-aggregate improvement does not hide them.
+This closes the missing-row, objective, and comparison-report evidence gaps.
+The retained catalog improves in aggregate under both setup coordinates. The
+35 proof regressions remain explicit per-row review data; setup-primary
+selection does not imply proof nonregression.
 
-The fp32 dense nv20 rows now use the same
-`MinFirstDirectSetupThenPayloadV2` objective as recursive schedules. Their
-first-direct padded capacities are 131,072 and 262,144 fields. Their six-level
-schedules use 458,752 and 655,360 total setup fields and produce 64,896 and
-66,912 proof bytes. The checked decision and the rejected weighted-objective
-alternative are recorded in the
-[catalog evidence note](evidence/subring-coefficient-packing/README.md#resolved-fp32-nv20-planner-objective).
+At the checked head, the fp32 dense nv20 adaptive direct rows use
+`MinSetupEnvelopeThenFirstDirectThenPayloadV3`. Their first-direct padded
+capacities are 131,072 and 262,144 fields. Their three-level schedules use
+131,072 and 180,224 total setup fields and produce 160,592 and 197,783 proof
+bytes. The checked decision is recorded in the
+[catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
 
 ### B slicing interaction
 
@@ -1500,10 +1503,11 @@ The planner MUST keep the search bounded in the following ways.
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
-- [x] Adaptive direct and recursive catalogs use first direct setup capacity,
-      proof payload, total setup, root output-witness length, and the canonical
-      descriptor in that order. The objective has no explicit `s`, `d_A`, or
-      fold-count component.
+- [x] Adaptive direct catalogs minimize exact total setup before first-direct
+      setup capacity. Recursive catalogs compare total setup at power-of-two
+      capacity before first-direct setup capacity. Both then compare proof
+      payload, root output-witness length, and the canonical descriptor. The
+      objective has no explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
 - [x] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
@@ -1518,8 +1522,8 @@ The planner MUST keep the search bounded in the following ways.
       regression are explicit in the checked base-to-head report.
 - [x] Both checked snapshots contain the exact padded first-direct setup
       capacity, and the complete comparison reports it for every retained row.
-- [x] The checked head contains 71 rows across 13 families. The complete
-      comparison contains four additions, one removal, and 67 changed rows.
+- [x] The checked head contains 83 rows across 13 families. The complete
+      comparison contains 16 additions, one removal, and 67 changed rows.
 - [x] Subring packing setup prefix edges use Linf. Reports for later evaluation trace
       edges preserve PR 369's existing L2 admission result.
 

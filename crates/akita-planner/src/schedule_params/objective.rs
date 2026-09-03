@@ -26,6 +26,16 @@ pub(crate) enum CompleteObjectiveBound {
         proof_bytes: usize,
         setup_field_elements: usize,
     },
+    SetupEnvelopeFirst {
+        setup_field_elements: usize,
+        first_direct_setup_capacity: usize,
+        proof_bytes: usize,
+    },
+    PaddedSetupEnvelopeFirst {
+        setup_envelope_capacity: usize,
+        first_direct_setup_capacity: usize,
+        proof_bytes: usize,
+    },
 }
 
 impl CompleteObjectiveBound {
@@ -45,6 +55,22 @@ impl CompleteObjectiveBound {
                 proof_bytes,
                 setup_field_elements,
             },
+            SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+                Self::SetupEnvelopeFirst {
+                    setup_field_elements,
+                    first_direct_setup_capacity,
+                    proof_bytes,
+                }
+            }
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+                Self::PaddedSetupEnvelopeFirst {
+                    setup_envelope_capacity: akita_types::padded_setup_prefix_len(
+                        setup_field_elements,
+                    ),
+                    first_direct_setup_capacity,
+                    proof_bytes,
+                }
+            }
         }
     }
 
@@ -81,13 +107,43 @@ impl CompleteObjectiveBound {
                     incumbent.setup_field_elements,
                 )
             }
+            Self::SetupEnvelopeFirst {
+                setup_field_elements,
+                first_direct_setup_capacity,
+                proof_bytes,
+            } => {
+                (
+                    setup_field_elements,
+                    first_direct_setup_capacity,
+                    proof_bytes,
+                ) > (
+                    incumbent.setup_field_elements,
+                    incumbent.first_direct_setup_capacity.field_elements(),
+                    incumbent.proof_bytes(),
+                )
+            }
+            Self::PaddedSetupEnvelopeFirst {
+                setup_envelope_capacity,
+                first_direct_setup_capacity,
+                proof_bytes,
+            } => {
+                (
+                    setup_envelope_capacity,
+                    first_direct_setup_capacity,
+                    proof_bytes,
+                ) > (
+                    akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
+                    incumbent.first_direct_setup_capacity.field_elements(),
+                    incumbent.proof_bytes(),
+                )
+            }
         }
     }
 
-    /// Compare the coordinates that remain ordered after a parent can mask
-    /// the child's setup envelope. The total-setup coordinate is deliberately
-    /// excluded; if capacity and proof tie, the parent may make setup tie too,
-    /// leaving the root output-witness length and canonical descriptor decisive.
+    /// Compare a direct suffix against a retained recursive-parent projection.
+    /// A parent can mask a child's setup envelope, so envelope-first search
+    /// additionally requires the bound's setup to be no better before using
+    /// the later capacity and proof coordinates.
     pub(crate) fn is_strictly_worse_for_recursive_parent(
         self,
         incumbent: CandidateMetrics,
@@ -104,21 +160,81 @@ impl CompleteObjectiveBound {
                         incumbent.proof_bytes(),
                     )
             }
+            Self::SetupEnvelopeFirst {
+                setup_field_elements,
+                first_direct_setup_capacity,
+                proof_bytes,
+                ..
+            } => {
+                setup_field_elements >= incumbent.setup_field_elements
+                    && (first_direct_setup_capacity, proof_bytes)
+                        > (
+                            incumbent.first_direct_setup_capacity.field_elements(),
+                            incumbent.proof_bytes(),
+                        )
+            }
+            Self::PaddedSetupEnvelopeFirst {
+                setup_envelope_capacity,
+                first_direct_setup_capacity,
+                proof_bytes,
+            } => {
+                setup_envelope_capacity
+                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    && (first_direct_setup_capacity, proof_bytes)
+                        > (
+                            incumbent.first_direct_setup_capacity.field_elements(),
+                            incumbent.proof_bytes(),
+                        )
+            }
             Self::Direct { .. } => false,
         }
     }
 
-    /// Compare only the proof coordinate that an offloaded parent reads from
-    /// the child's payload projection. Strictness is required because equal
-    /// proof bounds can still be separated by parent-owned setup, the root
-    /// output-witness length, and the canonical descriptor.
+    /// Compare a direct suffix against a retained payload projection. Under
+    /// envelope-first search, setup must also be no better because the parent
+    /// may not mask the child's envelope. Strict proof loss is required because
+    /// ties can still be separated by root-owned coordinates and the descriptor.
     pub(crate) fn is_strictly_worse_for_recursive_payload(
         self,
         incumbent: CandidateMetrics,
     ) -> bool {
         match self {
             Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes(),
+            Self::SetupEnvelopeFirst {
+                setup_field_elements,
+                proof_bytes,
+                ..
+            } => {
+                setup_field_elements >= incumbent.setup_field_elements
+                    && proof_bytes > incumbent.proof_bytes()
+            }
+            Self::PaddedSetupEnvelopeFirst {
+                setup_envelope_capacity,
+                proof_bytes,
+                ..
+            } => {
+                setup_envelope_capacity
+                    >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+                    && proof_bytes > incumbent.proof_bytes()
+            }
             Self::Direct { .. } => false,
+        }
+    }
+
+    pub(crate) fn setup_envelope_is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
+        match self {
+            Self::SetupEnvelopeFirst {
+                setup_field_elements,
+                ..
+            } => setup_field_elements > incumbent.setup_field_elements,
+            Self::PaddedSetupEnvelopeFirst {
+                setup_envelope_capacity,
+                ..
+            } => {
+                setup_envelope_capacity
+                    > akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
+            }
+            Self::Direct { .. } | Self::SetupFirst { .. } => false,
         }
     }
 }
@@ -142,8 +258,12 @@ pub(crate) fn complete_schedule_score(
         diagnostics,
     )?;
     let metrics = candidate.metrics();
-    if policy.selection_policy == SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-        && candidate.first_direct_setup_field_len.is_none()
+    if matches!(
+        policy.selection_policy,
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+            | SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(
             "setup-first candidate is missing its first direct setup size".into(),

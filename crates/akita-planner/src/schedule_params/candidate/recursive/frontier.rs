@@ -25,6 +25,7 @@ pub(super) fn derive_fold_candidate_frontier(
             usize,
         ),
     >::new();
+    let mut all_modeled = Vec::<BestLinfCandidate>::new();
     let best_modeled_score = std::cell::Cell::new(None::<LayoutCandidateScore>);
     for (source_index, candidate_source_moment) in
         [request.source_moment, None].into_iter().enumerate()
@@ -63,6 +64,14 @@ pub(super) fn derive_fold_candidate_frontier(
                 let mode = candidate.relation_transition.mode();
                 if source_index == 0
                     && next_witness_len < request.current_witness_len
+                    && !all_modeled.iter().any(|(_, existing, next)| {
+                        existing == &candidate && *next == next_witness_len
+                    })
+                {
+                    all_modeled.push((r, candidate.clone(), next_witness_len));
+                }
+                if source_index == 0
+                    && next_witness_len < request.current_witness_len
                     && best_modeled_with_score.get(&mode).is_none_or(
                         |(best_score, best_r, _, _)| {
                             recursive_candidate_order_key(score, r)
@@ -92,7 +101,16 @@ pub(super) fn derive_fold_candidate_frontier(
         .map(|(_, r, candidate, next)| (r, candidate, next))
         .collect::<Vec<_>>();
     if !request.opening.is_coefficient_packing() {
-        for best in &best_modeled {
+        let l2_seeds = if matches!(
+            request.policy.selection_policy,
+            crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+                | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        ) {
+            &all_modeled
+        } else {
+            &best_modeled
+        };
+        for best in l2_seeds {
             append_selective_l2_candidates(
                 &mut candidates,
                 Some(best),

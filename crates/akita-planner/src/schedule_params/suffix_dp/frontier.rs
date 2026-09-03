@@ -152,18 +152,37 @@ struct PayloadScore {
     setup_field_elements: usize,
 }
 
-fn setup_score(metrics: super::super::CandidateMetrics) -> SetupScore {
-    SetupScore {
-        first_direct_setup_capacity: metrics.first_direct_setup_capacity,
-        cost: metrics.cost,
-        setup_field_elements: metrics.setup_field_elements,
+fn setup_envelope_score(
+    selection_policy: crate::SelectionPolicyId,
+    setup_field_elements: usize,
+) -> usize {
+    if selection_policy
+        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    {
+        akita_types::padded_setup_prefix_len(setup_field_elements)
+    } else {
+        setup_field_elements
     }
 }
 
-fn payload_score(metrics: super::super::CandidateMetrics) -> PayloadScore {
+fn setup_score(
+    selection_policy: crate::SelectionPolicyId,
+    metrics: super::super::CandidateMetrics,
+) -> SetupScore {
+    SetupScore {
+        first_direct_setup_capacity: metrics.first_direct_setup_capacity,
+        cost: metrics.cost,
+        setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
+    }
+}
+
+fn payload_score(
+    selection_policy: crate::SelectionPolicyId,
+    metrics: super::super::CandidateMetrics,
+) -> PayloadScore {
     PayloadScore {
         cost: metrics.cost,
-        setup_field_elements: metrics.setup_field_elements,
+        setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
     }
 }
 
@@ -386,14 +405,17 @@ impl ProjectedFrontier {
         };
         let choices = self.by_parent_cost.entry(parent_cost).or_default();
         for projection in retained_projections.iter() {
-            let dominates = match projection {
-                Projection::FirstDirectSetup => setup_dominates,
-                Projection::Payload => payload_dominates,
-            };
             insert_projected(
                 choices.projected_mut(projection),
                 projected.clone(),
-                dominates,
+                |left, right| match projection {
+                    Projection::FirstDirectSetup => {
+                        setup_dominates_for_policy(policy.selection_policy, left, right)
+                    }
+                    Projection::Payload => {
+                        payload_dominates_for_policy(policy.selection_policy, left, right)
+                    }
+                },
             );
         }
         Ok(())
@@ -410,25 +432,30 @@ impl ProjectedFrontier {
         let choices = self.by_parent_cost.get(parent_cost);
         let keep = |projection| match projection {
             Projection::FirstDirectSetup => {
-                policy.selection_policy
-                    == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    && !choices.is_some_and(|choices| {
-                        choices.projected(projection).iter().any(|existing| {
-                            setup_primary_strictly_dominates(
-                                setup_score(existing.schedule.metrics()),
-                                existing.admission,
-                                setup_score(metrics),
-                                admission,
-                            )
-                        })
+                matches!(
+                policy.selection_policy,
+                crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+                    | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            ) && !choices.is_some_and(|choices| {
+                    choices.projected(projection).iter().any(|existing| {
+                        setup_primary_strictly_dominates(
+                            policy.selection_policy,
+                            setup_score(policy.selection_policy, existing.schedule.metrics()),
+                            existing.admission,
+                            setup_score(policy.selection_policy, metrics),
+                            admission,
+                        )
                     })
+                })
             }
             Projection::Payload => !choices.is_some_and(|choices| {
                 choices.projected(projection).iter().any(|existing| {
                     payload_primary_strictly_dominates(
-                        payload_score(existing.schedule.metrics()),
+                        policy.selection_policy,
+                        payload_score(policy.selection_policy, existing.schedule.metrics()),
                         existing.admission,
-                        payload_score(metrics),
+                        payload_score(policy.selection_policy, metrics),
                         admission,
                     )
                 })
@@ -482,18 +509,20 @@ impl ProjectedFrontier {
                     .iter()
                     .any(|existing| match projection {
                         Projection::FirstDirectSetup => setup_projection_dominates(
-                            projected_setup_order(existing),
+                            policy.selection_policy,
+                            projected_setup_order(policy.selection_policy, existing),
                             ProjectionOrder {
-                                score: setup_score(metrics),
+                                score: setup_score(policy.selection_policy, metrics),
                                 descriptor: descriptor.as_ref(),
                                 context: &descriptor_context,
                                 admission,
                             },
                         ),
                         Projection::Payload => payload_projection_dominates(
-                            projected_payload_order(existing),
+                            policy.selection_policy,
+                            projected_payload_order(policy.selection_policy, existing),
                             ProjectionOrder {
-                                score: payload_score(metrics),
+                                score: payload_score(policy.selection_policy, metrics),
                                 descriptor: descriptor.as_ref(),
                                 context: &descriptor_context,
                                 admission,
@@ -520,12 +549,14 @@ impl ProjectedFrontier {
             let frontier = choices.projected_mut(projection);
             frontier.retain(|existing| match projection {
                 Projection::FirstDirectSetup => !setup_projection_dominates(
-                    projected_setup_order(&projected),
-                    projected_setup_order(existing),
+                    policy.selection_policy,
+                    projected_setup_order(policy.selection_policy, &projected),
+                    projected_setup_order(policy.selection_policy, existing),
                 ),
                 Projection::Payload => !payload_projection_dominates(
-                    projected_payload_order(&projected),
-                    projected_payload_order(existing),
+                    policy.selection_policy,
+                    projected_payload_order(policy.selection_policy, &projected),
+                    projected_payload_order(policy.selection_policy, existing),
                 ),
             });
             frontier.push(projected.clone());
@@ -569,13 +600,24 @@ fn projection_bound_is_dominated(
     })
 }
 
-fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
-    setup_projection_dominates(projected_setup_order(left), projected_setup_order(right))
+fn setup_dominates_for_policy(
+    selection_policy: crate::SelectionPolicyId,
+    left: &ProjectedCandidate,
+    right: &ProjectedCandidate,
+) -> bool {
+    setup_projection_dominates(
+        selection_policy,
+        projected_setup_order(selection_policy, left),
+        projected_setup_order(selection_policy, right),
+    )
 }
 
-fn projected_setup_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, SetupScore> {
+fn projected_setup_order(
+    selection_policy: crate::SelectionPolicyId,
+    candidate: &ProjectedCandidate,
+) -> ProjectionOrder<'_, SetupScore> {
     ProjectionOrder {
-        score: setup_score(candidate.schedule.metrics()),
+        score: setup_score(selection_policy, candidate.schedule.metrics()),
         descriptor: candidate.descriptor.as_ref(),
         context: &candidate.descriptor_context,
         admission: candidate.admission,
@@ -583,17 +625,33 @@ fn projected_setup_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, 
 }
 
 fn setup_primary_strictly_dominates(
+    selection_policy: crate::SelectionPolicyId,
     left_score: SetupScore,
     left_admission: ParentAdmissionClass,
     right_score: SetupScore,
     right_admission: ParentAdmissionClass,
 ) -> bool {
-    left_admission.admits_every_parent_of(right_admission)
-        && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
-            || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
-                && left_score
-                    .cost
-                    .strictly_better_for_every_parent(right_score.cost)))
+    if !left_admission.admits_every_parent_of(right_admission) {
+        return false;
+    }
+    if matches!(
+        selection_policy,
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
+        return left_score.setup_field_elements <= right_score.setup_field_elements
+            && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
+                || (left_score.first_direct_setup_capacity
+                    == right_score.first_direct_setup_capacity
+                    && left_score
+                        .cost
+                        .strictly_better_for_every_parent(right_score.cost)));
+    }
+    left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
+        || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
+            && left_score
+                .cost
+                .strictly_better_for_every_parent(right_score.cost))
 }
 
 #[derive(Clone, Copy)]
@@ -605,35 +663,62 @@ struct ProjectionOrder<'a, Score> {
 }
 
 fn setup_projection_dominates(
+    selection_policy: crate::SelectionPolicyId,
     left: ProjectionOrder<'_, SetupScore>,
     right: ProjectionOrder<'_, SetupScore>,
 ) -> bool {
-    left.admission.admits_every_parent_of(right.admission)
-        && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
-            || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
-                && (left
-                    .score
-                    .cost
-                    .strictly_better_for_every_parent(right.score.cost)
-                    || (left
+    if !left.admission.admits_every_parent_of(right.admission) {
+        return false;
+    }
+    let equal_later_coordinates_are_canonical = left
+        .score
+        .cost
+        .never_worse_for_every_parent(right.score.cost)
+        && left.context == right.context
+        && left.descriptor <= right.descriptor;
+    if matches!(
+        selection_policy,
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) {
+        return left.score.setup_field_elements <= right.score.setup_field_elements
+            && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
+                || (left.score.first_direct_setup_capacity
+                    == right.score.first_direct_setup_capacity
+                    && (left
                         .score
                         .cost
-                        .never_worse_for_every_parent(right.score.cost)
-                        && left.score.setup_field_elements <= right.score.setup_field_elements
-                        && left.context == right.context
-                        && left.descriptor <= right.descriptor))))
+                        .strictly_better_for_every_parent(right.score.cost)
+                        || equal_later_coordinates_are_canonical)));
+    }
+    left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
+        || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
+            && (left
+                .score
+                .cost
+                .strictly_better_for_every_parent(right.score.cost)
+                || (equal_later_coordinates_are_canonical
+                    && left.score.setup_field_elements <= right.score.setup_field_elements)))
 }
 
-fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
+fn payload_dominates_for_policy(
+    selection_policy: crate::SelectionPolicyId,
+    left: &ProjectedCandidate,
+    right: &ProjectedCandidate,
+) -> bool {
     payload_projection_dominates(
-        projected_payload_order(left),
-        projected_payload_order(right),
+        selection_policy,
+        projected_payload_order(selection_policy, left),
+        projected_payload_order(selection_policy, right),
     )
 }
 
-fn projected_payload_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, PayloadScore> {
+fn projected_payload_order(
+    selection_policy: crate::SelectionPolicyId,
+    candidate: &ProjectedCandidate,
+) -> ProjectionOrder<'_, PayloadScore> {
     ProjectionOrder {
-        score: payload_score(candidate.schedule.metrics()),
+        score: payload_score(selection_policy, candidate.schedule.metrics()),
         descriptor: candidate.descriptor.as_ref(),
         context: &candidate.descriptor_context,
         admission: candidate.admission,
@@ -641,6 +726,7 @@ fn projected_payload_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_
 }
 
 fn payload_primary_strictly_dominates(
+    selection_policy: crate::SelectionPolicyId,
     left_score: PayloadScore,
     left_admission: ParentAdmissionClass,
     right_score: PayloadScore,
@@ -650,13 +736,24 @@ fn payload_primary_strictly_dominates(
         && left_score
             .cost
             .strictly_better_for_every_parent(right_score.cost)
+        && (selection_policy
+            != crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            && selection_policy
+                != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            || left_score.setup_field_elements <= right_score.setup_field_elements)
 }
 
 fn payload_projection_dominates(
+    selection_policy: crate::SelectionPolicyId,
     left: ProjectionOrder<'_, PayloadScore>,
     right: ProjectionOrder<'_, PayloadScore>,
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
+        && (selection_policy
+            != crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            && selection_policy
+                != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            || left.score.setup_field_elements <= right.score.setup_field_elements)
         && (left
             .score
             .cost
@@ -673,7 +770,7 @@ fn payload_projection_dominates(
 fn insert_projected(
     frontier: &mut Vec<ProjectedCandidate>,
     candidate: ProjectedCandidate,
-    dominates: fn(&ProjectedCandidate, &ProjectedCandidate) -> bool,
+    dominates: impl Fn(&ProjectedCandidate, &ProjectedCandidate) -> bool,
 ) {
     if frontier
         .iter()
@@ -698,6 +795,11 @@ mod tests {
     use crate::schedule_params::{
         CandidateMetrics, CompleteObjectiveBound, PackedProofCost, SetupPrefixCapacity,
     };
+
+    const SETUP_FIRST: crate::SelectionPolicyId =
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
+    const ENVELOPE_FIRST: crate::SelectionPolicyId =
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3;
 
     fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
         DescriptorOrderContext {
@@ -756,15 +858,18 @@ mod tests {
         let smaller_setup = setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 64);
         let smaller_descriptor = setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 128);
         assert!(!setup_projection_dominates(
+            SETUP_FIRST,
             order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
             order(smaller_descriptor, &[1], &context(2, 7), admission(2, 8),),
         ));
         assert!(!setup_projection_dominates(
+            SETUP_FIRST,
             order(smaller_descriptor, &[1], &context(2, 7), admission(2, 8),),
             order(smaller_setup, &[2], &context(2, 7), admission(2, 8)),
         ));
 
         assert!(setup_projection_dominates(
+            SETUP_FIRST,
             order(
                 setup_score(SetupPrefixCapacity::for_natural_len(4), 100, 0, 256),
                 &[9],
@@ -774,6 +879,7 @@ mod tests {
             order(smaller_setup, &[2], &context(3, 7), admission(2, 8)),
         ));
         assert!(setup_projection_dominates(
+            SETUP_FIRST,
             order(
                 setup_score(SetupPrefixCapacity::for_natural_len(8), 99, 0, 256),
                 &[9],
@@ -787,6 +893,7 @@ mod tests {
     #[test]
     fn payload_projection_keeps_setup_descriptor_tradeoffs_that_a_parent_can_mask() {
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(100, 0, 64),
                 &[2],
@@ -801,6 +908,7 @@ mod tests {
             ),
         ));
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(100, 0, 128),
                 &[1],
@@ -815,6 +923,7 @@ mod tests {
             ),
         ));
         assert!(payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(99, 0, 256),
                 &[9],
@@ -829,6 +938,7 @@ mod tests {
             ),
         ));
         assert!(payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(100, 0, 64),
                 &[1],
@@ -845,14 +955,67 @@ mod tests {
     }
 
     #[test]
+    fn envelope_first_projection_preserves_maskable_setup_tradeoffs() {
+        let context = context(2, 7);
+        let compatible = admission(2, 8);
+
+        assert!(!payload_projection_dominates(
+            ENVELOPE_FIRST,
+            order(payload_score(99, 0, 128), &[1], &context, compatible),
+            order(payload_score(100, 0, 64), &[2], &context, compatible),
+        ));
+        assert!(payload_projection_dominates(
+            ENVELOPE_FIRST,
+            order(payload_score(99, 0, 64), &[2], &context, compatible),
+            order(payload_score(100, 0, 128), &[1], &context, compatible),
+        ));
+
+        assert!(!setup_projection_dominates(
+            ENVELOPE_FIRST,
+            order(
+                setup_score(SetupPrefixCapacity::for_natural_len(16), 99, 0, 64),
+                &[1],
+                &context,
+                admission(2, 16),
+            ),
+            order(
+                setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 128),
+                &[2],
+                &context,
+                compatible,
+            ),
+        ));
+        assert!(setup_projection_dominates(
+            ENVELOPE_FIRST,
+            order(
+                setup_score(SetupPrefixCapacity::for_natural_len(4), 101, 0, 64),
+                &[2],
+                &context,
+                admission(2, 4),
+            ),
+            order(
+                setup_score(SetupPrefixCapacity::for_natural_len(8), 100, 0, 128),
+                &[1],
+                &context,
+                compatible,
+            ),
+        ));
+    }
+
+    #[test]
     fn payload_projection_prices_every_nonce_alignment() {
         let admission = admission(2, 8);
         let context = context(2, 7);
         let smaller_payload = order(payload_score(100, 8, 64), &[1], &context, admission);
         let smaller_nonce = order(payload_score(101, 0, 64), &[2], &context, admission);
 
-        assert!(payload_projection_dominates(smaller_payload, smaller_nonce));
+        assert!(payload_projection_dominates(
+            SETUP_FIRST,
+            smaller_payload,
+            smaller_nonce
+        ));
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             smaller_nonce,
             smaller_payload,
         ));
@@ -864,6 +1027,7 @@ mod tests {
         let two_fold = admission(2, 8);
 
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(99, 0, 32),
                 &[1],
@@ -873,6 +1037,7 @@ mod tests {
             order(score, &[2], &context(2, 7), two_fold),
         ));
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(
                 payload_score(99, 0, 32),
                 &[1],
@@ -882,10 +1047,12 @@ mod tests {
             order(score, &[2], &context(2, 7), two_fold),
         ));
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(score, &[1], &context(2, 8), two_fold),
             order(score, &[2], &context(2, 7), two_fold),
         ));
         assert!(!payload_projection_dominates(
+            SETUP_FIRST,
             order(score, &[1], &context(3, 7), two_fold),
             order(score, &[2], &context(2, 7), two_fold),
         ));
@@ -902,30 +1069,35 @@ mod tests {
         let capacity = SetupPrefixCapacity::for_natural_len(8);
         let compatible = admission(2, 8);
         assert!(setup_primary_strictly_dominates(
+            SETUP_FIRST,
             setup_score(capacity, 99, 0, 256),
             compatible,
             setup_score(capacity, 100, 0, 64),
             compatible,
         ));
         assert!(!setup_primary_strictly_dominates(
+            SETUP_FIRST,
             setup_score(capacity, 100, 0, 64),
             compatible,
             setup_score(capacity, 100, 0, 128),
             compatible,
         ));
         assert!(payload_primary_strictly_dominates(
+            SETUP_FIRST,
             payload_score(99, 0, 256),
             compatible,
             payload_score(100, 0, 64),
             compatible,
         ));
         assert!(!payload_primary_strictly_dominates(
+            SETUP_FIRST,
             payload_score(100, 0, 64),
             compatible,
             payload_score(100, 0, 128),
             compatible,
         ));
         assert!(!payload_primary_strictly_dominates(
+            SETUP_FIRST,
             payload_score(99, 0, 32),
             admission(1, 8),
             payload_score(100, 0, 64),

@@ -127,9 +127,9 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     )
     .unwrap();
     let selected_score = (
+        selected.estimate.estimated_num_setup_field_elements,
         estimated_first_direct_setup_capacity(&selected),
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        selected.estimate.estimated_num_setup_field_elements,
     );
 
     let uniform = RingDimensionSearchDomain::uniform(dimensions[0].d_a()).unwrap();
@@ -157,9 +157,9 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     assert!(
         selected_score
             <= (
+                candidate.estimate.estimated_num_setup_field_elements,
                 materialized_first_direct_setup_capacity(&candidate, key),
                 candidate.estimate.estimated_proof_payload_bytes().unwrap(),
-                candidate.estimate.estimated_num_setup_field_elements,
             )
     );
 
@@ -179,11 +179,13 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
         }
         previous = current;
     }
-    assert_eq!(
-        schedule.terminal.d_a(),
-        ADAPTIVE_SUFFIX_RING_DIMENSION,
-        "the shipped adaptive schedule must terminate in the audited suffix dimension"
-    );
+    if schedule.recursive_folds.len() + 1 >= akita_schedules::ADAPTIVE_SEARCH_LEVELS {
+        assert_eq!(
+            schedule.terminal.d_a(),
+            ADAPTIVE_SUFFIX_RING_DIMENSION,
+            "a terminal beyond the adaptive prefix must use the audited suffix dimension"
+        );
+    }
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -681,7 +683,7 @@ fn adaptive_search_rejects_an_advertised_unsupported_role_dimension() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
+fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 
     let base_policy = policy_of::<OneHot>();
@@ -752,21 +754,21 @@ fn adaptive_nv36_minimizes_first_direct_setup_before_proof_bytes() {
         }
     }
     let selected_score = (
+        selected.estimate.estimated_num_setup_field_elements,
         estimated_first_direct_setup_capacity(&selected),
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        selected.estimate.estimated_num_setup_field_elements,
     );
     let rank_one_capped_score = (
+        rank_one_capped.estimate.estimated_num_setup_field_elements,
         estimated_first_direct_setup_capacity(&rank_one_capped),
         rank_one_capped
             .estimate
             .estimated_proof_payload_bytes()
             .unwrap(),
-        rank_one_capped.estimate.estimated_num_setup_field_elements,
     );
     assert!(
         selected_score <= rank_one_capped_score,
-        "the expanded domain must not lose on the first-direct setup objective"
+        "the expanded domain must not lose on the setup-envelope-first objective"
     );
 }
 
@@ -938,8 +940,7 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
     .unwrap();
     let exact_fields =
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
-    let setup_field_budget = exact_fields - 1;
-    policy.setup_field_budget = Some(setup_field_budget);
+    policy.setup_field_budget = Some(exact_fields);
 
     let budgeted = find_schedule(
         onehot_group(16, 1),
@@ -948,9 +949,18 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
         &domain,
         OneHot::ring_challenge_config,
     )
-    .expect("the setup budget should select the smaller physical setup");
+    .expect("the exact setup budget should retain the setup-minimal schedule");
     let budgeted_fields =
         akita_types::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
-    assert!(budgeted_fields <= setup_field_budget);
-    assert!(budgeted_fields < exact_fields);
+    assert_eq!(budgeted_fields, exact_fields);
+
+    policy.setup_field_budget = Some(exact_fields - 1);
+    assert!(find_schedule(
+        onehot_group(16, 1),
+        &policy,
+        akita_config::honest_fold_policy_of::<OneHot>(),
+        &domain,
+        OneHot::ring_challenge_config,
+    )
+    .is_err());
 }

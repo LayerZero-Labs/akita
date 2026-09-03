@@ -131,6 +131,20 @@ fn price_planned_fold_candidate(
                 akita_types::padded_setup_prefix_len(natural_len)
                     < akita_types::padded_setup_prefix_len(incoming_len)
             });
+    if matches!(
+        ctx.policy.selection_policy,
+        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+    ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
+        && guide.is_some_and(|(lower_bound, _)| {
+            complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)
+        })
+    {
+        if let Some(diagnostics) = ctx.diagnostics {
+            diagnostics.record_guided_direct_edge_prune();
+        }
+        return Ok(());
+    }
     let prune_direct_edge = if direct_edge_is_admissible {
         guide
             .zip(search.guide_scope)

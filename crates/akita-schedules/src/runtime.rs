@@ -69,6 +69,12 @@ pub enum SelectionPolicyId {
     /// Pick first direct setup, proof bytes, total setup, root output witness,
     /// then descriptor.
     MinFirstDirectSetupThenPayloadV2,
+    /// Pick total setup, first direct setup, proof bytes, root output witness,
+    /// then descriptor.
+    MinSetupEnvelopeThenFirstDirectThenPayloadV3,
+    /// Pick power-of-two setup-envelope capacity, first direct setup, proof
+    /// bytes, root output witness, then descriptor.
+    MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4,
 }
 
 impl SelectionPolicyId {
@@ -77,13 +83,13 @@ impl SelectionPolicyId {
         recursive_setup_planning: bool,
         ring_dimension_schedule_mode: RingDimensionScheduleMode,
     ) -> Self {
-        if recursive_setup_planning
-            || matches!(
-                ring_dimension_schedule_mode,
-                RingDimensionScheduleMode::AdaptiveDimension { .. }
-            )
-        {
-            Self::MinFirstDirectSetupThenPayloadV2
+        if recursive_setup_planning {
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        } else if matches!(
+            ring_dimension_schedule_mode,
+            RingDimensionScheduleMode::AdaptiveDimension { .. }
+        ) {
+            Self::MinSetupEnvelopeThenFirstDirectThenPayloadV3
         } else {
             Self::MinEstimatedProofPayloadV2
         }
@@ -94,6 +100,8 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayloadV2 => 4,
             Self::MinFirstDirectSetupThenPayloadV2 => 5,
+            Self::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => 6,
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => 7,
             // Tags 1 and 2 belong to the descriptor-only predecessors. Tag 3
             // belonged to the retired setup-envelope-first policy. Never reuse
             // an objective tag: generated catalog admission depends on it.
@@ -105,6 +113,12 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayloadV2 => "MinEstimatedProofPayloadV2",
             Self::MinFirstDirectSetupThenPayloadV2 => "MinFirstDirectSetupThenPayloadV2",
+            Self::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
+                "MinSetupEnvelopeThenFirstDirectThenPayloadV3"
+            }
+            Self::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+                "MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4"
+            }
         }
     }
 }
@@ -779,7 +793,9 @@ pub fn materialize_candidate_schedule(
     }
     let first_direct_setup_field_len = match policy.selection_policy {
         SelectionPolicyId::MinEstimatedProofPayloadV2 => None,
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => Some(
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
+        | SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+        | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => Some(
             first_direct_setup_field_len_for_schedule(&schedule, root_layout)?,
         ),
     };
@@ -918,7 +934,7 @@ mod tests {
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: SelectiveL2ResponseModelId::TypedProtocolMomentsV1,
-            selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayloadV2,
+            selection_policy: SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             setup_field_budget: None,
@@ -956,6 +972,19 @@ mod tests {
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(0));
         assert!(RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(1));
         assert!(!RecursiveSetupSearchPolicy::RootAndFirstChildV1.admits_offloaded_edge_at(2));
+    }
+
+    #[test]
+    fn recursive_and_adaptive_direct_policies_use_distinct_setup_objectives() {
+        let adaptive = adaptive_policy().ring_dimension_schedule_mode;
+        assert_eq!(
+            SelectionPolicyId::for_policy(false, adaptive),
+            SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
+        );
+        assert_eq!(
+            SelectionPolicyId::for_policy(true, adaptive),
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        );
     }
 
     #[test]
