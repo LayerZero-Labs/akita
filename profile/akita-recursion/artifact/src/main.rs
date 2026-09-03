@@ -644,7 +644,10 @@ fn run() -> Result<(), String> {
     );
 
     let pre_group = PolynomialGroupLayout::new(PRE_NUM_VARS, 1);
-    let pre_descriptor = BaseCfg::profile_without_precommitted_groups(pre_group)
+    let pre_descriptor = base_scheme
+        .schedules()
+        .resolve_key(&AkitaScheduleLookupKey::single(pre_group))
+        .map(|row| row.profiles().final_group)
         .map_err(|err| format!("precommit profile: {err}"))?;
     let final_group = PolynomialGroupLayout::new(nv, FINAL_POLYS);
     let key = AkitaScheduleLookupKey {
