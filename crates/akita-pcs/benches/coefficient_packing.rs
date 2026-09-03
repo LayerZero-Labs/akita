@@ -121,7 +121,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     density_percent: usize,
 ) where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     const ONEHOT_K: usize = 256;
     let source_len = num_positions * D;

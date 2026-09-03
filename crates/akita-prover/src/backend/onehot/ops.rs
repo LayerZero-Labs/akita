@@ -323,7 +323,7 @@ pub(in crate::backend) fn onehot_coefficient_packing_partials<F, E, const D: usi
 ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
     W: PackingWeightAccessor<E>,
 {
@@ -469,7 +469,7 @@ impl<F, E, const D: usize, I>
     SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
     F: Field + CanonicalEncoding,
-    E: ExtField<F> + akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
 {
     fn coefficient_packing_partials_batch(
