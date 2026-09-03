@@ -1,4 +1,5 @@
 mod group;
+mod reduced;
 
 use super::*;
 use akita_algebra::cfg_try_fold_reduce;
@@ -62,84 +63,6 @@ impl<E: Field> SetupContributionPlan<E> {
                     DirectScanKernel::ReducedEvaluation { weights },
                 )
             }
-        )
-    }
-
-    fn evaluate_groups_reduced<F, const BASE_D: usize>(
-        &self,
-        setup_view: &RingMatrixView<'_, F, BASE_D>,
-        weights: &[ReducedDirectScanWeights<E>],
-    ) -> Result<E, AkitaError>
-    where
-        F: Field,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        let required = self.projection_geometry.required();
-        if self.d_weights.len() != self.d_rows {
-            return Err(AkitaError::InvalidSetup(
-                "cached setup scan geometry is malformed".into(),
-            ));
-        }
-        let setup_flat = setup_view.as_slice();
-        let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
-        let num_jobs = required.div_ceil(job_rings);
-        cfg_try_fold_reduce!(
-            0..num_jobs,
-            E::zero,
-            |acc, job| {
-                let lo = job.checked_mul(job_rings).ok_or(AkitaError::InvalidProof)?;
-                let hi = lo
-                    .checked_add(job_rings)
-                    .ok_or(AkitaError::InvalidProof)?
-                    .min(required);
-                let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
-                let mut segment_cursors = self
-                    .groups
-                    .iter()
-                    .map(|group| group.segments.partition_point(|segment| segment.hi <= lo))
-                    .collect::<Vec<_>>();
-                let mut term = E::zero();
-                for (offset, ring) in setup.iter().enumerate() {
-                    let base_idx = lo.checked_add(offset).ok_or(AkitaError::InvalidProof)?;
-                    let mut coefficient_weights = [E::zero(); BASE_D];
-                    let mut active = false;
-                    for ((group, direct), cursor) in
-                        self.groups.iter().zip(weights).zip(&mut segment_cursors)
-                    {
-                        while group
-                            .segments
-                            .get(*cursor)
-                            .is_some_and(|segment| segment.hi <= base_idx)
-                        {
-                            *cursor += 1;
-                        }
-                        let Some(segment) = group.segments.get(*cursor) else {
-                            continue;
-                        };
-                        if base_idx < segment.lo || base_idx >= segment.hi {
-                            continue;
-                        }
-                        add_reduced_base_ring_weights(
-                            base_idx,
-                            segment,
-                            &ReducedScanGroupWeights {
-                                e: &direct.weights.e,
-                                t: &direct.weights.t,
-                                z: &direct.weights.z,
-                                role_ratios: [group.a_ratio, group.b_ratio, group.d_ratio],
-                                roles: &direct.roles,
-                            },
-                            &mut coefficient_weights,
-                        )?;
-                        active = true;
-                    }
-                    if active {
-                        term += eval_ring_at_pows_fast(ring, &coefficient_weights);
-                    }
-                }
-                Ok(acc + term)
-            },
-            |lhs, rhs| Ok(lhs + rhs)
         )
     }
 
