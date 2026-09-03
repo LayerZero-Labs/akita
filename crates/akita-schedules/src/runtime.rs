@@ -586,13 +586,21 @@ pub fn stage3_payload_bytes_for_successor(
 }
 
 #[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NonterminalLevelPayloadBytes {
+    pub direct: usize,
+    pub stage3: usize,
+    pub relation_geometry: akita_types::RelationAddressGeometry,
+}
+
+#[doc(hidden)]
 pub fn nonterminal_level_payload_bytes(
     policy: &PlannerPolicy,
     params: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
     output_witness_len: usize,
-) -> Result<(usize, usize), AkitaError> {
+) -> Result<NonterminalLevelPayloadBytes, AkitaError> {
     let challenge_field_bits = policy.challenge_field_bits()?;
     let next_outer_payload = match successor {
         FoldSuccessor::Recursive(params) => Some(params),
@@ -627,10 +635,11 @@ pub fn nonterminal_level_payload_bytes(
     let direct = direct
         .checked_add(eor)
         .ok_or_else(|| AkitaError::InvalidSetup("level proof payload size overflow".into()))?;
-    Ok((
+    Ok(NonterminalLevelPayloadBytes {
         direct,
-        stage3_payload_bytes_for_successor(policy, successor)?,
-    ))
+        stage3: stage3_payload_bytes_for_successor(policy, successor)?,
+        relation_geometry,
+    })
 }
 
 /// Recompute the exact serialized proof payload for one expanded schedule.
@@ -672,26 +681,17 @@ pub fn expanded_schedule_proof_payload_bytes(
             || FoldSuccessor::Terminal(&schedule.terminal),
             |fold| FoldSuccessor::Recursive(&fold.params),
         );
-        let (direct, stage3) = nonterminal_level_payload_bytes(
+        let payload = nonterminal_level_payload_bytes(
             policy,
             params,
             &opening_layout,
             successor,
             output_witness_len,
         )?;
-        predecessor_rounds = Some(
-            params
-                .relation_address_geometry(
-                    &opening_layout,
-                    policy.claim_ext_degree,
-                    successor.ring_dimension(),
-                    output_witness_len,
-                )?
-                .relation_point_variable_count(),
-        );
+        predecessor_rounds = Some(payload.relation_geometry.relation_point_variable_count());
         total = total
-            .checked_add(direct)
-            .and_then(|value| value.checked_add(stage3))
+            .checked_add(payload.direct)
+            .and_then(|value| value.checked_add(payload.stage3))
             .ok_or_else(|| AkitaError::InvalidSetup("proof payload size overflow".into()))?;
     }
 

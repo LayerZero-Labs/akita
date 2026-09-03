@@ -541,15 +541,15 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     let (first_params, first_next_witness_len) = &candidates[0];
     let opening_layout = key.opening_layout().expect("root opening layout");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(first_params.clone());
-    let (packing_direct_bytes, _) =
-        akita_schedules::planner_support::nonterminal_level_payload_bytes(
-            &policy,
-            first_params,
-            &opening_layout,
-            akita_types::FoldSuccessor::Terminal(&terminal),
-            *first_next_witness_len,
-        )
-        .expect("packing level payload");
+    let packing_payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+        &policy,
+        first_params,
+        &opening_layout,
+        akita_types::FoldSuccessor::Terminal(&terminal),
+        *first_next_witness_len,
+    )
+    .expect("packing level payload");
+    let packing_direct_bytes = packing_payload.direct;
     assert_eq!(
         packing_direct_bytes,
         akita_types::level_proof_bytes(
@@ -978,7 +978,7 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     )
     .expect("base level payload");
     let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
-    let (runtime, stage3) = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+    let runtime = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         &params,
         &opening_layout,
@@ -986,8 +986,8 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         output_witness_len,
     )
     .expect("runtime level payload");
-    assert_eq!(stage3, 0);
-    assert_eq!(runtime - base, expected_eor);
+    assert_eq!(runtime.stage3, 0);
+    assert_eq!(runtime.direct - base, expected_eor);
 }
 
 #[cfg(feature = "catalog-gen")]

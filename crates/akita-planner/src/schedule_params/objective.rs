@@ -135,7 +135,12 @@ pub(crate) fn complete_schedule_score(
             AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
         })?
         .output_witness_len;
-    let descriptor = candidate_schedule_descriptor_bytes(candidate, diagnostics)?;
+    let descriptor = candidate_schedule_descriptor_bytes(
+        None,
+        &candidate.folds,
+        &candidate.terminal.params,
+        diagnostics,
+    )?;
     let metrics = candidate.metrics();
     if policy.selection_policy == SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
         && candidate.first_direct_setup_field_len.is_none()

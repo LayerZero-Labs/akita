@@ -247,9 +247,15 @@ pub(super) fn prepend_fold(
         || akita_types::FoldSuccessor::Terminal(&child.terminal.params),
         |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
+    let relation_geometry = params.relation_address_geometry(
+        &opening_layout,
+        policy.claim_ext_degree,
+        successor.ring_dimension(),
+        output_witness_len,
+    )?;
     let edge_nonce_bits = akita_types::transcript_grinding_nonce_bits_for_planner_edge(
         params,
-        output_witness_len,
+        relation_geometry,
         &opening_layout,
         successor,
         policy.decomposition.field_bits(),
@@ -300,9 +306,15 @@ pub(super) fn prepend_root(
         suffix.first_fold_params(),
         output_witness_len,
     )?;
+    let relation_geometry = root_params.relation_address_geometry(
+        &opening_layout,
+        policy.claim_ext_degree,
+        successor.ring_dimension(),
+        output_witness_len,
+    )?;
     let root_nonce_bits = akita_types::transcript_grinding_nonce_bits_for_planner_edge(
         root_params,
-        output_witness_len,
+        relation_geometry,
         &opening_layout,
         successor,
         policy.decomposition.field_bits(),

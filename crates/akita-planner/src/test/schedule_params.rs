@@ -1,5 +1,41 @@
 use super::*;
 
+fn exhaustive_parent_alignment_cmp(
+    left: PackedProofCost,
+    right: PackedProofCost,
+    compare: impl Fn(usize, usize) -> bool,
+) -> bool {
+    (0..8).all(|parent_remainder| {
+        left.checked_proof_bytes_with_parent_remainder(parent_remainder)
+            .zip(right.checked_proof_bytes_with_parent_remainder(parent_remainder))
+            .is_some_and(|(left, right)| compare(left, right))
+    })
+}
+
+#[test]
+fn packed_proof_cost_alignment_order_matches_exhaustive_comparison() {
+    let mut costs = Vec::new();
+    for payload_bytes in 0..=3 {
+        for nonce_bits in 0..=24 {
+            costs.push(PackedProofCost::new(payload_bytes, nonce_bits).unwrap());
+        }
+    }
+    costs.push(PackedProofCost::new(usize::MAX, 0).unwrap());
+
+    for &left in &costs {
+        for &right in &costs {
+            assert_eq!(
+                left.never_worse_for_every_parent(right),
+                exhaustive_parent_alignment_cmp(left, right, |left, right| left <= right),
+            );
+            assert_eq!(
+                left.strictly_better_for_every_parent(right),
+                exhaustive_parent_alignment_cmp(left, right, |left, right| left < right),
+            );
+        }
+    }
+}
+
 #[test]
 fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
     assert_eq!(

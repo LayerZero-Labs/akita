@@ -62,7 +62,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_candidate(
 #[allow(clippy::too_many_arguments)]
 pub fn transcript_grinding_nonce_bits_for_planner_edge(
     params: &CommittedGroupParams,
-    output_witness_len: usize,
+    relation_geometry: crate::RelationAddressGeometry,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
     modulus_bits: u32,
@@ -78,7 +78,7 @@ pub fn transcript_grinding_nonce_bits_for_planner_edge(
         extension_degree,
         level,
         params,
-        output_witness_len,
+        relation_geometry.relation_point_variable_count(),
         layout,
         successor,
     )?;
@@ -110,20 +110,31 @@ fn derive_transcript_grinding_plan(
         Ok(())
     };
 
+    let root_successor = schedule
+        .recursive_folds
+        .first()
+        .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
+            FoldSuccessor::Recursive(&step.params)
+        });
+    let root_rounds = schedule
+        .root
+        .params
+        .relation_address_geometry(
+            root_layout,
+            extension_degree,
+            root_successor.ring_dimension(),
+            schedule.root.output_witness_len,
+        )?
+        .relation_point_variable_count();
     let mut predecessor_rounds = append_nonterminal(
         &mut push,
         capacity,
         extension_degree,
         0,
         &schedule.root.params,
-        schedule.root.output_witness_len,
+        root_rounds,
         root_layout,
-        schedule
-            .recursive_folds
-            .first()
-            .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
-                FoldSuccessor::Recursive(&step.params)
-            }),
+        root_successor,
     )?;
 
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
@@ -136,13 +147,22 @@ fn derive_transcript_grinding_plan(
             .map_or(FoldSuccessor::Terminal(&schedule.terminal), |step| {
                 FoldSuccessor::Recursive(&step.params)
             });
+        let relation_rounds = fold
+            .params
+            .relation_address_geometry(
+                &layout,
+                extension_degree,
+                successor.ring_dimension(),
+                fold.output_witness_len,
+            )?
+            .relation_point_variable_count();
         predecessor_rounds = append_nonterminal(
             &mut push,
             capacity,
             extension_degree,
             usize_to_u32(index + 1, "grinding level")?,
             &fold.params,
-            fold.output_witness_len,
+            relation_rounds,
             &layout,
             successor,
         )?;
@@ -169,7 +189,7 @@ fn append_nonterminal(
     extension_degree: usize,
     level: u32,
     params: &CommittedGroupParams,
-    output_witness_len: usize,
+    relation_rounds: usize,
     layout: &OpeningClaimsLayout,
     successor: FoldSuccessor<'_>,
 ) -> Result<usize, AkitaError> {
@@ -202,11 +222,8 @@ fn append_nonterminal(
         capacity,
     )?)?;
 
-    let successor_d = successor.ring_dimension();
     let successor_opening_vars = successor.recursive_opening_num_vars()?;
-    let tau0_width = params
-        .relation_address_geometry(layout, extension_degree, successor_d, output_witness_len)?
-        .relation_point_variable_count();
+    let tau0_width = relation_rounds;
     if tau0_width > successor_opening_vars {
         return Err(AkitaError::InvalidSetup(
             "grinding Stage 2 point exceeds successor opening width".into(),
@@ -462,7 +479,7 @@ mod tests {
             1,
             0,
             &current,
-            output_witness_len,
+            expected_rounds,
             &layout,
             FoldSuccessor::Recursive(&successor),
         )

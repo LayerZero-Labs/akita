@@ -215,11 +215,20 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
     );
     let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
     let grind_bits = |successor| {
+        let successor = akita_types::FoldSuccessor::Recursive(successor);
+        let relation_geometry = evaluation_trace
+            .relation_address_geometry(
+                &layout,
+                policy.claim_ext_degree,
+                successor.ring_dimension(),
+                512,
+            )
+            .unwrap();
         akita_types::transcript_grinding_nonce_bits_for_planner_edge(
             &evaluation_trace,
-            512,
+            relation_geometry,
             &layout,
-            akita_types::FoldSuccessor::Recursive(successor),
+            successor,
             policy.decomposition.field_bits(),
             policy.claim_ext_degree,
             1,

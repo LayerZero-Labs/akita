@@ -17,33 +17,86 @@ pub(super) enum Projection {
 
 impl Projection {
     const ALL: [Self; 2] = [Self::FirstDirectSetup, Self::Payload];
+
+    const fn bit(self) -> u8 {
+        match self {
+            Self::FirstDirectSetup => 1,
+            Self::Payload => 2,
+        }
+    }
 }
 
-pub(super) fn consider_child_suffixes<'a>(
+#[derive(Clone, Copy, Default)]
+struct ProjectionMask(u8);
+
+impl ProjectionMask {
+    fn insert(&mut self, projection: Projection) {
+        self.0 |= projection.bit();
+    }
+
+    fn remove(&mut self, projection: Projection) {
+        self.0 &= !projection.bit();
+    }
+
+    const fn contains(self, projection: Projection) -> bool {
+        self.0 & projection.bit() != 0
+    }
+
+    const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    fn iter(self) -> impl Iterator<Item = Projection> {
+        Projection::ALL
+            .into_iter()
+            .filter(move |&projection| self.contains(projection))
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PricedChildEdge {
+    edge_price: super::ChildEdgePrice,
+    edge_nonce_bits: usize,
+}
+
+pub(super) fn price_child_edge(
     edge: &super::ChildEdge<'_>,
     successor_class: &ParentObservableKey,
-    child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
-    incoming_setup_prefix: Option<usize>,
-    projections: &[Projection],
-    frontier: &mut ProjectedFrontier,
-) -> Result<(), AkitaError> {
-    let mut child_candidates = child_candidates.into_iter();
-    let Some(first) = child_candidates.next() else {
-        return Ok(());
-    };
-    if first_parent_visible_cost(edge.policy, first)? != *successor_class {
+    representative: &ScheduleCandidate,
+) -> Result<PricedChildEdge, AkitaError> {
+    if first_parent_visible_cost(edge.policy, representative)? != *successor_class {
         return Err(AkitaError::InvalidSetup(
             "suffix frontier candidate disagrees with its parent-observable class".into(),
         ));
     }
+    let edge_price = child_edge_price(edge, representative)?;
+    let edge_nonce_bits = edge.grinding_nonce_bits(representative, edge_price.relation_geometry)?;
+    Ok(PricedChildEdge {
+        edge_price,
+        edge_nonce_bits,
+    })
+}
+
+pub(super) fn consider_child_suffixes<'a>(
+    edge: &super::ChildEdge<'_>,
+    child_candidates: impl IntoIterator<Item = &'a ScheduleCandidate>,
+    priced_edge: PricedChildEdge,
+    parent_cost: &ParentObservableKey,
+    incoming_setup_prefix: Option<usize>,
+    projections: &[Projection],
+    frontier: &mut ProjectedFrontier,
+) -> Result<(), AkitaError> {
     // `SuffixResult` partitions candidates by every successor coordinate a
     // parent can observe. Price the edge and grinding plan once for that class;
     // rebuilding them for descriptor-distinct members is redundant.
-    let edge_price = child_edge_price(edge, first)?;
-    let edge_nonce_bits = edge.grinding_nonce_bits(first)?;
-    let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
-    for suffix in std::iter::once(first).chain(child_candidates) {
-        let Some(candidate) = child_choice(edge, edge_price, edge_nonce_bits, suffix)? else {
+    for suffix in child_candidates {
+        let Some(candidate) = child_choice(
+            edge,
+            priced_edge.edge_price,
+            priced_edge.edge_nonce_bits,
+            suffix,
+        )?
+        else {
             continue;
         };
         if incoming_setup_prefix.is_some_and(|natural_len| {
@@ -56,7 +109,7 @@ pub(super) fn consider_child_suffixes<'a>(
         frontier.consider_pending(
             edge.policy,
             edge.diagnostics,
-            &parent_cost,
+            parent_cost,
             candidate,
             projections,
         )?;
@@ -138,6 +191,19 @@ impl DescriptorOrderContext {
                 .map(Arc::from),
         }
     }
+
+    fn for_pending(candidate: &PendingScheduleCandidate) -> Self {
+        Self {
+            fold_count: candidate.suffix_folds.len() + 1,
+            first_fold_descriptor: Some(
+                candidate
+                    .first_fold
+                    .params
+                    .canonical_descriptor_bytes()
+                    .into(),
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +216,13 @@ impl ParentAdmissionClass {
     pub(super) fn for_candidate(candidate: &ScheduleCandidate) -> Self {
         Self {
             fold_depth: candidate.folds.len().min(2) as u8,
+            first_direct_setup_capacity: candidate.metrics().first_direct_setup_capacity,
+        }
+    }
+
+    fn for_pending(candidate: &PendingScheduleCandidate) -> Self {
+        Self {
+            fold_depth: (candidate.suffix_folds.len() + 1).min(2) as u8,
             first_direct_setup_capacity: candidate.metrics().first_direct_setup_capacity,
         }
     }
@@ -289,7 +362,52 @@ impl ProjectedFrontier {
     ) -> Result<(), AkitaError> {
         let admission = ParentAdmissionClass::for_candidate(&candidate);
         let metrics = candidate.metrics();
-        let choices = self.by_parent_cost.get(&parent_cost);
+        let retained_projections = self.retained_primary_projections(
+            policy,
+            &parent_cost,
+            metrics,
+            admission,
+            projections,
+        );
+        if retained_projections.is_empty() {
+            return Ok(());
+        }
+        let projected = ProjectedCandidate {
+            descriptor: super::super::candidate_schedule_descriptor_bytes(
+                None,
+                &candidate.folds,
+                &candidate.terminal.params,
+                diagnostics,
+            )?
+            .into(),
+            descriptor_context: DescriptorOrderContext::for_candidate(&candidate),
+            admission,
+            schedule: candidate,
+        };
+        let choices = self.by_parent_cost.entry(parent_cost).or_default();
+        for projection in retained_projections.iter() {
+            let dominates = match projection {
+                Projection::FirstDirectSetup => setup_dominates,
+                Projection::Payload => payload_dominates,
+            };
+            insert_projected(
+                choices.projected_mut(projection),
+                projected.clone(),
+                dominates,
+            );
+        }
+        Ok(())
+    }
+
+    fn retained_primary_projections(
+        &self,
+        policy: &PlannerPolicy,
+        parent_cost: &ParentObservableKey,
+        metrics: super::super::CandidateMetrics,
+        admission: ParentAdmissionClass,
+        projections: &[Projection],
+    ) -> ProjectionMask {
+        let choices = self.by_parent_cost.get(parent_cost);
         let keep = |projection| match projection {
             Projection::FirstDirectSetup => {
                 policy.selection_policy
@@ -316,34 +434,13 @@ impl ProjectedFrontier {
                 })
             }),
         };
-        let retained_projections = projections
-            .iter()
-            .copied()
-            .filter(|&projection| keep(projection))
-            .collect::<Vec<_>>();
-        if retained_projections.is_empty() {
-            return Ok(());
+        let mut retained = ProjectionMask::default();
+        for &projection in projections {
+            if keep(projection) {
+                retained.insert(projection);
+            }
         }
-        let projected = ProjectedCandidate {
-            descriptor: super::super::candidate_schedule_descriptor_bytes(&candidate, diagnostics)?
-                .into(),
-            descriptor_context: DescriptorOrderContext::for_candidate(&candidate),
-            admission,
-            schedule: candidate,
-        };
-        let choices = self.by_parent_cost.entry(parent_cost).or_default();
-        for projection in retained_projections {
-            let dominates = match projection {
-                Projection::FirstDirectSetup => setup_dominates,
-                Projection::Payload => payload_dominates,
-            };
-            insert_projected(
-                choices.projected_mut(projection),
-                projected.clone(),
-                dominates,
-            );
-        }
-        Ok(())
+        retained
     }
 
     pub(super) fn consider_candidate(
@@ -365,13 +462,75 @@ impl ProjectedFrontier {
         pending: PendingScheduleCandidate,
         projections: &[Projection],
     ) -> Result<(), AkitaError> {
-        self.consider(
-            policy,
-            diagnostics,
-            parent_cost.clone(),
-            pending.into_candidate(),
-            projections,
-        )
+        let admission = ParentAdmissionClass::for_pending(&pending);
+        let metrics = pending.metrics();
+        let mut retained_projections =
+            self.retained_primary_projections(policy, parent_cost, metrics, admission, projections);
+        if retained_projections.is_empty() {
+            return Ok(());
+        }
+
+        // A candidate needs its canonical descriptor to resolve equal numeric
+        // frontiers, but it does not need a newly allocated fold-chain node
+        // until at least one projection actually retains it.
+        let descriptor: Arc<[u8]> = pending.descriptor_bytes(diagnostics)?.into();
+        let descriptor_context = DescriptorOrderContext::for_pending(&pending);
+        if let Some(choices) = self.by_parent_cost.get(parent_cost) {
+            for projection in retained_projections.iter() {
+                if choices
+                    .projected(projection)
+                    .iter()
+                    .any(|existing| match projection {
+                        Projection::FirstDirectSetup => setup_projection_dominates(
+                            projected_setup_order(existing),
+                            ProjectionOrder {
+                                score: setup_score(metrics),
+                                descriptor: descriptor.as_ref(),
+                                context: &descriptor_context,
+                                admission,
+                            },
+                        ),
+                        Projection::Payload => payload_projection_dominates(
+                            projected_payload_order(existing),
+                            ProjectionOrder {
+                                score: payload_score(metrics),
+                                descriptor: descriptor.as_ref(),
+                                context: &descriptor_context,
+                                admission,
+                            },
+                        ),
+                    })
+                {
+                    retained_projections.remove(projection);
+                }
+            }
+        }
+        if retained_projections.is_empty() {
+            return Ok(());
+        }
+
+        let projected = ProjectedCandidate {
+            descriptor,
+            descriptor_context,
+            admission,
+            schedule: pending.into_candidate(),
+        };
+        let choices = self.by_parent_cost.entry(parent_cost.clone()).or_default();
+        for projection in retained_projections.iter() {
+            let frontier = choices.projected_mut(projection);
+            frontier.retain(|existing| match projection {
+                Projection::FirstDirectSetup => !setup_projection_dominates(
+                    projected_setup_order(&projected),
+                    projected_setup_order(existing),
+                ),
+                Projection::Payload => !payload_projection_dominates(
+                    projected_payload_order(&projected),
+                    projected_payload_order(existing),
+                ),
+            });
+            frontier.push(projected.clone());
+        }
+        Ok(())
     }
 }
 
@@ -411,20 +570,16 @@ fn projection_bound_is_dominated(
 }
 
 fn setup_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
-    setup_projection_dominates(
-        ProjectionOrder {
-            score: setup_score(left.schedule.metrics()),
-            descriptor: left.descriptor.as_ref(),
-            context: &left.descriptor_context,
-            admission: left.admission,
-        },
-        ProjectionOrder {
-            score: setup_score(right.schedule.metrics()),
-            descriptor: right.descriptor.as_ref(),
-            context: &right.descriptor_context,
-            admission: right.admission,
-        },
-    )
+    setup_projection_dominates(projected_setup_order(left), projected_setup_order(right))
+}
+
+fn projected_setup_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, SetupScore> {
+    ProjectionOrder {
+        score: setup_score(candidate.schedule.metrics()),
+        descriptor: candidate.descriptor.as_ref(),
+        context: &candidate.descriptor_context,
+        admission: candidate.admission,
+    }
 }
 
 fn setup_primary_strictly_dominates(
@@ -471,19 +626,18 @@ fn setup_projection_dominates(
 
 fn payload_dominates(left: &ProjectedCandidate, right: &ProjectedCandidate) -> bool {
     payload_projection_dominates(
-        ProjectionOrder {
-            score: payload_score(left.schedule.metrics()),
-            descriptor: left.descriptor.as_ref(),
-            context: &left.descriptor_context,
-            admission: left.admission,
-        },
-        ProjectionOrder {
-            score: payload_score(right.schedule.metrics()),
-            descriptor: right.descriptor.as_ref(),
-            context: &right.descriptor_context,
-            admission: right.admission,
-        },
+        projected_payload_order(left),
+        projected_payload_order(right),
     )
+}
+
+fn projected_payload_order(candidate: &ProjectedCandidate) -> ProjectionOrder<'_, PayloadScore> {
+    ProjectionOrder {
+        score: payload_score(candidate.schedule.metrics()),
+        descriptor: candidate.descriptor.as_ref(),
+        context: &candidate.descriptor_context,
+        admission: candidate.admission,
+    }
 }
 
 fn payload_primary_strictly_dominates(

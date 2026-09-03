@@ -36,7 +36,7 @@ mod terminal;
 pub(super) use candidates::packing_precommit_opening_products;
 #[cfg(test)]
 pub(super) use candidates::state_allows_terminal_seed;
-use frontier::{consider_child_suffixes, ProjectedFrontier, Projection};
+use frontier::{consider_child_suffixes, price_child_edge, ProjectedFrontier, Projection};
 pub(crate) use search::derive_selected_suffix_schedule;
 use source::attach_source_moments;
 use state::*;
@@ -90,14 +90,18 @@ struct ChildEdge<'a> {
 }
 
 impl ChildEdge<'_> {
-    fn grinding_nonce_bits(&self, suffix: &ScheduleCandidate) -> Result<usize, AkitaError> {
+    fn grinding_nonce_bits(
+        &self,
+        suffix: &ScheduleCandidate,
+        relation_geometry: akita_types::RelationAddressGeometry,
+    ) -> Result<usize, AkitaError> {
         let successor = suffix.folds.first().map_or_else(
             || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
             |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
         );
         akita_types::transcript_grinding_nonce_bits_for_planner_edge(
             self.candidate_params.as_ref(),
-            self.next_witness_len,
+            relation_geometry,
             self.opening_layout,
             successor,
             self.policy.decomposition.field_bits(),
@@ -111,6 +115,7 @@ impl ChildEdge<'_> {
 struct ChildEdgePrice {
     direct_payload_bytes: usize,
     stage3_payload_bytes: usize,
+    relation_geometry: akita_types::RelationAddressGeometry,
 }
 
 struct PendingScheduleCandidate {
@@ -236,6 +241,18 @@ impl PendingScheduleCandidate {
             terminal: self.terminal,
         }
     }
+
+    fn descriptor_bytes(
+        &self,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
+    ) -> Result<Vec<u8>, AkitaError> {
+        super::candidate_schedule_descriptor_bytes(
+            Some(&self.first_fold),
+            &self.suffix_folds,
+            &self.terminal.params,
+            diagnostics,
+        )
+    }
 }
 
 fn child_edge_price(
@@ -246,14 +263,15 @@ fn child_edge_price(
         || akita_types::FoldSuccessor::Terminal(&suffix.terminal.params),
         |fold| akita_types::FoldSuccessor::Recursive(fold.params.as_ref()),
     );
-    let (direct_payload_bytes, stage3_payload_bytes) =
-        akita_schedules::planner_support::nonterminal_level_payload_bytes(
-            edge.policy,
-            &edge.candidate_params,
-            edge.opening_layout,
-            successor,
-            edge.next_witness_len,
-        )?;
+    let payload = akita_schedules::planner_support::nonterminal_level_payload_bytes(
+        edge.policy,
+        &edge.candidate_params,
+        edge.opening_layout,
+        successor,
+        edge.next_witness_len,
+    )?;
+    let direct_payload_bytes = payload.direct;
+    let stage3_payload_bytes = payload.stage3;
     if edge.offloaded != (stage3_payload_bytes != 0) {
         return Err(AkitaError::InvalidSetup(
             "setup edge topology disagrees with Stage-3 accounting".to_string(),
@@ -262,6 +280,7 @@ fn child_edge_price(
     Ok(ChildEdgePrice {
         direct_payload_bytes,
         stage3_payload_bytes,
+        relation_geometry: payload.relation_geometry,
     })
 }
 
@@ -544,22 +563,37 @@ fn price_level_candidate_with_children(
         require_child_fold,
         setup_field_budget: ctx.setup_field_budget,
     };
+    let parent_cost = ParentObservableKey::new(policy, Some(candidate_params), None)?;
     if let Some(direct_child) = children.direct {
         for (successor_class, candidates) in &direct_child.payload_only {
+            let Some(representative) = candidates.first() else {
+                continue;
+            };
+            let priced_edge = price_child_edge(&direct_edge, successor_class, representative)?;
             consider_child_suffixes(
                 &direct_edge,
-                successor_class,
                 candidates,
+                priced_edge,
+                &parent_cost,
                 state.topology.incoming_setup_prefix(),
                 direct_projections,
                 &mut frontiers.projected,
             )?;
         }
         for (successor_class, choices) in &direct_child.setup_and_payload {
+            let Some(representative) = choices
+                .payload_candidates()
+                .next()
+                .or_else(|| choices.setup_candidates().next())
+            else {
+                continue;
+            };
+            let priced_edge = price_child_edge(&direct_edge, successor_class, representative)?;
             consider_child_suffixes(
                 &direct_edge,
-                successor_class,
                 choices.payload_candidates(),
+                priced_edge,
+                &parent_cost,
                 state.topology.incoming_setup_prefix(),
                 direct_projections,
                 &mut frontiers.projected,
@@ -572,18 +606,28 @@ fn price_level_candidate_with_children(
             ..direct_edge
         };
         for (successor_class, choices) in &offloaded_child.setup_and_payload {
+            let Some(representative) = choices
+                .payload_candidates()
+                .next()
+                .or_else(|| choices.setup_candidates().next())
+            else {
+                continue;
+            };
+            let priced_edge = price_child_edge(&offloaded_edge, successor_class, representative)?;
             consider_child_suffixes(
                 &offloaded_edge,
-                successor_class,
                 choices.setup_candidates(),
+                priced_edge,
+                &parent_cost,
                 state.topology.incoming_setup_prefix(),
                 SETUP_PROJECTION,
                 &mut frontiers.projected,
             )?;
             consider_child_suffixes(
                 &offloaded_edge,
-                successor_class,
                 choices.payload_candidates(),
+                priced_edge,
+                &parent_cost,
                 state.topology.incoming_setup_prefix(),
                 PAYLOAD_PROJECTION,
                 &mut frontiers.projected,

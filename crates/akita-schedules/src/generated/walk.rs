@@ -210,22 +210,16 @@ pub(crate) fn walk_generated_schedule_entry(
             || akita_types::FoldSuccessor::Terminal(&terminal_params),
             |(params, _, _)| akita_types::FoldSuccessor::Recursive(params),
         );
-        let (direct_level_bytes, stage3_bytes) = nonterminal_level_payload_bytes(
+        let payload = nonterminal_level_payload_bytes(
             policy,
             lp,
             &opening_layout,
             successor,
             *output_witness_len,
         )?;
-        predecessor_rounds = Some(
-            lp.relation_address_geometry(
-                &opening_layout,
-                policy.claim_ext_degree,
-                successor.ring_dimension(),
-                *output_witness_len,
-            )?
-            .relation_point_variable_count(),
-        );
+        let direct_level_bytes = payload.direct;
+        let stage3_bytes = payload.stage3;
+        predecessor_rounds = Some(payload.relation_geometry.relation_point_variable_count());
         total_bytes = total_bytes
             .checked_add(direct_level_bytes)
             .and_then(|value| value.checked_add(stage3_bytes))

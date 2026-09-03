@@ -266,6 +266,28 @@ struct CandidateFoldIter<'a> {
     remaining: usize,
 }
 
+struct CandidateFoldPartsIter<'a> {
+    first: Option<&'a CandidateFoldStep>,
+    suffix: CandidateFoldIter<'a>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CandidateFoldPartsIter<'a> {
+    type Item = &'a CandidateFoldStep;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let step = self.first.take().or_else(|| self.suffix.next())?;
+        self.remaining -= 1;
+        Some(step)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CandidateFoldPartsIter<'_> {}
+
 impl<'a> Iterator for CandidateFoldIter<'a> {
     type Item = &'a CandidateFoldStep;
 
@@ -296,10 +318,25 @@ impl CandidateFoldChain {
         self.head.as_deref().map(|node| &node.step)
     }
 
+    #[cfg(test)]
     fn iter(&self) -> impl ExactSizeIterator<Item = &CandidateFoldStep> {
         CandidateFoldIter {
             next: self.head.as_deref(),
             remaining: self.len,
+        }
+    }
+
+    fn iter_with_prefix<'a>(
+        &'a self,
+        first: Option<&'a CandidateFoldStep>,
+    ) -> impl ExactSizeIterator<Item = &'a CandidateFoldStep> {
+        CandidateFoldPartsIter {
+            first,
+            suffix: CandidateFoldIter {
+                next: self.head.as_deref(),
+                remaining: self.len,
+            },
+            remaining: self.len + usize::from(first.is_some()),
         }
     }
 
@@ -376,19 +413,42 @@ impl PackedProofCost {
     }
 
     pub(crate) fn never_worse_for_every_parent(self, other: Self) -> bool {
-        (0..8).all(|parent_remainder| {
-            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
-                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
-                .is_some_and(|(left, right)| left <= right)
-        })
+        let Some((left, left_jump)) = self.parent_alignment_order() else {
+            return false;
+        };
+        let Some((right, right_jump)) = other.parent_alignment_order() else {
+            return false;
+        };
+        left < right || (left == right && left_jump >= right_jump)
     }
 
     pub(crate) fn strictly_better_for_every_parent(self, other: Self) -> bool {
-        (0..8).all(|parent_remainder| {
-            self.checked_proof_bytes_with_parent_remainder(parent_remainder)
-                .zip(other.checked_proof_bytes_with_parent_remainder(parent_remainder))
-                .is_some_and(|(left, right)| left < right)
-        })
+        let Some((left, left_jump)) = self.parent_alignment_order() else {
+            return false;
+        };
+        let Some((right, right_jump)) = other.parent_alignment_order() else {
+            return false;
+        };
+        left < right
+            && (left.checked_add(1).is_some_and(|next| next < right) || left_jump >= right_jump)
+    }
+
+    /// Proof bytes at parent remainder zero and the first remainder at which
+    /// this suffix gains another nonce byte. These two values completely
+    /// describe all eight parent alignments, avoiding an eight-way checked
+    /// division in every frontier comparison.
+    fn parent_alignment_order(self) -> Option<(usize, usize)> {
+        // The old exhaustive comparison rejected either operand when any of
+        // its eight alignments overflowed. Preserve that behavior.
+        self.checked_proof_bytes_with_parent_remainder(7)?;
+        let proof_bytes = self.checked_proof_bytes()?;
+        let remainder = self.nonce_bits % 8;
+        let jump = match remainder {
+            0 => 1,
+            1 => 8,
+            _ => 9 - remainder,
+        };
+        Some((proof_bytes, jump))
     }
 
     fn checked_proof_bytes(self) -> Option<usize> {
@@ -449,37 +509,39 @@ impl ScheduleCandidate {
 }
 
 pub(crate) fn candidate_schedule_descriptor_bytes(
-    choice: &ScheduleCandidate,
+    first_fold: Option<&CandidateFoldStep>,
+    suffix_folds: &CandidateFoldChain,
+    terminal: &akita_types::TerminalFoldParams,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<Vec<u8>, AkitaError> {
     let started = diagnostics.map(|_| std::time::Instant::now());
     let result = (|| {
-        if choice.folds.is_empty() {
-            return Ok(choice.terminal.params.canonical_descriptor_bytes());
+        let fold_count = suffix_folds.len() + usize::from(first_fold.is_some());
+        if fold_count == 0 {
+            return Ok(terminal.canonical_descriptor_bytes());
         }
-        let carrier_prefix_len = choice.folds.len().min(2);
+        let folds = || suffix_folds.iter_with_prefix(first_fold);
+        let carrier_prefix_len = fold_count.min(2);
         let mut bytes = Vec::new();
         bytes.push(carrier_prefix_len as u8);
         bytes.extend(
-            choice
-                .folds
-                .iter()
+            folds()
                 .take(carrier_prefix_len)
                 .map(|fold| fold.params.payload_mode.tag()),
         );
-        let descriptor_steps = choice.folds.iter().enumerate().map(|(index, fold)| {
-            akita_types::FoldScheduleDescriptorStep {
-                params: &fold.params,
-                payload_mode: if index < carrier_prefix_len {
-                    akita_types::CommitmentPayloadMode::Compressed
-                } else {
-                    fold.params.payload_mode
-                },
-                input_witness_len: fold.input_witness_len,
-                output_witness_len: fold.output_witness_len,
-            }
-        });
-        let terminal = &choice.terminal.params;
+        let descriptor_steps =
+            folds()
+                .enumerate()
+                .map(|(index, fold)| akita_types::FoldScheduleDescriptorStep {
+                    params: &fold.params,
+                    payload_mode: if index < carrier_prefix_len {
+                        akita_types::CommitmentPayloadMode::Compressed
+                    } else {
+                        fold.params.payload_mode
+                    },
+                    input_witness_len: fold.input_witness_len,
+                    output_witness_len: fold.output_witness_len,
+                });
         akita_types::FoldSchedule::append_descriptor_bytes_from_steps(
             &mut bytes,
             descriptor_steps,
