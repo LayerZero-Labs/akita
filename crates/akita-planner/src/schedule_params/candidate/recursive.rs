@@ -138,16 +138,17 @@ impl RecursiveCandidateContext<'_, '_> {
     fn candidate_core(
         &self,
         block_index_bits: usize,
+        num_chunks: usize,
+        delta_commit: usize,
+        delta_open: usize,
     ) -> Result<Option<RecursiveCandidateCore>, AkitaError> {
         let request = self.request;
         let policy = request.policy;
         let ring_challenge_cfg = request.opening.challenge_config();
         let dimensions = request.dimensions;
         let search = self.search;
-        let source = request.source;
         let log_basis_inner = request.log_basis_inner;
         let log_basis_open = request.log_basis_open;
-        let fold_level = request.fold_level;
         let num_ring_elems = search.num_ring_elems;
         let reduced_vars = search.reduced_vars;
         if reduced_vars <= 2
@@ -157,19 +158,12 @@ impl RecursiveCandidateContext<'_, '_> {
         {
             return Ok(None);
         }
-        let num_chunks = policy.chunks_at_level(fold_level);
         let num_positions_per_block = 1usize
             .checked_shl((reduced_vars - block_index_bits) as u32)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive candidate position count overflow".to_string())
             })?;
         let num_live_blocks = num_ring_elems.div_ceil(num_positions_per_block);
-        let open_decomp = DecompositionParams {
-            log_basis: log_basis_open,
-            ..policy.decomposition
-        };
-        let delta_commit = source.num_digits_inner(policy.decomposition, log_basis_inner)?;
-        let delta_open = num_digits_open(open_decomp);
         let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit)
         else {
             return Ok(None);
@@ -377,6 +371,10 @@ impl RecursiveCandidateContext<'_, '_> {
             log_basis: request.log_basis_open,
             ..policy.decomposition
         });
+        let opening_width = request
+            .opening
+            .method()
+            .physical_coefficient_width(policy.claim_ext_degree, request.dimensions.d_a())?;
         let splits = recursive_split_search_domain(
             policy.recursive_split_search_policy,
             search.num_ring_elems,
@@ -389,10 +387,7 @@ impl RecursiveCandidateContext<'_, '_> {
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: request.dimensions.d_a(),
-                opening_width: request.opening.method().physical_coefficient_width(
-                    policy.claim_ext_degree,
-                    request.dimensions.d_a(),
-                )?,
+                opening_width,
                 reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,
@@ -406,53 +401,37 @@ impl RecursiveCandidateContext<'_, '_> {
             if !admit_split(r, bounds) {
                 continue;
             }
-            let Some(core) = self.candidate_core(r)? else {
+            let Some(core) = self.candidate_core(r, search.num_chunks, delta_commit, delta_open)?
+            else {
                 continue;
             };
             let base_slice_candidates = self.candidates_from_core(&core, relation_domain)?;
             for setup_prefix in &search.setup_prefixes {
-                let mut slice_candidates = Vec::new();
-                for base_candidate in &base_slice_candidates {
-                    let params = attach_recursive_setup_prefix(
-                        setup_prefix.as_ref(),
-                        policy.claim_ext_degree,
-                        base_candidate.params.clone(),
-                    )?;
-                    if !params.compression_sources_supported()? {
-                        continue;
-                    }
-                    slice_candidates.push(RecursiveRelationCandidate {
-                        params,
-                        relation_transition: base_candidate.relation_transition,
-                    });
-                }
                 for transition in
                     relation_domain.transitions_in(self.request.relation_traversal_order)
                 {
-                    let mode_slices = slice_candidates
+                    let mut mode_slices = Vec::with_capacity(base_slice_candidates.len());
+                    for base_candidate in base_slice_candidates
                         .iter()
                         .filter(|candidate| candidate.relation_transition == *transition)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let retained_slices =
-                        crate::schedule_params::prune_locally_unprofitable_slices(
-                            policy,
-                            &search.opening_layout,
-                            mode_slices
-                                .into_iter()
-                                .map(|candidate| candidate.params)
-                                .collect(),
-                        )?
-                        .into_iter()
-                        .map(|params| RecursiveRelationCandidate {
-                            params,
-                            relation_transition: *transition,
-                        })
-                        .collect::<Vec<_>>();
-                    for candidate in retained_slices {
-                        let relation_mode = candidate.relation_transition.mode();
+                    {
+                        let params = attach_recursive_setup_prefix(
+                            setup_prefix.as_ref(),
+                            policy.claim_ext_degree,
+                            base_candidate.params.clone(),
+                        )?;
+                        if params.compression_sources_supported()? {
+                            mode_slices.push(params);
+                        }
+                    }
+                    for params in crate::schedule_params::prune_locally_unprofitable_slices(
+                        policy,
+                        &search.opening_layout,
+                        mode_slices,
+                    )? {
+                        let relation_mode = transition.mode();
                         let Some((score, params, next_witness_len)) =
-                            finalize_recursive_level_candidate(policy, search, candidate.params)?
+                            finalize_recursive_level_candidate(policy, search, params)?
                         else {
                             continue;
                         };
@@ -472,7 +451,7 @@ impl RecursiveCandidateContext<'_, '_> {
                             r,
                             RecursiveRelationCandidate {
                                 params,
-                                relation_transition: candidate.relation_transition,
+                                relation_transition: *transition,
                             },
                             next_witness_len,
                         );
@@ -576,7 +555,20 @@ fn append_selective_l2_candidates(
         source_moment: Some(source_moment),
         successor_policy,
     };
-    let Some(mut l2_core) = l2_context.candidate_core(*block_index_bits)? else {
+    let l2_delta_commit = l2_request
+        .source
+        .num_digits_inner(policy.decomposition, l2_request.log_basis_inner)?;
+    let l2_delta_open = num_digits_open(DecompositionParams {
+        log_basis: l2_request.log_basis_open,
+        ..policy.decomposition
+    });
+    let Some(mut l2_core) = l2_context.candidate_core(
+        *block_index_bits,
+        search.num_chunks,
+        l2_delta_commit,
+        l2_delta_open,
+    )?
+    else {
         return Ok(());
     };
     let relation_transition = best_modeled
@@ -617,7 +609,7 @@ fn append_selective_l2_candidates(
             .any(|linf| linf.params.outer_slice_count() == candidate.params.outer_slice_count())
     });
     for setup_prefix in &search.setup_prefixes {
-        let mut sliced = Vec::new();
+        let mut sliced = Vec::with_capacity(base_slices.len());
         for base_candidate in &base_slices {
             let params = attach_recursive_setup_prefix(
                 setup_prefix.as_ref(),
@@ -625,29 +617,17 @@ fn append_selective_l2_candidates(
                 base_candidate.params.clone(),
             )?;
             if params.compression_sources_supported()? {
-                sliced.push(RecursiveRelationCandidate {
-                    params,
-                    relation_transition: base_candidate.relation_transition,
-                });
+                sliced.push(params);
             }
         }
         let retained_slices = crate::schedule_params::prune_locally_unprofitable_slices(
             policy,
             &search.opening_layout,
-            sliced
-                .into_iter()
-                .map(|candidate| candidate.params)
-                .collect(),
-        )?
-        .into_iter()
-        .map(|params| RecursiveRelationCandidate {
-            params,
-            relation_transition,
-        })
-        .collect::<Vec<_>>();
-        for candidate in retained_slices {
+            sliced,
+        )?;
+        for params in retained_slices {
             let Some((_, params, next_witness_len)) =
-                finalize_recursive_level_candidate(policy, search, candidate.params)?
+                finalize_recursive_level_candidate(policy, search, params)?
             else {
                 continue;
             };
@@ -655,7 +635,7 @@ fn append_selective_l2_candidates(
                 candidates.push((
                     RecursiveRelationCandidate {
                         params,
-                        relation_transition: candidate.relation_transition,
+                        relation_transition,
                     },
                     next_witness_len,
                 ));

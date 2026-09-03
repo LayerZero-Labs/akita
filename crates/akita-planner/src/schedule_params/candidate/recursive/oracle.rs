@@ -89,7 +89,16 @@ fn independently_enumerated_l2_candidates(
         source_moment: Some(source_moment),
         successor_policy: context.successor_policy,
     };
-    let Some(mut l2_core) = l2_context.candidate_core(split)? else {
+    let delta_commit = l2_request
+        .source
+        .num_digits_inner(request.policy.decomposition, l2_request.log_basis_inner)?;
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: l2_request.log_basis_open,
+        ..request.policy.decomposition
+    });
+    let Some(mut l2_core) =
+        l2_context.candidate_core(split, context.search.num_chunks, delta_commit, delta_open)?
+    else {
         return Ok(Vec::new());
     };
     let l2_challenge_linf_slices = l2_context.candidates_from_core(&l2_core, relation_domain)?;
@@ -150,6 +159,13 @@ fn enumerate_unpruned_candidates(
         source_moment: request.source_moment,
         successor_policy: purpose.successor_policy(),
     };
+    let delta_commit = request
+        .source
+        .num_digits_inner(request.policy.decomposition, request.log_basis_inner)?;
+    let delta_open = num_digits_open(DecompositionParams {
+        log_basis: request.log_basis_open,
+        ..request.policy.decomposition
+    });
     let mut candidates = Vec::new();
     for (source_index, source_moment) in [request.source_moment, None].into_iter().enumerate() {
         if source_index != 0 && request.source_moment.is_none() {
@@ -160,7 +176,9 @@ fn enumerate_unpruned_candidates(
             ..base_context
         };
         for split in (1..search.reduced_vars).rev() {
-            let Some(core) = context.candidate_core(split)? else {
+            let Some(core) =
+                context.candidate_core(split, search.num_chunks, delta_commit, delta_open)?
+            else {
                 continue;
             };
             let linf_slices = context.candidates_from_core(&core, relation_domain)?;

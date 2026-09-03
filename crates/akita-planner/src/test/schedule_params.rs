@@ -46,6 +46,10 @@ fn dyadic_chunk_geometry_prices_exact_work_and_residual_imbalance() {
         layout_candidate_score(100, 12, 4).unwrap(),
         (124, 100, 12, 0)
     );
+    assert_eq!(layout_candidate_score(100, 4, 8).unwrap(), (109, 100, 4, 1));
+    for (blocks, chunks) in [(0, 1), (8, 0), (8, 3), (8, 128)] {
+        assert!(layout_candidate_score(100, blocks, chunks).is_err());
+    }
 }
 
 #[test]

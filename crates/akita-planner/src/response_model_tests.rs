@@ -207,6 +207,35 @@ fn gaussian_z_model_matches_measured_cross_field_states() {
 }
 
 #[test]
+fn rounded_normal_digit_moment_matches_two_sided_reference() {
+    fn reference(sigma: f64, basis: i64) -> f64 {
+        let radius = (8.0 * sigma + 0.5).ceil() as i64;
+        let mut moment = 0.0;
+        let mut lower_cdf = normal_cdf((-radius as f64 - 0.5) / sigma);
+        for value in -radius..=radius {
+            let upper_cdf = normal_cdf((value as f64 + 0.5) / sigma);
+            let probability = upper_cdf - lower_cdf;
+            let digit = centered_residue(value, basis) as f64;
+            moment += probability * digit * digit;
+            lower_cdf = upper_cdf;
+        }
+        moment
+    }
+
+    for basis in [2, 4, 8, 16, 64] {
+        for sigma in [0.1, 0.75, 1.5, basis as f64 * 0.9] {
+            let expected = reference(sigma, basis);
+            let actual = rounded_normal_digit_second_moment(sigma, basis);
+            let tolerance = expected.abs().max(1.0) * 1e-12;
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "sigma={sigma} basis={basis}: actual={actual}, expected={expected}"
+            );
+        }
+    }
+}
+
+#[test]
 fn cap_multiplier_has_markov_grinding_budget() {
     let source = SourceMomentEstimate::new(1_048_576).unwrap();
     assert_eq!(source.response_l2_sq_cap(75), Some(83_079_484));

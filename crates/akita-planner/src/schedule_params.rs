@@ -18,9 +18,9 @@ use akita_types::sis::{
     OuterCommitMatrixParams,
 };
 use akita_types::{
-    active_setup_field_len, dyadic_block_ranges, padded_setup_prefix_len, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams,
-    OpeningClaimsLayout, PolynomialGroupLayout,
+    active_setup_field_len, padded_setup_prefix_len, CommitmentRingDims, CommittedGroupParams,
+    DecompositionParams, GroupCommitPhaseParams, GroupOpenPhaseParams, OpeningClaimsLayout,
+    PolynomialGroupLayout,
 };
 #[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::{try_extension_opening_reduction_level_bytes, PlannedFoldSchedule};
@@ -599,20 +599,20 @@ pub(crate) fn layout_candidate_score(
     num_live_blocks: usize,
     num_chunks: usize,
 ) -> Result<LayoutCandidateScore, AkitaError> {
+    if num_live_blocks == 0
+        || num_chunks == 0
+        || num_chunks > akita_types::MAX_WITNESS_CHUNKS
+        || !num_chunks.is_power_of_two()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "layout candidate chunk geometry is malformed".to_string(),
+        ));
+    }
     let challenge_work = num_live_blocks;
-    let chunk_ranges = dyadic_block_ranges(num_live_blocks, num_chunks)?;
-    let min_load = chunk_ranges
-        .iter()
-        .map(|range| range.len())
-        .min()
-        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
-    let max_load = chunk_ranges
-        .iter()
-        .map(|range| range.len())
-        .max()
-        .ok_or_else(|| AkitaError::InvalidSetup("balanced chunk geometry is empty".to_string()))?;
     let chunk_work = num_live_blocks;
-    let imbalance = max_load - min_load;
+    // Canonical proportional partitioning gives every chunk either
+    // `floor(blocks / chunks)` or `ceil(blocks / chunks)` blocks.
+    let imbalance = usize::from(!num_live_blocks.is_multiple_of(num_chunks));
     let combined = physical_width
         .checked_add(challenge_work)
         .and_then(|cost| cost.checked_add(chunk_work))

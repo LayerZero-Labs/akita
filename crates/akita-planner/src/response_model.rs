@@ -421,6 +421,7 @@ fn centered_residue(value: i64, basis: i64) -> i64 {
     }
 }
 
+#[cfg(test)]
 fn normal_cdf(value: f64) -> f64 {
     0.5 * (1.0 + libm::erf(value / core::f64::consts::SQRT_2))
 }
@@ -512,14 +513,18 @@ fn rounded_normal_digit_second_moment(sigma: f64, basis: i64) -> f64 {
 
     let radius = (8.0 * sigma + 0.5).ceil() as i64;
     let mut moment = 0.0;
-    let mut lower_cdf = normal_cdf((-radius as f64 - 0.5) / sigma);
-    for value in -radius..=radius {
-        let upper = (value as f64 + 0.5) / sigma;
-        let upper_cdf = normal_cdf(upper);
-        let probability = upper_cdf - lower_cdf;
+    // The rounded centered normal and squared balanced residue are both even.
+    // Walk only positive buckets and evaluate their combined two-sided mass
+    // with the upper tail. Besides halving the software-erf work, `erfc(a) -
+    // erfc(b)` avoids subtracting two values near one in the positive tail.
+    let tail_scale = sigma * core::f64::consts::SQRT_2;
+    let mut lower_tail = libm::erfc(0.5 / tail_scale);
+    for value in 1..=radius {
+        let upper_tail = libm::erfc((value as f64 + 0.5) / tail_scale);
+        let probability = lower_tail - upper_tail;
         let digit = centered_residue(value, basis) as f64;
         moment += probability * digit * digit;
-        lower_cdf = upper_cdf;
+        lower_tail = upper_tail;
     }
     moment
 }
