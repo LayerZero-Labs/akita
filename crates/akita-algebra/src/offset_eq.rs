@@ -523,9 +523,6 @@ where
     H: AffineWeightSource<F, A> + ?Sized,
 {
     let low_len = low_weights.len().max(1);
-    let carry_count = outer_stride
-        .checked_add(1)
-        .ok_or_else(|| AkitaError::InvalidInput("affine carry count overflow".into()))?;
     let row_outer = first_high
         .checked_mul(low_len)
         .and_then(|base| base.checked_add(low_start))
@@ -555,6 +552,37 @@ where
     let mut accumulate_group = |address_low: usize,
                                 addresses: &[AffineAddress<F>]|
      -> Result<(), AkitaError> {
+        // Size the carry support from the addresses this low-residue group can
+        // actually reach. `outer_stride + 1` is a valid global bound, but it
+        // can be much too wide for a short low interval. In particular, the
+        // identity-low coefficient-packing lane has one low position, so its
+        // support is determined only by the digit span. Keeping the trailing
+        // zero summaries would both waste the direct row/carry contraction and
+        // make the bucketed kernel appear more expensive than its fallback.
+        let low_steps = low_end
+            .checked_sub(low_start)
+            .and_then(|span| span.checked_sub(1))
+            .ok_or_else(|| AkitaError::InvalidInput("affine low span is empty".into()))?;
+        let digit_steps = digit_weights
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| AkitaError::InvalidInput("affine digit span is empty".into()))?;
+        let max_carry_numerator = address_low
+            .checked_add(
+                outer_stride
+                    .checked_mul(low_steps)
+                    .ok_or_else(|| AkitaError::InvalidInput("affine carry span overflow".into()))?,
+            )
+            .and_then(|value| {
+                digit_stride
+                    .checked_mul(digit_steps)
+                    .and_then(|digit_span| value.checked_add(digit_span))
+            })
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry span overflow".into()))?;
+        let carry_count = max_carry_numerator
+            .checked_div(low_len)
+            .and_then(|carry| carry.checked_add(1))
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry count overflow".into()))?;
         let summaries = build_affine_low_summaries(
             &template,
             low_challenges,
