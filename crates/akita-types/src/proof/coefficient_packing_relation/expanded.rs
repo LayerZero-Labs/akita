@@ -3,7 +3,7 @@ use super::*;
 use std::sync::Arc;
 
 /// Checked inputs for one coefficient-packing group's shared relation semantics.
-pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: Field, E: Field> {
     pub level_params: &'a CommittedGroupParams,
     pub opening_batch: &'a OpeningClaimsLayout,
     pub relation_plan: &'a RelationRangeImagePlan,
@@ -19,7 +19,7 @@ pub(super) struct CoefficientPackingGroupSemanticInputs<'a, F: FieldCore, E: Fie
 /// Packing-specific E and quotient events over the checked flat witness domain.
 #[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct CoefficientPackingRelationEvents<E: FieldCore> {
+pub(super) struct CoefficientPackingRelationEvents<E: Field> {
     pub(super) events: Vec<RelationWeightEvent<E>>,
     pub(super) alpha_powers: Arc<[E]>,
     pub(super) relation_coefficient_block_len: usize,
@@ -27,7 +27,7 @@ pub(super) struct CoefficientPackingRelationEvents<E: FieldCore> {
 }
 
 #[cfg(test)]
-impl<E: FieldCore> CoefficientPackingRelationEvents<E> {
+impl<E: Field> CoefficientPackingRelationEvents<E> {
     #[must_use]
     pub(super) fn events(&self) -> &[RelationWeightEvent<E>] {
         &self.events
@@ -182,13 +182,13 @@ impl CoefficientPackingStage2Segment {
 
 /// One scalar-times-source structured Stage 2 contribution.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingStage2Term<E: FieldCore> {
+pub struct CoefficientPackingStage2Term<E: Field> {
     pub(super) source: CoefficientPackingStage2Source,
     pub(super) factor: E,
     pub(super) segments: Range<usize>,
 }
 
-impl<E: FieldCore> CoefficientPackingStage2Term<E> {
+impl<E: Field> CoefficientPackingStage2Term<E> {
     #[must_use]
     pub const fn source(&self) -> CoefficientPackingStage2Source {
         self.source
@@ -207,7 +207,7 @@ impl<E: FieldCore> CoefficientPackingStage2Term<E> {
 
 /// Direct-opening and packing-Z structured terms for one group.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingStage2Terms<E: FieldCore> {
+pub struct CoefficientPackingStage2Terms<E: Field> {
     pub(super) direct_opening_source: Vec<E>,
     pub(super) packing_z_source: Vec<E>,
     pub(super) segments: Vec<CoefficientPackingStage2Segment>,
@@ -218,7 +218,7 @@ pub struct CoefficientPackingStage2Terms<E: FieldCore> {
     pub(super) scalar_claim_weight: E,
 }
 
-impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
+impl<E: Field> CoefficientPackingStage2Terms<E> {
     #[must_use]
     pub fn direct_opening_source(&self) -> &[E] {
         &self.direct_opening_source
@@ -398,7 +398,7 @@ impl<E: FieldCore> CoefficientPackingStage2Terms<E> {
 
 /// One group's joined coefficient-packing relation semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingGroupSemantics<E: FieldCore> {
+pub struct CoefficientPackingGroupSemantics<E: Field> {
     pub(super) group_index: usize,
     pub(super) geometry: SubringCoefficientPackingGeometry,
     #[cfg(test)]
@@ -407,7 +407,7 @@ pub struct CoefficientPackingGroupSemantics<E: FieldCore> {
 }
 
 /// Exact authority used to prepare every packing group in one fold.
-pub struct CoefficientPackingBatchSemanticInputs<'a, F: FieldCore, E: FieldCore> {
+pub struct CoefficientPackingBatchSemanticInputs<'a, F: Field, E: Field> {
     pub level_params: &'a CommittedGroupParams,
     pub opening_batch: &'a OpeningClaimsLayout,
     pub relation_plan: &'a RelationRangeImagePlan,
@@ -421,11 +421,11 @@ pub struct CoefficientPackingBatchSemanticInputs<'a, F: FieldCore, E: FieldCore>
 
 /// Checked packing semantics for every packing group in one exact relation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingBatchSemantics<E: FieldCore> {
+pub struct CoefficientPackingBatchSemantics<E: Field> {
     pub(super) groups: Vec<CoefficientPackingGroupSemantics<E>>,
 }
 
-impl<E: FieldCore> CoefficientPackingBatchSemantics<E> {
+impl<E: Field> CoefficientPackingBatchSemantics<E> {
     #[must_use]
     pub fn groups(&self) -> &[CoefficientPackingGroupSemantics<E>] {
         &self.groups
@@ -437,7 +437,7 @@ impl<E: FieldCore> CoefficientPackingBatchSemantics<E> {
     }
 }
 
-impl<E: FieldCore> CoefficientPackingGroupSemantics<E> {
+impl<E: Field> CoefficientPackingGroupSemantics<E> {
     #[must_use]
     pub const fn group_index(&self) -> usize {
         self.group_index

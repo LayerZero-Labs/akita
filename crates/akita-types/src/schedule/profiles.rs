@@ -6,7 +6,7 @@ use crate::{
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
 use akita_error::AkitaError;
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Physical coefficient representation authenticated by a commitment.
 ///
@@ -162,6 +162,28 @@ impl GroupCommitPhaseParams {
         self.blocks
     }
 
+    /// Executable B packing implied by this frozen A/B identity.
+    ///
+    /// Slice count and physical B width live on the profile; this expands them
+    /// into the dyadic block ranges and padded physical layout the outer
+    /// commitment kernel consumes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AkitaError::InvalidSetup`] when the frozen dimensions cannot
+    /// form a well-defined slice layout.
+    pub fn derive_slice_geometry(&self) -> Result<CommitmentSliceGeometry, AkitaError> {
+        CommitmentSliceGeometry::try_new(
+            self.outer_slice_count,
+            self.blocks.live_blocks,
+            self.group.num_polynomials(),
+            self.inner.matrix.output_rank(),
+            self.outer.digits.num_digits,
+            self.inner.matrix.ring_dimension(),
+            self.outer.matrix.ring_dimension(),
+        )
+    }
+
     /// The A-role gadget decomposition.
     #[inline]
     #[must_use]
@@ -241,16 +263,7 @@ impl GroupCommitPhaseParams {
             .positions_per_block
             .checked_mul(self.inner.digits.num_digits)
             .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
-        let expected_b_width = CommitmentSliceGeometry::try_new(
-            self.outer_slice_count,
-            self.blocks.live_blocks,
-            self.group.num_polynomials(),
-            self.inner.matrix.output_rank(),
-            self.outer.digits.num_digits,
-            inner_ring_dimension,
-            outer_ring_dimension,
-        )?
-        .physical_input_width();
+        let expected_b_width = self.derive_slice_geometry()?.physical_input_width();
         if self.inner.matrix.input_width() != expected_a_width
             || self.outer.matrix.input_width() != expected_b_width
         {
@@ -258,6 +271,48 @@ impl GroupCommitPhaseParams {
                 "committed-group A/B matrix widths do not match frozen geometry".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate this profile as a commitment to one complete setup prefix.
+    ///
+    /// `natural_len` is only the support of the later setup-index weight. The
+    /// committed source is the complete canonical power-of-two prefix, so its
+    /// block geometry must cover every ring in that domain without a partial
+    /// block or an omitted tail.
+    pub fn validate_setup_prefix_geometry(&self, natural_len: usize) -> Result<(), AkitaError> {
+        if self.group.num_polynomials() != 1 {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix commitment profile must be singleton".into(),
+            ));
+        }
+        let n_prefix = 1usize
+            .checked_shl(self.group.num_vars() as u32)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix domain overflow".into()))?;
+        crate::validate_setup_prefix_domain(natural_len, n_prefix)?;
+
+        let d_setup = self.inner.matrix.ring_dimension();
+        if d_setup == 0 || !n_prefix.is_multiple_of(d_setup) {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix domain must be a multiple of its A ring dimension".into(),
+            ));
+        }
+        let full_prefix_rings = n_prefix / d_setup;
+        let committed_rings = self
+            .blocks
+            .live_blocks
+            .checked_mul(self.blocks.positions_per_block)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup-prefix block geometry overflow".into())
+            })?;
+        if self.blocks.live_ring_elements_per_claim != full_prefix_rings
+            || committed_rings != full_prefix_rings
+        {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup-prefix block geometry must commit all {full_prefix_rings} rings in the full power-of-two prefix"
+            )));
+        }
+
         Ok(())
     }
 
@@ -357,7 +412,7 @@ impl PrecommittedGroupProfiles {
     /// Returns an error when `groups` is empty.
     pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
-        F: FieldCore + 'a,
+        F: Field + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
         I::IntoIter: ExactSizeIterator,
     {
@@ -551,7 +606,7 @@ impl CommittedGroupBatchProfile {
     /// Returns an error when `groups` is empty.
     pub fn from_ordered_groups<'a, F, I>(groups: I) -> Result<Self, AkitaError>
     where
-        F: FieldCore + 'a,
+        F: Field + 'a,
         I: IntoIterator<Item = &'a CommittedGroup<F>>,
         I::IntoIter: ExactSizeIterator,
     {

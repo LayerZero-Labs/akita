@@ -34,8 +34,9 @@ env:
   # This lets the runner reach a steady state and warms operating system file
   # caches. Each measured process constructs fresh setup and local state.
   AKITA_BENCH_WARMUPS: "1"
-  # The profile example emits the per-fold wire grind_nonce in its proof-size
-  # breakdown; scripts/profile_bench_report.py surfaces it per level.
+  # The profile example emits the exact proof-global nonce-stream width and
+  # every public grinding-plan run. The detailed report attributes packed bits
+  # to each fold and query without rounding fold subtotals to bytes.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -55,24 +56,25 @@ jobs:
         # deterministically, fixing case order in the comment. `cases` is a
         # newline-separated list of MODE:NUM_VARS:NUM_POLYS[:SETUP_MODE] specs.
         #
-        # The adaptive small-field (fp32/fp64) one-hot cells run at nv=30. This
-        # exercises two more variables than the previous nv=28 fixture while
-        # retaining generated schedules and the equality-table allocation guard.
-        # Each base field has its own feature graph so unrelated catalogs and
-        # monomorphizations do not inflate every runner. The scalar fp128
-        # one-hot pair runs at nv=36; grouped and distributed fp128 cases stay
-        # at nv=32.
+        # Dense fixtures keep the same committed bit-mass across fields:
+        # fp32 nv=30, fp64 nv=29, fp128 nv=28. One-hot uses the same +1/+2
+        # offset from fp128: fp32 nv=34, fp64 nv=35, fp128 nv=36. Each base
+        # field has its own feature graph so unrelated catalogs and
+        # monomorphizations do not inflate every runner. Distributed fp128
+        # singletons stay at nv=32; multi-group fp128 finals use nv=34 except
+        # W8R2, which stays at nv=32 because the (34, 2) W8R2 catalog row fails
+        # setup-prefix checks.
         group:
           - name: 1-fp32-base
             profile_feature: profile-ci-fp32
             cases: |
-              dense_fp32:26:1
-              onehot_fp32:30:1
+              dense_fp32:30:1
+              onehot_fp32:34:1
           - name: 2-fp64-base
             profile_feature: profile-ci-fp64
             cases: |
-              dense_fp64:26:1
-              onehot_fp64:30:1
+              dense_fp64:29:1
+              onehot_fp64:35:1
           - name: 3-fp128-base
             profile_feature: profile-ci-fp128-base
             cases: |
@@ -82,11 +84,11 @@ jobs:
           - name: 4-multi-group-direct
             profile_feature: profile-ci-multi-group-direct
             cases: |
-              onehot_fp128_multi_group:32:4:direct
+              onehot_fp128_multi_group:34:4:direct
           - name: 5-multi-group-recursive
             profile_feature: profile-ci-multi-group-recursive
             cases: |
-              onehot_fp128_multi_group_recursive:32:4:recursive
+              onehot_fp128_multi_group_recursive:34:4:recursive
           - name: 6-multi-group-recursive-w8r2
             profile_feature: profile-ci-multi-group-recursive-w8r2
             cases: |

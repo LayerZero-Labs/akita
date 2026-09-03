@@ -1,11 +1,16 @@
 use super::*;
 
 pub(super) fn ifma52_cache_enabled<const D: usize>() -> bool {
-    (64..=512).contains(&D) && ifma52_enabled()
+    ifma52_cache_enabled_for_ring_dimension(D)
 }
 
-fn ifma52_tail_requirement<F: CanonicalField, const K: usize, const D: usize>(
+pub(super) fn ifma52_cache_enabled_for_ring_dimension(ring_dimension: usize) -> bool {
+    (64..=2048).contains(&ring_dimension) && ifma52_enabled()
+}
+
+fn ifma52_tail_requirement<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     moduli: [u64; K],
+    tail_modulus: u128,
     width: usize,
     rhs_abs_bound: u64,
 ) -> Option<bool> {
@@ -17,7 +22,7 @@ fn ifma52_tail_requirement<F: CanonicalField, const K: usize, const D: usize>(
         return Some(false);
     }
     capacity
-        .with_prime_modulus(I16_TAIL_PRIME.p as u128)
+        .with_prime_modulus(tail_modulus)
         .supports::<F, D>(width, rhs_abs_bound)
         .then_some(true)
 }
@@ -59,18 +64,50 @@ impl<const D: usize> ExactCachePlan<D> {
             Self::Q64Ifma52 { .. } => false,
         }
     }
+
+    fn cache_bytes(&self, num_ring_elements: usize) -> Result<usize, AkitaError> {
+        let bytes_per_ring = match self {
+            Self::Q32 { needs_tail, .. } => {
+                Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q32Ifma52 { needs_tail, .. } => {
+                core::mem::size_of::<u64>() + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q64 { needs_tail, .. } => {
+                Q64_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q64Ifma52 { .. } => 2 * core::mem::size_of::<u64>(),
+            Self::Q128 { needs_tail, .. } => {
+                Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i16>()
+            }
+            Self::Q128Ifma52 { needs_tail, .. } => {
+                3 * core::mem::size_of::<u64>()
+                    + usize::from(*needs_tail) * core::mem::size_of::<i32>()
+            }
+        };
+        num_ring_elements
+            .checked_mul(D)
+            .and_then(|entries| entries.checked_mul(bytes_per_ring))
+            .ok_or_else(|| AkitaError::InvalidSetup("planned exact NTT bytes overflow".into()))
+    }
 }
 
-pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
+pub(super) fn exact_cache_plan<F: Field + CanonicalEncoding, const D: usize>(
     selected: ProtocolCrtNttParams<D>,
     width: usize,
     rhs_abs_bound: u64,
 ) -> Result<ExactCachePlan<D>, AkitaError> {
     match selected {
         ProtocolCrtNttParams::Q32(params) => {
-            if let Some(needs_tail) =
-                ifma52_tail_requirement::<F, 1, D>([IFMA52_PRIMES[0]], width, rhs_abs_bound)
-            {
+            if let Some(needs_tail) = ifma52_tail_requirement::<F, 1, D>(
+                [IFMA52_PRIMES[0]],
+                I16_TAIL_PRIME.p as u128,
+                width,
+                rhs_abs_bound,
+            ) {
                 let mut params = Ifma52Params::new([IFMA52_PRIMES[0]])?;
                 if needs_tail {
                     params = params.with_i16_tail(I16_TAIL_PRIME.p)?;
@@ -95,6 +132,7 @@ pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
             if matches!(
                 ifma52_tail_requirement::<F, 2, D>(
                     [IFMA52_PRIMES[0], IFMA52_PRIMES[1]],
+                    I16_TAIL_PRIME.p as u128,
                     width,
                     rhs_abs_bound,
                 ),
@@ -115,12 +153,16 @@ pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
             })
         }
         ProtocolCrtNttParams::Q128(params) => {
-            if let Some(needs_tail) =
-                ifma52_tail_requirement::<F, 3, D>(IFMA52_PRIMES, width, rhs_abs_bound)
-            {
+            let tail_prime = q128_primes()[0];
+            if let Some(needs_tail) = ifma52_tail_requirement::<F, 3, D>(
+                IFMA52_PRIMES,
+                tail_prime.p as u128,
+                width,
+                rhs_abs_bound,
+            ) {
                 let mut params = Ifma52Params::new(IFMA52_PRIMES)?;
                 if needs_tail {
-                    params = params.with_i16_tail(I16_TAIL_PRIME.p)?;
+                    params = params.with_i32_tail(tail_prime.p)?;
                 }
                 Ok(ExactCachePlan::Q128Ifma52 {
                     params: Box::new(params),
@@ -141,8 +183,8 @@ pub(super) fn exact_cache_plan<F: CanonicalField, const D: usize>(
     }
 }
 
-/// Return whether an exact signed-coefficient request requires the i16 tail.
-pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
+/// Return whether an exact signed-coefficient request requires a CRT tail.
+pub fn ntt_cache_requires_exactness_tail<F: Field + CanonicalEncoding, const D: usize>(
     width: usize,
     rhs_abs_bound: u64,
 ) -> Result<bool, AkitaError> {
@@ -157,7 +199,25 @@ pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
     )
 }
 
-pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+/// Planned in-memory footprint of an exact signed-coefficient NTT cache.
+///
+/// This uses the same platform-selected cache plan as [`prepare_ntt_cache`],
+/// including IFMA52 limb widths and the q128 i32 exactness tail.
+pub fn planned_exact_ntt_cache_bytes<F: Field + CanonicalEncoding, const D: usize>(
+    num_ring_elements: usize,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<usize, AkitaError> {
+    let mode = NttCacheMode::ExactNegacyclic {
+        width,
+        rhs_abs_bound,
+    };
+    validate_cache_mode(mode)?;
+    exact_cache_plan::<F, D>(select_crt_ntt_params::<F, D>()?, width, rhs_abs_bound)?
+        .cache_bytes(num_ring_elements)
+}
+
+pub(super) fn prepare_exact_ntt_cache<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
     plan: ExactCachePlan<D>,
@@ -228,7 +288,15 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
             homogeneous!(params, Q128, needs_tail)
         }
         ExactCachePlan::Q128Ifma52 { params, needs_tail } => {
-            let (neg, tail) = prepare_ifma52_exact(matrix, tail_prefix_len, *params, needs_tail)?;
+            let retain_tail = needs_tail || tail_prefix_len.is_some_and(|length| length > 0);
+            let mut params = *params;
+            if retain_tail && !params.has_i32_tail() {
+                params = params.with_i32_tail(q128_primes()[0].p)?;
+            }
+            let tail = retain_tail
+                .then(|| prepare_ifma52_i32_tail(matrix, tail_prefix_len))
+                .transpose()?;
+            let neg = Ifma52NttMatrix::prepare(matrix.as_slice(), &params);
             PreparedNttCacheRepr::Q128Ifma52 { neg, tail }
         }
     };
@@ -236,12 +304,12 @@ pub(super) fn prepare_exact_ntt_cache<F: FieldCore + CanonicalField, const D: us
     Ok(PreparedNttCache(prepared))
 }
 
-fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: usize>(
+fn prepare_ifma52_exact<F: Field + CanonicalEncoding, const K: usize, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
     mut params: Ifma52Params<K, D>,
     needs_tail: bool,
-) -> Result<(Ifma52NttMatrix<K, D>, Option<PreparedIfma52I16Tail<D>>), AkitaError> {
+) -> Result<(Ifma52NttMatrix<K, D>, Option<PreparedIfma52Tail<i16, D>>), AkitaError> {
     // A verifier cache rebuild joins physical prefix lengths. Preserve a tail
     // installed by an earlier stronger request even when the current request's
     // exactness bound fits the IFMA base residues by themselves.
@@ -255,10 +323,10 @@ fn prepare_ifma52_exact<F: FieldCore + CanonicalField, const K: usize, const D: 
     Ok((Ifma52NttMatrix::prepare(matrix.as_slice(), &params), tail))
 }
 
-fn prepare_ifma52_i16_tail<F: FieldCore + CanonicalField, const D: usize>(
+fn prepare_ifma52_i16_tail<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     tail_prefix_len: Option<usize>,
-) -> Result<PreparedIfma52I16Tail<D>, AkitaError> {
+) -> Result<PreparedIfma52Tail<i16, D>, AkitaError> {
     let tail_len = tail_prefix_len.unwrap_or(matrix.as_slice().len());
     if tail_len == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -272,7 +340,27 @@ fn prepare_ifma52_i16_tail<F: FieldCore + CanonicalField, const D: usize>(
     let negacyclic = cfg_iter!(tail_rings)
         .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
         .collect();
-    Ok(PreparedIfma52I16Tail { negacyclic, params })
+    Ok(PreparedIfma52Tail { negacyclic, params })
+}
+
+fn prepare_ifma52_i32_tail<F: Field + CanonicalEncoding, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    tail_prefix_len: Option<usize>,
+) -> Result<PreparedIfma52Tail<i32, D>, AkitaError> {
+    let tail_len = tail_prefix_len.unwrap_or(matrix.as_slice().len());
+    if tail_len == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "required mixed IFMA52 i32-tail prefix is empty".into(),
+        ));
+    }
+    let tail_rings = matrix.as_slice().get(..tail_len).ok_or_else(|| {
+        AkitaError::InvalidSetup("mixed IFMA52 i32-tail prefix exceeds the base matrix".into())
+    })?;
+    let params = CrtNttParamSet::new([q128_primes()[0]]);
+    let negacyclic = cfg_iter!(tail_rings)
+        .map(|ring| CyclotomicCrtNtt::from_ring(ring, &params))
+        .collect();
+    Ok(PreparedIfma52Tail { negacyclic, params })
 }
 
 #[cfg(test)]
@@ -280,7 +368,7 @@ mod tests {
     use super::*;
     use crate::FlatMatrix;
     use akita_algebra::CyclotomicRing;
-    use akita_field::Prime32Offset99;
+    use jolt_field::Prime32Offset99;
 
     #[test]
     fn ifma_rebuild_retains_a_joined_tail_prefix() {
@@ -295,7 +383,7 @@ mod tests {
         let cache = prepare_exact_ntt_cache(matrix, Some(4), plan).expect("retained tail");
 
         assert!(cache.uses_ifma52());
-        assert!(cache.has_i16_tail());
+        assert!(cache.has_exactness_tail());
         assert_eq!(
             cache.cache_bytes(),
             10 * D * core::mem::size_of::<u64>() + 4 * D * core::mem::size_of::<i16>()

@@ -2,14 +2,16 @@
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::trim_trailing_zeros, UniPoly};
 use akita_error::AkitaError;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::reduce_signed_accum;
+use jolt_field::Unreduced;
+use jolt_field::{Field, Ring, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
 
+use crate::backend::packed_digits::{PackedSignedDigitView, PackedSignedDigits};
+
 #[derive(Clone, Copy)]
-struct SparseWeight<E: FieldCore> {
+struct SparseWeight<E: Field> {
     index: usize,
     linear: E,
     binary: E,
@@ -21,16 +23,16 @@ struct SparseWeight<E: FieldCore> {
 /// Witness values are read from `RelationRangeImageProver`'s existing compact
 /// or folded table, avoiding a full-domain field copy and keeping the addend's
 /// work proportional to its live support.
-pub(crate) struct AdditionalRelationTerms<E: FieldCore> {
+pub(crate) struct AdditionalRelationTerms<E: Field> {
     weights: Vec<SparseWeight<E>>,
     binary_batching: E,
     input_claim: E,
     domain_len: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
+impl<E: Field + Ring> AdditionalRelationTerms<E> {
     pub(crate) fn new(
-        compact_witness: &[i8],
+        compact_witness: &PackedSignedDigits,
         domain_len: usize,
         linear_weights: Vec<(usize, E)>,
         binary_intervals: &[Range<usize>],
@@ -157,7 +159,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         let input_claim = weights.iter().fold(E::zero(), |sum, weight| {
             let witness = compact_witness
                 .get(weight.index)
-                .map_or_else(E::zero, |&value| E::from_i64(i64::from(value)));
+                .map_or_else(E::zero, |value| E::from_i64(i64::from(value)));
             sum + witness * weight.linear
                 + binary_batching * weight.binary * witness * (witness + E::one())
         });
@@ -221,11 +223,11 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 
     pub(crate) fn round_polynomial_compact(
         &self,
-        compact_witness: &[i8],
+        compact_witness: PackedSignedDigitView<'_>,
         first_challenge: Option<E>,
     ) -> UniPoly<E>
     where
-        E: HasUnreducedOps,
+        E: Unreduced,
     {
         if first_challenge.is_none() {
             return self.round_polynomial_compact_initial(compact_witness);
@@ -234,7 +236,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
             let compact_value = |source_index| {
                 compact_witness
                     .get(source_index)
-                    .map_or_else(E::zero, |&value| E::from_i64(i64::from(value)))
+                    .map_or_else(E::zero, |value| E::from_i64(i64::from(value)))
             };
             if let Some(challenge) = first_challenge {
                 let left = compact_value(2 * index);
@@ -245,16 +247,19 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
         })
     }
 
-    /// First-round specialization while the witness is still signed bytes.
+    /// First-round specialization while the witness is still packed signed digits.
     ///
     /// The witness-dependent factors are small integers here. Accumulate their
     /// products without reducing after every multiplication, matching the
     /// compact ordinary-relation kernel used by the surrounding Stage 2 prover.
-    fn round_polynomial_compact_initial(&self, compact_witness: &[i8]) -> UniPoly<E>
+    fn round_polynomial_compact_initial(
+        &self,
+        compact_witness: PackedSignedDigitView<'_>,
+    ) -> UniPoly<E>
     where
-        E: HasUnreducedOps,
+        E: Unreduced,
     {
-        let mut coefficients = [E::MulU64Accum::zero(); 8];
+        let mut coefficients = [E::SmallProduct::zero(); 8];
         let mut cursor = 0usize;
         while cursor < self.weights.len() {
             let parent = self.weights[cursor].index >> 1;
@@ -267,7 +272,7 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
                 binary[side] = weight.binary;
                 cursor += 1;
             }
-            let witness_at = |index| compact_witness.get(index).copied().map_or(0, i64::from);
+            let witness_at = |index| compact_witness.get(index).map_or(0, i64::from);
             let witness = witness_at(2 * parent);
             let witness_delta = witness_at(2 * parent + 1) - witness;
             let linear_delta = linear[1] - linear[0];
@@ -381,12 +386,17 @@ impl<E: FieldCore + FromPrimitiveInt> AdditionalRelationTerms<E> {
 mod tests {
     use super::*;
     use akita_algebra::offset_eq::eq_eval_at_index;
-    use akita_field::Prime128OffsetA7F7 as F;
+    use jolt_field::One;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     fn equality_point(domain_len: usize) -> Vec<F> {
         (0..domain_len.trailing_zeros() as usize)
             .map(|index| F::from_u64(2 + index as u64))
             .collect()
+    }
+
+    fn packed(witness: &[i8]) -> PackedSignedDigits {
+        PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
     }
 
     fn reference_round_evaluation(
@@ -449,8 +459,9 @@ mod tests {
             },
         );
         let binary_interval = 0..2;
+        let packed_witness = packed(&witness);
         let mut prover = AdditionalRelationTerms::new(
-            &witness,
+            &packed_witness,
             4,
             linear,
             std::slice::from_ref(&binary_interval),
@@ -459,7 +470,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(prover.input_claim(), claim);
-        let polynomial = prover.round_polynomial_compact(&witness, None);
+        let polynomial = prover.round_polynomial_compact(packed_witness.view(), None);
         assert_eq!(
             polynomial.evaluate(&F::zero()) + polynomial.evaluate(&F::one()),
             claim
@@ -467,7 +478,7 @@ mod tests {
         let challenge = F::from_u64(17);
         let next_claim = polynomial.evaluate(&challenge);
         prover.bind(challenge);
-        let next = prover.round_polynomial_compact(&witness, Some(challenge));
+        let next = prover.round_polynomial_compact(packed_witness.view(), Some(challenge));
         assert_eq!(
             next.evaluate(&F::zero()) + next.evaluate(&F::one()),
             next_claim
@@ -480,17 +491,31 @@ mod tests {
         let binary_interval = 0..1;
         let support = std::slice::from_ref(&binary_interval);
         let equality_point = equality_point(2);
-        let invalid =
-            AdditionalRelationTerms::new(&[2, 0], 2, Vec::new(), support, &equality_point, rho)
-                .unwrap();
+        let invalid_witness = packed(&[2, 0]);
+        let invalid = AdditionalRelationTerms::new(
+            &invalid_witness,
+            2,
+            Vec::new(),
+            support,
+            &equality_point,
+            rho,
+        )
+        .unwrap();
         assert_eq!(
             invalid.input_claim(),
             rho * eq_eval_at_index(&equality_point, 0) * F::from_u64(6)
         );
 
-        let valid =
-            AdditionalRelationTerms::new(&[-1, 0], 2, Vec::new(), support, &equality_point, rho)
-                .unwrap();
+        let valid_witness = packed(&[-1, 0]);
+        let valid = AdditionalRelationTerms::new(
+            &valid_witness,
+            2,
+            Vec::new(),
+            support,
+            &equality_point,
+            rho,
+        )
+        .unwrap();
         assert_eq!(valid.input_claim(), F::zero());
     }
 
@@ -503,8 +528,9 @@ mod tests {
             (3, F::from_u64(7)),
             (6, F::from_u64(11)),
         ];
+        let packed_witness = packed(&witness);
         let terms = AdditionalRelationTerms::new(
-            &witness,
+            &packed_witness,
             8,
             linear,
             &[1..4, 6..8],
@@ -512,7 +538,7 @@ mod tests {
             F::from_u64(13),
         )
         .unwrap();
-        let polynomial = terms.round_polynomial_compact(&witness, None);
+        let polynomial = terms.round_polynomial_compact(packed_witness.view(), None);
         for point in 0..=5 {
             let point = F::from_u64(point);
             assert_eq!(
@@ -525,8 +551,9 @@ mod tests {
     #[test]
     fn construction_linearly_merges_duplicates_and_binary_support() {
         let equality_point = equality_point(8);
+        let packed_witness = packed(&[0; 8]);
         let terms = AdditionalRelationTerms::new(
-            &[0; 8],
+            &packed_witness,
             8,
             vec![
                 (0, F::from_u64(2)),
@@ -558,8 +585,9 @@ mod tests {
 
     #[test]
     fn construction_rejects_unsorted_linear_weights() {
+        let packed_witness = packed(&[0; 4]);
         assert!(AdditionalRelationTerms::new(
-            &[0; 4],
+            &packed_witness,
             4,
             vec![(2, F::one()), (1, F::one())],
             &[],

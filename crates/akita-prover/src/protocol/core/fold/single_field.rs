@@ -5,16 +5,12 @@ use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
 use crate::protocol::core::RootProverGroupOpening;
-use crate::{ProverOpeningData, ProverTranscriptGrind};
+use crate::ProverOpeningData;
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced, RandomSampling,
-};
 use akita_serialization::AkitaSerialize;
-use akita_transcript::Transcript;
 use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
+use jolt_field::{Fold, Unreduced};
 
 /// Prepare a fold level when claim and coefficient fields coincide (`EXT_DEGREE == 1`).
 ///
@@ -25,27 +21,29 @@ pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C,
     block_claims: ProverOpeningData<'a, E, P, F>,
     pad_base_evals: bool,
     transcript: &mut T,
+    level: u32,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Ring
+        + Field
+        + Unreduced
+        + Field
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O>,
     V: FnOnce() -> Result<(), AkitaError>,
     C: ComputeBackendSetup<F>,
@@ -63,6 +61,7 @@ where
         protocol_points: &protocol_points,
         reduction: None,
         trace_opening_batch: &opening_batch,
+        level,
         level_params,
         basis,
         pad_base_evals,

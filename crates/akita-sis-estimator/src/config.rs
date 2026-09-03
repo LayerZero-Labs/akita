@@ -44,7 +44,7 @@ pub struct SisSecurityConstraint {
 /// SIS security policy understood by the offline estimator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SisSecurityPolicy {
-    /// ADPS16 quantum LGSA gate at 128 bits.
+    /// Corrected ADPS16 quantum LGSA gate at 128 bits.
     Quantum128BitADPS16,
 }
 
@@ -67,6 +67,14 @@ impl SisSecurityPolicy {
                 },
                 minimum_log2_rop: 128.0,
             },
+        }
+    }
+}
+
+impl From<akita_types::sis::SisSecurityPolicyId> for SisSecurityPolicy {
+    fn from(policy: akita_types::sis::SisSecurityPolicyId) -> Self {
+        match policy {
+            akita_types::sis::SisSecurityPolicyId::Quantum128BitADPS16 => Self::Quantum128BitADPS16,
         }
     }
 }
@@ -195,6 +203,9 @@ pub struct EstimateConfig {
     /// Optional lattice dimension override matching lattice-estimator's `d`
     /// argument on fixed-cost calls.
     pub lattice_dimension: Option<u64>,
+    /// Decision threshold used by proven-pruned searches to classify a result
+    /// without representing an unnecessarily large exact cost.
+    pub proven_pruned_target_log2_rop: Option<f64>,
     /// Numeric precision and tolerance policy.
     pub numeric: NumericConfig,
 }
@@ -204,14 +215,14 @@ impl EstimateConfig {
     /// proven-pruned beta and zeta search.
     #[must_use]
     pub fn akita_infinity_table() -> Self {
+        let constraint = SisSecurityPolicy::Quantum128BitADPS16.adps16_quantum_constraint();
         Self {
-            red_cost_model: ReductionCostModel::Adps16 {
-                mode: Adps16Mode::Quantum,
-            },
+            red_cost_model: constraint.reduction_model,
             optimizer: OptimizerConfig::OptimizeZeta {
                 beta: SearchMode::Exhaustive,
                 zeta: SearchMode::ProvenPruned,
             },
+            proven_pruned_target_log2_rop: Some(constraint.minimum_log2_rop),
             ..Self::default()
         }
     }
@@ -250,6 +261,28 @@ impl EstimateConfig {
                 field: "lattice_dimension",
                 reason: "lattice dimension override must be positive".to_string(),
             });
+        }
+        let uses_proven_pruned = matches!(
+            self.optimizer,
+            OptimizerConfig::OptimizeZeta {
+                zeta: SearchMode::ProvenPruned,
+                ..
+            }
+        );
+        match self.proven_pruned_target_log2_rop {
+            Some(target) if !target.is_finite() || target <= 0.0 => {
+                return Err(EstimatorError::InvalidConfig {
+                    field: "proven_pruned_target_log2_rop",
+                    reason: "proven-pruned target must be finite and positive".to_string(),
+                });
+            }
+            None if uses_proven_pruned => {
+                return Err(EstimatorError::InvalidConfig {
+                    field: "proven_pruned_target_log2_rop",
+                    reason: "proven-pruned zeta search requires a decision target".to_string(),
+                });
+            }
+            Some(_) | None => {}
         }
         self.numeric.validate()
     }
@@ -326,6 +359,28 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn proven_pruned_search_requires_a_finite_positive_target() {
+        let config = EstimateConfig::akita_infinity_table();
+        assert_eq!(config.proven_pruned_target_log2_rop, Some(128.0));
+        assert!(config.validate().is_ok());
+
+        assert!(EstimateConfig {
+            proven_pruned_target_log2_rop: None,
+            ..config
+        }
+        .validate()
+        .is_err());
+        for target in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            assert!(EstimateConfig {
+                proven_pruned_target_log2_rop: Some(target),
+                ..config
+            }
+            .validate()
+            .is_err());
+        }
     }
 
     #[test]

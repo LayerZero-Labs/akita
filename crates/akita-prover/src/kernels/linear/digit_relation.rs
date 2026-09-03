@@ -1,7 +1,7 @@
 use super::*;
 
 /// Both transform-domain products contributed by the ring-switch D role.
-pub(crate) struct DigitRelationRows<F: FieldCore, const D: usize> {
+pub(crate) struct DigitRelationRows<F: Field, const D: usize> {
     pub(crate) negacyclic: Vec<CyclotomicRing<F, D>>,
     pub(crate) cyclic: Vec<CyclotomicRing<F, D>>,
 }
@@ -21,7 +21,7 @@ pub(crate) fn digit_relation_matrix_extent(
 /// cached route than reconstructing both products through the general fused
 /// B/A machinery.
 pub(crate) fn digit_relation_rows_cached_prover_bounds<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const D: usize,
 >(
     negacyclic_slot: &PreparedNttCache<D>,
@@ -39,7 +39,7 @@ pub(crate) fn digit_relation_rows_cached_prover_bounds<
 
 /// Stream the D-role matrix once and evaluate both transform-domain products.
 pub(crate) fn digit_relation_rows_streamed_prover_bounds<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     const D: usize,
 >(
     source: &[CyclotomicRing<F, D>],
@@ -81,7 +81,7 @@ pub(crate) fn digit_relation_rows_streamed_prover_bounds<
 }
 
 fn digit_relation_rows_with_params<
-    F: FieldCore + CanonicalField + HalvingField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,

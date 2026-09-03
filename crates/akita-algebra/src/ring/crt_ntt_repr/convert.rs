@@ -221,9 +221,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         scalar: &F,
         params: &CrtNttParamSet<W, K, D>,
     ) -> Self {
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let half_q = q / 2;
-        let canonical = scalar.to_canonical_u128();
+        let canonical = scalar
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
         let centered: i128 = if canonical > half_q {
             -((q - canonical) as i128)
         } else {
@@ -311,11 +316,8 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         lut: &DigitMontLut<W, K>,
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
-        for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
-            }
-            forward_ntt(limb, params.primes[k], tw, params.kernel_plan);
+        for (k, limb) in limbs.iter_mut().enumerate() {
+            lut.fill_negacyclic_limb(k, digits, params, limb);
         }
         Self { limbs }
     }
@@ -329,9 +331,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     ) -> Self {
         let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
         for (k, (limb, tw)) in limbs.iter_mut().zip(params.twiddles.iter()).enumerate() {
-            for (dst, &d) in limb.iter_mut().zip(digits.iter()) {
-                *dst = lut.get(k, d);
-            }
+            lut.fill_limb(k, digits, params, limb);
             forward_ntt_cyclic(limb, params.primes[k], tw, params.kernel_plan);
         }
         Self { limbs }

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{reduce_inner_opening_to_ring_element, BasisMode};
-use akita_field::{Ext2, Fp32, FpExt4, FpExt8};
+use jolt_field::{Ext2, Fp32, FpExt4, FpExt8, One, Zero};
 
 type F = Fp32<251>;
 type AkitaF32 = Fp32<4294967197>;
@@ -17,7 +17,7 @@ fn assert_trace_open_row_matches_subgroup_oracle<E, const D: usize, const K: usi
 where
     E: FpExtEncoding<AkitaF32>,
 {
-    assert_eq!(E::EXT_DEGREE, K);
+    assert_eq!(E::DEGREE, K);
     let params = SubfieldParams::<D, K>::new().unwrap();
     let ring = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
         AkitaF32::from_u64(3 + 5 * index as u64)
@@ -57,7 +57,7 @@ fn trace_open_row_matches_explicit_subgroup_trace() {
     assert_trace_open_row_matches_subgroup_oracle::<FpExt8<AkitaF32>, 64, 8>();
 }
 
-fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
+fn ring_subfield_basis<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
 ) -> Vec<CyclotomicRing<Fq, D>> {
     let step = D / (2 * K);
@@ -73,7 +73,7 @@ fn ring_subfield_basis<Fq: FieldCore, const D: usize, const K: usize>(
     basis
 }
 
-fn ring_subfield_coords<Fq: FieldCore, const D: usize, const K: usize>(
+fn ring_subfield_coords<Fq: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
     x: &CyclotomicRing<Fq, D>,
 ) -> Vec<Fq> {
@@ -363,8 +363,8 @@ fn pre_psi_digit_conversion_is_charged_once_before_physical_a_sizing() {
     // Two logical degree-four values with unit coordinates overlap under psi.
     // The logical infinity norm is one, while the actual packed coefficient
     // vector already carries the conversion cost with infinity norm two.
-    let logical = vec![1i8; 8];
-    let physical = pack_tensor_base_lift_i8_digits::<8>(&logical, 4, 4).unwrap();
+    let logical = [1i8; 8];
+    let physical = pack_tensor_base_lift_i8_digits::<8>(logical.iter().copied(), 4, 4).unwrap();
     assert_eq!(physical, vec![1, 2, 2, 2, 1, 0, 0, 0]);
     let physical_linf = physical
         .iter()

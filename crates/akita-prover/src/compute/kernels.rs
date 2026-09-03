@@ -4,27 +4,13 @@ use crate::compute::operation_plans::{
     RingSwitchRelationPlan, SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::compute::plans::RingSwitchRelationRows;
-use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, HalvingField, MulBaseUnreduced};
-
-/// Tensor-packed root witness alternatives produced by a tensor kernel.
-///
-/// This is an Akita-owned *output* sum type: the set of protocol output
-/// alternatives is fixed, so an enum is the right model here. It is not a
-/// closed *input-source* enum, which is the pattern the open boundary forbids.
-#[derive(Debug, Clone)]
-pub enum TensorPackedWitness<E: FieldCore> {
-    /// Dense tensor-packed evaluations (universal fallback).
-    Dense(Vec<E>),
-    /// Sparse tensor-packed witness preserved when the source/backend can.
-    Sparse(SparseExtensionOpeningWitness<E>),
-}
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 /// Outcome of a batched decompose-fold kernel invocation.
 #[derive(Debug)]
-pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
+pub enum BatchDecomposeFoldOutcome<F: Field, const D: usize> {
     /// Fused batched witness produced by the kernel.
     Fused(DecomposeFoldWitness<F>),
     /// No fused path; caller should decompose-fold each polynomial and aggregate.
@@ -41,7 +27,7 @@ pub enum BatchDecomposeFoldOutcome<F: FieldCore, const D: usize> {
 /// Akita views reduce to the standard `*_commit_rows` helpers above.
 pub trait RootCommitKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Inner commitments for a same-shape group of sources.
     ///
@@ -59,7 +45,7 @@ where
 /// Fused ring-switch relation-rows kernel over a borrowed relation view `S`.
 pub trait RingSwitchRelationKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused D rows in both domains, B cyclic rows, and A-side quotient rows.
     fn relation_rows(
@@ -67,9 +53,7 @@ where
         prepared: &Self::PreparedSetup,
         source: S,
         plan: RingSwitchRelationPlan,
-    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>
-    where
-        F: HalvingField;
+    ) -> Result<RingSwitchRelationRows<F, D>, AkitaError>;
 }
 
 /// Opening fold / decompose-fold kernel over a borrowed opening view `S`.
@@ -78,7 +62,7 @@ where
 /// state; setup-dependent work stays explicitly tied to the backend context.
 pub trait OpeningFoldKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused fold + evaluation in one pass over the source.
     fn evaluate_and_fold(
@@ -100,7 +84,7 @@ where
 /// Batched decompose-fold kernel over a borrowed opening-batch view `S`.
 pub trait OpeningBatchKernel<S, F, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     /// Fused batched decompose-fold at one opening point.
     fn decompose_fold_batch(
@@ -115,7 +99,7 @@ where
 /// extension-field point of type `E`.
 pub trait TensorProjectionKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials at one logical point.
@@ -128,18 +112,18 @@ where
     where
         E: MulBaseUnreduced<F>;
 
-    /// Tensor-packed recursive witness, dense or sparse when available.
+    /// Tensor-packed EOR witness.
     fn packed_witness(
         &self,
         prepared: Option<&Self::PreparedSetup>,
         source: S,
-    ) -> Result<TensorPackedWitness<E>, AkitaError>;
+    ) -> Result<Vec<E>, AkitaError>;
 }
 
 /// Batched tensor projection kernel over a borrowed tensor-batch view `S`.
 pub trait TensorProjectionBatchKernel<S, F, E, const D: usize>: ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Tensor-column partials for a same-point batch.
@@ -151,24 +135,13 @@ where
     ) -> Result<Vec<Vec<E>>, AkitaError>
     where
         E: MulBaseUnreduced<F>;
-
-    /// Sparse linear combination of tensor-packed recursive witnesses.
-    ///
-    /// Returns `Ok(None)` when a sparse combination is unavailable for the whole
-    /// batch and the caller must fall back to dense materialization.
-    fn sparse_linear_combination(
-        &self,
-        prepared: Option<&Self::PreparedSetup>,
-        source: S,
-        coeffs: &[E],
-    ) -> Result<Option<SparseExtensionOpeningWitness<E>>, AkitaError>;
 }
 
 /// Coefficient-packing projection over a borrowed same-shape source batch.
 pub trait SubringCoefficientPackingBatchKernel<S, F, E, const D: usize>:
     ComputeBackendSetup<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
 {
     /// Return one canonical base-field partial buffer per claim.

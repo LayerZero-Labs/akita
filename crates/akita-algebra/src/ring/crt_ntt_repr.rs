@@ -5,7 +5,7 @@ use std::array::from_fn;
 use crate::ntt::butterfly::NttTwiddles;
 use crate::ntt::crt::GarnerData;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
-use crate::{CanonicalField, CrtCapacity, FieldCore, NttKernelPlan};
+use crate::{CanonicalEncoding, CrtCapacity, Field, NttKernelPlan};
 
 /// CRT+NTT-domain representation of a cyclotomic ring element.
 ///
@@ -20,10 +20,10 @@ pub struct CyclotomicCrtNtt<W: PrimeWidth, const K: usize, const D: usize> {
 
 /// Field types that can convert to/from the CRT+NTT representation.
 ///
-/// Blanket-implemented for all `FieldCore + CanonicalField` types.
-pub trait CrtNttConvertibleField: FieldCore + CanonicalField {}
+/// Blanket-implemented for all `Field + CanonicalEncoding` types.
+pub trait CrtNttConvertibleField: Field + CanonicalEncoding {}
 
-impl<F: FieldCore + CanonicalField> CrtNttConvertibleField for F {}
+impl<F: Field + CanonicalEncoding> CrtNttConvertibleField for F {}
 
 /// Bundled CRT+NTT parameters for a fixed width/prime-count/degree tuple.
 ///
@@ -106,7 +106,11 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
             core::mem::size_of::<W>() == core::mem::size_of::<i32>()
                 && self.kernel_plan.uses_avx2_i32_dot()
         }
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(target_arch = "aarch64")]
+        {
+            core::mem::size_of::<W>() == core::mem::size_of::<i32>() && self.kernel_plan.uses_neon()
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
         {
             false
         }

@@ -2,13 +2,13 @@
 
 use akita_error::AkitaError;
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     AkitaVerifierSetup, FlatMatrix, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixVerifierRegistry,
 };
+use jolt_field::{CanonicalEncoding, Field};
 use std::sync::Arc;
 
 /// Prover setup artifact.
@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// Backend-prepared compute state is intentionally not stored here. Host code
 /// prepares a compute backend from the expanded setup when it wants to prove.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AkitaProverSetup<F: FieldCore> {
+pub struct AkitaProverSetup<F: Field> {
     /// Expanded matrix stage used by the prover.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Preprocessed setup-prefix commitment slots for setup-claim offloading.
@@ -27,7 +27,7 @@ pub struct AkitaProverSetup<F: FieldCore> {
     pub prefix_slots: SetupPrefixProverRegistry<F>,
 }
 
-impl<F: FieldCore> AkitaProverSetup<F> {
+impl<F: Field> AkitaProverSetup<F> {
     /// Generate a prover setup from already-computed setup capacity bounds.
     ///
     /// The caller supplies config-derived provisioning bounds in base-field
@@ -45,7 +45,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         setup_capacity: SetupMatrixCapacity,
     ) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + AkitaSerialize,
+        F: Field + CanonicalEncoding + AkitaSerialize,
     {
         let setup_seed = sample_akita_setup_seed();
         let seed = AkitaSetupDescriptor {
@@ -108,17 +108,17 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         let expanded = if verifier_matrix.len() == prover_matrix.len() {
             self.expanded.clone()
         } else {
-            let mut seed = self.expanded.seed().clone();
-            seed.num_field_elements = verifier_matrix.len();
+            let mut descriptor = self.expanded.descriptor().clone();
+            descriptor.num_field_elements = verifier_matrix.len();
             Arc::new(
                 AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                    seed,
+                    descriptor,
                     FlatMatrix::from_flat_data(verifier_matrix.to_vec()),
                 ),
             )
         };
         let mut prefix_slots =
-            SetupPrefixVerifierRegistry::new(self.expanded.seed().setup_seed.clone());
+            SetupPrefixVerifierRegistry::new(self.expanded.descriptor().setup_seed.clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
         AkitaVerifierSetup::from_parts(expanded, prefix_slots)
     }
@@ -134,7 +134,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// Returns an error if the expanded setup does not match its seed.
     pub fn from_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + RandomSampling + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
         expanded.check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup validation failed: {err}"))
@@ -155,20 +155,23 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// metadata is malformed.
     pub fn from_seed_validated_expanded(expanded: AkitaExpandedSetup<F>) -> Result<Self, AkitaError>
     where
-        F: CanonicalField + Valid,
+        F: Field + CanonicalEncoding + Valid,
     {
-        expanded.seed().check().map_err(|err| {
-            AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
+        expanded.descriptor().check().map_err(|err| {
+            AkitaError::InvalidSetup(format!(
+                "expanded setup descriptor validation failed: {err}"
+            ))
         })?;
         expanded.shared_matrix().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
         })?;
-        if expanded.shared_matrix().num_field_elements() != expanded.seed().num_field_elements {
+        if expanded.shared_matrix().num_field_elements() != expanded.descriptor().num_field_elements
+        {
             return Err(AkitaError::InvalidSetup(
-                "expanded setup matrix field count does not match setup seed".to_string(),
+                "expanded setup matrix field count does not match setup descriptor".to_string(),
             ));
         }
-        let setup_seed = expanded.seed().setup_seed.clone();
+        let setup_seed = expanded.descriptor().setup_seed.clone();
         let expanded = Arc::new(expanded);
         Ok(Self {
             expanded,
@@ -177,12 +180,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     }
 }
 
-impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Valid
-    for AkitaProverSetup<F>
-{
+impl<F: Field + CanonicalEncoding + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
-        if self.prefix_slots.setup_seed() != &self.expanded.seed().setup_seed {
+        if self.prefix_slots.setup_seed() != &self.expanded.descriptor().setup_seed {
             return Err(SerializationError::InvalidData(
                 "setup-prefix registry belongs to a different public matrix".to_string(),
             ));
@@ -194,7 +195,7 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Va
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128Offset275;
+    use jolt_field::Prime128Offset275;
 
     #[test]
     fn generate_with_capacity_rejects_zero_setup_len() {
@@ -225,7 +226,7 @@ mod tests {
                 num_field_elements: 3,
             })
             .expect("narrow verifier setup");
-        assert_eq!(verifier.expanded.seed().num_field_elements, 3);
+        assert_eq!(verifier.expanded.descriptor().num_field_elements, 3);
         assert_eq!(verifier.expanded.shared_matrix().num_field_elements(), 3);
         assert_eq!(
             verifier.expanded.shared_matrix().as_field_slice(),
@@ -262,6 +263,18 @@ mod tests {
         .expect("generate setup");
         let decomposed =
             RingVec::from_coeffs_with_ring_dim(Vec::new(), PREFIX_D).expect("empty A-native hint");
+        let inner_bound = akita_types::sis::rounded_up_role_a_inf_norm(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            PREFIX_D,
+            3,
+            &akita_challenges::SparseChallengeConfig::production_for_ring_dim(PREFIX_D)
+                .expect("D=64 has a production challenge configuration"),
+            1,
+            1,
+        )
+        .expect("audited prefix A bound");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -269,7 +282,7 @@ mod tests {
                 modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
                 role: SisMatrixRole::Inner,
                 ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
-                coeff_linf_bound: 32_767,
+                coeff_linf_bound: inner_bound,
             },
             1,
         )

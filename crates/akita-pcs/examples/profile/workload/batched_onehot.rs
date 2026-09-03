@@ -9,21 +9,18 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
-use akita_field::{
-    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_serialization::{AkitaSerialize, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     BasisMode, CommittedGroupBatchProfile, CommittedGroupParams, FoldSchedule, FpExtEncoding,
     OpeningClaimsLayout, PolynomialGroupLayout, SetupContributionMode,
 };
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use std::time::Instant;
@@ -35,24 +32,20 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     layout: &CommittedGroupParams,
     plan: Option<&FoldSchedule>,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     let group_layout = PolynomialGroupLayout::new(nv, num_polys);
     let polys: Vec<OneHotPoly<FF, u8>> = (0..num_polys)
@@ -162,12 +155,20 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         (commitments, proof, setup)
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     let opening_batch =
         OpeningClaimsLayout::from_root_groups(&[], group_layout).expect("same-point opening batch");
     let schedule = Cfg::resolve_catalog_row_for_opening(&opening_batch)
         .expect("batched schedule")
         .into_schedule();
+    let effective_schedule = plan.unwrap_or(&schedule);
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(effective_schedule, &opening_batch)
+        .expect("profile grinding plan");
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(
+        label,
+        &proof,
+        Some(effective_schedule),
+        &grinding_plan,
+    );
     if let Some(plan) = plan {
         report_proof_size_against_planner(
             label,

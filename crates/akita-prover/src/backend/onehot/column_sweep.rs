@@ -45,8 +45,8 @@ pub(super) fn bucketed_sweep_tile<F, const D: usize>(
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     debug_assert!(blocks.len() <= usize::from(u16::MAX) + 1);
     let mut col_counts = vec![0usize; active_a_cols];
@@ -80,7 +80,7 @@ where
     }
 
     let mut result = vec![Vec::with_capacity(n_a); blocks.len()];
-    let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
+    let mut row_accums: Vec<WideCyclotomicRing<F::Wide, D>> =
         vec![WideCyclotomicRing::zero(); blocks.len()];
     let mut partials = vec![CyclotomicRing::zero(); blocks.len()];
     let mut accum_counts = vec![0usize; blocks.len()];
@@ -124,18 +124,18 @@ pub(super) fn merge_sweep_tile<F, const D: usize>(
     n_a: usize,
     active_a_cols: usize,
     num_digits_inner: usize,
-    chunk_buf: &mut [WideCyclotomicRing<F::CommitAccum, D>],
+    chunk_buf: &mut [WideCyclotomicRing<F::Wide, D>],
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     let col_chunk = chunk_buf.len();
     let tile_len = tile_blocks.len();
     let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tile_len);
     result.resize_with(tile_len, || Vec::with_capacity(n_a));
     {
-        let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
+        let mut row_accums: Vec<WideCyclotomicRing<F::Wide, D>> =
             vec![WideCyclotomicRing::zero(); tile_len];
         // Overflow control without block splitting: fold each wide
         // accumulator into a canonical partial whenever it reaches
@@ -227,7 +227,7 @@ fn estimated_matrix_passes(total_blocks: usize, workers: usize, block_tile: usiz
 }
 
 fn max_entries_per_block<const D: usize, I: OneHotIndex>(
-    sources: &[OneHotView<'_, impl FieldCore, D, I>],
+    sources: &[OneHotView<'_, impl Field, D, I>],
     num_positions_per_block: usize,
 ) -> Result<usize, AkitaError> {
     let field_elems_per_block = num_positions_per_block
@@ -249,10 +249,10 @@ fn block_tile_for_scratch<F, const D: usize>(
     scratch_bytes_per_worker: usize,
 ) -> Result<usize, AkitaError>
 where
-    F: FieldCore + HasCommitAccum,
+    F: Field + WithCommitAccumulator,
 {
     let wide_ring = D
-        .checked_mul(std::mem::size_of::<F::CommitAccum>())
+        .checked_mul(std::mem::size_of::<F::Wide>())
         .ok_or_else(|| AkitaError::InvalidSetup("one hot wide ring size overflow".into()))?;
     let field_ring = D
         .checked_mul(std::mem::size_of::<F>())
@@ -310,8 +310,8 @@ pub(super) fn direct_sweep_tile<F, const D: usize>(
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     blocks
         .iter()
@@ -344,8 +344,8 @@ fn run_sweep_tile<F, const D: usize>(
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     debug_assert!(
         blocks
@@ -382,8 +382,8 @@ fn column_sweep_ajtai_onehot_multi_with_sweep<F, const D: usize, I>(
     forced_sweep: Option<OneHotSweep>,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
     I: OneHotIndex,
 {
     if num_digits_inner == 0 || !active_a_cols.is_multiple_of(num_digits_inner) {
@@ -529,8 +529,8 @@ pub(crate) fn column_sweep_ajtai_onehot_multi<F, const D: usize, I>(
     scratch_bytes_per_worker: usize,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
     I: OneHotIndex,
 {
     column_sweep_ajtai_onehot_multi_with_sweep(
@@ -555,8 +555,8 @@ pub(super) fn column_sweep_ajtai_onehot_multi_forced<F, const D: usize, I>(
     sweep: OneHotSweep,
 ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
     I: OneHotIndex,
 {
     column_sweep_ajtai_onehot_multi_with_sweep(
@@ -580,8 +580,8 @@ pub(crate) fn column_sweep_ajtai_onehot<F, const D: usize>(
     num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
-    F: FieldCore + CanonicalField + HasCommitAccum,
-    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + WithCommitAccumulator,
+    F::Wide: AdditiveGroup + From<F>,
 {
     direct_sweep_tile(a_view, blocks, num_digits_inner)
 }

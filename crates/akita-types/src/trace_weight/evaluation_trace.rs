@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{
@@ -25,7 +25,7 @@ pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), Akit
 }
 
 /// Slice the fold-block coordinates out of one prepared evaluation-trace point.
-fn evaluation_trace_block_point<X: FieldCore>(
+fn evaluation_trace_block_point<X: Field>(
     opening_point: &[X],
     num_positions_per_block: usize,
     num_live_blocks: usize,
@@ -61,7 +61,7 @@ fn evaluation_trace_block_point<X: FieldCore>(
 ///
 /// This contains protocol facts, not either side's runtime representation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EvaluationTraceGroupParameters<E: FieldCore> {
+pub struct EvaluationTraceGroupParameters<E: Field> {
     group_index: usize,
     claim_range: Range<usize>,
     block_opening_point: Arc<[E]>,
@@ -72,7 +72,7 @@ pub struct EvaluationTraceGroupParameters<E: FieldCore> {
     inner_trace: Arc<[E]>,
 }
 
-impl<E: FieldCore> EvaluationTraceGroupParameters<E> {
+impl<E: Field> EvaluationTraceGroupParameters<E> {
     #[must_use]
     pub fn group_index(&self) -> usize {
         self.group_index
@@ -130,7 +130,7 @@ impl<E: FieldCore> EvaluationTraceGroupParameters<E> {
 }
 
 /// Apply one uniform reduction scale to normalized evaluation-trace coefficients.
-pub fn scale_evaluation_trace_claim_coefficients<E: FieldCore>(
+pub fn scale_evaluation_trace_claim_coefficients<E: Field>(
     claim_coefficients: &[E],
     uniform_scale: E,
 ) -> Result<Vec<E>, AkitaError> {
@@ -147,7 +147,7 @@ pub fn scale_evaluation_trace_claim_coefficients<E: FieldCore>(
 
 /// Checked common inputs from which prover and verifier build separate
 /// evaluation-trace representations.
-pub struct EvaluationTraceInputs<'a, F: FieldCore, E: FieldCore> {
+pub struct EvaluationTraceInputs<'a, F: Field, E: Field> {
     pub digit_witness_domain: FlatBooleanDomain,
     pub relation_coefficient_block_len: usize,
     pub witness_layout: &'a WitnessLayout,
@@ -164,8 +164,8 @@ pub fn prepare_evaluation_trace_group_parameters<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<Vec<EvaluationTraceGroupParameters<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     if inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
@@ -244,7 +244,7 @@ where
                 group_dims.d_a(),
                 |D_G| {
                     let packed_inner = prepared.packed_inner_trusted::<D_G>()?;
-                    let trace = if E::EXT_DEGREE == 1 {
+                    let trace = if E::DEGREE == 1 {
                         packed_inner
                             .coefficients()
                             .iter()
@@ -290,7 +290,7 @@ where
 mod tests {
     use super::*;
     use crate::{basis_weights, block_rings_at_opening, embed_ring_subfield_vector};
-    use akita_field::{Ext2, Fp32, FpExt4, FpExt8, RandomSampling};
+    use jolt_field::{Ext2, Field, Fp32, FpExt4, FpExt8};
     use rand::{rngs::StdRng, SeedableRng};
 
     type BaseField = Fp32<251>;
@@ -300,10 +300,10 @@ mod tests {
 
     fn assert_extension_trace_factorization<E, const D: usize>(seed: u64)
     where
-        E: FpExtEncoding<BaseField> + ExtField<BaseField> + FromPrimitiveInt + RandomSampling,
+        E: FpExtEncoding<BaseField> + ExtField<BaseField> + Ring + Field,
     {
         let mut rng = StdRng::seed_from_u64(seed);
-        let inner_point_len = (D / E::EXT_DEGREE).trailing_zeros() as usize;
+        let inner_point_len = (D / E::DEGREE).trailing_zeros() as usize;
         for _ in 0..8 {
             let inner_point: Vec<E> = (0..inner_point_len).map(|_| E::random(&mut rng)).collect();
             let inner_weights = basis_weights(&inner_point, BasisMode::Lagrange).unwrap();

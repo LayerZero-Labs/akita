@@ -1,8 +1,8 @@
 use super::*;
 use crate::SisModulusProfileId;
 use akita_challenges::SparseChallengeConfig;
-use akita_field::CanonicalField;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::CanonicalEncoding;
+use jolt_field::{One, Prime128OffsetA7F7, Zero};
 
 type F = Prime128OffsetA7F7;
 const TEST_ADMISSION_CAP: u128 = 127;
@@ -30,9 +30,16 @@ fn test_lp() -> CommittedGroupParams {
         modulus_profile: params.inner().matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
-        coeff_linf_bound: *crate::sis::COEFF_LINF_BUCKETS
-            .last()
-            .expect("nonempty SIS buckets"),
+        coeff_linf_bound: crate::sis::sis_role_cells()
+            .into_iter()
+            .filter(|cell| {
+                cell.role == crate::sis::SisMatrixRole::Inner
+                    && cell.modulus_profile == params.inner().matrix.sis_modulus_profile()
+                    && cell.ring_dimension == 64
+            })
+            .map(|cell| cell.coeff_linf_bound)
+            .max()
+            .expect("nonempty SIS A bounds"),
     };
     params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
@@ -135,7 +142,7 @@ fn terminal_decoder_rejects_coefficient_outside_i16() {
 #[test]
 fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let cap = 31;
     let layout = TerminalResponseShape::from_groups(
         &lp,
@@ -164,7 +171,7 @@ fn terminal_response_z_budget_uses_golomb_rate_not_packed_digit_width() {
 #[test]
 fn direct_terminal_layout_contains_only_z_e_t_planes() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
@@ -185,7 +192,7 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
 #[test]
 fn direct_terminal_builder_constructs_z_e_t_segments() {
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = TerminalResponseShape::from_groups(
         &lp,
         field_bits,
@@ -223,11 +230,11 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
 
 #[test]
 fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
-    use akita_field::CanonicalField;
     use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
+    use jolt_field::CanonicalEncoding;
 
     let lp = test_lp();
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let layout = scalar_group_layout(&lp, 1, 1, 1, field_bits).unwrap();
     let scheduled_z_bytes = terminal_response_z_payload_bytes(&layout);
     assert!(
@@ -271,11 +278,11 @@ fn terminal_response_wire_round_trip_with_scheduled_z_budget() {
 #[test]
 fn terminal_e_absorb_matches_emitted_field_segment() {
     let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
     let group = layout.groups[0];
     let e_fields = RingVec::from_coeffs(
         (0..group.e_field_elems)
-            .map(|index| F::from_canonical_u128_reduced(index as u128 + 1))
+            .map(|index| F::from_u128_reduced(index as u128 + 1))
             .collect(),
     );
     let witness = TerminalResponse {
@@ -294,11 +301,11 @@ fn terminal_e_absorb_matches_emitted_field_segment() {
 #[test]
 fn terminal_transcript_parts_separate_t_state_from_z_response() {
     let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
+    let layout = scalar_group_layout(&lp, 1, 1, 1, F::MODULUS_BITS).unwrap();
     let group = layout.groups[0];
     let t_fields = RingVec::from_coeffs(
         (0..group.t_field_elems)
-            .map(|index| F::from_canonical_u128_reduced(index as u128 + 9))
+            .map(|index| F::from_u128_reduced(index as u128 + 9))
             .collect(),
     );
     let z = vec![3, 1, 4, 1];
@@ -463,7 +470,7 @@ fn certified_terminal_cap_applies_the_wire_representation_limit() {
 
 #[test]
 fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
-    let matrix = terminal_matrix_with_bucket(2047);
+    let matrix = terminal_matrix_with_bucket(1_428);
     let light = crate::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(3),
@@ -488,7 +495,7 @@ fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
 fn terminal_cap_has_exactly_one_implementation() {
     // The schedule-side method must not re-derive the cap. If these ever
     // disagree the split-brain this consolidation removed has returned.
-    for bucket in [2047u128, 8191, 67_108_863] {
+    for bucket in [1_428u128, 1_484, 104_244] {
         let matrix = terminal_matrix_with_bucket(bucket);
         for weight in [3usize, 6, 11] {
             let sparse = SparseChallengeConfig::pm1_only(weight);

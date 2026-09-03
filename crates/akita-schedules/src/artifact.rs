@@ -521,6 +521,7 @@ mod tests {
             selective_l2_response_model: identity.selective_l2_response_model,
             selection_policy: identity.selection_policy,
             recursive_split_search_policy: identity.recursive_split_search_policy,
+            recursive_setup_search_policy: identity.recursive_setup_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             ring_dimension_schedule_mode: identity.ring_dimension_schedule_mode,

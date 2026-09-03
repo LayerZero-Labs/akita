@@ -11,8 +11,8 @@ pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 mod subring_coefficient_packing;
 pub use dispatch::{
-    compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
-    ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
+    compression_ring_dim_supported_for_tier, field_modulus, field_modulus_be_bytes, ntt_max_ring_d,
+    ntt_min_ring_d, ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
     outer_opening_min_ring_d, protocol_dispatch_tier, protocol_dispatch_tier_for_sis_profile,
     validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
     ProtocolDispatchSlot, ProtocolRingDispatchTierId,
@@ -23,6 +23,7 @@ pub mod golomb_rice;
 pub mod instance_descriptor;
 pub mod layout;
 pub mod lhl_blinding;
+pub(crate) mod narrowing;
 pub mod ntt_cache;
 pub mod opening_claims;
 pub mod proof;
@@ -35,6 +36,8 @@ pub mod sis;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
+mod transcript_grinding;
+mod transcript_grinding_plan;
 pub mod witness;
 
 pub use commitment_slicing::{
@@ -72,9 +75,9 @@ pub use golomb_rice::{
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, ZFoldEncodingStats,
 };
 pub use instance_descriptor::{
-    digest_effective_schedule, digest_level_params, digest_serializable, setup_seed_digest,
-    AkitaInstanceDescriptor, AlgebraSection, CallSection, FoldLinfProtocolBinding, PlanSection,
-    ProtocolFeatureSet, SetupSection,
+    digest_descriptor_bytes, digest_effective_schedule, digest_level_params, digest_serializable,
+    setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
+    ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
@@ -93,7 +96,8 @@ pub use layout::{
 };
 pub use ntt_cache::{
     build_riscv64_scalar_q128_cache_artifact, centered_quotient_requires_i16_tail,
-    centered_quotient_requires_i16_tail_for_field, ntt_cache_requires_i16_tail,
+    centered_quotient_requires_i16_tail_for_field, dense_i8_commit_prefers_exact_ifma52,
+    ntt_cache_requires_exactness_tail, planned_exact_ntt_cache_bytes,
     prepare_compression_ntt_cache, prepare_ntt_cache, prepared_verifier_ntt_cache_metadata,
     select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey, NttCacheMode,
     NttPrefixRequirement, NttTransformDomain, PreparedNttCache, PreparedNttTailPairView,
@@ -147,20 +151,23 @@ pub use proof::{
     SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof,
     SubfieldMultiplierOpeningPoint, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
     TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
-    TerminalWitnessTranscriptParts, MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS,
-    MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS, SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
+    TerminalWitnessTranscriptParts, WitnessCoefficientSink,
+    MAX_GENERIC_SETUP_DECODE_FIELD_ELEMENTS, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS,
+    SETUP_PREFIX_CONTENT_TAG, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     append_digit_range_child_claims, reconstruct_l2_sq_from_gram, DigitRangeEqualityPoint,
     DigitRangePlan, FlatBooleanDomain,
 };
-pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
+pub use proof_size::level_proof_bytes;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
-    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, TerminalFoldParams,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, FoldSuccessor,
+    GroupCommitPhaseParams, NextWitnessBindingPolicy, PlannedFoldSchedule,
+    PrecommittedGroupProfiles, ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole,
+    TerminalFoldParams, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
@@ -197,6 +204,22 @@ pub use trace_weight::{
     TraceTermBatch, TraceWeightLayout,
 };
 pub use transcript::AppendToTranscript;
+pub use transcript_grinding::{
+    grind_bits_for_loss, multilinear_point_loss_factor, nominal_challenge_capacity_bits,
+    polynomial_identity_loss_factor, powers_batch_loss_factor, ring_switch_alpha_loss_factor,
+    sample_grinded_sumcheck_challenge, GrindingPlan, GrindingQueryKind, GrindingRun, GrindingSite,
+    ProverGrindingTranscript, ProverTranscriptGrinding, SumcheckProtocol, TranscriptGrinding,
+    TranscriptNonceReader, TranscriptNonceStream, TranscriptNonceWriter,
+    VerifierGrindingTranscript, VerifierTranscriptGrinding, FOLD_COORDINATE_ORACLE_REVISION,
+    FOLD_RESPONSE_ATTEMPTS, FOLD_RESPONSE_NONCE_BITS, GRINDING_ENCODING_VERSION,
+    GRINDING_LITTLE_ENDIAN_BIT_ORDER, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES,
+    GRINDING_QUERY_POLICY_REVISION, MAX_GRINDING_BITS, TRANSCRIPT_SECURITY_BITS,
+};
+pub use transcript_grinding_plan::{
+    derive_transcript_grinding_plan_from_public_shape,
+    transcript_grinding_nonce_bits_for_planner_candidate,
+    transcript_grinding_nonce_bits_for_planner_edge,
+};
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,
     CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId, WitnessLayout,

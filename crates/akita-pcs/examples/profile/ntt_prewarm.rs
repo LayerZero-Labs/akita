@@ -1,9 +1,9 @@
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_prover::{
     prewarm_ntt_requirements, CpuBackend, NttExecutionRequirements, UniformProverStack,
 };
 use akita_types::FoldSchedule;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Prewarm the exact cache union for the profile's shared CPU owner.
 ///
@@ -18,7 +18,7 @@ pub(crate) fn prewarm_uniform_profile_execution<F>(
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     let requirements = NttExecutionRequirements::from_commit_and_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<F, _>(stack, &requirements)

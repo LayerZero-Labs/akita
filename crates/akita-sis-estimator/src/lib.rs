@@ -20,8 +20,10 @@ pub mod optimizer;
 pub mod params;
 pub mod probability;
 pub mod reduction;
+pub mod schedule_security;
 pub mod simulator;
 pub mod width_table;
+pub mod work_cache;
 
 pub use akita::{
     scalar_sis_from_ring, scalar_sis_from_ring_euclidean, scalar_sis_from_ring_wide,
@@ -36,6 +38,10 @@ pub use error::{EstimatorError, Result};
 pub use numeric::{GoldenTrust, NumericBackend, NumericConfig, Probability};
 pub use params::{
     akita_q128, akita_q32, akita_q64, Bound, SisNorm, SisParameterUpdate, SisParameters,
+};
+pub use schedule_security::{
+    estimate_schedule_security, ScheduleSecurityEstimate, ScheduleSisBound,
+    ScheduleSisInstanceEstimate, ScheduleSisRole,
 };
 
 /// Estimate the cheapest SIS lattice attack for the configured optimizer.

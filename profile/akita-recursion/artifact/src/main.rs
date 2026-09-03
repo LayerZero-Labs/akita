@@ -15,10 +15,8 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, PseudoMersenneField,
-    RandomSampling,
+use akita_config::{
+    derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
@@ -35,6 +33,7 @@ use akita_types::{
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::env;
@@ -80,7 +79,7 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
 
 fn make_onehot_poly<FF>(num_vars: usize, seed: u64) -> Result<OneHotPoly<FF, u8>, String>
 where
-    FF: CanonicalField + FromPrimitiveInt,
+    FF: Field + CanonicalEncoding,
 {
     let onehot_k = onehot_k_for_num_vars(num_vars);
     let total_field = 1usize
@@ -97,7 +96,7 @@ where
 
 fn onehot_opening<FF, E>(poly: &OneHotPoly<FF, u8>, point: &[E]) -> Result<E, String>
 where
-    FF: CanonicalField,
+    FF: Field + CanonicalEncoding,
     E: ExtField<FF>,
 {
     if poly.indices().len() * poly.onehot_k() != (1usize << point.len()) {
@@ -161,7 +160,7 @@ fn materialize_schedule_setup_prefix_slots<FF>(
     schedule: &akita_types::FoldSchedule,
 ) -> Result<(), akita_error::AkitaError>
 where
-    FF: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid,
+    FF: Field + CanonicalEncoding + Valid,
     CpuBackend: ComputeBackendSetup<FF>,
 {
     for setup_prefix in schedule
@@ -231,8 +230,7 @@ fn build_statement<'a>(
 }
 
 fn fp128_prime_label() -> String {
-    match <F as PseudoMersenneField>::MODULUS_OFFSET {
-        2355 => "q=2^128-2355".to_string(),
+    match <F as PseudoMersenne>::OFFSET {
         0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
         offset => format!("q=2^128-{offset:#x}"),
     }
@@ -315,14 +313,14 @@ fn verify_proof(
 
 fn random_claim_point<FF, E>(num_vars: usize, seed: u64) -> Vec<E>
 where
-    FF: CanonicalField,
+    FF: Field + CanonicalEncoding,
     E: ExtField<FF>,
 {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..num_vars)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FF::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FF::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -457,6 +455,15 @@ macro_rules! generate_scalar_case {
         )
         .map_err(|err| format!("{} host-side sanity verify: {err}", case))?;
 
+        let grinding_plan = derive_transcript_grinding_plan::<ScalarCfg>(
+            schedule.schedule(),
+            &opening_layout,
+        )
+        .map_err(|err| format!("{} derive grinding plan: {err}", case))?;
+        let proof_shape = proof.shape();
+        proof_shape
+            .validate_grinding_plan(&grinding_plan)
+            .map_err(|err| format!("{} validate proof grinding shape: {err}", case))?;
         let inputs: AkitaJoltInputs<ScalarField, $d, ScalarExt> = AkitaJoltInputs {
             case,
             transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),
@@ -467,7 +474,7 @@ macro_rules! generate_scalar_case {
             schedule_selection,
             commitment,
             verifier_setup,
-            proof_shape: proof.shape(),
+            proof_shape,
             proof,
         };
         let blob = inputs
@@ -643,12 +650,12 @@ fn run() -> Result<(), String> {
     let pre_points: Vec<Vec<F>> = (0..PRE_GROUPS)
         .map(|_| {
             (0..PRE_NUM_VARS)
-                .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
                 .collect()
         })
         .collect();
     let final_point: Vec<F> = (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect();
 
     let t0 = Instant::now();
@@ -802,7 +809,15 @@ fn run() -> Result<(), String> {
         "host-side verify OK"
     );
 
+    let grinding_plan = derive_transcript_grinding_plan::<Cfg>(
+        schedule.schedule(),
+        &opening_layout,
+    )
+    .map_err(|err| format!("derive grinding plan failed: {err}"))?;
     let proof_shape = proof.shape();
+    proof_shape
+        .validate_grinding_plan(&grinding_plan)
+        .map_err(|err| format!("validate proof grinding shape failed: {err}"))?;
     let inputs: AkitaJoltInputs<F, SOURCE_VIEW_D> = AkitaJoltInputs {
         case: AkitaJoltCase::OneHotFp128MultiGroupRecursive,
         transcript_domain: TRANSCRIPT_DOMAIN.to_vec(),

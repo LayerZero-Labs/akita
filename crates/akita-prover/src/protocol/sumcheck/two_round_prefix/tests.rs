@@ -2,15 +2,23 @@ use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
-use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
+use crate::protocol::sumcheck::relation_range_image::{
+    PreparedProverLinearTerms, StructuredLinearSegment, StructuredLinearTerm,
+    StructuredLinearWeights,
+};
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
 use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
+use jolt_field::{ExtField, Field, FpExt4, One, Prime128Offset275, Prime32Offset99, Ring, Zero};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 type F = Prime128Offset275;
+
+fn packed(witness: &[i8]) -> crate::backend::packed_digits::PackedSignedDigits {
+    crate::backend::packed_digits::PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
+}
 
 fn ordered_equality_point(
     challenges: &[F],
@@ -164,7 +172,7 @@ fn stage2_relation_round_values_from_full_grid(full_grid: [F; 9], r0: F) -> Vec<
     out
 }
 
-fn tensor_values<E: FieldCore, const NX: usize, const NY: usize>(
+fn tensor_values<E: Field, const NX: usize, const NY: usize>(
     xs: [PrefixPoint<E>; NX],
     ys: [PrefixPoint<E>; NY],
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
@@ -463,7 +471,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
     let evaluation_trace = PreparedProverLinearTerms::from_dense(vec![F::zero(); 10], 5, 2);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -514,7 +522,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
             let evaluation_trace =
                 PreparedProverLinearTerms::from_dense(trace_compact.clone(), live_x_cols, y_len);
             build_stage2_bivariate_skip_proof_from_m_compact(
-                &w_compact,
+                packed(&w_compact).view(),
                 &alpha_evals_y,
                 &relation_matrix_col_evals,
                 &evaluation_trace,
@@ -564,7 +572,7 @@ fn stage2_bivariate_skip_proof_builder_with_prepared_trace_matches_dense() {
         .collect();
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -586,6 +594,155 @@ fn stage2_bivariate_skip_proof_builder_with_prepared_trace_matches_dense() {
             ring_bits,
         ),
     );
+}
+
+#[test]
+fn stage2_bivariate_skip_proof_builder_hoists_factored_trace_lanes() {
+    let live_x_cols = 5usize;
+    let col_bits = 3usize;
+    let ring_bits = 2usize;
+    let y_len = 1usize << ring_bits;
+    let w_compact: Vec<i8> = (0..(live_x_cols * y_len))
+        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
+        .collect();
+    let source0 = (0..(3 * y_len))
+        .map(|i| F::from_u64((11 * i as u64) + 13))
+        .collect::<Vec<_>>();
+    let source1 = (0..(3 * y_len))
+        .map(|i| F::from_u64((17 * i as u64) + 19))
+        .collect::<Vec<_>>();
+    let factor0 = F::from_u64(23);
+    let factor1 = F::from_u64(29);
+    let mut dense = vec![F::zero(); live_x_cols * y_len];
+    for lane in 0..3 {
+        for coefficient in 0..y_len {
+            dense[(lane + 1) * y_len + coefficient] = factor0 * source0[lane * y_len + coefficient]
+                + factor1 * source1[lane * y_len + coefficient];
+        }
+    }
+    let structured = StructuredLinearWeights {
+        sources: vec![Arc::from(source0), Arc::from(source1)],
+        segments: vec![
+            StructuredLinearSegment {
+                physical_coefficient_start: y_len,
+                source_coefficient_start: 0,
+                coefficient_count: 3 * y_len,
+            },
+            StructuredLinearSegment {
+                physical_coefficient_start: y_len,
+                source_coefficient_start: 0,
+                coefficient_count: 3 * y_len,
+            },
+        ],
+        terms: vec![
+            StructuredLinearTerm {
+                factor: factor0,
+                source_index: 0,
+                segment_range: 0..1,
+            },
+            StructuredLinearTerm {
+                factor: factor1,
+                source_index: 1,
+                segment_range: 1..2,
+            },
+        ],
+        physical_field_len: live_x_cols * y_len,
+    };
+    let factored = PreparedProverLinearTerms::from_structured_weights(&structured, y_len).unwrap();
+    let dense = PreparedProverLinearTerms::from_dense(dense, live_x_cols, y_len);
+    let alpha_evals_y = (0..y_len)
+        .map(|i| F::from_u64((31 * i as u64) + 37))
+        .collect::<Vec<_>>();
+    let relation_matrix_col_evals = (0..(1usize << col_bits))
+        .map(|i| F::from_u64((41 * i as u64) + 43))
+        .collect::<Vec<_>>();
+    let stage1_point = (0..(col_bits + ring_bits))
+        .map(|i| F::from_u64((47 * i as u64) + 53))
+        .collect::<Vec<_>>();
+    let build = |linear_terms| {
+        build_stage2_bivariate_skip_proof_from_m_compact(
+            packed(&w_compact).view(),
+            &alpha_evals_y,
+            &relation_matrix_col_evals,
+            linear_terms,
+            &stage1_point,
+            8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+    };
+    assert_eq!(build(&factored), build(&dense));
+}
+
+#[test]
+fn stage2_factored_trace_hoist_matches_dense_near_fp32_modulus() {
+    type E = FpExt4<Prime32Offset99>;
+
+    const MAX_CANONICAL: u64 = 0xffff_ff9c;
+    let near_modulus = |seed: usize| {
+        E::from_base_slice(&std::array::from_fn::<_, 4, _>(|coordinate| {
+            Prime32Offset99::from_u64(MAX_CANONICAL - ((seed + 17 * coordinate) % 89) as u64)
+        }))
+    };
+    let live_x_cols = 5usize;
+    let col_bits = 3usize;
+    let ring_bits = 6usize;
+    let y_len = 1usize << ring_bits;
+    let w_compact = (0..live_x_cols * y_len)
+        .map(|i| ((7 * i + 5) % 8) as i8 - 4)
+        .collect::<Vec<_>>();
+    let source = (0..3 * y_len)
+        .map(|i| near_modulus(3 * i + 1))
+        .collect::<Vec<_>>();
+    let factor = near_modulus(7);
+    let mut dense_values = vec![E::zero(); live_x_cols * y_len];
+    for lane in 0..3 {
+        for coefficient in 0..y_len {
+            dense_values[(lane + 1) * y_len + coefficient] =
+                factor * source[lane * y_len + coefficient];
+        }
+    }
+    let structured = StructuredLinearWeights {
+        sources: vec![Arc::from(source)],
+        segments: vec![StructuredLinearSegment {
+            physical_coefficient_start: y_len,
+            source_coefficient_start: 0,
+            coefficient_count: 3 * y_len,
+        }],
+        terms: vec![StructuredLinearTerm {
+            factor,
+            source_index: 0,
+            segment_range: 0..1,
+        }],
+        physical_field_len: live_x_cols * y_len,
+    };
+    let factored = PreparedProverLinearTerms::from_structured_weights(&structured, y_len).unwrap();
+    let dense = PreparedProverLinearTerms::from_dense(dense_values, live_x_cols, y_len);
+    let alpha_evals_y = (0..y_len)
+        .map(|i| near_modulus(5 * i + 11))
+        .collect::<Vec<_>>();
+    let relation_matrix_col_evals = (0..1usize << col_bits)
+        .map(|i| near_modulus(7 * i + 13))
+        .collect::<Vec<_>>();
+    let stage1_point = (0..col_bits + ring_bits)
+        .map(|i| near_modulus(11 * i + 19))
+        .collect::<Vec<_>>();
+    let build = |linear_terms| {
+        build_stage2_bivariate_skip_proof_from_m_compact(
+            packed(&w_compact).view(),
+            &alpha_evals_y,
+            &relation_matrix_col_evals,
+            linear_terms,
+            &stage1_point,
+            8,
+            live_x_cols,
+            col_bits,
+            ring_bits,
+        )
+    };
+
+    assert_eq!(build(&factored), build(&dense));
 }
 
 #[test]
@@ -631,7 +788,7 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
     );
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
-            &w_compact,
+            packed(&w_compact).view(),
             &alpha_evals_y,
             &relation_matrix_col_evals,
             &evaluation_trace,
@@ -859,7 +1016,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         .expect("stage1 bivariate-skip state should build");
 
     let mut prover = LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from(w_compact.as_slice()),
+        packed(&w_compact),
         &tau0,
         akita_types::DigitRangePlan::new(b).unwrap(),
         live_x_cols,

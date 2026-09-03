@@ -10,9 +10,8 @@ mod policy;
 
 use crate::layout::{CommitmentRingDims, RingRole};
 use crate::sis::SisModulusProfileId;
-use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_error::AkitaError;
-use akita_field::CanonicalField;
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(crate) use policy::role_ring_dimensions_for_tier;
 pub use policy::{
@@ -61,21 +60,76 @@ pub const fn protocol_dispatch_tier_for_sis_profile(
     }
 }
 
-/// Canonical field modulus from the canonical representation of `-1`.
+/// Exact field modulus, padded to 32-byte big-endian form.
 ///
-/// Uses the identity: the canonical form of `-1` in `Z_q` is `q - 1`.
+/// Uses the identity that the canonical form of `-1` in `Z_q` is `q - 1`.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] if the modulus exceeds 256 bits.
+pub fn field_modulus_be_bytes<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
+    if F::NUM_BYTES == 0 || F::NUM_BYTES > 32 {
+        return Err(AkitaError::InvalidSetup(
+            "Akita field modulus exceeds the 256-bit descriptor bound".into(),
+        ));
+    }
+    let mut little_endian = [0u8; 32];
+    (-F::one()).to_bytes_le(&mut little_endian[..F::NUM_BYTES]);
+    let mut carry = 1u16;
+    for byte in &mut little_endian[..F::NUM_BYTES] {
+        let sum = u16::from(*byte) + carry;
+        *byte = sum as u8;
+        carry = sum >> 8;
+        if carry == 0 {
+            break;
+        }
+    }
+    let modulus_bytes = if carry == 0 {
+        F::NUM_BYTES
+    } else if F::NUM_BYTES < 32 {
+        little_endian[F::NUM_BYTES] = carry as u8;
+        F::NUM_BYTES + 1
+    } else {
+        return Err(AkitaError::InvalidSetup(
+            "Akita field modulus exceeds the 256-bit descriptor bound".into(),
+        ));
+    };
+    let mut output = [0u8; 32];
+    let start = output.len() - modulus_bytes;
+    for (destination, source) in output[start..]
+        .iter_mut()
+        .zip(little_endian[..modulus_bytes].iter().rev())
+    {
+        *destination = *source;
+    }
+    Ok(output)
+}
+
+/// Exact modulus of one `u128`-representable PCS base field.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when the field modulus does not fit in
+/// `u128`, including for valid larger fields such as BN254.
 #[inline]
-pub fn field_modulus<F: CanonicalField>() -> u128 {
-    (-F::one()).to_canonical_u128() + 1
+pub fn field_modulus<F: Field + CanonicalEncoding>() -> Result<u128, AkitaError> {
+    let bytes = field_modulus_be_bytes::<F>()?;
+    if bytes[..16].iter().any(|&byte| byte != 0) {
+        return Err(AkitaError::InvalidSetup(
+            "Akita field modulus does not fit in u128".into(),
+        ));
+    }
+    let mut low = [0u8; 16];
+    low.copy_from_slice(&bytes[16..]);
+    Ok(u128::from_be_bytes(low))
 }
 
 /// Classify `F` into a dispatch tier from its modulus (Q32 / Q64 / Q128 CRT bands).
 #[inline]
-pub fn protocol_dispatch_tier<F: CanonicalField>() -> ProtocolRingDispatchTierId {
-    let modulus = field_modulus::<F>();
-    if modulus <= Q32_MODULUS as u128 {
+pub fn protocol_dispatch_tier<F: Field + CanonicalEncoding>() -> ProtocolRingDispatchTierId {
+    if F::MODULUS_BITS <= 32 {
         ProtocolRingDispatchTierId::Fp32
-    } else if modulus <= Q64_MODULUS as u128 {
+    } else if F::MODULUS_BITS <= 64 {
         ProtocolRingDispatchTierId::Fp64
     } else {
         ProtocolRingDispatchTierId::Fp128
@@ -92,7 +146,7 @@ pub fn ntt_ring_degree_supported_for_tier(tier: ProtocolRingDispatchTierId, d: u
 /// Whether `d` is a supported NTT ring degree for PCS field `F`.
 #[inline]
 #[must_use]
-pub fn ntt_ring_degree_supported_for_field<F: CanonicalField>(d: usize) -> bool {
+pub fn ntt_ring_degree_supported_for_field<F: Field + CanonicalEncoding>(d: usize) -> bool {
     ntt_ring_degree_supported_for_tier(protocol_dispatch_tier::<F>(), d)
 }
 
@@ -104,7 +158,7 @@ pub fn ntt_ring_degree_supported_for_field<F: CanonicalField>(d: usize) -> bool 
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when a role dimension is unsupported.
-pub fn validate_role_dims_for_field<F: CanonicalField>(
+pub fn validate_role_dims_for_field<F: Field + CanonicalEncoding>(
     dims: CommitmentRingDims,
 ) -> Result<(), AkitaError> {
     let tier = protocol_dispatch_tier::<F>();
@@ -167,7 +221,7 @@ pub fn validate_role_dispatch<const D: usize>(
 mod tests {
     use super::*;
     use crate::dispatch_for_field;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn protocol_dispatch_tier_classifies_fields() {
@@ -186,8 +240,28 @@ mod tests {
     }
 
     #[test]
-    fn inner_dispatch_fp128_accepts_through_d512() {
-        for d in [64usize, 128, 256, 512] {
+    fn field_modulus_helpers_preserve_exact_named_moduli() {
+        assert_eq!(
+            field_modulus::<Prime32Offset99>().unwrap(),
+            (1u128 << 32) - 99
+        );
+        assert_eq!(
+            field_modulus::<Prime64Offset59>().unwrap(),
+            (1u128 << 64) - 59
+        );
+        assert_eq!(
+            field_modulus::<Prime128OffsetA7F7>().unwrap(),
+            u128::MAX - 0xffff_a7f6
+        );
+        assert_eq!(
+            field_modulus_be_bytes::<Prime32Offset99>().unwrap()[28..],
+            (u32::MAX - 98).to_be_bytes()
+        );
+    }
+
+    #[test]
+    fn inner_dispatch_fp128_accepts_through_d1024() {
+        for d in [64usize, 128, 256, 512, 1024] {
             assert_eq!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -199,7 +273,7 @@ mod tests {
                 d
             );
         }
-        for d in [32usize, 1024] {
+        for d in [32usize, 2048] {
             assert!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -292,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_caps_at_d512() {
+    fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_reaches_d1024() {
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
             Prime128OffsetA7F7,
@@ -320,7 +394,17 @@ mod tests {
             1024usize,
             |D| Ok(D)
         )
-        .is_err());
+        .is_ok());
+    }
+
+    #[test]
+    fn ntt_dispatch_fp64_reaches_d2048() {
+        assert!(
+            dispatch_for_field!(ProtocolDispatchSlot::Ntt, Prime64Offset59, 2048usize, |D| {
+                Ok(D)
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -348,8 +432,8 @@ mod tests {
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp64), 32);
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp32), 64);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp128), 512);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp64), 1024);
+        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp128), 1024);
+        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp64), 2048);
         assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp32), 2048);
     }
 
@@ -398,7 +482,7 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_b).is_err());
 
         let fp64_high_a = CommitmentRingDims {
-            inner: 1024,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };
@@ -412,14 +496,14 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_b).is_err());
 
         let fp128_high_a = CommitmentRingDims {
-            inner: 512,
+            inner: 1024,
             outer: 256,
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
 
         let fp128_too_high_a = CommitmentRingDims {
-            inner: 1024,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };

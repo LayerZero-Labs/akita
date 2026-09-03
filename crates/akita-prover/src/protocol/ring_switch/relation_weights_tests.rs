@@ -1,6 +1,6 @@
 use super::*;
-use akita_field::Prime128OffsetA7F7;
 use akita_types::CommitmentRingDims;
+use jolt_field::{One, Prime128OffsetA7F7, Zero};
 
 type TestField = Prime128OffsetA7F7;
 

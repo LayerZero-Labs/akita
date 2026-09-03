@@ -6,15 +6,15 @@ use crate::traits::{
 };
 use crate::types::{EqFactoredSumcheckProof, EqFactoredUniPoly};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, Field};
 
 /// Advance the scaled claim state for one eq-factored sumcheck round.
 #[doc(hidden)]
 #[inline]
-pub fn advance_eq_factored_claim<E: FieldCore>(
+pub fn advance_eq_factored_claim<E: Field>(
     scaled_claim: E,
     claim_scale: E,
     l_at_0: E,
@@ -39,7 +39,7 @@ pub fn advance_eq_factored_claim<E: FieldCore>(
 pub trait EqFactoredSumcheckInstanceProverExt<E>:
     EqFactoredSumcheckInstanceProver<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Produce an eq-factored sumcheck proof.
     ///
@@ -59,10 +59,10 @@ where
         mut sample_challenge: S,
     ) -> Result<(EqFactoredSumcheckProof<E>, Vec<E>, E), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         let degree_bound = self.degree_bound();
@@ -84,7 +84,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, &poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             let (l_at_0, l_at_1) = self.current_linear_factor_evals();
             (scaled_claim, claim_scale) =
                 advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, &poly, r_i);
@@ -104,7 +104,7 @@ where
 
 impl<E, Inst> EqFactoredSumcheckInstanceProverExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: EqFactoredSumcheckInstanceProver<E>,
 {
 }
@@ -113,7 +113,7 @@ where
 pub trait EqFactoredSumcheckInstanceVerifierExt<E>:
     EqFactoredSumcheckInstanceVerifier<E> + Sized
 where
-    E: FieldCore,
+    E: Field,
 {
     /// Verify an eq-factored sumcheck proof.
     ///
@@ -138,10 +138,10 @@ where
         mut sample_challenge: S,
     ) -> Result<Vec<E>, AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         let num_rounds = self.num_rounds();
         if proof.round_polys.len() != num_rounds {
@@ -169,7 +169,7 @@ where
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             let (l_at_0, l_at_1) = round_state.current_linear_factor_evals();
             (scaled_claim, claim_scale) =
                 advance_eq_factored_claim(scaled_claim, claim_scale, l_at_0, l_at_1, poly, r_i);
@@ -187,7 +187,7 @@ where
 
 impl<E, Inst> EqFactoredSumcheckInstanceVerifierExt<E> for Inst
 where
-    E: FieldCore,
+    E: Field,
     Inst: EqFactoredSumcheckInstanceVerifier<E>,
 {
 }

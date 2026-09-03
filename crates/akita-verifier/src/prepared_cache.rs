@@ -1,11 +1,11 @@
 //! Target cache construction for persistent and recursive verifiers.
 
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{
     build_riscv64_scalar_q128_cache_artifact, dispatch_for_field, setup_seed_digest,
     AkitaVerifierSetup, FoldSchedule, PreparedVerifierNttCacheBinding, ScheduleRowDigest,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 pub(crate) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 pub(crate) const TERMINAL_I16_ABS_BOUND: u64 = 1 << (TERMINAL_I16_LOG_BASIS - 1);
@@ -45,18 +45,18 @@ pub(crate) fn terminal_ntt_cache_requirement(
 /// The returned bytes are derived performance state. They are not canonical
 /// setup bytes and must be bound to the verifier program or another trusted
 /// setup installation boundary before use.
-pub fn build_riscv64_terminal_ntt_cache<F: FieldCore + CanonicalField>(
+pub fn build_riscv64_terminal_ntt_cache<F: Field + CanonicalEncoding>(
     setup: &AkitaVerifierSetup<F>,
     schedule: &FoldSchedule,
     schedule_row_digest: ScheduleRowDigest,
 ) -> Result<Vec<u8>, AkitaError> {
     let requirement = terminal_ntt_cache_requirement(schedule)?;
-    let setup_seed_digest = setup_seed_digest(&setup.expanded.seed.setup_seed)
+    let setup_seed_digest = setup_seed_digest(&setup.expanded.descriptor.setup_seed)
         .map_err(|error| AkitaError::InvalidSetup(format!("setup seed identity: {error}")))?;
     let binding = PreparedVerifierNttCacheBinding {
         setup_seed_digest,
         schedule_row_digest,
-        setup_field_elements: setup.expanded.seed.num_field_elements,
+        setup_field_elements: setup.expanded.descriptor.num_field_elements,
     };
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -81,11 +81,11 @@ pub fn build_riscv64_terminal_ntt_cache<F: FieldCore + CanonicalField>(
 mod tests {
     use super::*;
     use akita_config::{proof_optimized::fp128::OneHot, CommitmentConfig};
-    use akita_field::Prime128Offset275 as F;
     use akita_types::{
         prepared_verifier_ntt_cache_metadata, AkitaExpandedSetup, AkitaScheduleLookupKey,
         AkitaSetupDescriptor, FlatMatrix, PolynomialGroupLayout, SetupPrefixVerifierRegistry,
     };
+    use jolt_field::{Prime128Offset275 as F, Ring};
     use std::sync::Arc;
 
     #[test]

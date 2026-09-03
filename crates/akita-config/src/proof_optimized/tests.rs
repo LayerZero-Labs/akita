@@ -9,7 +9,9 @@ use akita_schedules::fp32_onehot_table;
 #[cfg(feature = "schedules-default")]
 use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
-use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{
+    ntt_cache_requires_exactness_tail, AkitaScheduleLookupKey, PolynomialGroupLayout,
+};
 
 #[cfg(feature = "schedules-default")]
 #[test]
@@ -304,7 +306,12 @@ fn validate_table_terminal_exact_cache_plans<Cfg: CommitmentConfig>(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             <Cfg as CommitmentConfig>::Field,
             terminal.d_a(),
-            |D| ntt_cache_requires_i16_tail::<<Cfg as CommitmentConfig>::Field, D>(width, 1 << 15,)
+            |D| {
+                ntt_cache_requires_exactness_tail::<<Cfg as CommitmentConfig>::Field, D>(
+                    width,
+                    1 << 15,
+                )
+            }
         )
         .expect("generated terminal i16 accumulation should fit");
         coverage.eligible += 1;

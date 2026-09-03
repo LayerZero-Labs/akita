@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 use akita_error::AkitaError;
-use akita_field::{FieldCore, FromPrimitiveInt};
+use jolt_field::{Field, Ring};
 
 use crate::{
     CommitmentRingDims, CommittedGroupParams, DigitRangePlan, FlatBooleanDomain,
@@ -149,12 +149,13 @@ impl PhysicalResponsePlan {
     /// norm and limb-Gram claim construction.
     pub fn materialize_virtual_integers(
         &self,
-        compact_witness: &[i8],
+        compact_witness_len: usize,
+        mut decode_digits: impl FnMut(usize, &mut [i8]) -> Result<(), AkitaError>,
     ) -> Result<Vec<Vec<i128>>, AkitaError> {
-        if compact_witness.len() != self.domain.live_len() {
+        if compact_witness_len != self.domain.live_len() {
             return Err(AkitaError::InvalidSize {
                 expected: self.domain.live_len(),
-                actual: compact_witness.len(),
+                actual: compact_witness_len,
             });
         }
         let mut tables =
@@ -163,6 +164,7 @@ impl PhysicalResponsePlan {
             .fold_digit_count
             .checked_mul(self.ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("L2 response stride overflow".into()))?;
+        let mut digits = vec![0i8; self.ring_dimension];
         for segment in &self.segments {
             for row in 0..segment.physical_len / self.ring_dimension {
                 let witness_row = segment
@@ -177,19 +179,18 @@ impl PhysicalResponsePlan {
                         AkitaError::InvalidSetup("L2 physical row overflow".into())
                     })?)
                     .ok_or_else(|| AkitaError::InvalidSetup("L2 physical row overflow".into()))?;
-                for coefficient in 0..self.ring_dimension {
-                    let physical_index = physical_row + coefficient;
-                    match self.shape {
-                        PhysicalL2NormProofShape::Direct { .. } => {
-                            let mut value = 0i128;
-                            let mut basis_power = 1i128;
-                            for limb in 0..self.fold_digit_count {
-                                let index = witness_row + limb * self.ring_dimension + coefficient;
-                                let digit = compact_witness
-                                    .get(index)
-                                    .copied()
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                value = value
+                match self.shape {
+                    PhysicalL2NormProofShape::Direct { .. } => {
+                        let table = tables.first_mut().ok_or(AkitaError::InvalidProof)?;
+                        let output = table
+                            .get_mut(physical_row..physical_row + self.ring_dimension)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let mut basis_power = 1i128;
+                        for limb in 0..self.fold_digit_count {
+                            let index = witness_row + limb * self.ring_dimension;
+                            decode_digits(index, &mut digits)?;
+                            for (value, &digit) in output.iter_mut().zip(&digits) {
+                                *value = value
                                     .checked_add(
                                         i128::from(digit).checked_mul(basis_power).ok_or_else(
                                             || {
@@ -204,28 +205,23 @@ impl PhysicalResponsePlan {
                                             "L2 response recomposition overflow".into(),
                                         )
                                     })?;
-                                basis_power = basis_power
-                                    .checked_mul(self.fold_basis as i128)
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup("L2 basis power overflow".into())
-                                    })?;
                             }
-                            *tables
-                                .first_mut()
-                                .and_then(|table| table.get_mut(physical_index))
-                                .ok_or(AkitaError::InvalidProof)? = value;
+                            basis_power = basis_power
+                                .checked_mul(self.fold_basis as i128)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup("L2 basis power overflow".into())
+                                })?;
                         }
-                        PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
-                            for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
-                                let index = witness_row + limb * self.ring_dimension + coefficient;
-                                *table
-                                    .get_mut(physical_index)
-                                    .ok_or(AkitaError::InvalidProof)? = i128::from(
-                                    compact_witness
-                                        .get(index)
-                                        .copied()
-                                        .ok_or(AkitaError::InvalidProof)?,
-                                );
+                    }
+                    PhysicalL2NormProofShape::LimbGram { limb_count, .. } => {
+                        for (limb, table) in tables.iter_mut().enumerate().take(limb_count) {
+                            let index = witness_row + limb * self.ring_dimension;
+                            decode_digits(index, &mut digits)?;
+                            let output = table
+                                .get_mut(physical_row..physical_row + self.ring_dimension)
+                                .ok_or(AkitaError::InvalidProof)?;
+                            for (value, &digit) in output.iter_mut().zip(&digits) {
+                                *value = i128::from(digit);
                             }
                         }
                     }
@@ -237,7 +233,7 @@ impl PhysicalResponsePlan {
 
     /// Canonical paired-equality geometry that batches all virtual response
     /// evaluations into the existing Stage-2 witness relation.
-    pub fn virtualization_families<E: FieldCore + FromPrimitiveInt>(
+    pub fn virtualization_families<E: Field + Ring>(
         &self,
         batching: &[E],
     ) -> Result<Vec<EqPairTensorFamily<E>>, AkitaError> {

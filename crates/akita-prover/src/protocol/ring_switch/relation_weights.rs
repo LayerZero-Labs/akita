@@ -8,10 +8,6 @@ use std::ops::Range;
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{
-    CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
-};
 use akita_types::{
     gadget_row_scalars, prepare_coefficient_packing_batch_semantics, r_decomp_levels,
     AkitaExpandedSetup, CoefficientPackingBatchSemanticInputs, CoefficientPackingBatchSemantics,
@@ -20,11 +16,13 @@ use akita_types::{
     RelationRowFamily, RelationWitnessGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
 pub use akita_types::{RelationWeightContribution, RelationWeightEvent};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use setup_columns::{evaluate_setup_columns, SetupRows};
 
 /// Source of setup-matrix relation weights for this evaluation.
 #[derive(Clone, Copy)]
-pub enum RelationSetupSource<'a, F: FieldCore> {
+pub enum RelationSetupSource<'a, F: Field> {
     /// Emit setup events directly from the expanded setup matrix.
     Matrix(&'a AkitaExpandedSetup<F>),
     /// Omit setup events because their complete evaluation is supplied separately.
@@ -32,7 +30,7 @@ pub enum RelationSetupSource<'a, F: FieldCore> {
 }
 
 /// Inputs to the one semantic relation-event builder.
-pub struct RelationWeightEventInputs<'a, F: FieldCore, E: FieldCore> {
+pub struct RelationWeightEventInputs<'a, F: Field, E: Field> {
     pub setup: RelationSetupSource<'a, F>,
     pub instance: &'a RingRelationInstance<F>,
     pub alpha: E,
@@ -139,8 +137,8 @@ pub fn build_relation_weight_events<F, E>(
     inputs: RelationWeightEventInputs<'_, F, E>,
 ) -> Result<RelationWeightBuild<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F> + MulBaseUnreduced<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
 {
     let RelationWeightEventInputs {
         setup,

@@ -138,7 +138,7 @@ pub fn prepared_verifier_ntt_cache_metadata(
 }
 
 /// Build the scalar Q128 exact-negacyclic artifact consumed by a RISC V verifier.
-pub fn build_riscv64_scalar_q128_cache_artifact<F: FieldCore + CanonicalField, const D: usize>(
+pub fn build_riscv64_scalar_q128_cache_artifact<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     width: usize,
     rhs_abs_bound: u64,
@@ -257,7 +257,7 @@ fn encode_riscv64_scalar_q128_cache<const D: usize>(
     Ok(bytes)
 }
 
-pub(crate) fn decode_riscv64_scalar_q128_cache<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn decode_riscv64_scalar_q128_cache<F: Field + CanonicalEncoding, const D: usize>(
     bytes: &[u8],
     expected_binding: PreparedVerifierNttCacheBinding,
 ) -> Result<(PreparedVerifierNttCacheMetadata, PreparedNttCache<D>), AkitaError> {
@@ -338,7 +338,7 @@ pub(crate) fn decode_riscv64_scalar_q128_cache<F: FieldCore + CanonicalField, co
 mod tests {
     use super::*;
     use akita_algebra::CyclotomicRing;
-    use akita_field::Prime128Offset275 as F;
+    use jolt_field::{Prime128Offset275 as F, Ring};
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
     const D: usize = 64;
@@ -380,12 +380,12 @@ mod tests {
         let metadata = prepared_verifier_ntt_cache_metadata(&bytes).expect("metadata");
         assert_eq!(metadata.ring_dimension, D);
         assert_eq!(metadata.base_prefix_len, WIDTH);
-        assert_eq!(metadata.tail_prefix_len, WIDTH);
+        assert_eq!(metadata.tail_prefix_len, 0);
         assert_eq!(metadata.binding, binding());
         let (_, decoded) =
             decode_riscv64_scalar_q128_cache::<F, D>(&bytes, binding()).expect("decode");
         assert!(!decoded.uses_ifma52());
-        assert!(decoded.has_i16_tail());
+        assert!(!decoded.has_exactness_tail());
 
         let rhs = (0..WIDTH)
             .map(|column| {
@@ -465,6 +465,16 @@ mod tests {
 
     #[test]
     fn verifier_setup_installs_only_its_bound_artifact() {
+        std::thread::Builder::new()
+            .name("prepared-verifier-ntt-cache-test".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(verifier_setup_installs_only_its_bound_artifact_inner)
+            .expect("spawn prepared-cache test")
+            .join()
+            .expect("prepared-cache test thread");
+    }
+
+    fn verifier_setup_installs_only_its_bound_artifact_inner() {
         let matrix = matrix();
         let seed: crate::AkitaSetupSeed = [9; 32].into();
         let setup = crate::AkitaVerifierSetup::from_parts(
@@ -505,7 +515,7 @@ mod tests {
             .expect("install bound artifact");
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            WIDTH * D * (Q128_NUM_PRIMES * core::mem::size_of::<i32>() + 2)
+            WIDTH * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
         );
 
         let other_setup = crate::AkitaVerifierSetup::from_parts(

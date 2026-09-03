@@ -63,11 +63,11 @@ fn suffix_cache_gives_referenced_entry_a_second_chance() {
 }
 
 #[test]
-fn parent_observable_key_ignores_unpriced_successor_opening_details() {
+fn parent_observable_key_tracks_grinding_successor_geometry() {
     let policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     let challenge = akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
         .expect("D64 challenge");
-    let mut evaluation_trace = akita_types::CommittedGroupParams::params_only(
+    let mut shell = akita_types::CommittedGroupParams::params_only(
         akita_types::SisModulusProfileId::Q128OffsetA7F7,
         256,
         2,
@@ -76,45 +76,91 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
         2,
         challenge,
     );
-    evaluation_trace.payload_mode = akita_types::CommitmentPayloadMode::Raw;
-    let mut packing = evaluation_trace.clone();
-    packing.own_group_mut().opening.opening_method =
-        akita_types::OpeningMethod::SubringCoefficientPacking {
-            challenge_subring_dimension: 64,
-        };
-    packing.own_group_mut().opening.log_basis_open = 4;
-    packing.own_group_mut().opening.num_digits_open = 32;
+    shell.payload_mode = akita_types::CommitmentPayloadMode::Raw;
+    let evaluation_trace = shell.with_decomp(8, 64, 2, 2, 2).unwrap();
+    let mut wider_opening = shell.with_decomp(8, 128, 2, 2, 2).unwrap();
     assert_ne!(
         evaluation_trace.canonical_descriptor_bytes(),
-        packing.canonical_descriptor_bytes()
+        wider_opening.canonical_descriptor_bytes()
     );
-    assert_eq!(
-        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
-        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
-        "a parent prices only the successor outer payload and setup-prefix payload"
+    assert_ne!(
+        evaluation_trace.recursive_opening_num_vars().unwrap(),
+        wider_opening.recursive_opening_num_vars().unwrap()
     );
+    assert_ne!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&wider_opening), None).unwrap(),
+        "a parent grinding edge prices the successor opening width"
+    );
+    let opening_layout = super::suffix_opening_layout(1024, None).unwrap();
     assert_eq!(
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             &evaluation_trace,
-            Some(&evaluation_trace),
-            1024,
+            &opening_layout,
+            akita_types::FoldSuccessor::Recursive(&evaluation_trace),
             512,
         )
         .unwrap(),
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             &evaluation_trace,
-            Some(&packing),
-            1024,
+            &opening_layout,
+            akita_types::FoldSuccessor::Recursive(&wider_opening),
             512,
         )
         .unwrap(),
         "successors in one parent-observable bucket must price identically"
     );
 
-    let outer = packing.outer().matrix;
-    packing.own_group_mut().profile.outer.matrix =
+    let mut descriptor_distinct = evaluation_trace.clone();
+    let inner = descriptor_distinct.inner().matrix;
+    descriptor_distinct.own_group_mut().profile.inner.matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("test inner matrix has a SIS table key")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank() * 2,
+            inner.input_width(),
+            inner
+                .coeff_linf_bound()
+                .expect("test inner matrix has a coefficient bound"),
+            inner.ring_dimension(),
+        );
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        descriptor_distinct.canonical_descriptor_bytes(),
+        "the test requires descriptor-distinct successors"
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&descriptor_distinct), None).unwrap(),
+        "successor details invisible to the parent must share one class"
+    );
+    let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
+    let grind_bits = |successor| {
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            &evaluation_trace,
+            512,
+            &layout,
+            akita_types::FoldSuccessor::Recursive(successor),
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            1,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        grind_bits(&evaluation_trace),
+        grind_bits(&descriptor_distinct),
+        "one parent-observable successor class must have one grinding price"
+    );
+
+    let outer = wider_opening.outer().matrix;
+    wider_opening.own_group_mut().profile.outer.matrix =
         akita_types::OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
@@ -125,8 +171,8 @@ fn parent_observable_key_ignores_unpriced_successor_opening_details() {
             outer.ring_dimension(),
         );
     assert_ne!(
-        super::ParentObservableKey::new(&policy, Some(&evaluation_trace)).unwrap(),
-        super::ParentObservableKey::new(&policy, Some(&packing)).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&wider_opening), None).unwrap(),
         "changing the transmitted successor payload must change the parent key"
     );
 }

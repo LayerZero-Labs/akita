@@ -21,9 +21,9 @@ Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,
 folded and accumulated one element at a time (the only "vectorization" is the wide
 **scalar** `ProductAccum` of `HasUnreducedOps` plus Rayon). The arch-specific packed
-SIMD representation that already exists in `akita-field`
+SIMD representation that now lives in `jolt-field`
 (`PackedField` / `HasPacking`, and the production-quartic `PackedRingSubfieldFp4`) is
-**not connected** to any loop above `akita-field` (confirmed: zero `Packing` /
+**not connected** to any Akita prover loop (confirmed: zero `Packing` /
 `PackedField` / `pack_slice` hits in `akita-prover`, `akita-sumcheck`, or non-NTT
 `akita-algebra`).
 
@@ -61,11 +61,11 @@ Packing is **not** a uniform 8× win, and the spec is explicit about this:
   large absolute win on the measured hotspots.
 - Akita's fp4 (degree-4) packed `mul` already beats Plonky3's security-equivalent
   KoalaBear degree-5 by **1.7×** (AVX2) / **2.75×** (NEON) — so the field layer is
-  competitive; the gap to close is purely that nothing above `akita-field` uses it.
+  competitive; the gap to close is purely that no Akita prover loop uses it.
 
 ## Background
 
-### The packing layout (already in `akita-field`)
+### The packing layout (owned by `jolt-field`)
 
 `PackedRingSubfieldFp4<F, F::Packing>` is a **transpose / coefficient** packing: it stores
 `[PF; 4]` where `PF = F::Packing` is the packed base field, and each `PF` holds the
@@ -120,11 +120,10 @@ Both converge on the same five moves; copy them.
 
 | Loop | File:line | Shape |
 |------|-----------|-------|
-| EOR dense fold+accumulate | `extension_opening_reduction/dense.rs:173-190` (`fused_fold_and_accumulate`), `:60-69` (`accumulate_dense_round_with`) | scalar `E::fold_one`, `acc.add_constant_product` |
-| EOR factor fold (materialized) | `sparse.rs:883-903` (`fold_dense_reduction_tables_in_place` → `fold_evals_in_place`) | scalar `Vec<E>` |
-| EOR sparse accumulate / factor query | `sparse.rs:322-346` (`accumulate_entries_with_factor_using`), `:749-783` (`factor_pair`) | scalar over support + scalar `ProductAccum` dot |
-| EOR partials | `akita-types/src/extension_opening_reduction.rs:260-279` (`tensor_column_partials_split_fold`) | scalar base×ext via `SplitEqEvals` |
-| eq table | `akita-algebra/src/eq_poly.rs:232-252` (`SplitEqEvals`), `EqPolynomial::evals` | scalar `Vec<E>` |
+| EOR dense fold and accumulation | `extension_opening_reduction/dense.rs` (`accumulate_dense_round_with`, `fused_fold_and_accumulate_with`) | scalar `E::fold_one`, scalar `Deg2RoundAccum` |
+| EOR factor fold | `extension_opening_reduction/tables.rs` (`DenseEorFactor::fold_in_place`) and the fused path above | scalar `Vec<E>` |
+| EOR partials | `akita-types/src/extension_opening_reduction.rs` (`tensor_column_partials_split_fold`) | scalar base by extension contraction through `SplitEqEvals` |
+| equality table | `akita-algebra/src/eq_poly.rs` (`EqPolynomial::evals_mapped`) | scalar `Vec<E>` with parallel mapped construction |
 | digit-range round + fold | `digit_range/direct_range_leaf/`, `digit_range/class_indexed_product.rs`, `digit_range/class_indexed_range_leaf.rs` | basis-specialized compact and class-indexed kernels |
 | stage2 round + fold | `akita_stage2/dense_terms.rs:189-216`, `round_flow.rs:234` | scalar |
 | generic fold | `akita-algebra/src/poly.rs:225-228` (`fold_evals_in_place`) | scalar `E::fold_one` |
@@ -322,10 +321,10 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 `e_in`/`e_out` split that maps onto the packed-eq pattern leanMultisig uses
 (`split_eq.rs`); reuse the same packed eq tables.
 
-## Trait surface (what to add to akita-field / akita-algebra)
+## Trait surface (what to add to `jolt-field` / `akita-algebra`)
 
 - A **packed multilinear table view**: pack/unpack a `&[E]` into `&[E::Packing]` with a
-  scalar tail, mirroring `PackedValue::pack_slice_with_suffix`. (akita-field already has
+  scalar tail, mirroring `Packed::pack_slice_with_suffix`. (`jolt-field` already has
   the packed types; add the slice-cast helpers if missing.)
 - A **packed fold** primitive: `E::Packing` linear interpolation with `broadcast(r)`
   (the Slice 1 fold needs only this).
@@ -364,7 +363,7 @@ Same recipe applied to `compute_norm_round_eq_poly_from_s*` (stage1),
 
 ### Acceptance criteria
 
-- [ ] Packed table view + packed fold in `akita-field`/`akita-algebra`, with `NoPacking`
+- [ ] Packed table view + packed fold in `jolt-field`/`akita-algebra`, with `NoPacking`
   fallback; `WIDTH = 1` builds byte-identical to today.
 - [ ] Recursive suffix/terminal EOR dense fold runs packed (Slice 1); proof bytes remain
   byte-identical across the production extension-field tiers; `fp128` is unaffected.
@@ -440,10 +439,8 @@ span, then build the packed unreduced accumulator (Slice 2) for the univariate a
 - **PR #142** (`quang/plonky3-field-microbench`): `specs/archive/2026-Q3/cross-repo-field-microbench.md`
   (numbers `:216-243`, deferred `mul_add` for EOR `:252-257`), `bench-data/field-microbench.md`,
   `crates/akita-pcs/benches/field_arith/kernel.rs:8-57` (`packed_macc`).
-- **akita-field packed** (this branch): traits `crates/akita-field/src/fields/packed.rs`
-  (`PackedValue`, `PackedField`, `HasPacking`, `NoPacking` `:273`, arch select `:412-441`);
-  packed extension `crates/akita-field/src/fields/packed_ext.rs` (`PackedRingSubfieldFp4`
-  `:558-637`, `HasPacking` wiring `:702-710`, layout doc `:1-6`).
+- **Jolt packed fields**: `jolt-field` owns `Packed`, `WithPacking`, `NoPacking`,
+  the architecture-selected scalar packings, and packed extension towers.
 - **D1 microbench**: `specs/packed-accumulator-microbench.rs` (standalone `rustc`; the
   reduction-frequency-vs-lane-width numbers in D1; re-run on each target arch).
 - **Historical companion record**:

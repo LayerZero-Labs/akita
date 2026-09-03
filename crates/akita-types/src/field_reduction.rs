@@ -7,16 +7,13 @@
 use crate::dispatch_for_field;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, Ext2, ExtField, FieldCore, FpExt4, FpExt4MulBackend, FpExt8, FpExt8MulBackend,
-    FromPrimitiveInt, Invertible,
-};
 use akita_serialization::Valid;
+use jolt_field::{CanonicalEncoding, Ext2, ExtField, Field, FpExt4, FpExt8, PseudoMersenne, Ring};
 use std::array::from_fn;
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
 /// ring-subfield coordinates consumed by [`psi_embed`] and [`embed_subfield`].
-pub trait FpExtEncoding<F: FieldCore>: ExtField<F> {
+pub trait FpExtEncoding<F: Field>: ExtField<F> {
     /// Borrow coordinates in the ring-subfield basis.
     fn ext_coords(&self) -> &[F];
 
@@ -28,7 +25,7 @@ pub trait FpExtEncoding<F: FieldCore>: ExtField<F> {
 
 impl<F> FpExtEncoding<F> for F
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: PseudoMersenne,
 {
     #[inline]
     fn ext_coords(&self) -> &[F] {
@@ -43,7 +40,7 @@ where
 
 impl<F> FpExtEncoding<F> for Ext2<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid,
+    F: PseudoMersenne + Valid,
 {
     #[inline]
     fn ext_coords(&self) -> &[F] {
@@ -53,7 +50,7 @@ where
 
 impl<F> FpExtEncoding<F> for FpExt4<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + FpExt4MulBackend,
+    F: PseudoMersenne + Valid,
 {
     #[inline]
     fn ext_coords(&self) -> &[F] {
@@ -63,7 +60,7 @@ where
 
 impl<F> FpExtEncoding<F> for FpExt8<F>
 where
-    F: FieldCore + FromPrimitiveInt + Valid + FpExt8MulBackend,
+    F: PseudoMersenne + Valid,
 {
     #[inline]
     fn ext_coords(&self) -> &[F] {
@@ -181,7 +178,7 @@ impl<const D: usize, const K: usize> SubfieldParams<D, K> {
 /// # Panics
 ///
 /// Panics if the generated subgroup contains an invalid automorphism exponent.
-pub fn trace_h<F: FieldCore, const D: usize, const K: usize>(
+pub fn trace_h<F: Field, const D: usize, const K: usize>(
     params: SubfieldParams<D, K>,
     x: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -229,7 +226,7 @@ pub fn trace_h<F: FieldCore, const D: usize, const K: usize>(
 /// # Errors
 ///
 /// Returns an error when `coords.len() != D`.
-pub fn psi_embed<F: FieldCore, const D: usize, const K: usize>(
+pub fn psi_embed<F: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
     coords: &[F],
 ) -> Result<CyclotomicRing<F, D>, AkitaError> {
@@ -289,7 +286,7 @@ pub fn embed_ring_subfield_vector<F, E, const D: usize>(
     error: AkitaError,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     macro_rules! arm {
@@ -311,7 +308,7 @@ where
         }};
     }
 
-    match E::EXT_DEGREE {
+    match E::DEGREE {
         1 => arm!(1),
         2 => arm!(2),
         4 => arm!(4),
@@ -335,7 +332,7 @@ pub fn embed_ring_subfield_scalar<F, E, const D: usize>(
     error: AkitaError,
 ) -> Result<CyclotomicRing<F, D>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     macro_rules! arm {
@@ -346,7 +343,7 @@ where
         }};
     }
 
-    match E::EXT_DEGREE {
+    match E::DEGREE {
         1 => arm!(1),
         2 => arm!(2),
         4 => arm!(4),
@@ -369,7 +366,7 @@ pub fn embed_ring_subfield_scalar_flat<F, E>(
     error: AkitaError,
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + CanonicalField,
+    F: Field + Ring + CanonicalEncoding,
     E: FpExtEncoding<F>,
 {
     dispatch_for_field!(
@@ -399,7 +396,7 @@ where
 /// input is not whole head-slices, or if a packed coefficient would overflow
 /// `i8`.
 pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
-    digits: &[i8],
+    digits: impl ExactSizeIterator<Item = i8>,
     extension_degree: usize,
     width: usize,
 ) -> Result<Vec<i8>, AkitaError> {
@@ -414,12 +411,13 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                 "degree-one tensor pack must have width 1".to_string(),
             ));
         }
-        return Ok(digits.to_vec());
+        return Ok(digits.collect());
     }
-    if !digits.len().is_multiple_of(width) {
+    let digit_count = digits.len();
+    if !digit_count.is_multiple_of(width) {
         return Err(AkitaError::InvalidSize {
             expected: width,
-            actual: digits.len(),
+            actual: digit_count,
         });
     }
 
@@ -429,8 +427,9 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
             let packed_len = D / $k;
             let half = D / (2 * $k);
             let step = D / (2 * $k);
-            let tail_len = digits.len() / width;
+            let tail_len = digit_count / width;
             let mut out = Vec::with_capacity(tail_len.div_ceil(packed_len) * D);
+            let mut digits = digits;
 
             for tail_start in (0..tail_len).step_by(packed_len) {
                 let mut packed = [0i16; D];
@@ -439,14 +438,18 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                     if tail >= tail_len {
                         break;
                     }
+                    let mut coordinates = [0i8; $k];
+                    for coordinate in coordinates.iter_mut().take(width) {
+                        *coordinate = digits.next().ok_or(AkitaError::InvalidProof)?;
+                    }
                     if idx < half {
                         let shift = idx;
-                        let coord0 = digits[tail * width] as i16;
+                        let coord0 = i16::from(coordinates[0]);
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
                             AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
-                            let cj = digits[tail * width + j] as i16;
+                            let cj = i16::from(coordinates[j]);
                             let pos_offset = j * step;
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
@@ -464,12 +467,12 @@ pub fn pack_tensor_base_lift_i8_digits<const D: usize>(
                         }
                     } else {
                         let shift = idx - half + D / 2;
-                        let coord0 = digits[tail * width] as i16;
+                        let coord0 = i16::from(coordinates[0]);
                         packed[shift] = packed[shift].checked_add(coord0).ok_or_else(|| {
                             AkitaError::InvalidInput("packed tensor digit overflow".to_string())
                         })?;
                         for j in 1..width {
-                            let cj = digits[tail * width + j] as i16;
+                            let cj = i16::from(coordinates[j]);
                             let pos_offset = j * step;
                             packed[shift + pos_offset] =
                                 packed[shift + pos_offset].checked_add(cj).ok_or_else(|| {
@@ -525,7 +528,7 @@ pub fn recover_ring_subfield_inner_product<F, E, const D: usize>(
     packed_inner_point: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     macro_rules! arm {
@@ -539,7 +542,7 @@ where
         }};
     }
 
-    match E::EXT_DEGREE {
+    match E::DEGREE {
         1 => arm!(1),
         2 => arm!(2),
         4 => arm!(4),
@@ -555,7 +558,7 @@ fn recover_psi_inner_product<F, E, const D: usize, const K: usize>(
     rhs: &CyclotomicRing<F, D>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     let half = F::from_u64(2)
@@ -605,7 +608,7 @@ fn shifted_coefficient<F, const D: usize>(
     target: usize,
 ) -> Option<F>
 where
-    F: FieldCore,
+    F: Field,
 {
     if shift >= D || target >= D {
         return None;
@@ -630,7 +633,7 @@ pub(crate) fn trace_open_ring_row<F, E, const D: usize>(
     ring_bits: usize,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     let ring_len = 1usize
@@ -670,7 +673,7 @@ where
         }};
     }
 
-    match E::EXT_DEGREE {
+    match E::DEGREE {
         1 => arm!(1),
         2 => arm!(2),
         4 => arm!(4),
@@ -683,7 +686,7 @@ where
 
 fn lift_ring_to_extension<F, E, const D: usize>(ring: &CyclotomicRing<F, D>) -> CyclotomicRing<E, D>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     CyclotomicRing::from_coefficients(from_fn(|idx| E::lift_base(ring.coefficients()[idx])))
@@ -694,7 +697,7 @@ fn weighted_negacyclic_shift_sum<E, const D: usize>(
     eq_coords: &[E],
 ) -> CyclotomicRing<E, D>
 where
-    E: FieldCore,
+    E: Field,
 {
     let mut out = CyclotomicRing::<E, D>::zero();
     for (coord, weight) in eq_coords.iter().copied().enumerate() {
@@ -711,7 +714,7 @@ fn decode_extension_linear_trace<F, E, const D: usize, const K: usize>(
     trace_input: &CyclotomicRing<E, D>,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
+    F: Field + Ring,
     E: ExtField<F>,
 {
     if K == 1 {
@@ -754,7 +757,7 @@ pub(crate) fn trace_open_folded_ring_mle_dot<F, E, const D: usize>(
     ring_bits: usize,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt + Invertible,
+    F: Field + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
 {
     let ring_bits = u32::try_from(ring_bits).map_err(|_| {
@@ -789,7 +792,7 @@ where
         }};
     }
 
-    match E::EXT_DEGREE {
+    match E::DEGREE {
         1 => arm!(1),
         2 => arm!(2),
         4 => arm!(4),
@@ -825,7 +828,7 @@ pub fn check_trace_inner_product<F, const D: usize, const K: usize>(
     opening_coords: &[F; K],
 ) -> bool
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     if K == 1 {
         // trace_h for K = 1 is a constant ring element with
@@ -863,7 +866,7 @@ pub fn dispatch_trace_inner_product_check<F, const D: usize>(
     error: AkitaError,
 ) -> Result<bool, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
 {
     macro_rules! arm {
         ($k:expr) => {{
@@ -900,7 +903,7 @@ where
 ///
 /// `K` is a const generic so the caller's `coords` can be a fixed-size array
 /// and the `2K - 1` writes unroll completely.
-pub fn embed_subfield<F: FieldCore, const D: usize, const K: usize>(
+pub fn embed_subfield<F: Field, const D: usize, const K: usize>(
     _params: SubfieldParams<D, K>,
     coords: &[F; K],
 ) -> CyclotomicRing<F, D> {

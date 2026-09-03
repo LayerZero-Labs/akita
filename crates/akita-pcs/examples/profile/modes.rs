@@ -10,29 +10,25 @@ use crate::workload::{
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::unreduced::{HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide};
-use akita_field::TranscriptChallenge;
-use akita_field::{
-    CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
-use akita_serialization::{AkitaSerialize, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
     PolynomialGroupLayout, SetupContributionMode,
 };
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
 type F = fp128::Field;
 
 const MULTI_GROUP_PRE_NUM_VARS: usize = 16;
-const MULTI_GROUP_FINAL_NUM_VARS: usize = 32;
+const MULTI_GROUP_FINAL_NUM_VARS: usize = 34;
+const MULTI_GROUP_W8R2_FINAL_NUM_VARS: usize = 32;
 const MULTI_GROUP_PRE_GROUPS: usize = 2;
 const MULTI_GROUP_FINAL_POLYS: usize = 2;
 const MULTI_GROUP_TOTAL_POLYS: usize = MULTI_GROUP_PRE_GROUPS + MULTI_GROUP_FINAL_POLYS;
 
 fn fp128_prime_label() -> String {
-    match <F as PseudoMersenneField>::MODULUS_OFFSET {
-        2355 => "q=2^128-2355".to_string(),
+    match <F as PseudoMersenne>::OFFSET {
         // Prime128OffsetA7F7: p = 2^128 - 2^32 + 22537 = 2^128 - 0xFFFFA7F7.
         0xFFFFA7F7 => "q=2^128-2^32+22537".to_string(),
         offset => format!("q=2^128-{offset:#x}"),
@@ -59,24 +55,20 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     title: &str,
     nv: usize,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
@@ -97,24 +89,20 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     num_polys: usize,
 ) where
-    FF: CanonicalField
+    FF: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + HalvingField
-        + HasWide
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Field
+        + Ring
+        + PseudoMersenne
+        + Field
+        + Unreduced
+        + WithCommitAccumulator
         + Valid
+        + AkitaDeserialize<Context = ()>
         + AkitaSerialize
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<FF>
-        + FpExtEncoding<FF>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize
-        + Valid,
+    Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     tracing::info!("{}", title);
     let group = PolynomialGroupLayout::new(nv, num_polys);
@@ -377,11 +365,14 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     type Cfg = fp128::Dense;
     assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
-    run_dense_mode::<512, Cfg>(
-        "dense_fp128",
-        &format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ==="),
-        nv,
-    );
+    let title = format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ===");
+    let root_dimension = resolve_layout::<F, Cfg>(PolynomialGroupLayout::singleton(nv)).d_a();
+    match root_dimension {
+        256 => run_dense_mode::<256, Cfg>("dense_fp128", &title, nv),
+        512 => run_dense_mode::<512, Cfg>("dense_fp128", &title, nv),
+        1024 => run_dense_mode::<1024, Cfg>("dense_fp128", &title, nv),
+        dimension => panic!("dense_fp128 profile does not compile ring dimension D={dimension}"),
+    }
 }
 
 fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
@@ -462,23 +453,21 @@ fn run_multi_group_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtFiel
     layout_note: &str,
     nv: usize,
     num_polys: usize,
+    expected_final_nv: usize,
 ) {
-    assert_eq!(
-        nv, MULTI_GROUP_FINAL_NUM_VARS,
-        "{label} fixes the main-group arity"
-    );
+    assert_eq!(nv, expected_final_nv, "{label} fixes the main-group arity");
     assert_eq!(
         num_polys, MULTI_GROUP_TOTAL_POLYS,
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {MULTI_GROUP_FINAL_NUM_VARS}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, source fixture view D={D}, flat public setup, generated per-level dimensions, {MULTI_GROUP_PRE_GROUPS} precommitted {MULTI_GROUP_PRE_NUM_VARS}-variable singleton groups + {expected_final_nv}-variable main group with {MULTI_GROUP_FINAL_POLYS} polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(
         label,
         MULTI_GROUP_PRE_NUM_VARS,
-        MULTI_GROUP_FINAL_NUM_VARS,
+        expected_final_nv,
         MULTI_GROUP_FINAL_POLYS,
     );
 }
@@ -495,6 +484,7 @@ fn run_profile_onehot_fp128_multi_group(nv: usize, num_polys: usize) {
         "generated per-level dimensions",
         nv,
         num_polys,
+        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -505,6 +495,7 @@ fn run_profile_onehot_fp128_multi_group_recursive(nv: usize, num_polys: usize) {
         "adaptive ring dimensions + recursive setup",
         nv,
         num_polys,
+        MULTI_GROUP_FINAL_NUM_VARS,
     );
 }
 
@@ -515,6 +506,7 @@ fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, nu
         "adaptive ring dimensions + recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
         num_polys,
+        MULTI_GROUP_W8R2_FINAL_NUM_VARS,
     );
 }
 
@@ -648,7 +640,9 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
 pub(crate) fn log_active_fp128_prime_probe() {
     tracing::info!(
         "fp128 protocol prime active: modulus_offset = 0x{:x}, probe(2^128 + 1) = 0x{:x}",
-        <F as PseudoMersenneField>::MODULUS_OFFSET,
-        F::solinas_reduce(&[1u64, 0, 1]).to_canonical_u128(),
+        <F as PseudoMersenne>::OFFSET,
+        F::solinas_reduce(&[1u64, 0, 1])
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128"),
     );
 }

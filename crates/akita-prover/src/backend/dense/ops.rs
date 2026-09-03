@@ -14,13 +14,13 @@ use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::SubfieldMultiplierOpeningPoint;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 
 impl<F> DensePoly<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,
@@ -121,11 +121,17 @@ where
                     log_basis,
                 )
             };
-            let modulus = (-F::one()).to_canonical_u128() + 1;
+            let modulus = (-F::one())
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128")
+                + 1;
             return build_decompose_fold_witness::<F, D>(coeff_accum, modulus);
         }
 
-        let q = (-F::one()).to_canonical_u128() + 1;
+        let q = (-F::one())
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128")
+            + 1;
         let threshold = decompose_centering_threshold(num_digits, log_basis, q);
         let params = DecomposeParams {
             threshold,

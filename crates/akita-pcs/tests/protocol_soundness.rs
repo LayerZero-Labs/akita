@@ -6,12 +6,6 @@ use akita_config::proof_optimized::fp128;
 use akita_config::proof_optimized::{fp32, fp64};
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::Zero;
-use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
@@ -25,6 +19,9 @@ use akita_types::{
     OpeningScheduleSelection, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
+use jolt_field::{One, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 #[cfg(feature = "disk-persistence")]
@@ -63,23 +60,23 @@ fn init_rayon_pool() {
     });
 }
 
-fn random_point<FField: CanonicalField>(nv: usize) -> Vec<FField> {
+fn random_point<FField: CanonicalEncoding>(nv: usize) -> Vec<FField> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
 fn random_claim_point<FField, E>(nv: usize) -> Vec<E>
 where
-    FField: CanonicalField,
+    FField: CanonicalEncoding + Field,
     E: ExtField<FField>,
 {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
         .map(|_| {
-            let limbs = (0..E::EXT_DEGREE)
-                .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+            let limbs = (0..E::DEGREE)
+                .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
                 .collect::<Vec<_>>();
             E::from_base_slice(&limbs)
         })
@@ -88,7 +85,7 @@ where
 
 fn dense_lagrange_opening_from_evals<FField, E>(evals: &[FField], point: &[E]) -> E
 where
-    FField: FieldCore,
+    FField: Field,
     E: ExtField<FField>,
 {
     let weights = lagrange_weights(point).expect("valid opening point");
@@ -183,25 +180,27 @@ fn make_dense_fixture<FField, const D: usize, Cfg: CommitmentConfig<Field = FFie
     transcript_label: &'static [u8],
 ) -> DenseFixture<FField, Cfg::ExtField, D>
 where
-    FField: CanonicalField
+    FField: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + HasWide
-        + RandomSampling
-        + FromPrimitiveInt
+        + CanonicalEncoding
+        + Unreduced
+        + Field
+        + Ring
         + 'static
-        + HalvingField
-        + PseudoMersenneField
-        + Valid,
-    Cfg::ExtField: FrobeniusExtField<FField> + HasUnreducedOps + HasOptimizedFold,
-    <FField as HasWide>::Wide: From<FField> + ReduceTo<FField>,
+        + Field
+        + PseudoMersenne
+        + Valid
+        + AkitaDeserialize<Context = ()>
+        + AkitaSerialize,
+    Cfg::ExtField: ExtField<FField> + Unreduced + Fold,
+    <FField as Unreduced>::Wide: From<FField>,
     Cfg::ExtField: FpExtEncoding<FField> + AkitaSerialize,
 {
     let layout = singleton_layout::<Cfg>(nv);
 
     let mut rng = StdRng::seed_from_u64(0x0ddc_0ffe_e123_4567);
     let evals: Vec<FField> = (0..1usize << nv)
-        .map(|_| FField::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| FField::from_u128_reduced(rng.gen::<u128>()))
         .collect();
 
     let poly = DensePoly::<FField>::from_field_evals(nv, &evals).unwrap();
@@ -313,7 +312,7 @@ fn purge_setup_cache(max_num_vars: usize) {
     }
 }
 
-fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>) {
+fn bump_flat_ring_vec<FField: Field>(flat: &mut akita_types::RingVec<FField>) {
     let mut coeffs = flat.coeffs().to_vec();
     let first = coeffs
         .first_mut()
@@ -322,13 +321,11 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
     *flat = akita_types::RingVec::from_coeffs(coeffs);
 }
 
-fn mutate_terminal_e_hat_digit<FField: FieldCore>(
-    witness: &mut akita_types::TerminalResponse<FField>,
-) {
+fn mutate_terminal_e_hat_digit<FField: Field>(witness: &mut akita_types::TerminalResponse<FField>) {
     bump_flat_ring_vec(&mut witness.e_fields);
 }
 
-fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
+fn terminal_witness_mut<FField: Field, E: Field>(
     proof: &mut AkitaBatchedProof<FField, E>,
 ) -> &mut akita_types::TerminalResponse<FField> {
     proof.terminal.terminal_response_mut()
@@ -659,7 +656,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
             .unwrap();
 
         let mut malformed = proof.clone();
-        malformed.root.stage1.range_image_evaluation += F::from_canonical_u128_reduced(1);
+        malformed.root.stage1.range_image_evaluation += F::from_u128_reduced(1);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
@@ -839,6 +836,44 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             );
         #[cfg(feature = "logging-transcript")]
         {
+            let opening_layout = akita_types::OpeningClaimsLayout::new(EXT4_NV, EXT4_BATCH)
+                .expect("fp32 extension opening layout");
+            let grinding_plan = akita_config::derive_transcript_grinding_plan::<Cfg>(
+                resolved.schedule(),
+                &opening_layout,
+            )
+            .expect("fp32 extension grinding plan");
+            let prover_draw_counts = common::assert_production_grinding_audit(
+                prover_transcript.events(),
+                &grinding_plan,
+            );
+            common::assert_production_grinding_audit(vt.events(), &grinding_plan);
+            let expected_pow = grinding_plan
+                .runs()
+                .iter()
+                .filter(|run| run.kind() == akita_types::GrindingQueryKind::ProofOfWork);
+            for ((site, actual_draws), run) in prover_draw_counts.iter().zip(expected_pow) {
+                assert_eq!(*site, run.site());
+                match site {
+                    akita_types::GrindingSite::ExtensionOpeningPoint { .. }
+                    | akita_types::GrindingSite::Tau0Point { .. }
+                    | akita_types::GrindingSite::Tau1Point { .. } => {
+                        let expected_draws = usize::try_from(run.loss_factor()).unwrap()
+                            * <SE as ExtField<SF>>::DEGREE;
+                        assert_eq!(
+                            *actual_draws, expected_draws,
+                            "extension point draw count must match the public geometry"
+                        );
+                    }
+                    akita_types::GrindingSite::EvaluationBatch { .. }
+                    | akita_types::GrindingSite::ExtensionOpeningClaimBatch { .. } => {}
+                    _ => assert_eq!(
+                        *actual_draws,
+                        <SE as ExtField<SF>>::DEGREE,
+                        "one-element challenge must consume exactly one extension-field draw"
+                    ),
+                }
+            }
             let prover_events = common::public_transcript_events(prover_transcript.events());
             let verifier_events = common::public_transcript_events(vt.events());
             if prover_events != verifier_events {
@@ -857,7 +892,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
             }
             assert!(
                 common::assert_claim_batching_follows_opening_payload(&prover_events) > 0,
-                "multi-claim EOR must batch claims after the opening payload"
+                "multi-opening evaluation batching must follow the opening payload"
             );
             let event_index = |label: &[u8]| {
                 prover_events
@@ -869,8 +904,16 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     })
                     .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
             };
-            let beta = event_index(akita_transcript::labels::CHALLENGE_EOR_CLAIM_BATCH);
-            let eta = prover_events[..beta]
+            let terminal_claim = event_index(akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM);
+            let combined_claim = prover_events[..terminal_claim]
+                .iter()
+                .rposition(|event| {
+                    common::event_label(event).is_some_and(|candidate| {
+                        candidate == akita_transcript::labels::ABSORB_SUMCHECK_CLAIM
+                    })
+                })
+                .expect("EOR combined claim must precede its terminal claim");
+            let eta = prover_events[..combined_claim]
                 .iter()
                 .rposition(|event| {
                     common::event_label(event).is_some_and(|candidate| {
@@ -881,36 +924,9 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
                     })
                 })
                 .expect("EOR eta must precede claim batching");
-            let event_index_after = |start: usize, label: &[u8]| {
-                prover_events[start..]
-                    .iter()
-                    .position(|event| {
-                        common::event_label(event).is_some_and(|candidate| {
-                            common::is_label_or_extension_limb(candidate, label)
-                        })
-                    })
-                    .map(|offset| start + offset)
-                    .unwrap_or_else(|| panic!("missing transcript event for {label:?}"))
-            };
-            let combined_claim =
-                event_index_after(beta + 1, akita_transcript::labels::ABSORB_SUMCHECK_CLAIM);
-            let terminal_claim = event_index_after(
-                combined_claim + 1,
-                akita_transcript::labels::ABSORB_EOR_FINAL_CLAIM,
-            );
-            let payload = event_index_after(
-                terminal_claim + 1,
-                akita_transcript::labels::ABSORB_OPENING_PAYLOAD,
-            );
-            let gamma =
-                event_index_after(payload + 1, akita_transcript::labels::CHALLENGE_EVAL_BATCH);
             assert!(
-                eta < beta
-                    && beta < combined_claim
-                    && combined_claim < terminal_claim
-                    && terminal_claim < payload
-                    && payload < gamma,
-                "EOR transcript must order beta, sumcheck, terminal claims, payload, then gamma"
+                eta < combined_claim && combined_claim < terminal_claim,
+                "singleton EOR transcript must order eta before its sumcheck and terminal claims"
             );
         }
         honest_result.expect("honest fp32 extension proof must verify");

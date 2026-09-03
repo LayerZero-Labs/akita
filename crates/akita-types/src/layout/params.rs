@@ -6,7 +6,7 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::CanonicalField;
+use jolt_field::CanonicalEncoding;
 
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
@@ -587,6 +587,35 @@ impl CommittedGroupParams {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// One opening method family shared by every group in this fold.
+    pub fn uniform_opening_method(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<OpeningMethod, AkitaError> {
+        let first = self.group_params(opening_batch, 0)?.opening_method();
+        for group_index in 1..opening_batch.num_groups() {
+            let next = self
+                .group_params(opening_batch, group_index)?
+                .opening_method();
+            let same_family = matches!(
+                (first, next),
+                (
+                    OpeningMethod::EvaluationTrace,
+                    OpeningMethod::EvaluationTrace
+                ) | (
+                    OpeningMethod::SubringCoefficientPacking { .. },
+                    OpeningMethod::SubringCoefficientPacking { .. }
+                )
+            );
+            if !same_family {
+                return Err(AkitaError::InvalidSetup(
+                    "one fold cannot mix opening method families".into(),
+                ));
+            }
+        }
+        Ok(first)
+    }
+
     fn multi_group_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
@@ -765,12 +794,12 @@ impl CommittedGroupParams {
 
     /// Exact live next-witness length in field elements for scalar or
     /// multi-group folds.
-    pub fn output_witness_len<F: CanonicalField>(
+    pub fn output_witness_len<F: CanonicalEncoding>(
         &self,
         opening_batch: &OpeningClaimsLayout,
         extension_degree: usize,
     ) -> Result<usize, AkitaError> {
-        self.output_witness_len_for_field_bits(F::modulus_bits(), extension_degree, opening_batch)
+        self.output_witness_len_for_field_bits(F::MODULUS_BITS, extension_degree, opening_batch)
     }
 
     /// Exact live next-witness length using an explicit base-field bit width.

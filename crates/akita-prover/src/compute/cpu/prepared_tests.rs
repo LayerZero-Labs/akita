@@ -3,9 +3,9 @@ use crate::backend::RingSwitchRelationView;
 use crate::compute::backend::{ComputeBackendSetup, DigitRowsComputeBackend};
 use crate::compute::{RingSwitchRelationKernel, RingSwitchRelationPlan};
 use crate::AkitaProverSetup;
-use akita_field::Prime64Offset59;
 use akita_types::MAX_I8_LOG_BASIS;
 use akita_types::{NttCacheKey, NttTransformDomain, SetupMatrixCapacity};
+use jolt_field::Prime64Offset59;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ fn cpu_prepared_setup_identity_accepts_equivalent_setup() {
 fn cpu_prepared_setup_reports_checked_crt_capacity_profile() {
     let prepared = prepared();
     CpuBackend::DEFAULT
-        .digit_rows::<D>(&prepared, 1, &[[1i8; D]], 2)
+        .digit_rows::<D>(&prepared, 1, &[&[[1i8; D]]], 2)
         .expect("build exact NTT prefix");
     let profile = prepared.shared_ntt_profile(D).expect("profile");
 
@@ -242,6 +242,26 @@ fn planned_cache_bytes_match_max_joined_resident_state() {
 
     assert_eq!(prepared.shared_ntt_cache_bytes(), planned);
     assert_eq!(prepared.shared_ntt_cache_metrics().unwrap().len(), 2);
+}
+
+#[test]
+fn planned_exact_cache_bytes_use_the_selected_representation() {
+    let prepared = prepared();
+    let key = NttCacheKey {
+        ring_d: D,
+        num_ring_elements: 2,
+        domain: NttTransformDomain::ExactNegacyclicI16 {
+            width: 2,
+            rhs_abs_bound: 1 << 15,
+        },
+    };
+    let planned = prepared
+        .planned_shared_ntt_cache_bytes([key])
+        .expect("planned exact bytes");
+    let selected = akita_types::planned_exact_ntt_cache_bytes::<F, D>(2, 2, 1 << 15)
+        .expect("selected representation bytes");
+
+    assert_eq!(planned, selected);
 }
 
 #[test]

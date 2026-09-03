@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::MulBaseUnreduced;
+use jolt_field::MulBaseUnreduced;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -20,6 +20,7 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
     instance: &RingRelationInstance<F>,
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
+    level: u32,
     w: &RecursiveWitnessFlat,
     lp: &CommittedGroupParams,
     opening_source_len: usize,
@@ -29,9 +30,9 @@ pub(crate) fn ring_switch_finalize<F, E, T>(
     prepared_relation_groups: &[crate::protocol::ring_relation::PreparedRelationGroup<F, E>],
 ) -> Result<RingSwitchFinalization<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + Ring + MulBaseUnreduced<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let default_gamma;
     let gamma = if let Some(gamma) = gamma {
@@ -52,6 +53,7 @@ where
         opening_batch,
         instance,
     )?;
+    transcript.grind_query(akita_types::GrindingSite::RingSwitchAlpha { level })?;
     let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
 
     let opening_capacity = opening_source_len
@@ -107,9 +109,11 @@ where
         .checked_mul(opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
 
+    transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
     let tau0: Vec<E> = (0..num_sc_vars)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
         .collect();
+    transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
     let tau1: Vec<E> = (0..num_i)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
         .collect();
@@ -120,7 +124,7 @@ where
     }
 
     let relation_geometry =
-        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::EXT_DEGREE)?;
+        akita_types::RelationWitnessGeometry::for_level(lp, opening_batch, E::DEGREE)?;
     let relation_plan = akita_types::RelationRangeImagePlan::new(
         relation_geometry,
         geometry,
@@ -206,22 +210,13 @@ where
     #[cfg(feature = "parallel")]
     let (relation_weight_factorization_result, w_result) =
         rayon::join(prepare_relation_weight_factorization, || {
-            build_w_evals_compact(
-                w.shared_i8_digits(),
-                coeff_count,
-                1,
-                live_relation_lane_count,
-            )
+            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count)
         });
     #[cfg(not(feature = "parallel"))]
     let (relation_weight_factorization_result, w_result) = {
         let relation_weight_factorization = prepare_relation_weight_factorization();
-        let w_compact = build_w_evals_compact(
-            w.shared_i8_digits(),
-            coeff_count,
-            1,
-            live_relation_lane_count,
-        );
+        let w_compact =
+            build_w_evals_compact(w.packed_digits(), coeff_count, 1, live_relation_lane_count);
         (relation_weight_factorization, w_compact)
     };
 
@@ -230,7 +225,7 @@ where
             AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
         })?;
     let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
-        AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
+        AkitaError::InvalidInput(format!("witness opening preparation failed: {err:?}"))
     })?;
     if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
         return Err(AkitaError::InvalidSetup(

@@ -32,6 +32,7 @@ mod tail_segments;
 #[cfg(test)]
 mod tests;
 mod wire;
+mod witness_emission;
 
 /// Maximum coefficients accepted from a self-describing commitment artifact.
 ///
@@ -122,7 +123,6 @@ pub use stage1::{
 };
 pub use tail_segments::{
     build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
-    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
     raw_field_segment_bytes, tail_segment_multiplicities_from_layout,
     tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
     terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
@@ -130,11 +130,14 @@ pub use tail_segments::{
     TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
+pub use witness_emission::{
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    WitnessCoefficientSink,
+};
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};
@@ -143,6 +146,7 @@ use akita_sumcheck::{
     uniform_sumcheck_shape, EqFactoredSumcheckProofShape, SumcheckProof, SumcheckProofShape,
 };
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;

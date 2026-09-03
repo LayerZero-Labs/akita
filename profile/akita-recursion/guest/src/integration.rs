@@ -2,16 +2,13 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalBytes, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling, TranscriptChallenge,
-};
 use akita_recursion_glue::{AkitaJoltCase, AkitaJoltInputs};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, SerializationError, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{BasisMode, FpExtEncoding};
 use akita_verifier::batched_verify;
 use jolt::{end_cycle_tracking, start_cycle_tracking};
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne};
 
 include!(concat!(env!("OUT_DIR"), "/prepared_verifier_cache.rs"));
 
@@ -51,19 +48,15 @@ pub(crate) fn execute<Cfg, const D: usize>(
 ) -> u32
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
+    Cfg::Field: Field
+        + CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + RandomSampling
-        + PseudoMersenneField
-        + HalvingField
+        + PseudoMersenne
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
+        + ExtField<Cfg::Field>
         + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + Valid,

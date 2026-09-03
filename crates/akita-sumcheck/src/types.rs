@@ -2,12 +2,12 @@
 
 use akita_algebra::uni_poly::CompressedUniPoly;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, Field};
 use std::io::{Read, Write};
 
 /// Eq-factored round message storing `q(X)` without its linear coefficient.
@@ -16,12 +16,12 @@ use std::io::{Read, Write};
 /// `[q_0, q_2, q_3, ..., q_d]` for an inner polynomial
 /// `q(X) = q_0 + q_1 X + ... + q_d X^d`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqFactoredUniPoly<E: FieldCore> {
+pub struct EqFactoredUniPoly<E: Field> {
     /// Coefficients excluding the linear term: `[q_0, q_2, q_3, ..., q_d]`.
     pub coeffs_except_linear_term: Vec<E>,
 }
 
-impl<E: FieldCore> EqFactoredUniPoly<E> {
+impl<E: Field> EqFactoredUniPoly<E> {
     /// Construct from the full coefficient list of `q(X)`.
     pub fn from_q_coeffs(q_coeffs: Vec<E>) -> Self {
         if q_coeffs.is_empty() {
@@ -91,13 +91,13 @@ impl<E: FieldCore> EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: Valid + FieldCore> Valid for EqFactoredUniPoly<E> {
+impl<E: Valid + Field> Valid for EqFactoredUniPoly<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.coeffs_except_linear_term.check()
     }
 }
 
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredUniPoly<E> {
+impl<E: Field + AkitaSerialize> AkitaSerialize for EqFactoredUniPoly<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -117,9 +117,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredUniPoly<E> {
     }
 }
 
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for EqFactoredUniPoly<E>
-{
+impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for EqFactoredUniPoly<E> {
     /// Degree of the inner polynomial `q(X)`.
     type Context = usize;
     fn deserialize_with_mode<R: Read>(
@@ -157,12 +155,12 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
 
 /// Sumcheck proof containing one compressed univariate polynomial per round.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SumcheckProof<E: FieldCore> {
+pub struct SumcheckProof<E: Field> {
     /// One compressed univariate polynomial per sumcheck round.
     pub round_polys: Vec<CompressedUniPoly<E>>,
 }
 
-impl<E: Valid + FieldCore> Valid for SumcheckProof<E> {
+impl<E: Valid + Field> Valid for SumcheckProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_polys.check()
     }
@@ -182,7 +180,7 @@ pub fn uniform_sumcheck_shape(num_rounds: usize, degree: usize) -> SumcheckProof
     vec![degree; num_rounds]
 }
 
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SumcheckProof<E> {
+impl<E: Field + AkitaSerialize> AkitaSerialize for SumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -202,7 +200,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for SumcheckProof<E> {
     }
 }
 
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for SumcheckProof<E> {
+impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for SumcheckProof<E> {
     /// Per-round compact coefficient counts.
     type Context = SumcheckProofShape;
     fn deserialize_with_mode<R: Read>(
@@ -231,7 +229,7 @@ impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for
     }
 }
 
-impl<E: FieldCore> SumcheckProof<E> {
+impl<E: Field> SumcheckProof<E> {
     /// Verifier-side sumcheck transcript driver.
     ///
     /// This method:
@@ -255,10 +253,10 @@ impl<E: FieldCore> SumcheckProof<E> {
         mut sample_challenge: S,
     ) -> Result<(E, Vec<E>), AkitaError>
     where
-        F: FieldCore + CanonicalField,
+        F: Field + CanonicalEncoding,
         T: Transcript<F>,
         E: AkitaSerialize,
-        S: FnMut(&mut T) -> E,
+        S: FnMut(&mut T) -> Result<E, AkitaError>,
     {
         if self.round_polys.len() != num_rounds {
             return Err(AkitaError::InvalidSize {
@@ -278,7 +276,7 @@ impl<E: FieldCore> SumcheckProof<E> {
             }
 
             transcript.append_serde(labels::ABSORB_SUMCHECK_ROUND, poly);
-            let r_i = sample_challenge(transcript);
+            let r_i = sample_challenge(transcript)?;
             r.push(r_i);
 
             claim = poly.eval_from_hint(&claim, &r_i);
@@ -290,12 +288,12 @@ impl<E: FieldCore> SumcheckProof<E> {
 
 /// Eq-factored sumcheck proof containing one compressed inner polynomial per round.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EqFactoredSumcheckProof<E: FieldCore> {
+pub struct EqFactoredSumcheckProof<E: Field> {
     /// One eq-factored inner polynomial per sumcheck round.
     pub round_polys: Vec<EqFactoredUniPoly<E>>,
 }
 
-impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {
+impl<E: Valid + Field> Valid for EqFactoredSumcheckProof<E> {
     fn check(&self) -> Result<(), SerializationError> {
         self.round_polys.check()
     }
@@ -305,7 +303,7 @@ impl<E: Valid + FieldCore> Valid for EqFactoredSumcheckProof<E> {
 /// `(num_rounds, q_degree)`.
 pub type EqFactoredSumcheckProofShape = (usize, usize);
 
-impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredSumcheckProof<E> {
+impl<E: Field + AkitaSerialize> AkitaSerialize for EqFactoredSumcheckProof<E> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -325,7 +323,7 @@ impl<E: FieldCore + AkitaSerialize> AkitaSerialize for EqFactoredSumcheckProof<E
     }
 }
 
-impl<E: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
+impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     for EqFactoredSumcheckProof<E>
 {
     /// `(num_rounds, q_degree)` — number of round polynomials and the degree of `q`.

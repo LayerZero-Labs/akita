@@ -21,7 +21,7 @@ pub(super) fn is_zero_centered_row<const D: usize>(row: &[i32; D]) -> bool {
     row.iter().all(|&d| d == 0)
 }
 
-pub(super) fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, const D: usize>(
+pub(super) fn quotient_from_cyclic_and_negacyclic<F: Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     negacyclic: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -30,7 +30,7 @@ pub(super) fn quotient_from_cyclic_and_negacyclic<F: FieldCore + HalvingField, c
     CyclotomicRing::from_coefficients(from_fn(|k| (cyc[k] - neg[k]).half()))
 }
 
-pub(super) fn add_cyclic_product_into<F: FieldCore, const D: usize>(
+pub(super) fn add_cyclic_product_into<F: Field, const D: usize>(
     acc: &mut CyclotomicRing<F, D>,
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
@@ -55,11 +55,10 @@ pub(super) const CENTERED_LUT_MAX_ABS: u32 = (1 << 16) - 1;
 // Row-count ceiling for the block-parallel matvec. Commitments up to `n_a == 7`
 // still parallelize over blocks through the generic accumulator loop instead of
 // falling back to the column-tiled path, which has too few tiles to scale at
-// high nv. The block-parallel and column-tiled paths produce identical ring
-// output (per-step `reduce_range` accumulation + canonicalizing `to_ring`), so
-// raising the cap is a pure performance change.
-pub(super) const SMALL_ROW_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
-pub(super) const SMALL_ROW_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
+// high nv. The paths produce identical ring output, so this is only a workload
+// dispatch threshold.
+pub(super) const DENSE_I8_BLOCK_PARALLEL_MAX_ROWS: usize = 7;
+pub(super) const DENSE_I8_BLOCK_PARALLEL_MIN_BLOCKS: usize = 16;
 
 #[inline]
 pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {
@@ -70,29 +69,6 @@ pub(super) fn validate_i8_log_basis(log_basis: u32) -> Result<(), AkitaError> {
 pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
     debug_assert!(is_i8_log_basis(log_basis));
     1u64 << (log_basis - 1)
-}
-
-/// Whether every coefficient across `blocks` (fold-major) is a balanced gadget
-/// digit for `log_basis`, i.e. lies in `[-2^(log_basis-1), 2^(log_basis-1))`.
-///
-/// A `num_digits_inner == 1` recursive witness is a raw signed-i8 coefficient
-/// stream: degree-one fields yield balanced digits (the fast predecomposed
-/// digit commit applies), but extension-field tensor base-lift packing sums
-/// gadget digits and can exceed this range, requiring the general raw ring
-/// mat-vec. This predicate selects between the two.
-#[inline]
-pub(crate) fn digit_blocks_are_balanced<const D: usize>(
-    blocks: &[&[[i8; D]]],
-    num_cols: usize,
-    log_basis: u32,
-) -> bool {
-    if !is_i8_log_basis(log_basis) {
-        return false;
-    }
-    let bound = balanced_digit_abs_bound(log_basis);
-    blocks
-        .iter()
-        .all(|block| digit_rows_within_digit_bound(block, num_cols.min(block.len()), bound))
 }
 
 #[inline]

@@ -6,19 +6,16 @@ use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField, RandomSampling,
-};
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams,
     CompressionRelationWeights, FpExtEncoding, RingVec,
 };
 use akita_types::{
-    CoefficientPackingBatchSemantics, DigitBlocks, OpeningFamily, RelationRangeImagePlan,
-    RingRelationInstance,
+    CoefficientPackingBatchSemantics, OpeningFamily, RelationRangeImagePlan, RingRelationInstance,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 mod coeffs;
 mod commit;
@@ -31,7 +28,7 @@ mod tests;
 pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
-pub use evals::build_w_evals_compact;
+pub(crate) use evals::build_w_evals_compact;
 pub(crate) use finalize::ring_switch_finalize;
 pub use relation_weights::{
     build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
@@ -41,9 +38,9 @@ pub use relation_weights::{
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
-pub struct RingSwitchOutput<E: FieldCore> {
+pub struct RingSwitchOutput<E: Field> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
-    pub w_evals_compact: std::sync::Arc<[i8]>,
+    pub(crate) w_evals_compact: crate::backend::packed_digits::PackedSignedDigits,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Exact common-alpha factorization of the tau1-weighted relation table.
@@ -64,7 +61,7 @@ pub struct RingSwitchOutput<E: FieldCore> {
 
 /// Transcript-complete ring-switch state and the exact relation authority
 /// compiled from its freshly sampled challenges.
-pub(crate) struct RingSwitchFinalization<E: FieldCore> {
+pub(crate) struct RingSwitchFinalization<E: Field> {
     pub(crate) output: RingSwitchOutput<E>,
     pub(crate) relation_plan: RelationRangeImagePlan,
     pub(crate) opening_semantics: OpeningFamily<(), CoefficientPackingBatchSemantics<E>>,

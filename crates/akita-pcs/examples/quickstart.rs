@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::fp128;
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     ComputeBackendSetup, CpuBackend, DensePoly, SelectedProverOpeningData, UniformProverStack,
@@ -11,6 +10,7 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
+use jolt_field::CanonicalEncoding;
 
 type Config = fp128::Dense;
 type F = fp128::Field;
@@ -20,11 +20,11 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"akita/book/quickstart/v1";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evaluations: Vec<F> = (0..(1usize << NUM_VARS))
-        .map(|index| F::from_canonical_u128_reduced(index as u128 + 1))
+        .map(|index| F::from_u128_reduced(index as u128 + 1))
         .collect();
     let polynomial = DensePoly::from_field_evals(NUM_VARS, &evaluations)?;
     let point: Vec<F> = (0..NUM_VARS)
-        .map(|index| F::from_canonical_u128_reduced(index as u128 + 2))
+        .map(|index| F::from_u128_reduced(index as u128 + 2))
         .collect();
     let evaluation = evaluate_multilinear(&evaluations, &point);
 

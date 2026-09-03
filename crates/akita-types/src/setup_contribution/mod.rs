@@ -10,7 +10,7 @@
 
 use crate::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_error::{checked, AkitaError};
-use akita_field::{CanonicalField, FieldCore};
+use jolt_field::{CanonicalEncoding, Field};
 
 mod geometry;
 mod plan;
@@ -32,7 +32,7 @@ pub use plan::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContr
 /// Groups may have different fold depths: each group uses the prefix
 /// `gadget[..group.depth_fold]`. All fresh folded-response digits use the root
 /// opening basis.
-pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
+pub fn shared_setup_fold_gadget<F: Field + CanonicalEncoding>(
     level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],

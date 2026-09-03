@@ -8,11 +8,8 @@ use akita_algebra::offset_eq::{OffsetEqWindow, MAX_COMPACT_STRIDE_TERMS};
 use akita_algebra::poly::multilinear_eval;
 use akita_algebra::ring::scalar_powers;
 use akita_error::{checked, AkitaError};
-use akita_field::parallel::*;
-use akita_field::{
-    canonical_extension_basis, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, LiftBase,
-    MulBase,
-};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{canonical_extension_basis, CanonicalEncoding, ExtField, Field};
 
 use super::{
     relation_row_weight, RelationWeightContribution, RelationWeightEvent,
@@ -50,7 +47,7 @@ pub use expanded::{
     CoefficientPackingStage2Source, CoefficientPackingStage2Term, CoefficientPackingStage2Terms,
 };
 
-struct ValidatedCoefficientPackingGroup<'a, F: FieldCore, E: FieldCore> {
+struct ValidatedCoefficientPackingGroup<'a, F: Field, E: Field> {
     inputs: CoefficientPackingGroupSemanticInputs<'a, F, E>,
     geometry: SubringCoefficientPackingGeometry,
     group_claim_range: Range<usize>,
@@ -84,8 +81,8 @@ fn validate_coefficient_packing_batch_authority<F, E>(
     claim_coefficients: &[E],
 ) -> Result<CoefficientPackingBatchAuthority, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     if SignedDigitKernel::for_log_basis(level_params.open().digits.log_basis)
         != Some(SignedDigitKernel::I8)
@@ -119,10 +116,10 @@ where
         )?;
     }
     let relation_geometry =
-        RelationWitnessGeometry::for_level(level_params, opening_batch, E::EXT_DEGREE)?;
+        RelationWitnessGeometry::for_level(level_params, opening_batch, E::DEGREE)?;
     let expected_witness_layout = relation.segment_layout(level_params, None)?;
     if relation.opening_batch() != opening_batch
-        || relation.extension_degree() != E::EXT_DEGREE
+        || relation.extension_degree() != E::DEGREE
         || relation_plan.relation_witness_geometry() != &relation_geometry
         || relation_plan.witness_layout() != &expected_witness_layout
         || claim_coefficients.len() != opening_batch.num_total_polynomials()
@@ -149,7 +146,7 @@ where
     })
 }
 
-fn push_event<E: FieldCore>(
+fn push_event<E: Field>(
     events: &mut Vec<RelationWeightEvent<E>>,
     physical_start: usize,
     coefficient_count: usize,
@@ -191,8 +188,8 @@ fn prepare_coefficient_packing_group_semantics<F, E>(
     inputs: CoefficientPackingGroupSemanticInputs<'_, F, E>,
 ) -> Result<CoefficientPackingGroupSemantics<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let authority = validate_coefficient_packing_batch_authority::<F, E>(
         inputs.level_params,
@@ -213,8 +210,8 @@ fn validate_coefficient_packing_group<'a, F, E>(
     authority: &CoefficientPackingBatchAuthority,
 ) -> Result<ValidatedCoefficientPackingGroup<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let group_plan = inputs
         .relation_plan
@@ -242,7 +239,7 @@ where
         }
     };
     let geometry = SubringCoefficientPackingGeometry::try_new(
-        E::EXT_DEGREE,
+        E::DEGREE,
         group_params.inner_commit_matrix_params().ring_dimension(),
         challenge_subring_dimension,
     )?;
@@ -329,7 +326,8 @@ where
         .relation_coefficient_block_len();
     let physical_field_len = inputs.relation_plan.digit_witness_domain().live_len();
     let alpha_powers = scalar_powers(inputs.alpha, s);
-    let basis = canonical_extension_basis::<F, E>(geometry.extension_degree())?;
+    let basis = canonical_extension_basis::<F, E>(geometry.extension_degree())
+        .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
     let opening_gadget = gadget_row_scalars::<F>(
         group_params.num_digits_open(),
         group_params.log_basis_open(),
@@ -413,8 +411,8 @@ fn prepare_coefficient_packing_prover_group<F, E>(
     AkitaError,
 >
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let ValidatedCoefficientPackingGroup {
         inputs,
@@ -724,8 +722,8 @@ fn prepare_coefficient_packing_verifier_group<F, E>(
     validated: ValidatedCoefficientPackingGroup<'_, F, E>,
 ) -> Result<CoefficientPackingVerifierGroupSemantics<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let inputs = &validated.inputs;
     let group_layout = inputs.opening_batch.group_layout(inputs.group_index)?;
@@ -772,8 +770,8 @@ fn prepare_coefficient_packing_batch_groups<'a, F, E, T>(
     mut project: impl FnMut(ValidatedCoefficientPackingGroup<'a, F, E>) -> Result<T, AkitaError>,
 ) -> Result<Vec<T>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let authority = validate_coefficient_packing_batch_authority::<F, E>(
         inputs.level_params,
@@ -863,8 +861,8 @@ pub fn prepare_coefficient_packing_batch_semantics<F, E>(
     AkitaError,
 >
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let prepared = prepare_coefficient_packing_batch_groups(
         &inputs,
@@ -885,8 +883,8 @@ pub fn prepare_coefficient_packing_verifier_batch_semantics<F, E>(
     inputs: CoefficientPackingBatchSemanticInputs<'_, F, E>,
 ) -> Result<CoefficientPackingVerifierBatchSemantics<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: ExtField<F> + FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + FpExtEncoding<F>,
 {
     let groups = prepare_coefficient_packing_batch_groups(
         &inputs,

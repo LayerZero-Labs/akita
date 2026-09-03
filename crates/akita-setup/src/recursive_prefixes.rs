@@ -1,12 +1,12 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
     NttExecutionRequirements, RuntimeCommitBackendFor,
 };
 use akita_serialization::Valid;
 use akita_types::{dispatch_for_field, SetupPrefixSlotId};
+use jolt_field::{CanonicalEncoding, Field};
 use std::collections::BTreeSet;
 
 fn commit_setup_prefix_slot<F, B>(
@@ -16,7 +16,7 @@ fn commit_setup_prefix_slot<F, B>(
     id: &SetupPrefixSlotId,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
+    F: Field + CanonicalEncoding + Valid + 'static,
     B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     if setup.prefix_slots.get(id).is_some() {
@@ -49,7 +49,7 @@ pub(crate) fn materialize_setup_prefix_slots<F, B>(
     slot_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
+    F: Field + CanonicalEncoding + Valid + 'static,
     B: RuntimeCommitBackendFor<F, DensePoly<F>>,
 {
     let mut requirements = NttExecutionRequirements::default();
@@ -67,7 +67,7 @@ where
     Ok(())
 }
 
-pub(crate) fn validate_prefix_registry_complete<F: FieldCore>(
+pub(crate) fn validate_prefix_registry_complete<F: Field>(
     registry: &akita_types::SetupPrefixProverRegistry<F>,
     required_ids: &[SetupPrefixSlotId],
 ) -> Result<(), AkitaError> {
@@ -90,7 +90,7 @@ pub(crate) fn populate_required_setup_prefix_slots<F, Cfg>(
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField + Valid + 'static,
+    F: Field + CanonicalEncoding + Valid + 'static,
     Cfg: CommitmentConfig<Field = F>,
 {
     if !Cfg::recursive_setup_planning() {

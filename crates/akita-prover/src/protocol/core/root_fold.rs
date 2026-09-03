@@ -4,18 +4,17 @@ use crate::compute::{
     RuntimeCommitBackendFor, RuntimeRingSwitchProveBackend,
 };
 use crate::RecursiveWitnessFlat;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
+use jolt_field::AdditiveGroup;
 
 fn validate_packing_root_opening_shape<F, E>(
     ring_d: usize,
     alpha_bits: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: FpExtEncoding<F>,
 {
-    let ext_degree = <E as ExtField<F>>::EXT_DEGREE;
+    let ext_degree = <E as ExtField<F>>::DEGREE;
     if ext_degree == 0
         || !ring_d.is_multiple_of(ext_degree)
         || !(ring_d / ext_degree).is_power_of_two()
@@ -46,22 +45,22 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + Field
+        + Ring
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     TS: ComputeBackendSetup<F>,
     O: DigitRowsComputeBackend<F>,
@@ -69,7 +68,7 @@ where
     R: DigitRowsComputeBackend<F> + RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_batch)?;
+    let opening_method = root_params.uniform_opening_method(&opening_batch)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }
@@ -88,6 +87,7 @@ where
         claims,
         false,
         transcript,
+        0,
         || validate_packing_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
         basis,
@@ -126,23 +126,23 @@ pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     basis: BasisMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
-        + FromPrimitiveInt
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + Field
+        + PseudoMersenne
+        + Ring
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + Clone,
     C: RuntimeCommitBackendFor<F, RecursiveWitnessFlat> + ComputeBackendSetup<F> + 'stack,
     O: DigitRowsComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
@@ -160,7 +160,7 @@ where
     let stack = stacks.prove_stack_at_level(0);
     let root_params = &scheduled.params;
     let opening_layout = claims.opening_layout()?;
-    let opening_method = super::fold::uniform_opening_method(root_params, &opening_layout)?;
+    let opening_method = root_params.uniform_opening_method(&opening_layout)?;
     if !matches!(
         opening_method,
         akita_types::OpeningMethod::SubringCoefficientPacking { .. }

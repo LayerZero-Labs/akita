@@ -171,14 +171,16 @@ The planner uses the same byte formulas that runtime schedule expansion uses:
 - `level_proof_bytes` for a fold level.
 - `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
+- the canonical grinding plan for the one proof-level packed nonce stream.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
 
 `level_proof_bytes` is also schedule-shaped: it prices an outer commitment on
 ordinary recursive edges and zero outgoing-commitment bytes for the
-`TerminalInnerState` handoff. Terminal proof bodies contain only the grind
-nonce plus any extension-opening reduction; their clear witness is priced by
-`terminal_response_bytes`.
+`TerminalInnerState` handoff. Level bodies contain no nonce field. The exact
+stream byte count is rounded once across the complete plan. Terminal proof
+bodies contain only any extension-opening reduction; their clear witness is
+priced by `terminal_response_bytes`.
 
 This keeps generated-table expansion and offline DP regeneration aligned. A
 generated table row and a fresh DP run are two ways to produce the same typed
@@ -385,12 +387,22 @@ at levels 0 and 1 use subring coefficient packing and do not carry EOR. Later
 `EvaluationTrace` suffixes and the terminal opening retain method-aware EOR
 pricing when the claim field is an extension.
 
+Recursive setup offloading may continue across several levels. A fold that
+receives a setup prefix opens the prefix and recursive witness with the same
+method. At levels 0 and 1 that method is subring coefficient packing. At later
+levels it is evaluation trace.
+
+The fp128 presets use extension degree one, so their evaluation-trace folds do
+not run EOR. The fp32 and fp64 presets use proper extension fields. Their later
+evaluation-trace folds run one EOR that batches the dense setup prefix with the
+recursive suffix witness. The planner prices that combined opening shape.
+
 ## Crate Boundary
 
 The dependency direction is:
 
 ```text
-akita-config -> akita-schedules -> akita-types / akita-challenges / akita-field
+akita-config -> akita-schedules -> akita-types / akita-challenges / jolt-field
 akita-planner -> akita-schedules
 akita-planner --features catalog-gen -> akita-config
 ```

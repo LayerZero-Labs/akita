@@ -102,7 +102,7 @@ fn every_grouped_precommitted_descriptor_has_a_generated_producer() {
                             .unwrap_or_else(|error| {
                                 panic!("{} S-row lookup failed: {error}", family.module_name)
                             });
-                    GroupCommitPhaseParams::try_from_params(group, &schedule.root.params)
+                    GroupCommitPhaseParams::try_from_params(group, &schedule.schedule().root.params)
                         .expect("valid generated profile")
                 })
         })
@@ -162,7 +162,7 @@ fn prepare_family_catalog(
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn catalog_identity_rejects_non_v1_protocol_epoch() {
+fn catalog_identity_rejects_noncurrent_protocol_epoch() {
     let mut catalog = fp128::Dense::schedule_catalog().expect("generated catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
@@ -170,7 +170,7 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
         &policy_of::<fp128::Dense>(),
         fp128::Dense::ring_challenge_config,
     )
-    .expect_err("non-v1 protocol epoch must not validate");
+    .expect_err("noncurrent protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
 }
 
@@ -199,7 +199,16 @@ fn generated_catalogs_pin_dyadic_slice_chunk_interactions() {
         }
     }
 
-    for expected in [(1, 1), (2, 2), (4, 2), (2, 4), (2, 8), (8, 4), (8, 8)] {
+    for expected in [
+        (1, 1),
+        (2, 2),
+        (4, 2),
+        (4, 4),
+        (2, 8),
+        (4, 8),
+        (8, 4),
+        (8, 8),
+    ] {
         assert!(
             observed.contains(&expected),
             "generated schedules must retain S/W={expected:?}; observed {observed:?}"

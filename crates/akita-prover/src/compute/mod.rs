@@ -42,8 +42,8 @@ pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCa
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub use kernels::{
     BatchDecomposeFoldOutcome, OpeningBatchKernel, OpeningFoldKernel, RingSwitchRelationKernel,
-    RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    RootCommitKernel, SubringCoefficientPackingBatchKernel, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 pub use operation_plans::{
     CommitInnerPlan, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningFoldOutput, OpeningFoldPlan,

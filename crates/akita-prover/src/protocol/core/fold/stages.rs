@@ -2,14 +2,15 @@ use super::*;
 
 pub(in crate::protocol::core) fn prove_stage1<F, E, T>(
     transcript: &mut T,
+    level: u32,
     rs: &mut RingSwitchOutput<E>,
     lp: &CommittedGroupParams,
     plan: &RelationRangeImagePlan,
 ) -> Result<Stage1ProveOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -31,15 +32,15 @@ where
         digit_range_equality_col_bits,
         rs.digit_range_equality_low_variable_count,
     )?;
-    let stage1_prover = DigitRangeProver::new(
-        std::sync::Arc::clone(&rs.w_evals_compact),
+    let stage1_prover = DigitRangeProver::from_packed_digits(
+        rs.w_evals_compact.clone(),
         plan.digit_range_plan(),
         domain,
         equality_point,
     )?;
     let physical_plan = PhysicalResponsePlan::new(lp, plan)?;
     let (stage1_proof, stage1_point) =
-        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref())?;
+        stage1_prover.prove::<F, T>(transcript, physical_plan.as_ref(), level)?;
     let range_image_evaluation = stage1_proof.range_image_evaluation;
     let physical_l2 = match physical_plan {
         Some(physical_plan) => {
@@ -101,9 +102,9 @@ pub(super) fn prove_stage2<F, E, T>(
     plan: RelationRangeImagePlan,
 ) -> Result<RelationRangeImageProveResult<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Unreduced + Fold + Ring + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
@@ -158,7 +159,7 @@ where
     let additional_relation_terms = (!linear_weights.is_empty() || !binary_intervals.is_empty())
         .then(|| {
             AdditionalRelationTerms::new(
-                rs.w_evals_compact.as_ref(),
+                &rs.w_evals_compact,
                 domain_len,
                 linear_weights,
                 &binary_intervals,
@@ -192,9 +193,22 @@ where
             "stage-2 prover initialization failed at fold level {level}: {err}"
         ))
     })?;
+    let level = u32::try_from(level)
+        .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+    let mut round = 0u32;
     let (stage2_sumcheck_proof, sumcheck_challenges, final_claim) = stage2_prover
         .prove::<F, T, _>(transcript, |tr| {
-            sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::Stage2,
+                level,
+                0,
+                round,
+            )?;
+            round = round
+                .checked_add(1)
+                .ok_or_else(|| AkitaError::InvalidSetup("Stage 2 round overflow".into()))?;
+            Ok(challenge)
         })?;
     if final_claim != stage2_prover.expected_final_claim()? {
         return Err(AkitaError::InvalidInput(
@@ -220,14 +234,14 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F>
-        + FromPrimitiveInt
-        + LiftBase<F>
+        + Ring
+        + ExtField<F>
         + AkitaSerialize
-        + akita_field::unreduced::HasUnreducedOps
-        + akita_field::MulBaseUnreduced<F>,
-    T: Transcript<F>,
+        + jolt_field::Unreduced
+        + jolt_field::MulBaseUnreduced<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
@@ -253,8 +267,21 @@ where
                     transcript,
                 )?
             };
+            let level = u32::try_from(level)
+                .map_err(|_| AkitaError::InvalidSetup("fold level exceeds u32".into()))?;
+            let mut round = 0u32;
             let output = stage3_prover.prove::<T, _>(transcript, |tr| {
-                sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+                let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                    tr,
+                    akita_types::SumcheckProtocol::Stage3,
+                    level,
+                    0,
+                    round,
+                )?;
+                round = round
+                    .checked_add(1)
+                    .ok_or_else(|| AkitaError::InvalidSetup("Stage 3 round overflow".into()))?;
+                Ok(challenge)
             })?;
             Ok(Some(Stage3ProveOutput {
                 proof: SetupSumcheckProof {

@@ -7,35 +7,34 @@
 //!
 //! ## Descriptor version policy
 //!
-//! Akita is under active development. The version remains `1` until the
-//! protocol is frozen for audit. Integrators must pin an exact revision because
-//! no backward compatibility is guaranteed. After audit freeze, incompatible
-//! descriptor-bound protocol changes increment the version.
+//! Each incompatible change increments the version while the protocol is under
+//! active development. Integrators must pin an exact revision because the
+//! project does not guarantee backward compatibility.
 
-mod fold_linf_binding;
 #[cfg(test)]
 mod tests;
+mod transcript_grinding_binding;
 
-pub use fold_linf_binding::FoldLinfProtocolBinding;
+pub use transcript_grinding_binding::TranscriptGrindingBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
+use crate::narrowing::{usize_to_u32, usize_to_u8};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
-    COMPRESSION_POLICY,
+    AkitaSetupSeed, BasisMode, CommittedGroupParams, CompressionPolicyId, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, SisModulusProfileId, COMPRESSION_POLICY,
 };
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
     DEFAULT_MAX_SEQUENCE_LEN,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 use std::io::{Read, Write};
 
 /// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 3;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];
@@ -66,16 +65,19 @@ pub struct AkitaInstanceDescriptor {
     pub setup: SetupSection,
     /// Final effective verifier schedule for this proof.
     pub plan: PlanSection,
+    /// Protocol-wide transcript-grinding policy and plan identity.
+    pub grinding: TranscriptGrindingBinding,
     /// Per-call public shape and batching data.
     pub call: CallSection,
 }
 
 impl AkitaInstanceDescriptor {
-    /// Construct a descriptor from its four sections.
+    /// Construct a descriptor from its canonical sections.
     pub fn new(
         algebra: AlgebraSection,
         setup: SetupSection,
         plan: PlanSection,
+        grinding: TranscriptGrindingBinding,
         call: CallSection,
     ) -> Self {
         Self {
@@ -83,6 +85,7 @@ impl AkitaInstanceDescriptor {
             algebra,
             setup,
             plan,
+            grinding,
             call,
         }
     }
@@ -120,13 +123,13 @@ impl AlgebraSection {
     /// fixed-width integer fields.
     pub fn for_fields<F, E>() -> Result<Self, AkitaError>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
         Ok(Self {
-            prime_modulus_be: modulus_be_32::<F>(),
+            prime_modulus_be: modulus_be_32::<F>()?,
             field_extension_degree: usize_to_u8(1, "field extension degree")?,
-            extension_degree: usize_to_u8(E::EXT_DEGREE, "extension degree")?,
+            extension_degree: usize_to_u8(E::DEGREE, "extension degree")?,
         })
     }
 }
@@ -162,8 +165,6 @@ pub struct SetupSection {
     pub setup_seed_digest: DescriptorDigest,
     /// Protocol-affecting feature mode (transparent-only after zk-strip).
     pub protocol_features: ProtocolFeatureSet,
-    /// Fold-l∞ grind cap and nonce wire contract.
-    pub fold_linf: FoldLinfProtocolBinding,
 }
 
 impl SetupSection {
@@ -188,7 +189,6 @@ impl SetupSection {
             compression_policy: COMPRESSION_POLICY,
             setup_seed_digest: setup_seed_digest(setup_seed)?,
             protocol_features: ProtocolFeatureSet::current(),
-            fold_linf: FoldLinfProtocolBinding::CURRENT,
         })
     }
 }
@@ -303,6 +303,7 @@ impl Valid for AkitaInstanceDescriptor {
         self.algebra.check()?;
         self.setup.check()?;
         self.plan.check()?;
+        self.grinding.check()?;
         self.call.check()?;
         Ok(())
     }
@@ -318,6 +319,7 @@ impl AkitaSerialize for AkitaInstanceDescriptor {
         self.algebra.serialize_with_mode(&mut writer, compress)?;
         self.setup.serialize_with_mode(&mut writer, compress)?;
         self.plan.serialize_with_mode(&mut writer, compress)?;
+        self.grinding.serialize_with_mode(&mut writer, compress)?;
         self.call.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -327,6 +329,7 @@ impl AkitaSerialize for AkitaInstanceDescriptor {
             + self.algebra.serialized_size(compress)
             + self.setup.serialized_size(compress)
             + self.plan.serialized_size(compress)
+            + self.grinding.serialized_size(compress)
             + self.call.serialized_size(compress)
     }
 }
@@ -345,6 +348,12 @@ impl AkitaDeserialize for AkitaInstanceDescriptor {
             algebra: AlgebraSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
             setup: SetupSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
             plan: PlanSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            grinding: TranscriptGrindingBinding::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?,
             call: CallSection::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         if matches!(validate, Validate::Yes) {
@@ -465,17 +474,11 @@ impl Valid for SetupSection {
         self.decomposition
             .validate()
             .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        if self.fold_linf != FoldLinfProtocolBinding::CURRENT {
-            return Err(SerializationError::InvalidData(
-                "descriptor fold_linf binding does not match active protocol cutover".to_string(),
-            ));
-        }
         if self.compression_policy != COMPRESSION_POLICY {
             return Err(SerializationError::InvalidData(
                 "descriptor compression policy does not match active protocol cutover".to_string(),
             ));
         }
-        self.fold_linf.check()?;
         self.protocol_features.check()?;
         Ok(())
     }
@@ -495,7 +498,6 @@ impl AkitaSerialize for SetupSection {
         writer.write_all(&self.setup_seed_digest)?;
         self.protocol_features
             .serialize_with_mode(&mut writer, compress)?;
-        self.fold_linf.serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
@@ -505,7 +507,6 @@ impl AkitaSerialize for SetupSection {
             + 1
             + 32
             + self.protocol_features.serialized_size(compress)
-            + self.fold_linf.serialized_size(compress)
     }
 }
 
@@ -531,15 +532,12 @@ impl AkitaDeserialize for SetupSection {
         let setup_seed_digest = read_digest(&mut reader)?;
         let protocol_features =
             ProtocolFeatureSet::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let fold_linf =
-            FoldLinfProtocolBinding::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             decomposition,
             sis_modulus_profile,
             compression_policy,
             setup_seed_digest,
             protocol_features,
-            fold_linf,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -753,19 +751,8 @@ impl AkitaDeserialize for CallSection {
     }
 }
 
-fn modulus_be_32<F: CanonicalField>() -> [u8; 32] {
-    let modulus = detect_field_modulus::<F>();
-    let mut out = [0u8; 32];
-    out[16..].copy_from_slice(&modulus.to_be_bytes());
-    out
-}
-
-fn usize_to_u32(value: usize, name: &'static str) -> Result<u32, AkitaError> {
-    u32::try_from(value).map_err(|_| AkitaError::InvalidInput(format!("{name} does not fit u32")))
-}
-
-fn usize_to_u8(value: usize, name: &'static str) -> Result<u8, AkitaError> {
-    u8::try_from(value).map_err(|_| AkitaError::InvalidInput(format!("{name} does not fit u8")))
+fn modulus_be_32<F: Field + CanonicalEncoding>() -> Result<[u8; 32], AkitaError> {
+    crate::field_modulus_be_bytes::<F>()
 }
 
 fn blake2b_256(bytes: &[u8]) -> DescriptorDigest {

@@ -3,7 +3,7 @@
 use super::{extract_balanced_digit, peel_first_balanced_digit_i32, to_signed, DecomposeParams};
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallenge;
-use akita_field::CanonicalField;
+use jolt_field::{CanonicalEncoding, Field};
 
 const D64_ROTATED_CHALLENGE_MIN_WEIGHT: usize = 42;
 
@@ -102,7 +102,10 @@ pub(super) fn accumulate_rotated_digit_plane<const D: usize>(
 }
 
 #[inline(always)]
-pub(crate) fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const D: usize>(
+pub(crate) fn decompose_ring_full_challenge_accumulate<
+    F: Field + CanonicalEncoding,
+    const D: usize,
+>(
     ring: &CyclotomicRing<F, D>,
     rotated: &[[i16; D]],
     acc: &mut [[i32; D]],
@@ -116,7 +119,7 @@ pub(crate) fn decompose_ring_full_challenge_accumulate<F: CanonicalField, const 
 }
 
 #[inline(always)]
-fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usize>(
+fn decompose_ring_full_challenge_accumulate_fast<F: Field + CanonicalEncoding, const D: usize>(
     ring: &CyclotomicRing<F, D>,
     rotated: &[[i16; D]],
     acc: &mut [[i32; D]],
@@ -125,9 +128,24 @@ fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usi
     let bulk_end = D - (D % 3);
 
     for base in (0..bulk_end).step_by(3) {
-        let mut c0 = to_signed(ring.coeffs[base].to_canonical_u128(), p);
-        let mut c1 = to_signed(ring.coeffs[base + 1].to_canonical_u128(), p);
-        let mut c2 = to_signed(ring.coeffs[base + 2].to_canonical_u128(), p);
+        let mut c0 = to_signed(
+            ring.coeffs[base]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128"),
+            p,
+        );
+        let mut c1 = to_signed(
+            ring.coeffs[base + 1]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128"),
+            p,
+        );
+        let mut c2 = to_signed(
+            ring.coeffs[base + 2]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128"),
+            p,
+        );
         let rot0 = &rotated[base];
         let rot1 = &rotated[base + 1];
         let rot2 = &rotated[base + 2];
@@ -147,7 +165,12 @@ fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usi
     }
 
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let mut c = to_signed(ring.coeffs[idx].to_canonical_u128(), p);
+        let mut c = to_signed(
+            ring.coeffs[idx]
+                .to_u128_checked()
+                .expect("Akita field element must fit in u128"),
+            p,
+        );
         for plane in acc.iter_mut() {
             let digit = extract_balanced_digit(&mut c, p);
             if digit != 0 {
@@ -158,7 +181,10 @@ fn decompose_ring_full_challenge_accumulate_fast<F: CanonicalField, const D: usi
 }
 
 #[inline(always)]
-fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D: usize>(
+fn decompose_ring_full_challenge_accumulate_overflow<
+    F: Field + CanonicalEncoding,
+    const D: usize,
+>(
     ring: &CyclotomicRing<F, D>,
     rotated: &[[i16; D]],
     acc: &mut [[i32; D]],
@@ -174,9 +200,15 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
         let rot1 = &rotated[base + 1];
         let rot2 = &rotated[base + 2];
 
-        let canonical0 = ring.coeffs[base].to_canonical_u128();
-        let canonical1 = ring.coeffs[base + 1].to_canonical_u128();
-        let canonical2 = ring.coeffs[base + 2].to_canonical_u128();
+        let canonical0 = ring.coeffs[base]
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
+        let canonical1 = ring.coeffs[base + 1]
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
+        let canonical2 = ring.coeffs[base + 2]
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
 
         let (mut c0, d0) = peel_first_balanced_digit_i32(canonical0, p);
         let (mut c1, d1) = peel_first_balanced_digit_i32(canonical1, p);
@@ -207,7 +239,9 @@ fn decompose_ring_full_challenge_accumulate_overflow<F: CanonicalField, const D:
     }
 
     for (idx, rot) in rotated.iter().enumerate().take(D).skip(bulk_end) {
-        let canonical = ring.coeffs[idx].to_canonical_u128();
+        let canonical = ring.coeffs[idx]
+            .to_u128_checked()
+            .expect("Akita field element must fit in u128");
         let (mut c, d0) = peel_first_balanced_digit_i32(canonical, p);
         if d0 != 0 {
             add_scaled_rotated_row(first_acc, rot, d0);

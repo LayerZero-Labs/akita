@@ -2,7 +2,6 @@
 
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
@@ -14,6 +13,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     SamplingMode,
 };
+use jolt_field::{CanonicalEncoding, Prime128OffsetA7F7, Zero};
 use std::time::Duration;
 
 type F = Prime128OffsetA7F7;
@@ -27,7 +27,7 @@ struct SetupIndexWeightBenchCase {
 }
 
 fn test_scalar(value: u128) -> F {
-    F::from_canonical_u128(value)
+    F::from_u128_checked(value).expect("benchmark scalar must be canonical")
 }
 
 fn configure_group(group: &mut BenchmarkGroup<'_, WallTime>) {

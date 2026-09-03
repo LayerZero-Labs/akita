@@ -15,18 +15,13 @@ use crate::stages::stage2::AkitaStage2Verifier;
 use crate::stages::{verify_physical_l2_norm, PhysicalL2RangeClaim, SetupSumcheckVerifier};
 use akita_challenges::{FoldDraw, LiveFoldDraw};
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    MulBaseUnreduced, PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EOR_FINAL_CLAIM, ABSORB_EVALUATION_CLAIMS,
     ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_OPENING_PAYLOAD, ABSORB_RANGE_IMAGE_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_EOR_CLAIM_BATCH, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -35,18 +30,20 @@ use akita_types::{
     canonical_extension_opening_reduction_shape, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::relation_row_weight, raw_field_segment_bytes,
     relation_claim_from_compressed_rhs_extension, ring_subfield_packed_extension_opening_point,
-    sample_row_coefficients, tensor_equality_factor_eval_at_point, AkitaStage1Proof,
-    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding,
-    InnerCommitSecurityRoute, OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan,
-    PolynomialGroupClaims, PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry,
-    RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams,
-    TerminalLevelProof, TerminalResponse, TerminalWitnessTranscriptParts,
+    tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldParams, FoldSchedule, FpExtEncoding, InnerCommitSecurityRoute,
+    OpeningClaims, OpeningClaimsLayout, PhysicalResponsePlan, PolynomialGroupClaims,
+    PreparedOpeningPoint, RelationRangeImagePlan, RelationWitnessGeometry, RingRelationInstance,
+    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    TerminalResponse, TerminalWitnessTranscriptParts,
 };
+
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
 use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, PseudoMersenne, Ring};
 
 mod fold;
 mod root_fold;
@@ -74,7 +71,7 @@ fn prepare_terminal_witness_replay<F, T>(
     terminal_response_len: usize,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     T: Transcript<F>,
 {
     if terminal_response.num_elems() != terminal_response_len {

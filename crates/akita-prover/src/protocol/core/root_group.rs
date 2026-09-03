@@ -8,30 +8,29 @@ use crate::compute::{
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan,
 };
 use crate::PreparedProverGroup;
-use akita_field::unreduced::ReduceTo;
-use akita_field::AdditiveGroup;
 use akita_types::{
     coefficient_packing_scalar_opening, OpeningFamily, OpeningMethod,
     PreparedSubringCoefficientPackingPoint, SubringCoefficientPackingGeometry,
 };
+use jolt_field::AdditiveGroup;
 
-pub(crate) struct PreparedEvaluationTraceGroup<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedEvaluationTraceGroup<F: Field, E: Field> {
     pub(crate) point: PreparedOpeningPoint<F, E>,
     pub(crate) folded_by_claim: Vec<RingVec<F>>,
 }
 
-pub(crate) struct PreparedCoefficientPackingGroup<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedCoefficientPackingGroup<F: Field, E: Field> {
     pub(crate) point: PreparedSubringCoefficientPackingPoint<E>,
     pub(crate) partials_by_claim: Vec<SubringCoefficientPackingPartials<F>>,
 }
 
-pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
+pub(crate) struct PreparedGroupOpening<F: Field, E: Field> {
     pub(crate) kind:
         OpeningFamily<PreparedEvaluationTraceGroup<F, E>, PreparedCoefficientPackingGroup<F, E>>,
     pub(crate) scalar_openings: Vec<E>,
 }
 
-pub(crate) trait RootProverGroupMeta<F: FieldCore> {
+pub(crate) trait RootProverGroupMeta<F: Field> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
     #[cfg(feature = "response-model-diagnostics")]
@@ -40,8 +39,8 @@ pub(crate) trait RootProverGroupMeta<F: FieldCore> {
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
 {
@@ -69,8 +68,8 @@ where
 
 pub(crate) trait RootProverGroupTensor<F, E, B>: RootProverGroupMeta<F>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + MulBaseUnreduced<F>,
     B: ComputeBackendSetup<F>,
 {
@@ -82,7 +81,7 @@ where
         point: &[E],
     ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError>;
 
-    fn extension_opening_terms(
+    fn extension_opening_group(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
@@ -90,12 +89,12 @@ where
         claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError>;
+    ) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError>;
 }
 
 impl<F, P> RootProverGroupMeta<F> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore,
+    F: Field,
     P: crate::compute::RootPolyMeta<F>,
 {
     fn num_polynomials(&self) -> usize {
@@ -130,8 +129,8 @@ where
 
 impl<F, E, P, B> RootProverGroupOpening<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
     P: RuntimeRootProvePoly<F>,
     B: ComputeBackendSetup<F>
@@ -160,7 +159,7 @@ where
                 } = opening_method
                 {
                     let geometry = SubringCoefficientPackingGeometry::try_new(
-                        E::EXT_DEGREE,
+                        E::DEGREE,
                         D,
                         challenge_subring_dimension,
                     )?;
@@ -301,8 +300,8 @@ where
 
 impl<F, E, P, B> RootProverGroupTensor<F, E, B> for PreparedProverGroup<'_, P>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring + Unreduced + 'static,
+    <F as Unreduced>::Wide: From<F>,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
     P: RuntimeRootProvePoly<F> + RuntimeTensorSource<F>,
     B: ComputeBackendSetup<F> + RuntimeTensorBackendFor<F, P, E>,
@@ -327,7 +326,7 @@ where
         )
     }
 
-    fn extension_opening_terms(
+    fn extension_opening_group(
         &self,
         backend: &B,
         prepared: Option<&B::PreparedSetup>,
@@ -335,12 +334,12 @@ where
         claim_coefficients: &[E],
         tail_point: &[E],
         eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
+    ) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
             ring_dimension,
-            |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
+            |D| build_extension_opening_reduction_group::<F, E, P, B, D>(
                 backend,
                 prepared,
                 self.polynomial_refs(),

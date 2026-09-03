@@ -2,9 +2,9 @@
 
 use super::{charge_work, checked_axis_offset, EqPairTensorFamily, EqPairTensorWeights};
 use crate::offset_eq::OffsetEqWindow;
-use crate::FieldCore;
+use crate::Field;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
+use jolt_field::solinas::parallel::*;
 
 /// Materialize the left-address weights induced by tensor families and one
 /// equality point on the right.
@@ -13,7 +13,7 @@ use akita_field::parallel::*;
 ///
 /// Returns an error for malformed geometry, an out-of-range left address, or
 /// recurrence work above [`crate::offset_eq::MAX_COMPACT_STRIDE_TERMS`].
-pub fn materialize_eq_tensor_left<F: FieldCore>(
+pub fn materialize_eq_tensor_left<F: Field>(
     equality: &OffsetEqWindow<F>,
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
@@ -71,7 +71,7 @@ pub fn materialize_eq_tensor_left<F: FieldCore>(
     Ok(output)
 }
 
-fn materialize_disjoint_unit_intervals<F: FieldCore>(
+fn materialize_disjoint_unit_intervals<F: Field>(
     equality: &OffsetEqWindow<F>,
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
@@ -147,12 +147,12 @@ fn materialize_disjoint_unit_intervals<F: FieldCore>(
     Ok(Some(output))
 }
 
-struct DenseLeftTensorView<'a, F: FieldCore> {
+struct DenseLeftTensorView<'a, F: Field> {
     family: &'a EqPairTensorFamily<F>,
     destination_axis: usize,
 }
 
-fn materialize_dense_left_overlap<F: FieldCore>(
+fn materialize_dense_left_overlap<F: Field>(
     equality: &OffsetEqWindow<F>,
     families: &[EqPairTensorFamily<F>],
     output_len: usize,
@@ -265,7 +265,7 @@ fn materialize_dense_left_overlap<F: FieldCore>(
     Ok(Some(output))
 }
 
-fn dense_left_destination_axis<F: FieldCore>(family: &EqPairTensorFamily<F>) -> Option<usize> {
+fn dense_left_destination_axis<F: Field>(family: &EqPairTensorFamily<F>) -> Option<usize> {
     let mut destination = None;
     for (index, axis) in family.axes.iter().enumerate() {
         if axis.left_stride == 1 && matches!(axis.weights, EqPairTensorWeights::Unit) {
@@ -279,7 +279,7 @@ fn dense_left_destination_axis<F: FieldCore>(family: &EqPairTensorFamily<F>) -> 
     destination
 }
 
-fn contract_residual_tensor_axes<F: FieldCore>(
+fn contract_residual_tensor_axes<F: Field>(
     equality: &OffsetEqWindow<F>,
     family: &EqPairTensorFamily<F>,
     destination_axis: usize,
@@ -338,7 +338,7 @@ fn contract_residual_tensor_axes<F: FieldCore>(
     }
     Ok(acc)
 }
-fn visit_tensor_coordinates<F: FieldCore>(
+fn visit_tensor_coordinates<F: Field>(
     family: &EqPairTensorFamily<F>,
     axis_index: usize,
     left_offset: usize,

@@ -11,8 +11,7 @@ use akita_config::{
     effective_batched_schedule, ensure_prover_schedule_fits_setup, CommitmentConfig,
     TrustedScheduleCatalog,
 };
-use akita_field::unreduced::ReduceTo;
-use akita_field::{AdditiveGroup, CanonicalField};
+use jolt_field::{AdditiveGroup, CanonicalEncoding};
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -43,24 +42,23 @@ pub fn batched_prove<'a, Cfg, T, P, C, O, TS, R>(
 ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + Field
+        + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
+    Cfg::Field: Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
@@ -98,7 +96,7 @@ where
     ensure_prover_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
-    bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+    let grinding_plan = bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,
         selection,
@@ -115,6 +113,7 @@ where
         claims,
         schedule,
         basis,
+        &grinding_plan,
     )
     .map(|(proof, _total_levels)| proof)
 }
@@ -148,27 +147,27 @@ pub fn prove<'a, Cfg, T, P, C, O, TS, R>(
     claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
     schedule: &FoldSchedule,
     basis: BasisMode,
+    grinding_plan: &akita_types::GrindingPlan,
 ) -> Result<(AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, usize), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + Invertible
-        + PseudoMersenneField,
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Unreduced
+        + Field
+        + PseudoMersenne,
     Cfg::ExtField: FpExtEncoding<Cfg::Field> + MulBaseUnreduced<Cfg::Field>,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
+        + Ring
         + AkitaSerialize,
-    T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-    Cfg::Field: FromPrimitiveInt + 'static,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+    T: Transcript<Cfg::Field> + TranscriptChallengePreview,
+    Cfg::Field: Ring + 'static,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
     P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, O>,
     C: ComputeBackendSetup<Cfg::Field>
         + RuntimeCommitBackendFor<Cfg::Field, RecursiveWitnessFlat>
@@ -208,11 +207,8 @@ where
                 "root commitment group count does not match opening batch".to_string(),
             ));
         }
-        let relation_geometry = RelationWitnessGeometry::for_level(
-            root_params,
-            &opening_batch,
-            Cfg::ExtField::EXT_DEGREE,
-        )?;
+        let relation_geometry =
+            RelationWitnessGeometry::for_level(root_params, &opening_batch, Cfg::ExtField::DEGREE)?;
         let relation_layout = relation_geometry.rhs_layout();
         for (group_index, commitment) in commitments.iter().enumerate() {
             let plan = relation_layout.compression_plan_for_group(group_index)?;
@@ -243,11 +239,13 @@ where
         },
     );
 
-    let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
+    let mut grinding_transcript =
+        akita_types::ProverGrindingTranscript::<T>::new(transcript, grinding_plan)?;
+    let root = prove_root::<Cfg::Field, Cfg::ExtField, _, P, C, O, TS, R, Cfg>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         claims,
         &schedule.root,
         next_params,
@@ -263,17 +261,19 @@ where
     // at this exact root/suffix boundary through the lifecycle hook.
     stacks.after_root_fold()?;
 
-    let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
+    let suffix = crate::prove_suffix::<Cfg, _, C, O, TS, R>(
         expanded,
         prefix_slots,
         stacks,
-        transcript,
+        &mut grinding_transcript,
         next_state,
         schedule,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix prove failed: {err:?}")))?;
+    let nonce_stream = grinding_transcript.finish()?;
     Ok((
         AkitaBatchedProof {
+            nonce_stream,
             root,
             recursive_folds: suffix.recursive_folds,
             terminal: suffix.terminal,

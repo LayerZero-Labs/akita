@@ -4,7 +4,7 @@ use crate::proof::relation::{
     RelationRowFamily, RelationWitnessGeometry,
 };
 use crate::WitnessLayout;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::{One, Prime128OffsetA7F7, Zero};
 
 #[test]
 fn compression_quotient_rows_are_included_before_evaluation_trace() {

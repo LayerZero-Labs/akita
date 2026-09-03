@@ -1,13 +1,15 @@
 use super::CpuPreparedSetup;
+use crate::backend::packed_digits::PackedSignedDigitView;
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-#[allow(unused_imports)]
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore};
 use akita_types::{balanced_signed_digit_abs_bound, NttCacheKey, NttTransformDomain};
+#[allow(unused_imports)]
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 
-pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "dense_commit_rows_exact_i16")]
+pub(super) fn dense_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
     n_a: usize,
     row_width: usize,
@@ -45,9 +47,47 @@ pub(super) fn dense_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const D: usize>(
+#[tracing::instrument(skip_all, name = "dense_commit_cached_digit_rows_exact_i16")]
+pub(super) fn dense_commit_cached_digit_rows<F: Field + CanonicalEncoding, const D: usize>(
     prepared: &CpuPreparedSetup<F>,
-    coeffs: &[[i8; D]],
+    n_a: usize,
+    row_width: usize,
+    digit_block_slices: &[&[[i8; D]]],
+    log_basis_inner: u32,
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
+        .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    prepared.with_shared_ntt::<D, _>(
+        NttCacheKey::from_matrix_shape(
+            D,
+            n_a,
+            row_width,
+            NttTransformDomain::ExactNegacyclicI16 {
+                width: row_width,
+                rhs_abs_bound,
+            },
+        )?,
+        |ntt| {
+            cfg_iter!(digit_block_slices)
+                .map(|block| {
+                    if block.len() > row_width {
+                        return Err(AkitaError::InvalidSetup(
+                            "cached digit block exceeds dense commitment row width".into(),
+                        ));
+                    }
+                    let mut rhs = Vec::with_capacity(row_width);
+                    rhs.extend(block.iter().map(|digits| from_fn(|k| i16::from(digits[k]))));
+                    rhs.resize(row_width, [0i16; D]);
+                    ntt.mat_vec_i16::<F>(log_basis_inner, n_a, &rhs)
+                })
+                .collect()
+        },
+    )
+}
+
+pub(super) fn recursive_packed_witness_commit_rows<F: Field + CanonicalEncoding, const D: usize>(
+    prepared: &CpuPreparedSetup<F>,
+    digits: PackedSignedDigitView<'_>,
     n_rows: usize,
     num_positions_per_block: usize,
     num_live_blocks: usize,
@@ -59,6 +99,7 @@ pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const
         .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".into()))?;
     let rhs_abs_bound = balanced_signed_digit_abs_bound(log_basis_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid signed digit basis".into()))?;
+    let ring_elems = digits.len() / D;
     prepared.with_shared_ntt::<D, _>(
         NttCacheKey::from_matrix_shape(
             D,
@@ -70,12 +111,14 @@ pub(super) fn recursive_witness_commit_rows<F: FieldCore + CanonicalField, const
             },
         )?,
         |ntt| {
-            cfg_chunks!(coeffs, num_positions_per_block)
-                .take(num_live_blocks)
-                .map(|block| {
+            cfg_into_iter!(0..num_live_blocks)
+                .map(|block_index| {
+                    let start_ring = block_index * num_positions_per_block;
+                    let live = (ring_elems - start_ring).min(num_positions_per_block);
+                    let block = digits.decode_rings::<D>(start_ring, live)?;
                     let mut rhs = vec![[0i16; D]; row_width];
                     if num_digits_inner == 1 {
-                        for (dst, src) in rhs.iter_mut().zip(block) {
+                        for (dst, src) in rhs.iter_mut().zip(&block) {
                             *dst = from_fn(|k| i16::from(src[k]));
                         }
                     } else {

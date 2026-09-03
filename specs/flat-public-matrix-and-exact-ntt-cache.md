@@ -7,7 +7,6 @@
 | Status        | implemented |
 | PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, the deleted mixed-ring experiment, and `archive/2026-Q3/setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
-| Superseded-by | Setup-prefix offloading content and capacity semantics are superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md` |
 | Book-chapter  | book/src/usage/commitment-api.md |
 
 ## Summary
@@ -25,9 +24,10 @@ schedule geometry, and backend optimization.
 This spec makes the public matrix a dimension-free, prefix-compatible field
 stream. A materialized setup is an exact cached prefix of that stream. Ring
 dimensions exist only on schedule-owned matrix views and arithmetic operations.
-Power-of-two zero padding exists only where a protocol object has a Boolean
-evaluation domain, especially setup-prefix offloading; it does not enlarge the
-random source prefix. NTT caches are derived backend state, independently sized
+Power-of-two zero padding exists only in protocol objects whose semantics call
+for zero padding. A setup-prefix commitment is different: its complete
+power-of-two domain is an actual prefix of the random public stream, while its
+setup-index weight is zero outside the natural support. NTT caches are derived backend state, independently sized
 for each ring dimension, transform domain, operation cluster, and exactness
 profile. Their sizes are compiled from the concrete operations that will use
 them, not from the total materialized setup capacity.
@@ -160,7 +160,8 @@ API and config API MUST expose that unit directly. A ring-element
 #### Derived setup artifacts
 
 Setup-prefix commitments are preprocessing artifacts derived from a public
-matrix ID, a natural source prefix, and commitment parameters. They remain in
+matrix ID, a natural weight support, its canonical full power-of-two source
+prefix, and commitment parameters. They remain in
 prover and verifier registries. They do not change the identity or storage
 shape of the base public matrix.
 
@@ -435,7 +436,7 @@ A prover package and a verifier hot path have different matrix requirements
 when setup contributions are offloaded. The prover package must materialize
 every source prefix and every matrix needed to build the setup-prefix
 commitments. A verifier that has already accepted those commitment artifacts
-does not scan an offloaded producer's natural source prefix during proof
+does not scan an offloaded producer's full committed source prefix during proof
 verification.
 
 For a resolved schedule, number the nonterminal producers from the root through
@@ -506,9 +507,7 @@ hot-path public matrix is shorter.
 
 ### Setup-prefix offloading
 
-Setup-prefix offloading has two lengths with different meanings. The original
-zero-padded content rule in this spec has been superseded by
-[`full-setup-prefix-compact-tail-weights.md`](archive/2026-Q3/full-setup-prefix-compact-tail-weights.md):
+Setup-prefix offloading has two lengths with different meanings:
 
 ```text
 natural_len = active setup-weight support used by Stage 3
@@ -861,16 +860,16 @@ The seed digest in `AkitaInstanceDescriptor` binds the generation dimension,
 capacity, and host nv/batch limits. `AlgebraSection` separately carries one
 ring dimension even though the effective mixed schedule carries several.
 
-#### Setup-prefix padding
+#### Setup-prefix commitment domain
 
-The setup-prefix witness correctly copies `natural_len` coefficients and fills
-the rest of `n_prefix` with zero. Capacity accounting nevertheless includes
-`n_prefix` as if those zeros had to be random public-matrix coefficients. That
-charge is removed. The commitment A/B matrix footprints remain.
+The setup-prefix witness is exactly `S[0..n_prefix]`. Every coefficient in the
+power-of-two tail after `natural_len` is a real public-matrix coefficient and
+is committed by the setup-prefix A/B matrices. The compact setup-index weight,
+not the committed source, is zero outside `natural_len`.
 
-Recursive prefix preprocessing also rejects any base setup whose generation D
-is not D64. That restriction is an artifact of the carrier model, not a
-protocol requirement.
+Prefix preprocessing uses the prefix commitment's independently selected A/B
+dimensions. It requires the block geometry to cover exactly `n_prefix / D_A`
+rings and does not inherit a generation dimension from the flat setup stream.
 
 #### Prover NTT caches
 
@@ -938,8 +937,8 @@ to the verifier cache. These caches need not have the same profile or lifetime.
 
 #### Setup offloading
 
-The natural public prefix, its padded committed witness, and the matrices that
-commit that witness are three separate shapes. Setup capacity and cache
+The natural weight support, its complete power-of-two committed prefix, and the
+matrices that commit that prefix are three separate shapes. Setup capacity and cache
 compilation use the correct shape for each. Preprocessing caches may be dropped
 after all required prefix slots are materialized; they must not silently become
 the runtime prove-cache contract.
@@ -1088,12 +1087,10 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 #### Setup-prefix offloading
 
-- [x] Superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`: capacity
-  accounting now charges `n_prefix` for selected full-prefix setup sources and
-  separately includes setup-prefix commitment matrices.
-- [x] Superseded by `archive/2026-Q3/full-setup-prefix-compact-tail-weights.md`: tests now cover
-  a non-power-of-two natural support and prove tail entries are actual
-  public-stream coefficients rather than synthesized zeros.
+- [x] Capacity accounting charges `n_prefix` for selected full-prefix setup
+  sources and separately includes setup-prefix commitment matrices.
+- [x] Tests cover a non-power-of-two natural support and prove tail entries are
+  actual public-stream coefficients rather than synthesized zeros.
 - [x] Setup-prefix preprocessing works for independently selected prefix A/B
   dimensions while the same setup serves a differently dimensioned mixed
   schedule.
@@ -1176,7 +1173,7 @@ review-visible.
 
 Construct schedules where the largest footprints come respectively from root
 A, root B, root D, a precommitted group, a recursive level, terminal A, a
-setup-prefix natural source, and a setup-prefix commitment matrix. Assert that
+setup-prefix full source, and a setup-prefix commitment matrix. Assert that
 the canonical scan returns the exact maximum in fields.
 
 Include a maximum whose field count is not divisible by another scheduled D.
@@ -1413,8 +1410,8 @@ This follow-up should implement the cutover in dependency order without compatib
 wrappers.
 
 1. Add flat public matrix identity, paged derivation, golden vectors, and exact
-   prefix storage in `akita-types`; strengthen `akita-field::RandomSampling`
-   and cut all prime fields to the canonical rejection helper.
+   prefix storage in `akita-types`; use `jolt-field`'s canonical field sampling
+   helper for every prime field.
 2. Cut checked matrix views and canonical field-capacity scans to the new
    storage. Remove whole-envelope ring reinterpretation.
 3. Change descriptor identity and version, then update prover/verifier

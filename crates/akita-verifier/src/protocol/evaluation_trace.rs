@@ -12,11 +12,11 @@ use akita_algebra::offset_eq::{
 };
 use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
     basis_weights, prepare_evaluation_trace_group_parameters, BasisMode, EvaluationTraceInputs,
     FpExtEncoding,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ struct PreparedEvaluationTraceUnit {
 
 /// Verifier state for one opening group.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PreparedEvaluationTraceGroup<E: FieldCore> {
+struct PreparedEvaluationTraceGroup<E: Field> {
     block_opening_point: Arc<[E]>,
     basis: BasisMode,
     source_ring_dimension: usize,
@@ -95,7 +95,7 @@ fn trace_unit_run_strides(
 
 /// Block-axis work selected and constructed once during trace preparation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum PreparedTraceContraction<E: FieldCore> {
+enum PreparedTraceContraction<E: Field> {
     /// Concrete affine weights for the small-block crossover region.
     Affine {
         low_block_weights: Arc<[E]>,
@@ -169,7 +169,7 @@ fn trace_unit_tensor_segments(
     Ok(segments)
 }
 
-fn prepare_trace_contraction<E: FieldCore>(
+fn prepare_trace_contraction<E: Field>(
     block_opening_point: &[E],
     basis: BasisMode,
     units: &[PreparedEvaluationTraceUnit],
@@ -199,12 +199,12 @@ fn prepare_trace_contraction<E: FieldCore>(
 
 /// Succinct verifier representation of the complete evaluation-trace weight.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PreparedEvaluationTrace<E: FieldCore> {
+pub(crate) struct PreparedEvaluationTrace<E: Field> {
     groups: Vec<PreparedEvaluationTraceGroup<E>>,
     num_variables: usize,
 }
 
-impl<E: FieldCore> PreparedEvaluationTrace<E> {
+impl<E: Field> PreparedEvaluationTrace<E> {
     /// Evaluate the trace-weight MLE without constructing prover terms or
     /// scanning physical coefficient support.
     pub(crate) fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
@@ -416,8 +416,8 @@ pub(crate) fn prepare_evaluation_trace<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<PreparedEvaluationTrace<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
-    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + Ring,
+    E: FpExtEncoding<F> + ExtField<F> + Ring,
 {
     let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(inputs)?;
     let mut groups = Vec::with_capacity(group_parameters.len());
@@ -511,14 +511,14 @@ where
 /// Exact synthetic trace fixture for production-kernel benchmarks.
 #[cfg(any(test, feature = "benchmark-support"))]
 pub struct EvaluationTraceBenchmarkCase {
-    trace: PreparedEvaluationTrace<akita_field::Prime128OffsetA7F7>,
-    point: Vec<akita_field::Prime128OffsetA7F7>,
+    trace: PreparedEvaluationTrace<jolt_field::Prime128OffsetA7F7>,
+    point: Vec<jolt_field::Prime128OffsetA7F7>,
 }
 
 #[cfg(any(test, feature = "benchmark-support"))]
 impl EvaluationTraceBenchmarkCase {
     /// Evaluate the prepared trace at its fixed benchmark point.
-    pub fn evaluate(&self) -> Result<akita_field::Prime128OffsetA7F7, AkitaError> {
+    pub fn evaluate(&self) -> Result<jolt_field::Prime128OffsetA7F7, AkitaError> {
         self.trace.evaluate_at_point(&self.point)
     }
 }
@@ -531,8 +531,8 @@ pub fn evaluation_trace_benchmark_case(
     witness_chunks: usize,
     basis: BasisMode,
 ) -> Result<EvaluationTraceBenchmarkCase, AkitaError> {
-    use akita_field::Prime128OffsetA7F7 as F;
     use akita_types::dyadic_block_ranges;
+    use jolt_field::Prime128OffsetA7F7 as F;
 
     const SOURCE_RING_DIMENSION: usize = 128;
     const OPENING_RING_DIMENSION: usize = 128;
@@ -627,6 +627,7 @@ mod tests {
         RelationAddressGeometry, RelationRangeImagePlan, RingMultiplierOpeningPoint,
         SisModulusProfileId, WitnessLayout,
     };
+    use jolt_field::Zero;
 
     #[test]
     fn unit_tensor_segments_match_separate_unit_contractions() {
@@ -750,7 +751,7 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
-        type F = akita_field::Prime128OffsetA7F7;
+        type F = jolt_field::Prime128OffsetA7F7;
         type E = F;
         const D: usize = 128;
         const NUM_VARIABLES: usize = 16;

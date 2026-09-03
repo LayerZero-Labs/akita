@@ -10,7 +10,7 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 ## In scope
 
 - `akita-verifier`
-- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, verifier-used `akita-field` paths
+- Verifier-reachable code in `akita-types` (including SIS derivation and table materialization), `akita-serialization`, `akita-algebra`, `akita-sumcheck`, `akita-transcript`, `akita-challenges`, and verifier-used `jolt-field` paths
 - `akita-config` policy validation and trusted artifact binding used by `batched_verify`
 - `akita-schedules` trusted artifact decoding, row identity, row resolution,
   and canonical resolved-row audit paths
@@ -21,9 +21,11 @@ The catalog is setup or preprocessing input, never proof input. Before setup
 access or transcript replay, Akita validates artifact identity and runtime
 hooks, resolves the public row digest, compares every ordered public
 `GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix,
-checks challenge and full terminal L infinity or L2 cap geometry, and confirms the schedule fits
-the setup field capacity. Private polynomial representations and honest-prover
-witness models are not verifier inputs. A proof cannot supply schedule bytes.
+prices each shared A row for the schedule's response-chunk count, checks
+challenge and full terminal L infinity or L2 cap geometry, and confirms the
+schedule fits the setup field capacity. Private polynomial representations and
+honest-prover witness models are not verifier inputs. A proof cannot supply
+schedule bytes.
 
 The accepted proof topology is structural: a root fold, zero or more recursive
 folds, and one terminal cleartext witness. The verifier rejects proof-shape
@@ -31,6 +33,20 @@ mismatches before transcript replay. Every terminal uses predecessor-bound
 inner `t` and the `consistency | A` relation. The root may be that predecessor;
 there is no separate fallback proof form, final outer `u`, or terminal B/D
 block to validate.
+
+Transcript replay is also shape-bounded. Before decoding the headerless proof,
+the verifier derives the canonical `GrindingPlan` and successor-aware fold
+geometry from the validated public schedule and opening layout. That one
+geometry determines each sumcheck round count, recursive opening layout, proof
+shape, and packed nonce-stream width. The decoder validates the stream byte
+bound and final padding before allocation; replay rejects a wrong site or query
+kind, truncation, incomplete consumption, and an out-of-range nonce.
+
+Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
+group root has a fixed 32-byte boundary, coordinate indices are checked before
+conversion, and buffered fixed-width reads use bounded copies rather than
+panicking slice conversions. A refill boundary changes neither the byte stream
+nor the challenge law.
 
 ## Rules
 

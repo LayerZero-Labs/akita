@@ -7,8 +7,8 @@ use akita_transcript::TranscriptEvent;
 fn main() {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
-    use akita_field::{CanonicalField, Fp64};
     use akita_transcript::{labels, AkitaTranscript, LoggingTranscript, Transcript};
+    use jolt_field::{CanonicalEncoding, Fp64};
 
     type F = Fp64<4294967197>;
 
@@ -16,10 +16,7 @@ fn main() {
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL));
     transcript.bind_instance_bytes(b"transcript-schedule/example-descriptor");
     transcript.append_bytes(labels::ABSORB_COMMITMENT, b"commitment");
-    transcript.append_field(
-        labels::ABSORB_EVALUATION_CLAIMS,
-        &F::from_canonical_u128_reduced(42),
-    );
+    transcript.append_field(labels::ABSORB_EVALUATION_CLAIMS, &F::from_u128_reduced(42));
     let _ = transcript.challenge_scalar(labels::CHALLENGE_LINEAR_RELATION);
     transcript.append_bytes(labels::ABSORB_TERMINAL_E_HAT, b"terminal-e-hat");
     let _ = transcript.challenge_scalar(labels::CHALLENGE_SPARSE_CHALLENGE);
@@ -64,6 +61,33 @@ fn format_event(event: &TranscriptEvent) -> String {
             "wire label={} len={bytes_len} digest={}",
             label_text(label),
             hex_digest(bytes_digest)
+        ),
+        TranscriptEvent::Grinding {
+            site_label,
+            grind_bits,
+            nonce_bits,
+            nonce,
+            predicate_len,
+            predicate,
+        } => format!(
+            "grind label={} target={grind_bits} nonce_bits={nonce_bits} nonce={nonce} predicate_len={predicate_len} predicate={}",
+            label_text(site_label),
+            hex_digest(predicate)
+        ),
+        TranscriptEvent::GrindingPlanQuery { site, multiplicity } => format!(
+            "grinding-plan site={} multiplicity={multiplicity}",
+            hex_digest(site)
+        ),
+        TranscriptEvent::GrindingActualQuery { site, label } => format!(
+            "grinding-actual site={} label={}",
+            hex_digest(site),
+            label_text(label)
+        ),
+        TranscriptEvent::FoldChallengeRange {
+            group_index,
+            coordinate_count,
+        } => format!(
+            "fold-challenge-range group={group_index} coordinates={coordinate_count}"
         ),
     }
 }

@@ -1038,6 +1038,8 @@ fn witness_unit_lengths(
     num_claims: usize,
     chunk_num_live_blocks: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
+    // Every response chunk retains the same full ambient Z buffer. The number
+    // of assigned live blocks affects only the chunk-local E and T material.
     let z_len = checked::product([
         params.num_positions_per_block(),
         params.num_digits_inner(),

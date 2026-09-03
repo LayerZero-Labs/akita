@@ -14,12 +14,12 @@ mod validation;
 
 use akita_algebra::CyclotomicRing;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::FieldCore;
 use akita_types::RingVec;
+use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 
 pub use api::{
-    commit, commit_setup_prefix, prepare_commit_inputs, AkitaProverSetup, CommitOutput,
+    commit, commit_setup_prefix, resolve_polynomial_group_layout, AkitaProverSetup, CommitOutput,
     GroupContext, PreparedGroupProveOps, PreparedProverGroup,
 };
 
@@ -43,7 +43,6 @@ pub use compute::{
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor, TensorCluster,
     TieredProveStacks, UniformProverStack,
 };
-pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{
     DigitRangeProver, LowBasisRangeCheckProver, RelationRangeImageProver,
 };
@@ -62,7 +61,7 @@ pub use types::{ProverOpeningData, SelectedProverOpeningData};
 /// closures borrow typed ring rows via [`Self::z_folded_rings_trusted`] and
 /// [`Self::centered_coeffs_trusted`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecomposeFoldWitness<F: FieldCore> {
+pub struct DecomposeFoldWitness<F: Field> {
     /// Folded witness rows in flat ring storage.
     pub z_folded_rings: RingVec<F>,
     /// Centered integer coefficients for each [`z_folded_rings`] row, stored row-major flat.
@@ -77,7 +76,7 @@ pub struct DecomposeFoldWitness<F: FieldCore> {
     ring_dim: usize,
 }
 
-impl<F: FieldCore> DecomposeFoldWitness<F> {
+impl<F: Field> DecomposeFoldWitness<F> {
     /// Construct from owned coefficient rows at a kernel boundary.
     pub fn from_coefficient_parts<const D: usize>(
         z_folded_coeffs: Vec<[F; D]>,
@@ -245,12 +244,12 @@ fn centered_coefficient_bounds<const D: usize>(rows: &[[i32; D]]) -> (i32, i32) 
 ///
 /// Ring dimension is stored by the single flat A-ring buffer. Public commit
 /// parameters own the source-block and row boundaries.
-pub struct CommitInnerWitness<F: FieldCore> {
+pub struct CommitInnerWitness<F: Field> {
     /// Recombined inner `A * s_i` rows in `[block][A row][coefficient]` order.
     pub inner_rows: RingVec<F>,
 }
 
-impl<F: FieldCore> CommitInnerWitness<F> {
+impl<F: Field> CommitInnerWitness<F> {
     /// Construct from typed kernel output at a commit boundary.
     pub fn from_rows<const D: usize>(
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,

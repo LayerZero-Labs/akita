@@ -2,10 +2,10 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::{checked, AkitaError};
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 #[cfg(test)]
-use akita_field::{ExtField, FromPrimitiveInt};
+use jolt_field::{Ring, Zero};
 
 use crate::{basis_weights, basis_weights_prefix, BasisMode};
 
@@ -250,7 +250,7 @@ impl SubringCoefficientPackingGeometry {
 /// are retained for the first three axes; only the exact live block prefix is
 /// retained from the padded block domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreparedSubringCoefficientPackingPoint<E: FieldCore> {
+pub struct PreparedSubringCoefficientPackingPoint<E: Field> {
     geometry: SubringCoefficientPackingGeometry,
     basis: BasisMode,
     source_num_vars: usize,
@@ -267,7 +267,7 @@ pub struct PreparedSubringCoefficientPackingPoint<E: FieldCore> {
     live_block_weights: Vec<E>,
 }
 
-impl<E: FieldCore> PreparedSubringCoefficientPackingPoint<E> {
+impl<E: Field> PreparedSubringCoefficientPackingPoint<E> {
     /// Split one public opening point into the canonical packing axes.
     pub fn new(
         geometry: SubringCoefficientPackingGeometry,
@@ -438,7 +438,7 @@ mod reference_tests;
 mod tests {
     use super::*;
     use akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128OffsetA7F7;
 
     #[test]
     fn derives_every_production_subring_packing_geometry() {

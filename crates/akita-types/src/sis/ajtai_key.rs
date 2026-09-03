@@ -1,5 +1,5 @@
 //! Ajtai-commitment key sizing: exact SIS profiles, role-specific matrix
-//! parameter types, secure-rank lookup, and coefficient-`L∞` bucket rounding.
+//! parameter types, secure-rank lookup, and coefficient-`L∞` target resolution.
 //!
 //! This is the single home for "given a width and a rounded-up coefficient
 //! bound at a security floor, what is the minimum SIS-secure module rank, and what audited
@@ -8,6 +8,7 @@
 
 use akita_error::AkitaError;
 
+use super::coverage::inner_coeff_linf_bounds;
 #[cfg(test)]
 use super::generated_sis_table::SIS_TABLE_DIGEST;
 use super::l2_table::{min_secure_l2_rank, SisL2TableKey};
@@ -16,9 +17,8 @@ use crate::descriptor_bytes::{push_u128, push_usize, sis_modulus_profile_tag};
 
 mod table;
 pub use table::{
-    ceil_coeff_linf_bucket, ceil_supported_linf_bound, min_secure_rank,
-    sis_table_key_for_linf_bound, ScalarCutoff, SisMatrixRole, SisModulusProfileId,
-    SisSecurityPolicyId, SisTableDigest, SisTableKey, COEFF_LINF_BUCKETS,
+    ceil_supported_linf_bound, min_secure_rank, sis_table_key_for_linf_bound, ScalarCutoff,
+    SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, SisTableKey,
     DEFAULT_SIS_SECURITY_POLICY, SUPPORTED_SIS_SECURITY_POLICIES,
 };
 
@@ -400,9 +400,8 @@ impl InnerCommitMatrixParams {
     #[must_use]
     pub fn max_secure_collision_linf(&self) -> Option<u128> {
         let key = self.sis_table_key()?;
-        COEFF_LINF_BUCKETS
-            .iter()
-            .copied()
+        inner_coeff_linf_bounds(key.modulus_profile, key.ring_dimension)
+            .into_iter()
             .take_while(|&bound| {
                 min_secure_rank(
                     SisTableKey {
@@ -681,18 +680,20 @@ impl<R: LinfMatrixRole> LinfCommitMatrix<R> {
 
     #[must_use]
     pub fn max_secure_collision_linf(&self) -> Option<u128> {
-        COEFF_LINF_BUCKETS
-            .iter()
-            .copied()
-            .take_while(|&bound| {
-                let key = SisTableKey {
-                    coeff_linf_bound: bound,
-                    ..self.sis_table_key
-                };
-                min_secure_rank(key, self.input_width as u64)
-                    .is_some_and(|rank| rank <= self.output_rank)
-            })
-            .last()
+        inner_coeff_linf_bounds(
+            self.sis_table_key.modulus_profile,
+            self.sis_table_key.ring_dimension,
+        )
+        .into_iter()
+        .take_while(|&bound| {
+            let key = SisTableKey {
+                coeff_linf_bound: bound,
+                ..self.sis_table_key
+            };
+            min_secure_rank(key, self.input_width as u64)
+                .is_some_and(|rank| rank <= self.output_rank)
+        })
+        .last()
     }
 
     /// Byte-identical to the two macro expansions it replaces.

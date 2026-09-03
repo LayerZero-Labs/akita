@@ -2,28 +2,24 @@
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
 use akita_prover::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     RuntimeCoefficientPackingBackendFor, RuntimeCommitBackendFor, RuntimeCommitSource,
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, UniformProverStack,
 };
-use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommitOutput, GroupContext};
 use akita_prover::{PreparedGroupProveOps, RecursiveFoldSource, SelectedProverOpeningData};
-use akita_serialization::{AkitaSerialize, Valid};
-use akita_transcript::Transcript;
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
+use akita_transcript::{Transcript, TranscriptChallengePreview};
 use akita_types::AkitaBatchedProof;
 use akita_types::AkitaVerifierSetup;
 use akita_types::{
     BasisMode, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaimsLayout,
     SetupMatrixCapacity,
 };
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
+use jolt_field::{Fold, Unreduced};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,21 +37,9 @@ pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
 impl<Cfg> AkitaCommitmentScheme<Cfg>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + Valid
-        + AkitaSerialize,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + AkitaSerialize,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
     /// Bind one validated trusted schedule catalog to this scheme instance.
     ///
@@ -106,7 +90,10 @@ where
         &self,
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
-    ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
+    ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError>
+    where
+        Cfg::Field: AkitaDeserialize<Context = ()>,
+    {
         akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
             &self.schedules,
             max_num_vars,
@@ -167,8 +154,8 @@ where
         context: GroupContext<'_>,
     ) -> Result<CommitOutput<Cfg::Field>, AkitaError>
     where
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
         P: RuntimeCommitSource<Cfg::Field>,
         B: RuntimeCommitBackendFor<Cfg::Field, P>,
     {
@@ -205,9 +192,9 @@ where
         basis: BasisMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
     where
-        T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
-        Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
-        <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
+        T: Transcript<Cfg::Field> + TranscriptChallengePreview,
+        Cfg::Field: Ring + Unreduced + Field + 'static,
+        <Cfg::Field as Unreduced>::Wide: From<Cfg::Field> + AdditiveGroup,
         P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B>,
         B: ComputeBackendSetup<Cfg::Field>
             + RuntimeCommitBackendFor<Cfg::Field, akita_prover::RecursiveWitnessFlat>
@@ -280,17 +267,10 @@ fn batched_verify_inner<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + FromPrimitiveInt
-        + PseudoMersenneField
-        + Valid
-        + AkitaSerialize,
+    Cfg::Field:
+        Field + CanonicalEncoding + Unreduced + Ring + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field> + FromPrimitiveInt + AkitaSerialize + Valid,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();

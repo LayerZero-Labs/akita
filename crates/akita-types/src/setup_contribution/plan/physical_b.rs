@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::offset_eq::{EqPairTensorAxis, EqPairTensorFamily};
 
-pub(super) fn build_physical_b_weight_segments<E: FieldCore>(
+pub(super) fn build_physical_b_weight_segments<E: Field>(
     geometry: &crate::CommitmentSliceGeometry,
     physical_rows: usize,
     logical_row_weights: &[E],
@@ -103,7 +103,7 @@ pub(super) fn build_physical_b_weight_segments<E: FieldCore>(
     Ok(segments)
 }
 
-impl<E: FieldCore> PhysicalBSetupPlan<E> {
+impl<E: Field> PhysicalBSetupPlan<E> {
     /// Contract logical slice-major B row and column weights onto the one
     /// physical B matrix. The logical columns remain polynomial-major, while
     /// each slice is padded independently to the physical matrix width.
@@ -142,7 +142,7 @@ impl<E: FieldCore> PhysicalBSetupPlan<E> {
     }
 }
 
-pub(super) fn build_group_b_setup_tensors<E: FieldCore>(
+pub(super) fn build_group_b_setup_tensors<E: Field>(
     relation_geometry: RelationAddressGeometry,
     group: &SetupContributionGroupPlan<E>,
     witness_layout: &WitnessLayout,

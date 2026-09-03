@@ -4,6 +4,8 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 
+mod field_impls;
+
 use std::io::{Cursor, Read, Write};
 
 /// Default maximum number of elements accepted by self-described validated

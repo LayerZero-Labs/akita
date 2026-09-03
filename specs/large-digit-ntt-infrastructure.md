@@ -682,13 +682,23 @@ footprint: a tail adds exactly `tail_prefix_len * D * 2` bytes, and base-only
 schedules allocate zero tail bytes. Cache construction may grow only in
 proportion to transforms actually requested.
 
-### Completed NEON follow-up and future work
+### Completed commitment follow-up and future work
 
 The AArch64 follow-up implements the production-12289 fused forward tail and
 inverse head, direct signed-`i16` Montgomery ingress for both residue widths,
 and scalar differential coverage at the supported protocol dimensions. Its
 benchmark grid covers Q32/Q64 D64 through D1024, Q128 D64 through D512, and
 ranks 1, 2, 4, and 8.
+
+The commitment-kernel follow-up batches equal-width outer digit rows at the
+compute-backend boundary. Its i32 CRT path transforms and accumulates up to six
+columns before Montgomery reduction on NEON and AVX2. The batch bound is one
+named arithmetic constant, and scalar differential tests cover every count up
+to that bound. Dense q128 `i8` commitments may instead use one exact IFMA52
+accumulation when the host supports IFMA52, the base three-prime product is too
+small for the complete row, and adding the 12289 tail makes it exact. Other
+hosts and shapes retain bounded portable chunks. This policy depends on the
+arithmetic capacity and CPU capability, not a named machine or variable count.
 
 The remaining items are hypotheses to test with component benchmarks before
 changing arithmetic or prepared layout.
@@ -697,7 +707,6 @@ changing arithmetic or prepared layout.
 | --- | --- |
 | isolated component attribution | The broad transform and complete-matvec grid is implemented. Add isolated LUT-conversion and reconstruction measurements, and use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
 | NEON lane scheduling | Unrolling independent four-lane widening operations may hide multiply latency without the D64 regression observed for blanket eight-lane butterflies. Test eight-lane direct arithmetic first on streaming twists and then only on selected wide stages. |
-| batched RHS columns | Preparing and accumulating several columns together may reduce accumulator traffic and expose independent Montgomery chains, especially for rank-1 D512. Measure register pressure and temporary-cache footprint for each field tier. |
 | validated LUT access | `CenteredMontLut` exactly covers the data-derived bound, so an internally unchecked lookup after boundary validation may remove redundant per-coefficient `Option` handling. Preserve verifier rejection at the outer boundary. |
 | AVX2 i32 stages | The pointwise path already has an eight-lane Montgomery primitive. Evaluate eight lanes for transform stages `len >= 8`, four lanes at `len = 4`, and the existing fused tail. |
 | AVX2/AVX-512 i16 | Replace AVX2 scalar stages below `len = 16` with width-aware or fused stages before considering a 32-lane AVX-512BW kernel. AVX-512 frequency effects require machine-specific measurement. |

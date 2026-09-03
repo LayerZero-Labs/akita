@@ -72,6 +72,71 @@ fn grouped_level_params() -> CommittedGroupParams {
     params
 }
 
+#[cfg(feature = "catalog-gen")]
+fn audited_grouped_level_params() -> CommittedGroupParams {
+    use akita_types::{
+        InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole,
+    };
+
+    let params = grouped_level_params();
+    let key = |role| {
+        akita_types::sis::sis_table_key_for_linf_bound(
+            akita_types::sis::DEFAULT_SIS_SECURITY_POLICY,
+            akita_types::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            role,
+            64,
+            1,
+        )
+        .expect("synthetic matrix has an audited SIS bucket")
+    };
+    let groups = params
+        .groups()
+        .iter()
+        .cloned()
+        .map(|mut group| {
+            group.opening.fold_challenge_config =
+                SparseChallengeConfig::production_for_ring_dim(64)
+                    .expect("production synthetic challenge");
+            group.profile.inner.matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+                key(SisMatrixRole::Inner),
+                group.profile.inner.matrix.input_width(),
+            )
+            .expect("audited synthetic A matrix");
+            let outer_width = akita_types::CommitmentSliceGeometry::try_new(
+                group.profile.outer_slice_count,
+                group.profile.blocks.live_blocks,
+                1,
+                group.profile.inner.matrix.output_rank(),
+                group.profile.outer.digits.num_digits,
+                group.profile.inner.matrix.ring_dimension(),
+                group.profile.outer.matrix.ring_dimension(),
+            )
+            .expect("synthetic B geometry")
+            .physical_input_width();
+            group.profile.outer.matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+                key(SisMatrixRole::Outer),
+                outer_width,
+            )
+            .expect("audited synthetic B matrix");
+            group
+        })
+        .collect();
+    let open_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+        key(SisMatrixRole::Open),
+        params.open().matrix.input_width(),
+    )
+    .expect("audited synthetic D matrix");
+    CommittedGroupParams::try_new(
+        groups,
+        open_matrix,
+        params.payload_mode,
+        params.source_encoding,
+        params.witness_chunk,
+    )
+    .expect("audited grouped params")
+}
+
 #[test]
 fn scalar_next_witness_len_rejects_multi_group_root_level_params() {
     let grouped = grouped_level_params();
@@ -469,12 +534,14 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
     .expect("root packing candidates");
     assert!(!candidates.is_empty());
     let (first_params, first_next_witness_len) = &candidates[0];
+    let opening_layout = key.opening_layout().expect("root opening layout");
+    let terminal = akita_types::TerminalFoldParams::from_expanded_group(first_params.clone());
     let (packing_direct_bytes, _) =
         akita_schedules::planner_support::nonterminal_level_payload_bytes(
             &policy,
             first_params,
-            None,
-            1 << 16,
+            &opening_layout,
+            akita_types::FoldSuccessor::Terminal(&terminal),
             *first_next_witness_len,
         )
         .expect("packing level payload");
@@ -484,9 +551,15 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             policy.decomposition.field_bits(),
             policy.challenge_field_bits().unwrap(),
             first_params,
+            first_params
+                .relation_address_geometry(
+                    &opening_layout,
+                    policy.claim_ext_degree,
+                    terminal.d_a(),
+                    *first_next_witness_len,
+                )
+                .unwrap(),
             None,
-            *first_next_witness_len,
-            Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .expect("packing direct payload without EOR"),
     );
@@ -731,6 +804,42 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
                 challenge_subring_dimension: 64,
             }
     }));
+
+    let natural_len = (1 << 14) - 513;
+    let n_prefix = akita_types::padded_setup_prefix_len(natural_len);
+    let full_prefix_groups = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix,
+            ..request(trace)
+        },
+    )
+    .unwrap();
+    assert!(!full_prefix_groups.is_empty());
+    for group in full_prefix_groups {
+        assert_eq!(
+            group.profile.blocks.live_ring_elements_per_claim
+                * group.profile.inner.matrix.ring_dimension(),
+            n_prefix
+        );
+        assert_eq!(
+            group.profile.blocks.live_blocks * group.profile.blocks.positions_per_block,
+            group.profile.blocks.live_ring_elements_per_claim
+        );
+        akita_types::scheduled_setup_prefix(natural_len, group)
+            .validate()
+            .expect("full setup prefix covers its complete power-of-two domain");
+    }
+
+    let error = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix: natural_len,
+            ..request(trace)
+        },
+    )
+    .expect_err("a natural length is not a setup-prefix commitment domain");
+    assert!(error.to_string().contains("nonzero power of two"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -740,19 +849,31 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
 
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
-    let mut params = grouped_level_params();
-    let prefix_params = *params
-        .precommitted_groups()
-        .last()
-        .expect("synthetic prefix params");
+    let mut params = audited_grouped_level_params();
+    let mut cache = SetupPrefixSearchCache::default();
+    let prefix_params = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            policy: &policy,
+            opening: PlannerOpeningCandidate::evaluation_trace(params.fold_challenge_config()),
+            log_basis_open: params.open().digits.log_basis,
+            n_prefix: 1 << 6,
+            num_chunks: 1,
+            inner_ring_dimension: params.d_a(),
+            outer_ring_dimension: params.outer().matrix.ring_dimension(),
+        },
+    )
+    .expect("setup-prefix candidates")
+    .into_iter()
+    .next()
+    .expect("synthetic prefix params");
     params
         .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
             1 << 6,
             prefix_params,
         )))
         .expect("valid setup-prefix topology");
-    let witness_len = 1 << 4;
-    let output_witness_len = 1 << 4;
+    let output_witness_len = 1 << 6;
     let final_group = PolynomialGroupLayout::singleton(4);
     let opening_layout = params
         .opening_layout_for_final_group(final_group)
@@ -771,16 +892,23 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
         policy.decomposition.field_bits(),
         policy.challenge_field_bits().unwrap(),
         &params,
+        params
+            .relation_address_geometry(
+                &opening_layout,
+                policy.claim_ext_degree,
+                params.d_a(),
+                output_witness_len,
+            )
+            .unwrap(),
         None,
-        output_witness_len,
-        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
     )
     .expect("base level payload");
+    let terminal = akita_types::TerminalFoldParams::from_expanded_group(params.clone());
     let (runtime, stage3) = akita_schedules::planner_support::nonterminal_level_payload_bytes(
         &policy,
         &params,
-        None,
-        witness_len,
+        &opening_layout,
+        akita_types::FoldSuccessor::Terminal(&terminal),
         output_witness_len,
     )
     .expect("runtime level payload");
@@ -838,8 +966,9 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     }
 
     let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
     let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
+        let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
+            .expect("production challenge for candidate A dimension");
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
@@ -885,11 +1014,13 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     )
     .is_none());
 
+    let d64_challenge =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("production D64 challenge");
     assert!(
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &challenge,
+            ring_challenge_cfg: &d64_challenge,
             challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
@@ -922,7 +1053,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &OversizedFoldPolicy,
-            ring_challenge_cfg: &challenge,
+            ring_challenge_cfg: &d64_challenge,
             challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
@@ -959,8 +1090,9 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     }
 
     let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
     let dimensions = CommitmentRingDims::uniform(256);
+    let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
+        .expect("production challenge for candidate A dimension");
     let num_claims = 1;
     let width_s = 8;
     let mut raw_candidate = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {

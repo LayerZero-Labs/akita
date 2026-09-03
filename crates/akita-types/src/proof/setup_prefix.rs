@@ -13,10 +13,10 @@ use crate::{
     OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 use akita_error::AkitaError;
-use akita_field::FieldCore;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::Field;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -141,25 +141,6 @@ impl Hash for SetupPrefixSlotId {
 
 impl Valid for SetupPrefixSlotId {
     fn check(&self) -> Result<(), SerializationError> {
-        let d_setup = self.d_setup();
-        if d_setup == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot d_setup must be non-zero".to_string(),
-            ));
-        }
-        let n_prefix = n_prefix_from_commitment_profile(&self.commitment_profile)?;
-        validate_setup_prefix_domain(self.natural_len, n_prefix)
-            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        if n_prefix == 0 || !n_prefix.is_power_of_two() {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot n_prefix must be a non-zero power of two".to_string(),
-            ));
-        }
-        if !n_prefix.is_multiple_of(d_setup) {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot n_prefix must be a multiple of d_setup".to_string(),
-            ));
-        }
         self.commitment_profile
             .validate(
                 self.commitment_profile
@@ -168,12 +149,11 @@ impl Valid for SetupPrefixSlotId {
                     .sis_modulus_profile()
                     .field_bits(),
             )
+            .and_then(|()| {
+                self.commitment_profile
+                    .validate_setup_prefix_geometry(self.natural_len)
+            })
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        if self.commitment_profile.group.num_polynomials() != 1 {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot commitment params must be singleton".to_string(),
-            ));
-        }
         Ok(())
     }
 }
@@ -214,12 +194,9 @@ fn deserialize_sis_security_policy<R: Read>(
 ) -> Result<SisSecurityPolicyId, SerializationError> {
     let mut tag = [0u8; 1];
     reader.read_exact(&mut tag)?;
-    match tag[0] {
-        1 => Ok(SisSecurityPolicyId::Quantum128BitADPS16),
-        _ => Err(SerializationError::InvalidData(
-            "invalid SIS security policy tag".to_string(),
-        )),
-    }
+    SisSecurityPolicyId::from_tag(tag[0]).ok_or_else(|| {
+        SerializationError::InvalidData("invalid SIS security policy tag".to_string())
+    })
 }
 
 fn serialize_sis_matrix_role<W: Write>(
@@ -448,12 +425,12 @@ impl AkitaDeserialize for SetupPrefixSlotId {
 
 /// Public commitment half of a setup-prefix slot, stored without `D` const generics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixPublicCommitment<F: FieldCore> {
+pub struct SetupPrefixPublicCommitment<F: Field> {
     /// Commitment rows in flattened ring-coefficient form.
     pub rows: Vec<RingVec<F>>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
+impl<F: Field + Valid> Valid for SetupPrefixPublicCommitment<F> {
     fn check(&self) -> Result<(), SerializationError> {
         if self.rows.is_empty() {
             return Err(SerializationError::InvalidData(
@@ -484,7 +461,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixPublicCommitment<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitment<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitment<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -512,7 +489,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixPublicCommitme
 
 impl<F> AkitaDeserialize for SetupPrefixPublicCommitment<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -571,12 +548,12 @@ where
 
 /// Verifier-visible metadata for one setup-prefix slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixVerifierSlot<F: FieldCore> {
+pub struct SetupPrefixVerifierSlot<F: Field> {
     pub id: SetupPrefixSlotId,
     pub commitment: SetupPrefixPublicCommitment<F>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
+impl<F: Field + Valid> Valid for SetupPrefixVerifierSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         self.commitment.check()?;
@@ -600,7 +577,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -617,7 +594,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierSlot<F
 
 impl<F> AkitaDeserialize for SetupPrefixVerifierSlot<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -651,13 +628,13 @@ where
 /// is re-asserted at runtime against `id.d_setup` and the per-row coefficient
 /// width (see [`Valid::check`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixSlot<F: FieldCore> {
+pub struct SetupPrefixSlot<F: Field> {
     pub id: SetupPrefixSlotId,
     pub commitment: SetupPrefixPublicCommitment<F>,
     pub hint: AkitaCommitmentHint<F>,
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
+impl<F: Field + Valid> Valid for SetupPrefixSlot<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.id.check()?;
         self.commitment.check()?;
@@ -684,7 +661,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -704,7 +681,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixSlot<F> {
 
 impl<F> AkitaDeserialize for SetupPrefixSlot<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -735,7 +712,7 @@ where
     }
 }
 
-impl<F: FieldCore> SetupPrefixSlot<F> {
+impl<F: Field> SetupPrefixSlot<F> {
     fn validate_compression_hint(&self) -> Result<(), AkitaError> {
         let plan = setup_prefix_compression_plan(&self.id.commitment_profile)
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -754,12 +731,12 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
 
 /// In-memory registry of prover-ready setup-prefix slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixProverRegistry<F: FieldCore> {
+pub struct SetupPrefixProverRegistry<F: Field> {
     setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
-impl<F: FieldCore> SetupPrefixProverRegistry<F> {
+impl<F: Field> SetupPrefixProverRegistry<F> {
     #[must_use]
     pub fn new(setup_seed: AkitaSetupSeed) -> Self {
         Self {
@@ -818,7 +795,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
+impl<F: Field + Valid> Valid for SetupPrefixProverRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
@@ -839,7 +816,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -868,7 +845,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
 
 impl<F> AkitaDeserialize for SetupPrefixProverRegistry<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -898,12 +875,12 @@ where
 
 /// In-memory registry of verifier-visible setup-prefix slots.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetupPrefixVerifierRegistry<F: FieldCore> {
+pub struct SetupPrefixVerifierRegistry<F: Field> {
     setup_seed: AkitaSetupSeed,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
-impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
+impl<F: Field> SetupPrefixVerifierRegistry<F> {
     #[must_use]
     pub fn new(setup_seed: AkitaSetupSeed) -> Self {
         Self {
@@ -972,7 +949,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
+impl<F: Field + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.setup_seed.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
@@ -993,7 +970,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     }
 }
 
-impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegistry<F> {
+impl<F: Field + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegistry<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -1022,7 +999,7 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
 
 impl<F> AkitaDeserialize for SetupPrefixVerifierRegistry<F>
 where
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: Field + Valid + AkitaDeserialize<Context = ()>,
 {
     type Context = ();
 
@@ -1255,6 +1232,10 @@ pub fn setup_prefix_coverage_eval_len(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
+    template.validate()?;
+    selected_slot_id
+        .commitment_profile
+        .validate_setup_prefix_geometry(selected_slot_id.natural_len)?;
     let template_slot_id = template.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
             "{coverage_error}: planned setup-prefix template is not a prefix group"

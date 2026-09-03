@@ -4,13 +4,11 @@ use std::env;
 use std::thread;
 
 #[cfg(feature = "parallel")]
-use akita_field::packed::{PackedField, PackedValue};
-#[cfg(feature = "parallel")]
-use akita_field::{
-    CanonicalField, Prime128Offset275, Prime31Offset19, Prime64Offset59, RandomSampling,
-};
-#[cfg(feature = "parallel")]
 use criterion::{black_box, Criterion, Throughput};
+#[cfg(feature = "parallel")]
+use jolt_field::{
+    CanonicalEncoding, Field, Packed, Prime128Offset275, Prime31Offset19, Prime64Offset59, Zero,
+};
 #[cfg(feature = "parallel")]
 use rand::{rngs::StdRng, SeedableRng};
 #[cfg(feature = "parallel")]
@@ -57,15 +55,15 @@ pub(crate) fn bench_parallel_throughput(c: &mut Criterion) {
         .expect("build benchmark rayon pool");
 
     let mut rng = StdRng::seed_from_u64(0x7061_7261_0001);
-    let lhs31: Vec<Prime31Offset19> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let rhs31: Vec<Prime31Offset19> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let lhs64: Vec<Prime64Offset59> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
-    let rhs64: Vec<Prime64Offset59> = (0..n).map(|_| RandomSampling::random(&mut rng)).collect();
+    let lhs31: Vec<Prime31Offset19> = (0..n).map(|_| Field::random(&mut rng)).collect();
+    let rhs31: Vec<Prime31Offset19> = (0..n).map(|_| Field::random(&mut rng)).collect();
+    let lhs64: Vec<Prime64Offset59> = (0..n).map(|_| Field::random(&mut rng)).collect();
+    let rhs64: Vec<Prime64Offset59> = (0..n).map(|_| Field::random(&mut rng)).collect();
     let lhs128: Vec<Prime128Offset275> = (0..n)
-        .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .map(|_| Prime128Offset275::from_u128_reduced(rand_u128(&mut rng)))
         .collect();
     let rhs128: Vec<Prime128Offset275> = (0..n)
-        .map(|_| Prime128Offset275::from_canonical_u128_reduced(rand_u128(&mut rng)))
+        .map(|_| Prime128Offset275::from_u128_reduced(rand_u128(&mut rng)))
         .collect();
 
     let lhs31_p = P31O19::pack_slice(&lhs31);
@@ -155,7 +153,7 @@ fn bench_scalar_parallel<F>(
     out: &mut [F],
     chunk: usize,
 ) where
-    F: akita_field::FieldCore + Send + Sync,
+    F: jolt_field::Field + Send + Sync,
 {
     group.bench_function(format!("{label}_mul_seq"), |b| {
         b.iter(|| {
@@ -198,7 +196,7 @@ fn bench_packed_parallel<PF>(
     out: &mut [PF],
     chunk: usize,
 ) where
-    PF: PackedField + Copy + Send + Sync,
+    PF: Packed + Copy + Send + Sync,
 {
     group.bench_function(format!("{label}_packed_mul_seq"), |b| {
         b.iter(|| {

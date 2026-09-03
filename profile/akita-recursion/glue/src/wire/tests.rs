@@ -1,6 +1,7 @@
 use super::*;
 use akita_challenges::SparseChallengeConfig;
 use akita_config::proof_optimized::{fp128, fp32};
+use akita_types::sis::sis_table_key_for_linf_bound;
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, scheduled_setup_prefix,
     CompressionChainPlan, GroupCommitPhaseParams, GroupOpenPhaseParams, GroupOpeningPlan,
@@ -8,6 +9,7 @@ use akita_types::{
     SetupPrefixPublicCommitment, SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId,
     SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
+use jolt_field::Zero;
 
 type TestCfg = fp128::OneHot;
 type TestF = fp128::Field;
@@ -30,18 +32,17 @@ fn blob_prefix() -> Vec<u8> {
 }
 
 fn prefix_commitment_params() -> GroupOpenPhaseParams {
-    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-        SisTableKey {
-            policy: DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
-            role: SisMatrixRole::Inner,
-            ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
-            coeff_linf_bound: 32_767,
-        },
-        1,
+    let inner_key = sis_table_key_for_linf_bound(
+        DEFAULT_SIS_SECURITY_POLICY,
+        SisTableDigest::CURRENT,
+        SisModulusProfileId::Q128OffsetA7F7,
+        SisMatrixRole::Inner,
+        u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+        32_767,
     )
-    .expect("audited prefix A matrix");
+    .expect("audited prefix A bound");
+    let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, 1)
+        .expect("audited prefix A matrix");
     let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: DEFAULT_SIS_SECURITY_POLICY,
@@ -256,12 +257,14 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
         &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
     )
     .expect("generated singleton row");
-    let canonical = canonical_proof_shape(
+    let opening_layout = row.profiles().opening_layout().expect("opening layout");
+    let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(
         row.schedule(),
-        &row.profiles().opening_layout().expect("opening layout"),
-        1,
+        &opening_layout,
     )
-    .expect("canonical shape");
+    .expect("grinding plan");
+    let canonical = canonical_proof_shape(row.schedule(), &opening_layout, 1, &grinding_plan)
+        .expect("canonical shape");
 
     let mut huge = canonical.clone();
     huge.root.opening_payload_coeffs = usize::MAX;
@@ -297,10 +300,17 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
     let row =
         ExtCfg::resolve_catalog_row_for_opening(&layout).expect("generated fp32 singleton row");
+    let opening_layout = row.profiles().opening_layout().expect("catalog layout");
+    let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(
+        row.schedule(),
+        &opening_layout,
+    )
+    .expect("grinding plan");
     let mut noncanonical = canonical_proof_shape(
         row.schedule(),
-        &row.profiles().opening_layout().expect("catalog layout"),
-        <ExtE as ExtField<ExtF>>::EXT_DEGREE,
+        &opening_layout,
+        <ExtE as ExtField<ExtF>>::DEGREE,
+        &grinding_plan,
     )
     .expect("canonical extension shape");
     noncanonical

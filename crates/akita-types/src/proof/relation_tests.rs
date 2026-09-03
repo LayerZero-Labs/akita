@@ -1,5 +1,5 @@
 use super::*;
-use akita_field::{Fp32, FpExt2, LiftBase, NegOneNr, Prime128OffsetA7F7};
+use jolt_field::{ExtField, Fp32, FpExt2, NegOneNr, Prime128OffsetA7F7, Ring, Zero};
 
 type F = Fp32<251>;
 type E = FpExt2<F, NegOneNr>;

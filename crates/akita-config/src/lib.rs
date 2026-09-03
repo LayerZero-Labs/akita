@@ -8,7 +8,6 @@
 
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced};
 use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -20,6 +19,7 @@ use akita_types::{
     AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams, OpeningClaimsLayout,
     SetupMatrixCapacity, SisModulusProfileId,
 };
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
@@ -98,6 +98,7 @@ pub mod setup_prefix_slots;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
 pub use akita_schedules::TrustedScheduleCatalog;
@@ -124,6 +125,7 @@ pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
     )
 }
 pub use transcript_binding::bind_transcript_instance_descriptor;
+pub use transcript_grinding_plan::derive_transcript_grinding_plan;
 
 /// Derive the runtime schedule policy from a preset.
 ///
@@ -139,6 +141,11 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         selection_policy: Cfg::selection_policy(),
         recursive_split_search_policy:
             akita_schedules::RecursiveSplitSearchPolicy::BoundedBalancedExtremesV1,
+        recursive_setup_search_policy: if recursive_setup_planning {
+            akita_schedules::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+        } else {
+            akita_schedules::RecursiveSetupSearchPolicy::Exhaustive
+        },
         setup_field_budget: None,
         min_offloaded_witness_contraction: 3,
         ring_dimension_schedule_mode: Cfg::RING_DIMENSION_SCHEDULE_MODE,
@@ -208,7 +215,7 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
     Cfg::validate_sis_modulus_profile()?;
     let policy = policy_of::<Cfg>();
     akita_schedules::validate_policy(&policy)?;
-    let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE;
+    let actual_degree = <Cfg::ExtField as ExtField<Cfg::Field>>::DEGREE;
     if Cfg::EXT_DEGREE != actual_degree
         || policy.claim_ext_degree != actual_degree
         || policy.chal_ext_degree != actual_degree
@@ -227,7 +234,8 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
 
 /// Root group's source-specific policy for offline schedule generation.
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
-    Cfg::committed_source_class().honest_fold_policy(<Cfg::Field as CanonicalField>::modulus_bits())
+    Cfg::committed_source_class()
+        .honest_fold_policy(<Cfg::Field as CanonicalEncoding>::MODULUS_BITS)
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -242,7 +250,7 @@ pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::Hones
 /// extension opening with base-field committed witnesses internally.
 pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Base field used by ring commitments, setup matrices, and SIS bounds.
-    type Field: CanonicalField + FieldCore;
+    type Field: CanonicalEncoding + Field;
 
     /// Field used by public openings and all proof scalars.
     type ExtField: ExtField<Self::Field> + MulBaseUnreduced<Self::Field> + Valid;
@@ -252,12 +260,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// This is the `K` consumed by [`field_reduction::psi_embed`] and
     /// [`field_reduction::embed_subfield`] in `akita-types`, and the `K` that
     /// validates `SubfieldParams<D, K>`. Default body delegates to
-    /// `<ExtField as ExtField<Field>>::EXT_DEGREE`; presets should not
+    /// `<ExtField as ExtField<Field>>::DEGREE`; presets should not
     /// override unless they have a reason to disagree with that.
     ///
     /// [`field_reduction::psi_embed`]: akita_types::field_reduction::psi_embed
     /// [`field_reduction::embed_subfield`]: akita_types::field_reduction::embed_subfield
-    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::EXT_DEGREE;
+    const EXT_DEGREE: usize = <Self::ExtField as ExtField<Self::Field>>::DEGREE;
 
     /// Absorb an extension-field element into a base-field transcript.
     fn append_extension_field<T: Transcript<Self::Field>>(
@@ -302,7 +310,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// synthetic or miswired field cannot silently inherit a nearby profile.
     fn validate_sis_modulus_profile() -> Result<(), AkitaError> {
         let modulus = (-Self::Field::from_u64(1))
-            .to_canonical_u128()
+            .to_u128_checked()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("SIS field modulus does not fit in u128".to_string())
+            })?
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("SIS field modulus overflow".to_string()))?;
         if Self::sis_modulus_profile().matches_modulus(modulus) {
@@ -495,10 +506,10 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp32, FpExt4};
     use akita_transcript::{
         append_ext_field, labels, sample_ext_challenge, AkitaTranscript, Transcript,
     };
+    use jolt_field::{Fp32, FpExt4};
 
     type Base = Fp32<251>;
     type BaseExt = FpExt4<Base>;
@@ -604,7 +615,7 @@ mod tests {
     fn ext_degree_default_matches_ext_field_degree() {
         assert_eq!(
             SingleExtensionConfig::EXT_DEGREE,
-            <BaseExt as ExtField<Base>>::EXT_DEGREE
+            <BaseExt as ExtField<Base>>::DEGREE
         );
         assert_eq!(SingleExtensionConfig::EXT_DEGREE, 4);
     }
@@ -953,6 +964,46 @@ mod fp128_policy_tests {
         });
         assert!(
             error.to_string().contains("setup-prefix geometry"),
+            "unexpected setup-prefix error: {error}"
+        );
+    }
+
+    #[cfg(feature = "schedules-fp128-onehot-recursive")]
+    #[test]
+    fn row_admission_rejects_setup_prefix_that_omits_real_tail_rings() {
+        type RecursiveOneHot = crate::RecursiveCommitmentConfig<fp128::OneHot>;
+
+        let row = (14..=50)
+            .find_map(|num_vars| {
+                let layout = OpeningClaimsLayout::new(num_vars, 1).ok()?;
+                let row = RecursiveOneHot::resolve_catalog_row_for_opening(&layout).ok()?;
+                row.schedule()
+                    .recursive_folds
+                    .iter()
+                    .any(|fold| fold.params.setup_prefix().is_some())
+                    .then_some(row)
+            })
+            .expect("generated row with a setup prefix");
+        let error = mutated_row_admission_error::<RecursiveOneHot>(&row, |schedule| {
+            let step = schedule
+                .recursive_folds
+                .iter_mut()
+                .find(|fold| fold.params.setup_prefix().is_some())
+                .expect("recursive setup-prefix fold");
+            let mut prefix = *step.params.setup_prefix().expect("setup-prefix group");
+            let blocks = prefix.profile.blocks;
+            let omitted_tail_rings = blocks.live_ring_elements_per_claim - 1;
+            prefix.profile.blocks = akita_types::BlockGeometry::new(
+                omitted_tail_rings,
+                blocks.positions_per_block,
+                omitted_tail_rings.div_ceil(blocks.positions_per_block),
+            );
+            step.params
+                .set_setup_prefix(Some(prefix))
+                .expect("valid prefix topology");
+        });
+        assert!(
+            error.to_string().contains("must commit all"),
             "unexpected setup-prefix error: {error}"
         );
     }

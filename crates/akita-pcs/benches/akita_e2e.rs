@@ -3,7 +3,6 @@
 use akita_algebra::poly::multilinear_eval;
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, SelectedProverOpeningData,
@@ -15,6 +14,7 @@ use akita_types::{
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
+use jolt_field::{CanonicalEncoding, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Duration;
@@ -27,7 +27,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
     let decomp = Cfg::decomposition();
     if decomp.log_commit_bound >= 128 {
         (0..len)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+            .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
             .collect()
     } else {
         let half_bound = 1i64 << (decomp.log_commit_bound.min(62) - 1);
@@ -40,7 +40,7 @@ fn make_dense_evals<Cfg: CommitmentConfig<Field = F>>(nv: usize) -> Vec<F> {
 fn random_point(nv: usize) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(0xcafe_babe);
     (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 

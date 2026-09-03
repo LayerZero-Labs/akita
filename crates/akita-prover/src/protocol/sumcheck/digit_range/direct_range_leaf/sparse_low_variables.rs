@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[inline]
     pub(super) fn use_sparse_x_y_round(&self) -> bool {
         !self.in_x_phase() && self.live_x_cols < (1usize << self.col_bits)
@@ -10,9 +10,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::compute_round_compact_sparse_x_y"
     )]
-    pub(super) fn compute_round_compact_sparse_x_y<V: CompactRangeImageValue>(
+    pub(super) fn compute_round_compact_sparse_x_y<S: CompactRangeImageSource + ?Sized>(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
     ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = compact_range_image.len() / self.live_x_cols;
@@ -28,8 +28,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 let y_pair = j % y_pairs;
                 let top = x * y_len + 2 * y_pair;
                 (
-                    compact_range_image[top].range_image_value(),
-                    compact_range_image[top + 1].range_image_value(),
+                    compact_range_image.range_image_value(top),
+                    compact_range_image.range_image_value(top + 1),
                 )
             },
         )
@@ -91,7 +91,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
             let col = &range_image[x * y_len..(x + 1) * y_len];
             let j_base = x * current_y_half;
-            let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
+            let mut outer_accum = vec![E::Product::zero(); num_coeffs_q];
             let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
             let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
@@ -99,7 +99,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             while blk < live_pairs {
                 let blk_end = (blk + block_size).min(live_pairs);
                 let j_high = (j_base + blk) >> first_bits;
-                let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let blk_len = blk_end - blk;
                 let full_chunks = blk_len / 4;
 
@@ -164,15 +164,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
                 let e_out = e_second[j_high];
                 for k in 0..num_coeffs_q {
-                    let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                    outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                    let inner_reduced = E::reduce_product(inner_accum[k]);
+                    outer_accum[k] += e_out.mul_unreduced(inner_reduced);
                 }
                 blk = blk_end;
             }
 
             outer_accum
         };
-        let merge_accumulators = |mut left: Vec<E::ProductAccum>, right: Vec<E::ProductAccum>| {
+        let merge_accumulators = |mut left: Vec<E::Product>, right: Vec<E::Product>| {
             for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
                 *left_coefficient += right_coefficient;
             }
@@ -184,21 +184,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             .enumerate()
             .map(process_column)
             .reduce(
-                || vec![E::ProductAccum::zero(); num_coeffs_q],
+                || vec![E::Product::zero(); num_coeffs_q],
                 merge_accumulators,
             );
         #[cfg(not(feature = "parallel"))]
         let accumulated = cfg_chunks_mut!(out, next_y_len)
             .enumerate()
             .map(process_column)
-            .fold(
-                vec![E::ProductAccum::zero(); num_coeffs_q],
-                merge_accumulators,
-            );
-        let q_coeffs = accumulated
-            .into_iter()
-            .map(E::reduce_product_accum)
-            .collect();
+            .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
+        let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
         let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)

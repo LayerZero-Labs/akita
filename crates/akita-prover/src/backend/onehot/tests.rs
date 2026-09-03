@@ -3,15 +3,15 @@ use super::*;
 use crate::backend::test_support::aggregate_witnesses;
 use crate::compute::{RootCommitSource, RootOpeningSource};
 use crate::DensePoly;
-use akita_field::RandomSampling;
-use akita_field::{Fp64, Prime128Offset275, Prime24Offset3};
 use akita_types::FlatMatrix;
+use jolt_field::{Field, Ring};
+use jolt_field::{Fp64, Prime128Offset275, Prime24Offset3};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 fn materialize_onehot_as_dense<F, const D: usize, I>(poly: &OneHotPoly<F, I>) -> DensePoly<F>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     I: OneHotIndex,
 {
     let mut coeffs = vec![CyclotomicRing::<F, D>::zero(); (1usize << poly.num_vars).div_ceil(D)];
@@ -29,10 +29,10 @@ where
 
 fn test_ring_scalar<F, const D: usize>(seed: u64) -> CyclotomicRing<F, D>
 where
-    F: CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
-        F::from_canonical_u128_reduced(u128::from(seed + idx as u64 + 1))
+        F::from_u128_reduced(u128::from(seed + idx as u64 + 1))
     }))
 }
 
@@ -208,7 +208,7 @@ fn single_chunk_onehot_large_block_uses_safe_accumulator_path() {
     const D: usize = 64;
 
     let num_positions_per_block = F::MAX_COMMIT_ACCUMULATIONS + 1;
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring; num_positions_per_block]];
     let bucket: Vec<SparseRingBlockEntry> = (0..num_positions_per_block)
@@ -250,7 +250,7 @@ fn multi_chunk_onehot_large_block_uses_safe_accumulator_path() {
     let num_digits_inner = 1;
     let num_positions_per_block = num_entries;
 
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring; num_positions_per_block * num_digits_inner]];
 
@@ -297,7 +297,7 @@ fn repeated_onehot_position_overflow_splits_entries() {
 
     let n_a = 1;
     let num_digits_inner = 1;
-    let max_coeff = F::from_canonical_u128_reduced((1u128 << 24) - 4);
+    let max_coeff = F::from_u128_reduced((1u128 << 24) - 4);
     let dense_ring = CyclotomicRing::from_coefficients([max_coeff; D]);
     let a_matrix = [vec![dense_ring]];
 

@@ -4,28 +4,28 @@ use super::digit_range::class_indexed_range_leaf::ClassIndexedRangeLeafProver;
 use super::digit_range::exact_prefix::ExactPrefixTable;
 use akita_algebra::UniPoly;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{
     EqFactoredSumcheckInstanceProver, SumcheckInstanceProver, SumcheckInstanceProverExt,
 };
 use akita_transcript::labels::{
     ABSORB_L2_NORM_INTEGER, ABSORB_L2_NORM_SUBCLAIM, ABSORB_L2_VIRTUAL_EVALUATION,
-    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE, CHALLENGE_SUMCHECK_ROUND,
+    CHALLENGE_L2_NORM_BATCH, CHALLENGE_L2_NORM_MERGE,
 };
-use akita_transcript::{sample_ext_challenge, Transcript};
+use akita_transcript::sample_ext_challenge;
 use akita_types::{
     reconstruct_l2_sq_from_gram, PhysicalL2NormProof, PhysicalL2NormProofShape,
     PhysicalResponsePlan,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
+use jolt_field::{Fold, Unreduced};
 
 const RANGE_Q_MAX_DEGREE: usize = 4;
 const FUSED_MAX_DEGREE: usize = RANGE_Q_MAX_DEGREE + 1;
 const NORM_MAX_DEGREE: usize = 3;
 
-enum PhysicalNormTerm<E: FieldCore> {
+enum PhysicalNormTerm<E: Field> {
     Direct {
         response: ExactPrefixTable<E>,
     },
@@ -36,7 +36,7 @@ enum PhysicalNormTerm<E: FieldCore> {
     },
 }
 
-impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
+impl<E: Field + Fold> PhysicalNormTerm<E> {
     #[inline(always)]
     fn affine_pair(table: &ExactPrefixTable<E>, pair_index: usize) -> (E, E) {
         let left = table.value_or_default(2 * pair_index);
@@ -102,7 +102,7 @@ impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
     }
 
     fn bind(&mut self, challenge: E) -> Result<(), AkitaError> {
-        let context = E::precompute_fold(challenge);
+        let context = E::precompute(challenge);
         let fold = |left, right| E::fold_one(&context, left, right);
         match self {
             Self::Direct { response } => response.fold_in_place(fold),
@@ -159,7 +159,7 @@ impl<E: FieldCore + HasOptimizedFold> PhysicalNormTerm<E> {
     }
 }
 
-struct FusedRangeNormProver<E: FieldCore> {
+struct FusedRangeNormProver<E: Field> {
     range: ClassIndexedRangeLeafProver<E>,
     norm: PhysicalNormTerm<E>,
     norm_merge: E,
@@ -167,9 +167,7 @@ struct FusedRangeNormProver<E: FieldCore> {
     rounds_completed: usize,
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps> SumcheckInstanceProver<E>
-    for FusedRangeNormProver<E>
-{
+impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRangeNormProver<E> {
     fn num_rounds(&self) -> usize {
         EqFactoredSumcheckInstanceProver::num_rounds(&self.range)
     }
@@ -214,7 +212,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps> Sumch
     }
 }
 
-fn exact_claims<E: FieldCore + FromPrimitiveInt>(
+fn exact_claims<E: Field + Ring>(
     plan: &PhysicalResponsePlan,
     integers: &[Vec<i128>],
 ) -> Result<(u128, Vec<E>), AkitaError> {
@@ -268,7 +266,7 @@ fn exact_claims<E: FieldCore + FromPrimitiveInt>(
     }
 }
 
-fn prepare_norm_term<E: FieldCore + FromPrimitiveInt>(
+fn prepare_norm_term<E: Field + Ring>(
     plan: &PhysicalResponsePlan,
     integers: Vec<Vec<i128>>,
     subclaim_weights: &[E],
@@ -328,21 +326,25 @@ fn prepare_norm_term<E: FieldCore + FromPrimitiveInt>(
 /// range leaf and prove the resulting standard sumcheck.
 pub(in crate::protocol::sumcheck) fn prove_physical_l2_norm<F, E, T>(
     plan: &PhysicalResponsePlan,
-    compact_witness: &[i8],
+    compact_witness: &crate::backend::packed_digits::PackedSignedDigits,
     range: ClassIndexedRangeLeafProver<E>,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(PhysicalL2NormProof<E>, Vec<E>, E), AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + FromPrimitiveInt + HasOptimizedFold + HasUnreducedOps + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: ExtField<F> + Ring + Fold + Unreduced + AkitaSerialize,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if EqFactoredSumcheckInstanceProver::num_rounds(&range) != plan.domain().num_vars() {
         return Err(AkitaError::InvalidSetup(
             "fused Stage-1 leaf has inconsistent range geometry".into(),
         ));
     }
-    let integers = plan.materialize_virtual_integers(compact_witness)?;
+    let integers = plan.materialize_virtual_integers(compact_witness.len(), |start, output| {
+        compact_witness.view().decode_range(start, output)?;
+        Ok(())
+    })?;
     let (response_l2_sq, subclaims) = exact_claims::<E>(plan, &integers)?;
     transcript.append_serde(ABSORB_L2_NORM_INTEGER, &response_l2_sq);
     for claim in &subclaims {
@@ -352,6 +354,7 @@ where
     let (norm_input_claim, subclaim_weights) = match plan.shape() {
         PhysicalL2NormProofShape::Direct { .. } => (E::from_u128(response_l2_sq), Vec::new()),
         PhysicalL2NormProofShape::LimbGram { .. } => {
+            transcript.grind_query(akita_types::GrindingSite::L2SubclaimBatch { level })?;
             let gamma = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_BATCH);
             let mut power = E::one();
             let mut weights = Vec::with_capacity(subclaims.len());
@@ -365,6 +368,7 @@ where
         }
     };
     let norm = prepare_norm_term(plan, integers, &subclaim_weights)?;
+    transcript.grind_query(akita_types::GrindingSite::L2NormMerge { level })?;
     let norm_merge = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_L2_NORM_MERGE);
     let range_input_claim = EqFactoredSumcheckInstanceProver::input_claim(&range);
     let mut prover = FusedRangeNormProver {
@@ -374,8 +378,19 @@ where
         input_claim: range_input_claim + norm_merge * norm_input_claim,
         rounds_completed: 0,
     };
+    let mut round = 0u32;
     let (sumcheck, point, final_claim) = prover.prove::<F, T, _>(transcript, |tr| {
-        sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
+        let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+            tr,
+            akita_types::SumcheckProtocol::PhysicalL2,
+            level,
+            0,
+            round,
+        )?;
+        round = round
+            .checked_add(1)
+            .ok_or_else(|| AkitaError::InvalidSetup("physical L2 round overflow".into()))?;
+        Ok(challenge)
     })?;
     let expected_final_claim =
         prover.range.final_range_claim() + norm_merge * prover.norm.final_claim()?;

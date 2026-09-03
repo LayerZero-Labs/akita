@@ -9,7 +9,7 @@ use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, LimbQ,
     MontCoeff, NttKernelPlan,
 };
-use akita_field::{Fp128, Fp32, Fp64, Prime128Offset275};
+use jolt_field::{Fp128, Fp32, Fp64, Prime128Offset275, Ring, Zero};
 
 #[test]
 fn limbq_from_to_u128_round_trip() {

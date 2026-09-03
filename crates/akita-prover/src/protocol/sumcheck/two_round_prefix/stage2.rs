@@ -1,10 +1,9 @@
 use super::common::*;
 use crate::protocol::sumcheck::relation_range_image::PreparedProverLinearTerms;
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_field::parallel::*;
-use akita_field::unreduced::HasUnreducedOps;
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Unreduced, Zero};
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,12 +49,12 @@ impl BooleanCorner {
 /// Internal compressed stage-2 `{0, 1, Infinity}^2` grid with one omitted
 /// Boolean corner.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage2CompressedGrid<E: FieldCore> {
+pub(crate) struct Stage2CompressedGrid<E: Field> {
     pub omitted_corner: BooleanCorner,
     pub evals_except_corner: [E; 8],
 }
 
-impl<E: FieldCore> Stage2CompressedGrid<E> {
+impl<E: Field> Stage2CompressedGrid<E> {
     #[cfg(test)]
     pub(crate) fn from_full_grid(full_grid: [E; 9], omitted_corner: BooleanCorner) -> Self {
         let omitted_idx = omitted_corner.grid_index();
@@ -94,7 +93,7 @@ impl<E: FieldCore> Stage2CompressedGrid<E> {
 /// This payload is built and consumed inside the prover to reconstruct ordinary
 /// stage-2 sumcheck round messages; it is not serialized in the Akita proof.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
+pub(crate) struct Stage2BivariateSkipProof<E: Field> {
     pub norm: Stage2CompressedGrid<E>,
     pub relation: Stage2CompressedGrid<E>,
 }
@@ -102,7 +101,7 @@ pub(crate) struct Stage2BivariateSkipProof<E: FieldCore> {
 /// Return the stage-2 full-domain grid in row-major `x`-major order over
 /// `{0, 1, Infinity}^2`.
 #[cfg(test)]
-pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
+pub(crate) fn stage2_full_grid_values<E: Field + Ring>(
     mut eval: impl FnMut(PrefixPoint<E>, PrefixPoint<E>) -> E,
 ) -> [E; 9] {
     let points = stage2_full_prefix_points::<E>();
@@ -116,7 +115,7 @@ pub(crate) fn stage2_full_grid_values<E: FieldCore + FromPrimitiveInt>(
 /// Evaluate a biquadratic from its full `{0, 1, Infinity}^2` grid.
 #[inline]
 #[cfg(test)]
-pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
+pub(crate) fn eval_biquadratic_from_full_grid<E: Field>(
     full_grid: [E; 9],
     x: PrefixPoint<E>,
     y: PrefixPoint<E>,
@@ -130,7 +129,7 @@ pub(crate) fn eval_biquadratic_from_full_grid<E: FieldCore>(
 /// Return the local claim weights for the four Boolean corners of the stage-2
 /// norm half, ordered as `[(0,0), (0,1), (1,0), (1,1)]`.
 #[inline]
-pub(crate) fn stage2_norm_corner_weights_from_linear_evals<E: FieldCore>(
+pub(crate) fn stage2_norm_corner_weights_from_linear_evals<E: Field>(
     l0_at_0: E,
     l0_at_1: E,
     l1_at_0: E,
@@ -147,14 +146,14 @@ pub(crate) fn stage2_norm_corner_weights_from_linear_evals<E: FieldCore>(
 /// Return the local claim weights for the four Boolean corners of the stage-2
 /// norm half when the two local eq factors are `eq(tau0, X)` and `eq(tau1, Y)`.
 #[inline]
-pub(crate) fn stage2_norm_corner_weights_from_taus<E: FieldCore>(tau0: E, tau1: E) -> [E; 4] {
+pub(crate) fn stage2_norm_corner_weights_from_taus<E: Field>(tau0: E, tau1: E) -> [E; 4] {
     stage2_norm_corner_weights_from_linear_evals(E::one() - tau0, tau0, E::one() - tau1, tau1)
 }
 
 /// Choose the default omitted corner for stage-2 norm compression, preferring
 /// `(0,0)` when its claim weight is nonzero.
 #[inline]
-pub(crate) fn default_stage2_norm_omitted_corner<E: FieldCore>(
+pub(crate) fn default_stage2_norm_omitted_corner<E: Field>(
     corner_weights: [E; 4],
 ) -> BooleanCorner {
     for corner in BooleanCorner::default_norm_order() {
@@ -167,7 +166,7 @@ pub(crate) fn default_stage2_norm_omitted_corner<E: FieldCore>(
 
 /// Recover a full stage-2 grid from an omitted-corner compression and a
 /// weighted Boolean-corner claim relation.
-pub(crate) fn recover_stage2_grid_from_corner_claim<E: FieldCore>(
+pub(crate) fn recover_stage2_grid_from_corner_claim<E: Field>(
     compressed: &Stage2CompressedGrid<E>,
     corner_weights: [E; 4],
     claim: E,
@@ -189,7 +188,7 @@ pub(crate) fn recover_stage2_grid_from_corner_claim<E: FieldCore>(
 
 /// Recover a full stage-2 relation grid from its default `(0,0)` omission.
 #[inline]
-pub(crate) fn recover_stage2_relation_grid_from_claim<E: FieldCore>(
+pub(crate) fn recover_stage2_relation_grid_from_claim<E: Field>(
     compressed: &Stage2CompressedGrid<E>,
     relation_claim: E,
 ) -> [E; 9] {
@@ -212,10 +211,8 @@ pub(crate) fn can_use_stage2_two_round_prefix(ring_bits: usize, b: usize) -> boo
     name = "two_round_prefix::build_stage2_bivariate_skip_proof_from_m_compact"
 )]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
->(
-    w_compact: &[i8],
+pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<E: Field + Ring + Unreduced>(
+    w_compact: crate::backend::packed_digits::PackedSignedDigitView<'_>,
     alpha_evals_y: &[E],
     relation_matrix_col_evals: &[E],
     linear_terms: &PreparedProverLinearTerms<E>,
@@ -276,31 +273,31 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
         _ => unreachable!(),
     };
 
-    let (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg) = cfg_fold_reduce!(
+    let (norm_pos, norm_neg, relation_accum, _) = cfg_fold_reduce!(
         0..live_x_cols,
         || {
             (
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::ProductAccum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
-                [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                [E::Product::zero(); STAGE2_COMPRESSED_POINT_COUNT],
+                vec![0usize; y_quads],
             )
         },
-        |(mut norm_pos, mut norm_neg, mut rel_accum, mut linear_pos, mut linear_neg), x_idx| {
-            let column = &w_compact[x_idx * y_len..(x_idx + 1) * y_len];
+        |(mut norm_pos, mut norm_neg, mut relation_accum, mut lookup_indices), x_idx| {
+            let column_start = x_idx * y_len;
+            let mut column = w_compact
+                .slice(column_start..column_start + y_len)
+                .expect("stage-2 compact column is in bounds")
+                .iter();
             let eq_x_weight = eq_x[x_idx];
             let row_val = relation_matrix_col_evals[x_idx];
-            let mut x_rel_pos = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
-            let mut x_rel_neg = [E::MulU64Accum::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let linear_lane = linear_terms.resolve_lane(x_idx);
+            let mut x_rel_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+            let mut x_rel_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
             for (y_quad, &eq_y_weight) in eq_y_suffix.iter().enumerate() {
-                let base = 4 * y_quad;
-                let lookup_idx = lookup_index_fn([
-                    w_digit_fn(column[base]),
-                    w_digit_fn(column[base + 1]),
-                    w_digit_fn(column[base + 2]),
-                    w_digit_fn(column[base + 3]),
-                ]);
+                let quad = column.next_array::<4>().expect("compact quad digits");
+                let lookup_idx = lookup_index_fn(quad.map(w_digit_fn));
+                lookup_indices[y_quad] = lookup_idx;
                 let norm_weight = eq_y_weight * eq_x_weight;
                 accum_lookup_vector_signed_selected(
                     &mut norm_pos,
@@ -315,54 +312,54 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
-                let linear_quad = linear_terms.quad_at(x_idx, base, y_len);
-                let linear_point_values = stage2_relation_m_point_values_compressed(linear_quad);
-                accum_pointwise_signed(
-                    &mut linear_pos,
-                    &mut linear_neg,
-                    &linear_point_values,
-                    &rel_table[lookup_idx],
-                );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
-                rel_accum[idx] += row_val.mul_to_product_accum(x_rel);
+                relation_accum[idx] += row_val.mul_unreduced(x_rel);
             }
-            (norm_pos, norm_neg, rel_accum, linear_pos, linear_neg)
+            linear_lane.for_each_factored(|factor, values| {
+                debug_assert_eq!(values.len(), y_len);
+                let mut x_linear_pos = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+                let mut x_linear_neg = [E::SmallProduct::zero(); STAGE2_COMPRESSED_POINT_COUNT];
+                for (linear_quad, &lookup_idx) in values.chunks_exact(4).zip(&lookup_indices) {
+                    let linear_point_values = stage2_relation_m_point_values_compressed([
+                        linear_quad[0],
+                        linear_quad[1],
+                        linear_quad[2],
+                        linear_quad[3],
+                    ]);
+                    accum_pointwise_signed(
+                        &mut x_linear_pos,
+                        &mut x_linear_neg,
+                        &linear_point_values,
+                        &rel_table[lookup_idx],
+                    );
+                }
+                for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
+                    let x_linear = reduce_signed_accum::<E>(x_linear_pos[idx], x_linear_neg[idx]);
+                    relation_accum[idx] += factor.mul_unreduced(x_linear);
+                }
+            });
+            (norm_pos, norm_neg, relation_accum, lookup_indices)
         },
-        |(mut norm_pos_a, mut norm_neg_a, mut rel_accum_a, mut linear_pos_a, mut linear_neg_a),
-         (norm_pos_b, norm_neg_b, rel_accum_b, linear_pos_b, linear_neg_b)| {
+        |(mut norm_pos_a, mut norm_neg_a, mut relation_accum_a, lookup_indices_a),
+         (norm_pos_b, norm_neg_b, relation_accum_b, _)| {
             for (dst, src) in norm_pos_a.iter_mut().zip(norm_pos_b.iter()) {
                 *dst += *src;
             }
             for (dst, src) in norm_neg_a.iter_mut().zip(norm_neg_b.iter()) {
                 *dst += *src;
             }
-            for (dst, src) in rel_accum_a.iter_mut().zip(rel_accum_b.iter()) {
+            for (dst, src) in relation_accum_a.iter_mut().zip(relation_accum_b.iter()) {
                 *dst += *src;
             }
-            for (dst, src) in linear_pos_a.iter_mut().zip(linear_pos_b.iter()) {
-                *dst += *src;
-            }
-            for (dst, src) in linear_neg_a.iter_mut().zip(linear_neg_b.iter()) {
-                *dst += *src;
-            }
-            (
-                norm_pos_a,
-                norm_neg_a,
-                rel_accum_a,
-                linear_pos_a,
-                linear_neg_a,
-            )
+            (norm_pos_a, norm_neg_a, relation_accum_a, lookup_indices_a)
         }
     );
     let norm_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
         std::array::from_fn(|idx| reduce_signed_accum::<E>(norm_pos[idx], norm_neg[idx]));
     let relation_evals_except_corner: [E; STAGE2_COMPRESSED_POINT_COUNT] =
-        std::array::from_fn(|idx| {
-            E::reduce_product_accum(rel_accum[idx])
-                + reduce_signed_accum::<E>(linear_pos[idx], linear_neg[idx])
-        });
+        std::array::from_fn(|idx| E::reduce_product(relation_accum[idx]));
     Some(Stage2BivariateSkipProof {
         norm: Stage2CompressedGrid {
             omitted_corner: norm_omitted_corner,
@@ -378,7 +375,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
 /// State needed to reconstruct the first two ordinary stage-2 round messages
 /// from the internal bivariate-skip payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Stage2BivariateSkipState<E: FieldCore> {
+pub(crate) struct Stage2BivariateSkipState<E: Field> {
     norm_x_row_coeffs: [[E; 3]; 3],
     relation_x_row_coeffs: [[E; 3]; 3],
     tau0: E,
@@ -386,7 +383,7 @@ pub(crate) struct Stage2BivariateSkipState<E: FieldCore> {
     batching_coeff: E,
 }
 
-impl<E: FieldCore> Stage2BivariateSkipState<E> {
+impl<E: Field> Stage2BivariateSkipState<E> {
     pub(crate) fn new(
         proof: &Stage2BivariateSkipProof<E>,
         stage1_point: &[E],
@@ -430,7 +427,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> Stage2BivariateSkipState<E> {
+impl<E: Field + Ring> Stage2BivariateSkipState<E> {
     #[inline]
     pub(crate) fn reconstruct_round0_polys(&self) -> (UniPoly<E>, UniPoly<E>) {
         let norm_q = add_quadratic_coeffs(

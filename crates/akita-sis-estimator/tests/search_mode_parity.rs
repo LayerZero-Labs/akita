@@ -1,8 +1,7 @@
-//! Compare Python-local-minimum and exhaustive search on golden cells.
+//! Compare Python-local-minimum, certified, and full-domain search on golden cells.
 //!
-//! Default CI runs a small smoke grid. The medium trusted subset and rank-20
-//! geometries are `#[ignore]` manual gates before infinity table generation;
-//! use the same filter via `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
+//! The same grids are available for benchmarking via
+//! `AKITA_SIS_INFINITY_BENCH_SET=exhaustive-ci` in
 //! `cargo bench -p akita-sis-estimator --bench infinity_optimizer`.
 
 #[cfg(feature = "parallel")]
@@ -80,17 +79,17 @@ fn local_minimum_config() -> EstimateConfig {
     EstimateConfig::lattice_estimator_parity()
 }
 
-fn exhaustive_config() -> EstimateConfig {
+fn certified_config() -> EstimateConfig {
     EstimateConfig::akita_infinity_table()
 }
 
 #[cfg(feature = "parallel")]
-fn parallel_exhaustive_config() -> EstimateConfig {
+fn full_exhaustive_parallel_config() -> EstimateConfig {
     InfinityWidthProfile::ExhaustiveParallel.config()
 }
 
 #[test]
-fn exhaustive_search_smoke_grid_covers_families_and_rank5() {
+fn certified_search_smoke_grid_covers_families_and_rank5() {
     let families: std::collections::HashSet<_> = SMOKE_CASES.iter().map(|row| row.family).collect();
     assert_eq!(families.len(), 3, "expected all three modulus families");
     assert!(
@@ -100,7 +99,7 @@ fn exhaustive_search_smoke_grid_covers_families_and_rank5() {
 }
 
 #[test]
-fn exhaustive_search_is_at_least_as_good_as_local_minimum_smoke() {
+fn certified_search_is_at_least_as_good_as_local_minimum_smoke() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let mut violations = Vec::new();
     for row in smoke_rows() {
@@ -108,10 +107,10 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_smoke() {
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
         let local = estimate(&params, &local_minimum_config()).unwrap();
-        let exhaustive = estimate(&params, &exhaustive_config()).unwrap();
-        if !exhaustive_at_least_as_good(&exhaustive, &local, tol) {
+        let certified = estimate(&params, &certified_config()).unwrap();
+        if !exhaustive_at_least_as_good(&certified, &local, tol) {
             violations.push(format!(
-                "exhaustive worse than local-minimum for {row:?}\n  local={local:?}\n  exhaustive={exhaustive:?}"
+                "certified search worse than local-minimum for {row:?}"
             ));
         }
     }
@@ -122,18 +121,16 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_smoke() {
 
 #[cfg(feature = "parallel")]
 #[test]
-fn parallel_exhaustive_matches_serial_exhaustive_smoke() {
+fn full_exhaustive_parallel_matches_certified_search_smoke() {
     let mut mismatches = Vec::new();
     for row in smoke_rows() {
         let params =
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
-        let serial = estimate(&params, &exhaustive_config()).unwrap();
-        let parallel = estimate(&params, &parallel_exhaustive_config()).unwrap();
-        if serial != parallel {
-            mismatches.push(format!(
-                "parallel exhaustive mismatch for {row:?}\n  serial={serial:?}\n  parallel={parallel:?}"
-            ));
+        let certified = estimate(&params, &certified_config()).unwrap();
+        let full = estimate(&params, &full_exhaustive_parallel_config()).unwrap();
+        if !same_exact_or_above_target_result(&certified, &full) {
+            mismatches.push(format!("full exhaustive mismatch for {row:?}"));
         }
     }
     if !mismatches.is_empty() {
@@ -142,8 +139,7 @@ fn parallel_exhaustive_matches_serial_exhaustive_smoke() {
 }
 
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
-fn exhaustive_search_covers_medium_trusted_grid() {
+fn certified_search_covers_medium_trusted_grid() {
     let rows = exhaustive_subset_rows();
     assert!(
         rows.len() >= 85,
@@ -157,8 +153,7 @@ fn exhaustive_search_covers_medium_trusted_grid() {
 }
 
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
-fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
+fn certified_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let mut violations = Vec::new();
     for row in exhaustive_subset_rows() {
@@ -166,10 +161,10 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
         let local = estimate(&params, &local_minimum_config()).unwrap();
-        let exhaustive = estimate(&params, &exhaustive_config()).unwrap();
-        if !exhaustive_at_least_as_good(&exhaustive, &local, tol) {
+        let certified = estimate(&params, &certified_config()).unwrap();
+        if !exhaustive_at_least_as_good(&certified, &local, tol) {
             violations.push(format!(
-                "exhaustive worse than local-minimum for {row:?}\n  local={local:?}\n  exhaustive={exhaustive:?}"
+                "certified search worse than local-minimum for {row:?}"
             ));
         }
     }
@@ -180,19 +175,16 @@ fn exhaustive_search_is_at_least_as_good_as_local_minimum_on_medium_subset() {
 
 #[cfg(feature = "parallel")]
 #[test]
-#[ignore = "medium-grid exhaustive parity is slow; run manually before table generation changes"]
-fn parallel_exhaustive_matches_serial_exhaustive_on_medium_subset() {
+fn full_exhaustive_parallel_matches_certified_search_on_medium_subset() {
     let mut mismatches = Vec::new();
     for row in exhaustive_subset_rows() {
         let params =
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
-        let serial = estimate(&params, &exhaustive_config()).unwrap();
-        let parallel = estimate(&params, &parallel_exhaustive_config()).unwrap();
-        if serial != parallel {
-            mismatches.push(format!(
-                "parallel exhaustive mismatch for {row:?}\n  serial={serial:?}\n  parallel={parallel:?}"
-            ));
+        let certified = estimate(&params, &certified_config()).unwrap();
+        let full = estimate(&params, &full_exhaustive_parallel_config()).unwrap();
+        if !same_exact_or_above_target_result(&certified, &full) {
+            mismatches.push(format!("full exhaustive mismatch for {row:?}"));
         }
     }
     if !mismatches.is_empty() {
@@ -200,11 +192,9 @@ fn parallel_exhaustive_matches_serial_exhaustive_on_medium_subset() {
     }
 }
 
-/// Rank-20 geometries have `m = 1280` and are too slow for default CI.
-/// Run with `cargo test -p akita-sis-estimator --test search_mode_parity -- --ignored`.
+/// Rank-20 geometries have `m = 1280`.
 #[test]
-#[ignore = "rank-20 exhaustive cells are slow; run manually before table generation changes"]
-fn exhaustive_search_rank20_geometries_manual() {
+fn certified_search_rank20_geometries() {
     let tol = NumericConfig::default().sage_abs_tolerance;
     let rows: Vec<_> = parse_trusted_rows()
         .into_iter()
@@ -216,10 +206,10 @@ fn exhaustive_search_rank20_geometries_manual() {
             scalar_sis_from_ring(row.family, row.d, row.rank, row.width, row.coeff_linf_bound)
                 .unwrap();
         let local = estimate(&params, &local_minimum_config()).unwrap();
-        let exhaustive = estimate(&params, &exhaustive_config()).unwrap();
+        let certified = estimate(&params, &certified_config()).unwrap();
         assert!(
-            exhaustive_at_least_as_good(&exhaustive, &local, tol),
-            "rank-20 exhaustive regression for {row:?}\n  local={local:?}\n  exhaustive={exhaustive:?}"
+            exhaustive_at_least_as_good(&certified, &local, tol),
+            "rank-20 certified-search regression for {row:?}"
         );
     }
 }
@@ -313,6 +303,31 @@ fn exhaustive_at_least_as_good(
         (CostValue::ProvenAboveTarget(_), CostValue::Infinity) => true,
         (CostValue::Infinity, CostValue::ProvenAboveTarget(_)) => true,
         (CostValue::Finite(_), CostValue::ProvenAboveTarget(_)) => true,
-        (CostValue::ProvenAboveTarget(_), CostValue::Finite(_)) => false,
+        (CostValue::ProvenAboveTarget(lower_bound), CostValue::Finite(reference)) => {
+            lower_bound.log2 <= reference.log2 + tol
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+fn same_exact_or_above_target_result(
+    lhs: &akita_sis_estimator::LatticeCost,
+    rhs: &akita_sis_estimator::LatticeCost,
+) -> bool {
+    let tol = NumericConfig::default().sage_abs_tolerance;
+    match (lhs.rop, rhs.rop) {
+        (CostValue::Finite(lhs), CostValue::Finite(rhs)) => (lhs.log2 - rhs.log2).abs() <= tol,
+        (CostValue::ProvenAboveTarget(lhs), CostValue::Finite(rhs))
+        | (CostValue::Finite(rhs), CostValue::ProvenAboveTarget(lhs)) => rhs.log2 >= lhs.log2,
+        (CostValue::ProvenAboveTarget(lhs), CostValue::ProvenAboveTarget(rhs)) => {
+            lhs.log2 >= 128.0 && rhs.log2 >= 128.0
+        }
+        (CostValue::Infinity, CostValue::Infinity) => true,
+        (CostValue::ProvenAboveTarget(lower_bound), CostValue::Infinity)
+        | (CostValue::Infinity, CostValue::ProvenAboveTarget(lower_bound)) => {
+            lower_bound.log2 >= 128.0
+        }
+        (CostValue::Finite(_), CostValue::Infinity)
+        | (CostValue::Infinity, CostValue::Finite(_)) => false,
     }
 }

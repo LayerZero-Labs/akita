@@ -1,6 +1,7 @@
 use super::poly::DensePoly;
 use akita_algebra::CyclotomicRing;
-use akita_field::Prime128OffsetA7F7 as F;
+use jolt_field::Prime128OffsetA7F7 as F;
+use jolt_field::{Ring, Zero};
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {

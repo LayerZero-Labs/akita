@@ -14,7 +14,7 @@ orchestration lives in `akita-pcs`.
 | Crate | Role |
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas |
-| `akita-field` | Field traits, prime/extension fields, FFT, parallel macros |
+| `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
 | `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
@@ -22,6 +22,7 @@ orchestration lives in `akita-pcs`.
 | `akita-challenges` | Challenge sampling helpers |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
 | `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and generated-table certification |
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven table emission |
 | `akita-schedules` | Feature-gated generated schedule table wiring |
 | `akita-config` | Presets, `CommitmentConfig`, schedule catalog wiring |
@@ -36,13 +37,14 @@ orchestration lives in `akita-pcs`.
 graph TD
   Error["akita-error"]
   Ser["akita-serialization"]
-  Field["akita-field"]
+  Field["jolt-field (external)"]
   Witness["akita-witness"]
   Algebra["akita-algebra"]
   Transcript["akita-transcript"]
   Challenges["akita-challenges"]
   Sumcheck["akita-sumcheck"]
   Types["akita-types"]
+  SisEstimator["akita-sis-estimator"]
   Planner["akita-planner"]
   Schedules["akita-schedules"]
   Config["akita-config"]
@@ -51,8 +53,6 @@ graph TD
   Setup["akita-setup"]
   Pcs["akita-pcs"]
 
-  Field --> Error
-  Field --> Ser
   Witness --> Error
   Witness --> Field
   Algebra --> Error
@@ -75,11 +75,13 @@ graph TD
   Types --> Ser
   Types --> Sumcheck
   Types --> Transcript
+  SisEstimator --> Types
   Planner --> Error
   Planner --> Challenges
   Planner --> Schedules
   Planner --> Types
   Planner -. catalog-gen .-> Config
+  Planner -. catalog-security .-> SisEstimator
   Schedules --> Error
   Schedules --> Challenges
   Schedules --> Types
@@ -136,7 +138,7 @@ graph TD
   is known. Generic checked helpers must not be redefined in downstream crates.
 - `akita-witness` owns the shared borrowed witness/polynomial view vocabulary
   (`PolynomialView`, `WitnessProvider`) consumed by sumcheck and polyops paths.
-  It depends only on `akita-error` and `akita-field`. At the time of this graph,
+  It depends only on `akita-error` and external `jolt-field`. At the time of this graph,
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
@@ -145,6 +147,11 @@ graph TD
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional
   `catalog-gen` feature also enables `akita-config`, allowing table-emission
   binaries to name concrete `CommitmentConfig` presets.
+- `akita-sis-estimator` owns the offline scalar SIS cost model and table
+  certification logic. It depends on inert schedule and matrix descriptions in
+  `akita-types`. The planner's optional `catalog-security` feature uses it to
+  report direct modeled costs for expanded generated rows; normal planner,
+  schedule, prover, and verifier builds do not depend on the estimator.
 - `akita-schedules` owns generated row types, catalog identity validation,
   runtime row expansion, and the tracked generated tables with their Cargo
   feature wiring. The family modules are deterministic planner output. The crate

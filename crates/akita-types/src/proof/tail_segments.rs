@@ -4,10 +4,10 @@ use std::io::Write;
 
 use akita_error::AkitaError;
 
-use akita_field::{CanonicalField, FieldCore, HalvingField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
+use jolt_field::{CanonicalEncoding, Field};
 
 use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
@@ -16,9 +16,9 @@ use crate::golomb_rice::{
     golomb_rice_values_within_cap, golomb_rice_zigzag_width, tail_z_planner_bits_per_coord,
 };
 use crate::layout::field_bytes;
-use crate::proof::{DigitBlocks, RingVec, TerminalWitnessTranscriptParts};
+use crate::proof::{RingVec, TerminalWitnessTranscriptParts};
 use crate::tail_golomb_rice_low_bits::{cap_rice_low_bits, wire_rice_low_bits};
-use crate::{CommittedGroupParams, TerminalFoldParams, WitnessLayout, WitnessUnitLayout};
+use crate::{CommittedGroupParams, TerminalFoldParams};
 
 /// Public segment geometry for a transparent terminal witness.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -57,14 +57,14 @@ pub struct TerminalResponseShape {
 
 /// Clear terminal response carried on the wire.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TerminalResponse<F: FieldCore> {
+pub struct TerminalResponse<F: Field> {
     pub layout: TailSegmentLayout,
     pub z_payloads: Vec<Vec<u8>>,
     pub e_fields: RingVec<F>,
     pub t_fields: RingVec<F>,
 }
 
-pub struct TerminalResponseGroupParts<'a, F: FieldCore> {
+pub struct TerminalResponseGroupParts<'a, F: Field> {
     pub params: crate::GroupOpenPhaseParams,
     pub num_w_vectors: usize,
     pub num_t_vectors: usize,
@@ -417,7 +417,7 @@ impl AkitaDeserialize for TerminalResponseShape {
     }
 }
 
-impl<F: FieldCore + Valid> Valid for TerminalResponse<F> {
+impl<F: Field + Valid> Valid for TerminalResponse<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.layout.check()?;
         if self.z_payloads.len() != self.layout.groups.len() {
@@ -446,7 +446,7 @@ impl<F: FieldCore + Valid> Valid for TerminalResponse<F> {
     }
 }
 
-impl<F: FieldCore> TerminalResponse<F> {
+impl<F: Field> TerminalResponse<F> {
     /// Shape descriptor for this terminal witness.
     pub fn shape(&self) -> TerminalResponseShape {
         TerminalResponseShape {
@@ -474,7 +474,7 @@ impl TerminalResponseShape {
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for TerminalResponse<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> AkitaSerialize for TerminalResponse<F> {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
@@ -498,14 +498,12 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> AkitaSerialize for Terminal
             self.layout
                 .e_field_elems()
                 .saturating_add(self.layout.t_field_elems())
-                .saturating_mul(field_bytes(F::modulus_bits())),
+                .saturating_mul(field_bytes(F::MODULUS_BITS)),
         )
     }
 }
 
-impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for TerminalResponse<F>
-{
+impl<F: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for TerminalResponse<F> {
     type Context = TerminalResponseShape;
 
     fn deserialize_with_mode<R: std::io::Read>(
@@ -555,7 +553,7 @@ impl<F: FieldCore + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
     }
 }
 
-impl<F: FieldCore + CanonicalField + AkitaSerialize> TerminalResponse<F> {
+impl<F: Field + CanonicalEncoding + AkitaSerialize> TerminalResponse<F> {
     /// Canonical segment bytes in wire order (`z ‖ e ‖ t`).
     pub fn wire_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -600,7 +598,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize> TerminalResponse<F> {
     }
 }
 
-fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
+fn append_field_coeffs<F: Field + AkitaSerialize, W: Write>(
     writer: &mut W,
     coeffs: &[F],
     compress: Compress,
@@ -615,7 +613,7 @@ fn append_field_coeffs<F: FieldCore + AkitaSerialize, W: Write>(
     Ok(())
 }
 
-fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
+fn append_field_coeffs_vec<F: Field + AkitaSerialize>(
     out: &mut Vec<u8>,
     coeffs: &[F],
 ) -> Result<(), AkitaError> {
@@ -638,7 +636,7 @@ fn append_field_coeffs_vec<F: FieldCore + AkitaSerialize>(
 /// Propagates field serialization failures as [`AkitaError::InvalidProof`].
 pub fn raw_field_segment_bytes<F>(fields: &RingVec<F>) -> Result<Vec<u8>, AkitaError>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let mut out = Vec::new();
     append_field_coeffs_vec(&mut out, fields.coeffs())?;
@@ -899,7 +897,7 @@ pub fn build_terminal_response_from_groups<F>(
     scheduled_shape: &TerminalResponseShape,
 ) -> Result<TerminalResponse<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     if ring_d == 0 || lp.d_a() != ring_d {
         return Err(AkitaError::InvalidInput(
@@ -1007,7 +1005,7 @@ pub fn build_terminal_response<F>(
     z_folded_centered_flat: &[i32],
 ) -> Result<TerminalResponse<F>, AkitaError>
 where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
+    F: Field + CanonicalEncoding + AkitaSerialize,
 {
     let group = scheduled_shape
         .layout
@@ -1063,7 +1061,7 @@ where
 /// # Errors
 ///
 /// Returns an error when the encoded `z` payload is inadmissible or exceeds the budget.
-pub fn validate_terminal_response_z_payload<F: FieldCore>(
+pub fn validate_terminal_response_z_payload<F: Field>(
     witness: &TerminalResponse<F>,
 ) -> Result<(), AkitaError> {
     let group = witness
@@ -1083,234 +1081,6 @@ pub fn validate_terminal_response_z_payload<F: FieldCore>(
         )),
         other => other,
     })
-}
-
-/// Emit one group's role-native E planes at canonical witness addresses.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_witness_e_planes<const D_ROLE: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
-    source_physical_width: usize,
-    num_claims: usize,
-    depth_open: usize,
-    digits: &DigitBlocks,
-    source_num_live_blocks: usize,
-) -> Result<(), AkitaError> {
-    if !source_physical_width.is_multiple_of(D_ROLE) {
-        return Err(AkitaError::InvalidSetup(
-            "witness E dimensions must satisfy D_ROLE | D_A".into(),
-        ));
-    }
-    digits.ensure_stride::<D_ROLE>()?;
-    let role_subcolumns = source_physical_width / D_ROLE;
-    let expected = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(role_subcolumns))
-        .and_then(|n| n.checked_mul(depth_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
-    if digits.total_planes() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: digits.total_planes(),
-        });
-    }
-    let flat = digits.typed_planes::<D_ROLE>()?;
-    for unit in layout.units_for_group(group_id)? {
-        if unit.e_geometry().physical_coefficient_width() != source_physical_width {
-            return Err(AkitaError::InvalidSetup(
-                "witness E source width disagrees with resolved geometry".into(),
-            ));
-        }
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                let semantic = claim * source_num_live_blocks + global_block;
-                for role_subcolumn in 0..role_subcolumns {
-                    for digit in 0..depth_open {
-                        let source =
-                            (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
-                        let destination = unit.e_coefficient_index(
-                            D_ROLE,
-                            num_claims,
-                            depth_open,
-                            claim,
-                            global_block,
-                            role_subcolumn,
-                            digit,
-                            0,
-                        )?;
-                        write_witness_coefficients(out, destination, &flat[source])?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Emit one group's role-native T planes at canonical witness addresses.
-#[allow(clippy::too_many_arguments)]
-pub fn emit_witness_t_planes<const D_A: usize, const D_ROLE: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
-    num_claims: usize,
-    n_a: usize,
-    depth_outer: usize,
-    digits: &DigitBlocks,
-    source_num_live_blocks: usize,
-) -> Result<(), AkitaError> {
-    if !D_A.is_multiple_of(D_ROLE) {
-        return Err(AkitaError::InvalidSetup(
-            "witness T dimensions must satisfy D_ROLE | D_A".into(),
-        ));
-    }
-    digits.ensure_stride::<D_ROLE>()?;
-    let role_subcolumns = D_A / D_ROLE;
-    let expected = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(role_subcolumns))
-        .and_then(|n| n.checked_mul(depth_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T source length overflow".into()))?;
-    if digits.total_planes() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: digits.total_planes(),
-        });
-    }
-    let flat = digits.typed_planes::<D_ROLE>()?;
-    let planes_per_block = n_a
-        .checked_mul(role_subcolumns)
-        .and_then(|n| n.checked_mul(depth_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
-    for unit in layout.units_for_group(group_id)? {
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                for a_row in 0..n_a {
-                    for role_subcolumn in 0..role_subcolumns {
-                        for digit in 0..depth_outer {
-                            let source = (claim * source_num_live_blocks + global_block)
-                                * planes_per_block
-                                + (a_row * role_subcolumns + role_subcolumn) * depth_outer
-                                + digit;
-                            let destination = unit.t_coefficient_index(
-                                D_A,
-                                D_ROLE,
-                                num_claims,
-                                n_a,
-                                depth_outer,
-                                claim,
-                                global_block,
-                                a_row,
-                                role_subcolumn,
-                                digit,
-                                0,
-                            )?;
-                            write_witness_coefficients(out, destination, &flat[source])?;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_witness_coefficients(
-    out: &mut [i8],
-    start: usize,
-    coefficients: &[i8],
-) -> Result<(), AkitaError> {
-    let end = start
-        .checked_add(coefficients.len())
-        .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
-    out.get_mut(start..end)
-        .ok_or(AkitaError::InvalidProof)?
-        .copy_from_slice(coefficients);
-    Ok(())
-}
-
-/// Emit one ownership unit's replicated Z planes at canonical addresses.
-pub fn emit_witness_z_planes<const D_SOURCE: usize>(
-    out: &mut [i8],
-    unit: &WitnessUnitLayout,
-    num_positions_per_block: usize,
-    depth_commit: usize,
-    depth_fold: usize,
-    all_planes: &[[i8; D_SOURCE]],
-) -> Result<(), AkitaError> {
-    let expected = num_positions_per_block
-        .checked_mul(depth_commit)
-        .and_then(|n| n.checked_mul(depth_fold))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness Z source length overflow".into()))?;
-    if all_planes.len() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: all_planes.len(),
-        });
-    }
-    for position in 0..num_positions_per_block {
-        for commit_digit in 0..depth_commit {
-            for fold_digit in 0..depth_fold {
-                let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
-                write_witness_coefficients(
-                    out,
-                    unit.z_coefficient_index(
-                        D_SOURCE,
-                        num_positions_per_block,
-                        depth_commit,
-                        depth_fold,
-                        position,
-                        commit_digit,
-                        fold_digit,
-                        0,
-                    )?,
-                    &all_planes[source],
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Emit the shared R planes at canonical witness addresses.
-pub fn emit_witness_r_planes<const D: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    quotient_depth: usize,
-    planes: &[[i8; D]],
-) -> Result<(), AkitaError> {
-    if layout.r_rows().iter().any(|row| {
-        row.geometry().polynomial_modulus_dimension() != D
-            || row.geometry().coordinate_plane_count() != 1
-    }) || quotient_depth != layout.quotient_depth()
-    {
-        return Err(AkitaError::InvalidSetup(
-            "witness R source shape is malformed".into(),
-        ));
-    }
-    let expected = layout
-        .r_rows()
-        .len()
-        .checked_mul(quotient_depth)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness R source shape overflow".into()))?;
-    if planes.len() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: planes.len(),
-        });
-    }
-    for row in 0..layout.r_rows().len() {
-        for digit in 0..quotient_depth {
-            write_witness_coefficients(
-                out,
-                layout.r_coefficient_index(row, digit, 0, 0)?,
-                &planes[row * quotient_depth + digit],
-            )?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

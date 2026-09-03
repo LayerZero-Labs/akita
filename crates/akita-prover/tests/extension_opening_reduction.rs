@@ -2,13 +2,8 @@
 
 use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
-use akita_field::{
-    Ext2, ExtField, FieldCore, FpExt4, Prime128Offset275, Prime24Offset3, Prime30Offset35,
-    Prime31Offset19, Prime32Offset99, Prime64Offset59,
-};
 use akita_prover::protocol::extension_opening_reduction::{
-    ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm, SparseExtensionOpeningWitness,
-    SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
+    ExtensionOpeningReductionGroup, ExtensionOpeningReductionProver, ExtensionOpeningReductionTerm,
 };
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels as tr_labels;
@@ -22,15 +17,29 @@ use akita_types::{
     ExtensionOpeningReductionRoundResult, ExtensionOpeningTensorPartials,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
+use jolt_field::{Ext2, ExtField, Field, One, Prime128Offset275, Prime64Offset59, Ring, Zero};
 
 type F = Prime128Offset275;
 
-fn new_transcript() -> AkitaTranscript<F> {
-    <AkitaTranscript<F> as Transcript<F>>::new(tr_labels::DOMAIN_AKITA_PROTOCOL)
+fn eor_group<E: Field>(
+    witness: Vec<E>,
+    factor: Vec<E>,
+    coeff: E,
+) -> Result<ExtensionOpeningReductionGroup<E>, AkitaError> {
+    ExtensionOpeningReductionGroup::new(
+        vec![ExtensionOpeningReductionTerm::new(witness, coeff)],
+        factor,
+    )
 }
 
-fn sample_round(tr: &mut AkitaTranscript<F>) -> F {
-    tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND)
+fn new_transcript() -> AkitaTranscript<F> {
+    <AkitaTranscript<F> as akita_transcript::TranscriptFactory<F>>::new(
+        tr_labels::DOMAIN_AKITA_PROTOCOL,
+    )
+}
+
+fn sample_round(tr: &mut AkitaTranscript<F>) -> Result<F, AkitaError> {
+    Ok(tr.challenge_scalar(tr_labels::CHALLENGE_SUMCHECK_ROUND))
 }
 
 fn verify_eor_rounds(
@@ -74,52 +83,9 @@ fn verify_eor_full(
     Ok(result.challenges)
 }
 
-#[test]
-fn sparse_witness_sorted_constructor_combines_without_sorting() {
-    let witness = SparseExtensionOpeningWitness::from_sorted_entries(
-        8,
-        vec![
-            (1, F::from_u64(3)),
-            (1, F::from_u64(5)),
-            (3, F::zero()),
-            (4, F::from_u64(7)),
-        ],
-    )
-    .unwrap();
-    assert_eq!(
-        witness.entries(),
-        &[(1, F::from_u64(8)), (4, F::from_u64(7))]
-    );
-
-    assert!(SparseExtensionOpeningWitness::from_sorted_entries(
-        8,
-        vec![(2, F::one()), (1, F::one())],
-    )
-    .is_err());
-
-    let unique = SparseExtensionOpeningWitness::from_sorted_unique_entries(
-        8,
-        vec![(1, F::from_u64(3)), (4, F::from_u64(7))],
-    )
-    .unwrap();
-    assert_eq!(
-        unique.entries(),
-        &[(1, F::from_u64(3)), (4, F::from_u64(7))]
-    );
-    assert!(SparseExtensionOpeningWitness::from_sorted_unique_entries(
-        8,
-        vec![(1, F::one()), (1, F::one())],
-    )
-    .is_err());
-    assert!(
-        SparseExtensionOpeningWitness::from_sorted_unique_entries(8, vec![(1, F::zero())],)
-            .is_err()
-    );
-}
-
 fn lifted_multilinear_eval<B, E>(evals: &[B], point: &[E]) -> E
 where
-    B: FieldCore,
+    B: Field,
     E: ExtField<B>,
 {
     let mut layer = evals.iter().copied().map(E::lift_base).collect::<Vec<_>>();
@@ -156,11 +122,8 @@ fn tensor_partials_recompose_logical_extension_opening() {
         column_partials,
         row_partials,
     };
-    assert_eq!(
-        partials.column_partials.len(),
-        <E as ExtField<B>>::EXT_DEGREE
-    );
-    assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::EXT_DEGREE);
+    assert_eq!(partials.column_partials.len(), <E as ExtField<B>>::DEGREE);
+    assert_eq!(partials.row_partials.len(), <E as ExtField<B>>::DEGREE);
 
     let logical_claim = derive_tensor_extension_opening_claim_from_partials::<B, E>(
         &point,
@@ -295,10 +258,8 @@ fn extension_opening_reduction_proves_witness_factor_claim() {
     let factor_evals: Vec<F> = (0..16).map(|i| F::from_u64((7 * i + 11) as u64)).collect();
     let expected_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], expected_claim).unwrap();
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
     assert_eq!(prover.input_claim(), expected_claim);
 
@@ -331,15 +292,15 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
         * extension_opening_reduction_claim(&witness_a, &factor_a).unwrap()
         + coeff_b * extension_opening_reduction_claim(&witness_b, &factor_b).unwrap();
 
-    let terms = vec![
-        ExtensionOpeningReductionTerm::new(witness_a.clone(), factor_a.clone(), coeff_a).unwrap(),
-        ExtensionOpeningReductionTerm::new(witness_b.clone(), factor_b.clone(), coeff_b).unwrap(),
+    let groups = vec![
+        eor_group(witness_a.clone(), factor_a.clone(), coeff_a).unwrap(),
+        eor_group(witness_b.clone(), factor_b.clone(), coeff_b).unwrap(),
     ];
     assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(&terms).unwrap(),
+        ExtensionOpeningReductionProver::input_claim_from_groups(&groups).unwrap(),
         expected_claim
     );
-    let mut prover = ExtensionOpeningReductionProver::new(terms, expected_claim).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(groups, expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
     assert_eq!(prover.degree_bound(), EXTENSION_OPENING_REDUCTION_DEGREE);
 
@@ -367,349 +328,44 @@ fn batched_extension_opening_reduction_uses_one_common_rho() {
 }
 
 #[test]
-fn sparse_tensor_factor_matches_dense_factor_rounds() {
-    type B = Prime64Offset59;
-    type E = Ext2<B>;
-
-    let tail_point = (0..5)
-        .map(|idx| {
-            E::from_base_slice(&[
-                B::from_u64(3 * idx as u64 + 7),
-                B::from_u64(5 * idx as u64 + 11),
-            ])
-        })
+fn shared_dense_factor_preserves_batched_proof() {
+    let witness_a = (0..32)
+        .map(|index| F::from_u64((3 * index + 5) as u64))
         .collect::<Vec<_>>();
-    let eta = vec![E::from_base_slice(&[B::from_u64(17), B::from_u64(19)])];
-    let coeff = E::from_base_slice(&[B::from_u64(23), B::from_u64(29)]);
-    let entries = vec![
-        (1, E::from_base_slice(&[B::from_u64(31), B::from_u64(37)])),
-        (2, E::from_base_slice(&[B::from_u64(41), B::from_u64(43)])),
-        (3, E::from_base_slice(&[B::from_u64(47), B::from_u64(53)])),
-        (5, E::from_base_slice(&[B::from_u64(59), B::from_u64(61)])),
-        (20, E::from_base_slice(&[B::from_u64(67), B::from_u64(71)])),
-        (25, E::from_base_slice(&[B::from_u64(73), B::from_u64(79)])),
-    ];
-    let sparse_witness =
-        SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
+    let witness_b = (0..32)
+        .map(|index| F::from_u64((11 * index + 7) as u64))
+        .collect::<Vec<_>>();
+    let factor = (0..32)
+        .map(|index| F::from_u64((17 * index + 13) as u64))
+        .collect::<Vec<_>>();
+    let coeff_a = F::from_u64(19);
+    let coeff_b = F::from_u64(23);
+    let input_claim = coeff_a * extension_opening_reduction_claim(&witness_a, &factor).unwrap()
+        + coeff_b * extension_opening_reduction_claim(&witness_b, &factor).unwrap();
 
-    let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-    let dense_term =
-        ExtensionOpeningReductionTerm::new_sparse(sparse_witness.clone(), dense_factor, coeff)
-            .unwrap();
-    let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
-        sparse_witness,
-        tail_point.clone(),
-        eta,
-        coeff,
-        2,
+    let separate_groups = vec![
+        eor_group(witness_a.clone(), factor.clone(), coeff_a).unwrap(),
+        eor_group(witness_b.clone(), factor.clone(), coeff_b).unwrap(),
+    ];
+    let shared_group = ExtensionOpeningReductionGroup::new(
+        vec![
+            ExtensionOpeningReductionTerm::new(witness_a, coeff_a),
+            ExtensionOpeningReductionTerm::new(witness_b, coeff_b),
+        ],
+        factor,
     )
     .unwrap();
 
-    let expected_claim =
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&dense_term))
+    let prove = |groups| {
+        let mut prover = ExtensionOpeningReductionProver::new(groups, input_claim).unwrap();
+        let mut transcript = new_transcript();
+        let result = prover
+            .prove::<F, _, _>(&mut transcript, sample_round)
             .unwrap();
-    assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&lazy_term,))
-            .unwrap(),
-        expected_claim
-    );
-
-    let mut dense_prover =
-        ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
-    let mut lazy_prover =
-        ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
-    let mut claim = expected_claim;
-    for round in 0..tail_point.len() {
-        let dense_round = dense_prover.compute_round_univariate(round, claim);
-        let lazy_round = lazy_prover.compute_round_univariate(round, claim);
-        assert_eq!(lazy_round, dense_round);
-
-        let challenge = E::from_base_slice(&[
-            B::from_u64(83 + 2 * round as u64),
-            B::from_u64(89 + 3 * round as u64),
-        ]);
-        claim = dense_round.evaluate(&challenge);
-        dense_prover.ingest_challenge(round, challenge);
-        lazy_prover.ingest_challenge(round, challenge);
-    }
-
-    assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
-}
-
-#[test]
-fn sparse_tensor_factor_matches_dense_factor_rounds_at_production_lazy_depth() {
-    type B = Prime32Offset99;
-    type E = FpExt4<B>;
-
-    let tail_point = (0..14)
-        .map(|idx| {
-            E::from_base_slice(&[
-                B::from_u64(3 * idx as u64 + 7),
-                B::from_u64(5 * idx as u64 + 11),
-                B::from_u64(2 * idx as u64 + 1),
-                B::from_u64(7 * idx as u64 + 3),
-            ])
-        })
-        .collect::<Vec<_>>();
-    let eta = vec![
-        E::from_base_slice(&[
-            B::from_u64(17),
-            B::from_u64(19),
-            B::from_u64(4),
-            B::from_u64(6),
-        ]),
-        E::from_base_slice(&[
-            B::from_u64(8),
-            B::from_u64(2),
-            B::from_u64(13),
-            B::from_u64(5),
-        ]),
-    ];
-    let coeff = E::from_base_slice(&[
-        B::from_u64(23),
-        B::from_u64(29),
-        B::from_u64(9),
-        B::from_u64(15),
-    ]);
-    let entries = [1usize, 2, 3, 5, 20, 25, 127, 4096, 8191, 10_000, 16_000]
-        .into_iter()
-        .enumerate()
-        .map(|(entry_idx, table_idx)| {
-            (
-                table_idx,
-                E::from_base_slice(&[
-                    B::from_u64(31 + 2 * entry_idx as u64),
-                    B::from_u64(37 + 3 * entry_idx as u64),
-                    B::from_u64(5 + entry_idx as u64),
-                    B::from_u64(11 + 4 * entry_idx as u64),
-                ]),
-            )
-        })
-        .collect::<Vec<_>>();
-    let sparse_witness =
-        SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
-
-    let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-    let dense_term =
-        ExtensionOpeningReductionTerm::new_sparse(sparse_witness.clone(), dense_factor, coeff)
-            .unwrap();
-    let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
-        sparse_witness,
-        tail_point.clone(),
-        eta,
-        coeff,
-        SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
-    )
-    .unwrap();
-
-    let expected_claim =
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&dense_term))
-            .unwrap();
-    assert_eq!(
-        ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&lazy_term,))
-            .unwrap(),
-        expected_claim
-    );
-
-    let mut dense_prover =
-        ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
-    let mut lazy_prover =
-        ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
-    let mut claim = expected_claim;
-    for round in 0..tail_point.len() {
-        let dense_round = dense_prover.compute_round_univariate(round, claim);
-        let lazy_round = lazy_prover.compute_round_univariate(round, claim);
-        assert_eq!(lazy_round, dense_round);
-
-        let challenge = E::from_base_slice(&[
-            B::from_u64(83 + 2 * round as u64),
-            B::from_u64(89 + 3 * round as u64),
-            B::from_u64(5 + round as u64),
-            B::from_u64(11 + round as u64),
-        ]);
-        claim = dense_round.evaluate(&challenge);
-        dense_prover.ingest_challenge(round, challenge);
-        lazy_prover.ingest_challenge(round, challenge);
-    }
-
-    assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
-}
-
-// Exercises the `FpExt4<Fp32>` lazy tensor factor across every Fp32-backed
-// base prime: the largest `2^32 - 99` down through the 31-bit Mersenne-style
-// `2^31 - 19` and smaller widths. Where the product accumulator is exact the lazy
-// factor takes the delayed-reduction branch in `factor_pair`; otherwise it falls
-// back to per-term reduction. Either way the lazy rounds must stay byte-identical to
-// the dense factor materialized via per-term `Mul` (the byte-identical-proof
-// guarantee for the small-field one-hot modes). The macro stamps one `#[test]` per
-// prime so a regression pinpoints the offending modulus rather than hiding behind a
-// single hard-coded prime.
-macro_rules! sparse_tensor_factor_matches_dense_fp32_test {
-    ($name:ident, $base:ty) => {
-        #[test]
-        fn $name() {
-            type B = $base;
-            type E = FpExt4<B>;
-
-            let tail_point = (0..5)
-                .map(|idx| {
-                    E::from_base_slice(&[
-                        B::from_u64(3 * idx as u64 + 7),
-                        B::from_u64(5 * idx as u64 + 11),
-                        B::from_u64(2 * idx as u64 + 1),
-                        B::from_u64(7 * idx as u64 + 3),
-                    ])
-                })
-                .collect::<Vec<_>>();
-            let eta = vec![
-                E::from_base_slice(&[
-                    B::from_u64(17),
-                    B::from_u64(19),
-                    B::from_u64(4),
-                    B::from_u64(6),
-                ]),
-                E::from_base_slice(&[
-                    B::from_u64(8),
-                    B::from_u64(2),
-                    B::from_u64(13),
-                    B::from_u64(5),
-                ]),
-            ];
-            let coeff = E::from_base_slice(&[
-                B::from_u64(23),
-                B::from_u64(29),
-                B::from_u64(9),
-                B::from_u64(15),
-            ]);
-            let entries = vec![
-                (
-                    1,
-                    E::from_base_slice(&[
-                        B::from_u64(31),
-                        B::from_u64(37),
-                        B::from_u64(2),
-                        B::from_u64(8),
-                    ]),
-                ),
-                (
-                    2,
-                    E::from_base_slice(&[
-                        B::from_u64(41),
-                        B::from_u64(43),
-                        B::from_u64(5),
-                        B::from_u64(9),
-                    ]),
-                ),
-                (
-                    3,
-                    E::from_base_slice(&[
-                        B::from_u64(47),
-                        B::from_u64(53),
-                        B::from_u64(6),
-                        B::from_u64(1),
-                    ]),
-                ),
-                (
-                    5,
-                    E::from_base_slice(&[
-                        B::from_u64(59),
-                        B::from_u64(61),
-                        B::from_u64(7),
-                        B::from_u64(3),
-                    ]),
-                ),
-                (
-                    20,
-                    E::from_base_slice(&[
-                        B::from_u64(67),
-                        B::from_u64(71),
-                        B::from_u64(8),
-                        B::from_u64(4),
-                    ]),
-                ),
-                (
-                    25,
-                    E::from_base_slice(&[
-                        B::from_u64(73),
-                        B::from_u64(79),
-                        B::from_u64(2),
-                        B::from_u64(6),
-                    ]),
-                ),
-            ];
-            let sparse_witness =
-                SparseExtensionOpeningWitness::new(1usize << tail_point.len(), entries).unwrap();
-
-            let dense_factor = tensor_equality_factor_evals::<B, E>(&tail_point, &eta).unwrap();
-            let dense_term = ExtensionOpeningReductionTerm::new_sparse(
-                sparse_witness.clone(),
-                dense_factor,
-                coeff,
-            )
-            .unwrap();
-            let lazy_term = ExtensionOpeningReductionTerm::new_sparse_tensor_factor::<B>(
-                sparse_witness,
-                tail_point.clone(),
-                eta,
-                coeff,
-                2,
-            )
-            .unwrap();
-
-            let expected_claim = ExtensionOpeningReductionProver::input_claim_from_terms(
-                std::slice::from_ref(&dense_term),
-            )
-            .unwrap();
-            assert_eq!(
-                ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(
-                    &lazy_term,
-                ))
-                .unwrap(),
-                expected_claim
-            );
-
-            let mut dense_prover =
-                ExtensionOpeningReductionProver::new(vec![dense_term], expected_claim).unwrap();
-            let mut lazy_prover =
-                ExtensionOpeningReductionProver::new(vec![lazy_term], expected_claim).unwrap();
-            let mut claim = expected_claim;
-            for round in 0..tail_point.len() {
-                let dense_round = dense_prover.compute_round_univariate(round, claim);
-                let lazy_round = lazy_prover.compute_round_univariate(round, claim);
-                assert_eq!(lazy_round, dense_round);
-
-                let challenge = E::from_base_slice(&[
-                    B::from_u64(83 + 2 * round as u64),
-                    B::from_u64(89 + 3 * round as u64),
-                    B::from_u64(5 + round as u64),
-                    B::from_u64(11 + round as u64),
-                ]);
-                claim = dense_round.evaluate(&challenge);
-                dense_prover.ingest_challenge(round, challenge);
-                lazy_prover.ingest_challenge(round, challenge);
-            }
-
-            assert_eq!(lazy_prover.final_terms(), dense_prover.final_terms());
-        }
+        (result, prover.final_terms().unwrap())
     };
+    assert_eq!(prove(vec![shared_group]), prove(separate_groups));
 }
-
-sparse_tensor_factor_matches_dense_fp32_test!(
-    sparse_tensor_factor_matches_dense_factor_rounds_fp32_prime32_offset99,
-    Prime32Offset99
-);
-sparse_tensor_factor_matches_dense_fp32_test!(
-    sparse_tensor_factor_matches_dense_factor_rounds_fp32_prime31_offset19,
-    Prime31Offset19
-);
-sparse_tensor_factor_matches_dense_fp32_test!(
-    sparse_tensor_factor_matches_dense_factor_rounds_fp32_prime30_offset35,
-    Prime30Offset35
-);
-sparse_tensor_factor_matches_dense_fp32_test!(
-    sparse_tensor_factor_matches_dense_factor_rounds_fp32_prime24_offset3,
-    Prime24Offset3
-);
 
 #[test]
 fn extension_opening_reduction_proves_transparent_factor_claim() {
@@ -738,10 +394,8 @@ fn extension_opening_reduction_proves_transparent_factor_claim() {
     let factor_evals = factor.evals().unwrap();
     let expected_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], expected_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], expected_claim).unwrap();
     assert_eq!(prover.input_claim(), expected_claim);
 
     let mut prover_transcript = new_transcript();
@@ -768,9 +422,8 @@ fn detached_verifier_checks_transparent_factor_against_opened_witness() {
     let factor_evals = factor.evals().unwrap();
     let input_claim = factor.claim_for_witness(&witness_evals).unwrap();
 
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -810,9 +463,8 @@ fn extension_opening_reduction_rejects_wrong_final_oracle() {
     let factor_evals: Vec<F> = (0..8).map(|i| F::from_u64((2 * i + 9) as u64)).collect();
 
     let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals, F::one()).unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals, F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
     let mut prover_transcript = new_transcript();
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut prover_transcript, sample_round)
@@ -828,10 +480,8 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
     let witness_evals: Vec<F> = (0..4).map(|i| F::from_u64((5 * i + 1) as u64)).collect();
     let factor_evals: Vec<F> = (0..4).map(|i| F::from_u64((13 * i + 2) as u64)).collect();
     let input_claim = extension_opening_reduction_claim(&witness_evals, &factor_evals).unwrap();
-    let term =
-        ExtensionOpeningReductionTerm::new(witness_evals.clone(), factor_evals.clone(), F::one())
-            .unwrap();
-    let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+    let group = eor_group(witness_evals.clone(), factor_evals.clone(), F::one()).unwrap();
+    let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
 
     let mut prover_transcript = new_transcript();
     let (proof, challenges, final_claim) = prover
@@ -861,7 +511,7 @@ fn extension_opening_reduction_detached_round_verifier_returns_final_claim() {
 fn extension_opening_reduction_rejects_malformed_table_lengths() {
     let witness_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
     let factor_evals = vec![F::one(), F::from_u64(2), F::from_u64(3)];
-    assert!(ExtensionOpeningReductionTerm::new(witness_evals, factor_evals, F::one()).is_err());
+    assert!(eor_group(witness_evals, factor_evals, F::one()).is_err());
 
     let witness_evals = vec![F::one(), F::from_u64(2)];
     let factor_evals = vec![F::one()];
@@ -873,14 +523,14 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 }
 
 // ---------------------------------------------------------------------------
-// Regression: EOR round messages must honor `DELAYED_PRODUCT_SUM_IS_EXACT`.
+// Regression: EOR round messages must honor `SUM_IS_EXACT`.
 //
-// `accumulate_dense_round`, `fused_fold_and_accumulate`, and the sparse
-// `accumulate_entries_with_factor` sum `mul_to_product_accum` products and
-// reduce once. That is only sound when the field's accumulator is exact w.r.t.
-// per-term `Mul`. For a field that leaves `DELAYED_PRODUCT_SUM_IS_EXACT` at its
-// conservative `false` default, the prover must reduce every product first, or
-// the round coefficients silently drift and the prover's claim diverges.
+// `accumulate_dense_round` and `fused_fold_witness_and_accumulate` sum
+// `mul_unreduced` products and reduce once. That is only sound when the
+// field's accumulator is exact w.r.t. per-term `Mul`. For a field that leaves
+// `SUM_IS_EXACT` at its conservative `false` default, the
+// prover must reduce every product first, or the round coefficients silently
+// drift and the prover's claim diverges.
 //
 // The existing byte-identical tests only cover fields whose flag is `true`
 // (exact) or whose accumulator is trivially exact, so they cannot catch a
@@ -889,8 +539,8 @@ fn proof_claim(witness_evals: &[F], factor_evals: &[F]) -> F {
 // assert the emitted round messages stay byte-identical to per-term `Mul`.
 mod delayed_product_sum_contract {
     use super::*;
-    use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-    use akita_field::{AdditiveGroup, Invertible, One, RingCore, Zero};
+    use jolt_field::{AdditiveGroup, One, Ring, Zero};
+    use jolt_field::{Fold, Unreduced};
     use std::fmt;
     use std::iter::{Product, Sum};
     use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
@@ -899,8 +549,8 @@ mod delayed_product_sum_contract {
 
     /// `u64` product accumulator that adds modulo `2^64`. Each stored value is a
     /// canonical residue `< p < 2^64`, but summing several near-`p` residues
-    /// wraps, so `reduce(Σ mul_to_product_accum)` diverges from `Σ a*b` — exactly
-    /// the hazard `DELAYED_PRODUCT_SUM_IS_EXACT = false` exists to flag.
+    /// wraps, so `reduce(Σ mul_unreduced)` diverges from `Σ a*b` — exactly
+    /// the hazard `SUM_IS_EXACT = false` exists to flag.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     struct WrappingU64Accum(u64);
 
@@ -955,7 +605,7 @@ mod delayed_product_sum_contract {
     impl AdditiveGroup for WrappingU64Accum {}
 
     /// Field wrapper over `Prime64Offset59` whose only non-standard behavior is
-    /// the lossy product accumulator above plus `DELAYED_PRODUCT_SUM_IS_EXACT =
+    /// the lossy product accumulator above plus `SUM_IS_EXACT =
     /// false`. All ordinary arithmetic delegates to the exact inner field, so a
     /// per-term `Mul` computation is trivially the ground truth.
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
@@ -1062,17 +712,32 @@ mod delayed_product_sum_contract {
         }
     }
     impl AdditiveGroup for LossyField {}
-    impl RingCore for LossyField {}
-    impl Invertible for LossyField {
+    impl Ring for LossyField {
+        fn from_u64(v: u64) -> Self {
+            Self(Inner::from_u64(v))
+        }
+        fn from_i64(v: i64) -> Self {
+            Self(Inner::from_i64(v))
+        }
+        fn from_u128(v: u128) -> Self {
+            Self(Inner::from_u128(v))
+        }
+        fn from_i128(v: i128) -> Self {
+            Self(Inner::from_i128(v))
+        }
+    }
+    impl Field for LossyField {
         fn inverse(&self) -> Option<Self> {
             self.0.inverse().map(Self)
         }
+        fn random<R: rand_core::RngCore>(rng: &mut R) -> Self {
+            Self(Inner::random(rng))
+        }
     }
-    impl FieldCore for LossyField {}
 
-    impl HasOptimizedFold for LossyField {
-        type FoldCtx = Self;
-        fn precompute_fold(r: Self) -> Self {
+    impl Fold for LossyField {
+        type Ctx = Self;
+        fn precompute(r: Self) -> Self {
             r
         }
         fn fold_one(r: &Self, even: Self, odd: Self) -> Self {
@@ -1080,25 +745,32 @@ mod delayed_product_sum_contract {
         }
     }
 
-    impl HasUnreducedOps for LossyField {
-        type MulU64Accum = WrappingU64Accum;
-        type ProductAccum = WrappingU64Accum;
+    impl Unreduced for LossyField {
+        type SmallProduct = WrappingU64Accum;
+        type Product = WrappingU64Accum;
+        type Wide = Self;
 
         // Deliberately inexact: the accumulator wraps mod 2^64, so a delayed
         // batch sum diverges from per-term `Mul` once the sum crosses 2^64.
-        const DELAYED_PRODUCT_SUM_IS_EXACT: bool = false;
+        const SUM_IS_EXACT: bool = false;
 
         fn mul_u64_unreduced(self, small: u64) -> WrappingU64Accum {
             WrappingU64Accum((self.0 * Inner::from_u64(small)).to_limbs())
         }
-        fn mul_to_product_accum(self, other: Self) -> WrappingU64Accum {
+        fn mul_unreduced(self, other: Self) -> WrappingU64Accum {
             WrappingU64Accum((self.0 * other.0).to_limbs())
         }
-        fn reduce_mul_u64_accum(accum: WrappingU64Accum) -> Self {
+        fn reduce_small_product(accum: WrappingU64Accum) -> Self {
             Self(Inner::from_u64(accum.0))
         }
-        fn reduce_product_accum(accum: WrappingU64Accum) -> Self {
+        fn reduce_product(accum: WrappingU64Accum) -> Self {
             Self(Inner::from_u64(accum.0))
+        }
+        fn scale_wide(self, small: i32) -> Self::Wide {
+            self * Self::from_i32(small)
+        }
+        fn reduce_wide(wide: Self::Wide) -> Self {
+            wide
         }
     }
 
@@ -1148,9 +820,9 @@ mod delayed_product_sum_contract {
         let delayed = {
             let mut accum = WrappingU64Accum::zero();
             for i in 0..half {
-                accum += witness[2 * i].mul_to_product_accum(factor[2 * i]);
+                accum += witness[2 * i].mul_unreduced(factor[2 * i]);
             }
-            LossyField::reduce_product_accum(accum)
+            LossyField::reduce_product(accum)
         };
         assert_ne!(
             per_term, delayed,
@@ -1159,7 +831,7 @@ mod delayed_product_sum_contract {
     }
 
     // Dense path: round 0 exercises `accumulate_dense_round`; later rounds use
-    // the cache filled by `fused_fold_and_accumulate`. Both must reduce per term
+    // the cache filled by `fused_fold_witness_and_accumulate`. Both must reduce per term
     // for this field, so every round message matches the per-term reference.
     #[test]
     fn dense_round_messages_honor_delayed_product_flag() {
@@ -1173,10 +845,8 @@ mod delayed_product_sum_contract {
         assert_inputs_are_hazardous(&witness, &factor);
 
         let input_claim = extension_opening_reduction_claim(&witness, &factor).unwrap();
-        let term =
-            ExtensionOpeningReductionTerm::new(witness.clone(), factor.clone(), LossyField::one())
-                .unwrap();
-        let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
+        let group = eor_group(witness.clone(), factor.clone(), LossyField::one()).unwrap();
+        let mut prover = ExtensionOpeningReductionProver::new(vec![group], input_claim).unwrap();
         let mut claim = prover.input_claim();
 
         let eval_points = [zero, one, two, LossyField::from_u64(3)];
@@ -1194,36 +864,6 @@ mod delayed_product_sum_contract {
             prover.ingest_challenge(round, challenge);
             witness = reference_fold(&witness, challenge);
             factor = reference_fold(&factor, challenge);
-        }
-    }
-
-    // Sparse path: round 0 exercises `accumulate_entries_with_factor`, which
-    // must take the per-term branch for this field.
-    #[test]
-    fn sparse_round_messages_honor_delayed_product_flag() {
-        let zero = LossyField::zero();
-        let one = LossyField::one();
-        let max = max_residue();
-        // Dense-equivalent tables (even slots nonzero) for the reference.
-        let witness = vec![one, zero, one, zero, one, zero, one, zero];
-        let factor = vec![max, zero, max, zero, max, zero, max, zero];
-        assert_inputs_are_hazardous(&witness, &factor);
-
-        let entries = vec![(0, one), (2, one), (4, one), (6, one)];
-        let sparse = SparseExtensionOpeningWitness::new(8, entries).unwrap();
-        let term = ExtensionOpeningReductionTerm::new_sparse(sparse, factor.clone(), one).unwrap();
-        let input_claim =
-            ExtensionOpeningReductionProver::input_claim_from_terms(std::slice::from_ref(&term))
-                .unwrap();
-        let mut prover = ExtensionOpeningReductionProver::new(vec![term], input_claim).unwrap();
-
-        let prover_poly = prover.compute_round_univariate(0, input_claim);
-        for x in [zero, one, LossyField::from_u64(2), LossyField::from_u64(3)] {
-            assert_eq!(
-                prover_poly.evaluate(&x),
-                reference_round_eval(&witness, &factor, input_claim, x),
-                "sparse round 0 diverged from per-term Mul at x={x:?}"
-            );
         }
     }
 }

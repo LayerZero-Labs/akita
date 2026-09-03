@@ -2,7 +2,7 @@
 use super::*;
 
 #[cfg(test)]
-pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn mat_vec_mul_unchecked<F: Field + CanonicalEncoding, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
 ) -> Vec<CyclotomicRing<F, D>> {
@@ -20,7 +20,7 @@ pub(crate) fn mat_vec_mul_unchecked<F: FieldCore + CanonicalField, const D: usiz
 
 #[cfg(test)]
 pub(super) fn precompute_dense_mat_ntt_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -39,7 +39,7 @@ pub(super) fn precompute_dense_mat_ntt_with_params<
 
 #[cfg(test)]
 fn mat_vec_mul_dense_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -68,7 +68,7 @@ fn mat_vec_mul_dense_with_params<
 
 #[cfg(test)]
 fn mat_vec_mul_dense_many_with_params<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -101,7 +101,7 @@ fn mat_vec_mul_dense_many_with_params<
 }
 
 #[cfg(test)]
-pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn mat_vec_mul_crt_ntt<F: Field + CanonicalEncoding, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vec: &[CyclotomicRing<F, D>],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
@@ -115,7 +115,7 @@ pub(crate) fn mat_vec_mul_crt_ntt<F: FieldCore + CanonicalField, const D: usize>
 }
 
 #[cfg(test)]
-pub(crate) fn mat_vec_mul_crt_ntt_many<F: FieldCore + CanonicalField, const D: usize>(
+pub(crate) fn mat_vec_mul_crt_ntt_many<F: Field + CanonicalEncoding, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     vecs: &[Vec<CyclotomicRing<F, D>>],
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {

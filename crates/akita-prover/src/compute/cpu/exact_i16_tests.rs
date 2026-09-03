@@ -1,18 +1,29 @@
 use super::prepared_tests::{prepared, D, F};
 use super::CpuBackend;
+use crate::backend::packed_digits::PackedSignedDigits;
 use crate::compute::plans::DenseCommitInput;
 use akita_algebra::CyclotomicRing;
-use akita_field::PseudoMersenneField;
 use akita_types::sis::compute_num_digits_field_width;
 use akita_types::{NttCacheKey, NttTransformDomain};
+use jolt_field::{CanonicalEncoding, One, Ring};
 
 #[test]
 fn recursive_commit_selects_exact_i16_from_inner_basis() {
     let prepared = prepared();
     let coeffs = vec![[1i8; D], [-1i8; D]];
+    let packed =
+        PackedSignedDigits::from_i8_digits(coeffs.into_iter().flatten().collect(), 2).unwrap();
     let commit = |log_basis_inner| {
         CpuBackend::DEFAULT
-            .recursive_witness_commit_rows(&prepared, &coeffs, 1, 2, 1, 1, log_basis_inner, Some(2))
+            .recursive_packed_witness_commit_rows::<_, D>(
+                &prepared,
+                packed.zero_padded(2 * D).unwrap(),
+                1,
+                2,
+                1,
+                1,
+                log_basis_inner,
+            )
             .expect("recursive commit rows")
     };
 
@@ -72,10 +83,8 @@ fn dense_i16_commit_matches_schoolbook_composition() {
     let n_a = 2;
 
     for log_basis_inner in [9, 10, 11] {
-        let num_digits_inner = compute_num_digits_field_width(
-            <F as PseudoMersenneField>::MODULUS_BITS,
-            log_basis_inner,
-        );
+        let num_digits_inner =
+            compute_num_digits_field_width(<F as CanonicalEncoding>::MODULUS_BITS, log_basis_inner);
         let row_width = block.len() * num_digits_inner;
         let actual = CpuBackend::DEFAULT
             .dense_commit_rows(

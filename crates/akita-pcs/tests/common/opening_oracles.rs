@@ -5,11 +5,11 @@
 //! would let a shared point-layout or fold-order bug move both values together.
 //! These functions instead evaluate raw coefficients directly.
 
-use akita_field::FieldCore;
 use akita_prover::OneHotPoly;
+use jolt_field::Field;
 
 /// Lagrange weight at one Boolean index, in little-endian variable order.
-fn lagrange_weight_at<E: FieldCore>(point: &[E], index: usize) -> E {
+fn lagrange_weight_at<E: Field>(point: &[E], index: usize) -> E {
     point
         .iter()
         .enumerate()
@@ -27,7 +27,7 @@ fn lagrange_weight_at<E: FieldCore>(point: &[E], index: usize) -> E {
 /// The recursion borrows evaluation halves and reuses one small leaf buffer.
 /// It therefore avoids the materialized Lagrange table limit and a full copy
 /// of production-sized evaluation vectors.
-pub(crate) fn dense_opening_lagrange<E: FieldCore>(evals: &[E], point: &[E]) -> E {
+pub(crate) fn dense_opening_lagrange<E: Field>(evals: &[E], point: &[E]) -> E {
     debug_assert_eq!(
         evals.len(),
         1usize << point.len(),
@@ -39,7 +39,7 @@ pub(crate) fn dense_opening_lagrange<E: FieldCore>(evals: &[E], point: &[E]) -> 
     dense_opening_lagrange_rec(evals, point, &mut scratch)
 }
 
-fn dense_opening_lagrange_rec<E: FieldCore>(evals: &[E], point: &[E], scratch: &mut [E]) -> E {
+fn dense_opening_lagrange_rec<E: Field>(evals: &[E], point: &[E], scratch: &mut [E]) -> E {
     if evals.len() <= scratch.len() {
         let mut len = evals.len();
         scratch[..len].copy_from_slice(evals);
@@ -63,7 +63,7 @@ fn dense_opening_lagrange_rec<E: FieldCore>(evals: &[E], point: &[E], scratch: &
 }
 
 /// Dense opening in the monomial basis.
-pub(crate) fn dense_opening_monomial<E: FieldCore>(evals: &[E], point: &[E]) -> E {
+pub(crate) fn dense_opening_monomial<E: Field>(evals: &[E], point: &[E]) -> E {
     assert_eq!(
         evals.len(),
         1usize << point.len(),
@@ -86,7 +86,7 @@ pub(crate) fn dense_opening_monomial<E: FieldCore>(evals: &[E], point: &[E]) -> 
 ///
 /// Each selected weight is computed on demand, so production arities above
 /// the materialized Lagrange-table limit remain executable.
-pub(crate) fn onehot_opening_lagrange<Base: FieldCore, E: FieldCore>(
+pub(crate) fn onehot_opening_lagrange<Base: Field, E: Field>(
     poly: &OneHotPoly<Base, u8>,
     point: &[E],
 ) -> E {

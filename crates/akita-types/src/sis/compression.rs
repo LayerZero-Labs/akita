@@ -89,8 +89,8 @@ pub fn min_compression_secure_rank(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ntt_cache_requires_i16_tail;
-    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use crate::ntt_cache_requires_exactness_tail;
+    use jolt_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn coverage_is_exactly_the_six_rank_one_compression_cells() {
@@ -150,9 +150,9 @@ mod tests {
         use akita_algebra::CyclotomicRing;
 
         // First-map dimensions sit in both the protocol NTT band and the compression ladder.
-        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 16>(4_096, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 32>(2_048, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 64>(1_024, 1).unwrap());
+        assert!(!ntt_cache_requires_exactness_tail::<Prime128OffsetA7F7, 16>(4_096, 1).unwrap());
+        assert!(!ntt_cache_requires_exactness_tail::<Prime64Offset59, 32>(2_048, 1).unwrap());
+        assert!(!ntt_cache_requires_exactness_tail::<Prime32Offset99, 64>(1_024, 1).unwrap());
 
         // Compression-only dims must use the purpose-aware prep path.
         let q128_d8 = FlatMatrix::from_ring_slice(&vec![
@@ -162,7 +162,7 @@ mod tests {
         let q128_cache =
             prepare_compression_ntt_cache(q128_d8.ring_view::<8>(1, 256).expect("view"))
                 .expect("q128/D8 cache");
-        assert!(!q128_cache.has_i16_tail());
+        assert!(!q128_cache.has_exactness_tail());
         assert!(q128_cache.has_cyclic());
 
         let q64_d16 =
@@ -170,7 +170,7 @@ mod tests {
         let q64_cache =
             prepare_compression_ntt_cache(q64_d16.ring_view::<16>(1, 128).expect("view"))
                 .expect("q64/D16 cache");
-        assert!(!q64_cache.has_i16_tail());
+        assert!(!q64_cache.has_exactness_tail());
         assert!(q64_cache.has_cyclic());
 
         let q32_d32 =
@@ -178,7 +178,7 @@ mod tests {
         let q32_cache =
             prepare_compression_ntt_cache(q32_d32.ring_view::<32>(1, 64).expect("view"))
                 .expect("q32/D32 cache");
-        assert!(!q32_cache.has_i16_tail());
+        assert!(!q32_cache.has_exactness_tail());
         assert!(q32_cache.has_cyclic());
     }
 }

@@ -8,12 +8,14 @@ use akita_error::AkitaError;
 
 mod descriptor;
 mod profiles;
+mod sis_occurrences;
 mod sizing;
 
 pub use profiles::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
     GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
+pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -310,6 +312,35 @@ impl TerminalFoldParams {
     }
 }
 
+/// Successor consumed by one nonterminal fold.
+///
+/// Recursive and terminal successors expose different wire payloads, but both
+/// determine the outgoing relation domain. Proof shape, proof sizing, and
+/// transcript planning therefore share this one schedule-owned distinction.
+#[derive(Clone, Copy)]
+pub enum FoldSuccessor<'a> {
+    Recursive(&'a CommittedGroupParams),
+    Terminal(&'a TerminalFoldParams),
+}
+
+impl FoldSuccessor<'_> {
+    #[inline]
+    #[must_use]
+    pub fn ring_dimension(self) -> usize {
+        match self {
+            Self::Recursive(params) => params.d_a(),
+            Self::Terminal(params) => params.d_a(),
+        }
+    }
+
+    pub fn recursive_opening_num_vars(self) -> Result<usize, AkitaError> {
+        match self {
+            Self::Recursive(params) => params.recursive_opening_num_vars(),
+            Self::Terminal(params) => params.recursive_opening_num_vars(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FoldSchedule {
     pub root: FoldParams,
@@ -423,28 +454,11 @@ impl FoldSchedule {
                 ));
             }
             if let Some(prefix) = &step.params.setup_prefix() {
-                prefix.validate()?;
-                prefix.profile.outer_slice_count.validate_for_commitment(
-                    0,
-                    crate::CommitmentPayloadMode::Compressed,
-                    prefix.profile.blocks.live_blocks,
-                )?;
-                let n_prefix = prefix.n_prefix()?;
-                let natural_len = prefix.setup_natural_len.ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "incoming setup prefix carries no active support length".to_string(),
-                    )
-                })?;
-                crate::validate_setup_prefix_domain(natural_len, n_prefix).map_err(|_| {
+                prefix.validate().map_err(|error| {
                     AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
+                        "recursive fold {index} setup-prefix geometry is invalid: {error}"
                     ))
                 })?;
-                if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup-prefix geometry is invalid"
-                    )));
-                }
             }
             let successor_len = self
                 .recursive_folds
@@ -782,6 +796,8 @@ fn validate_stage2_successor_capacity(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
+    /// Exact proof-level packed nonce-stream bytes.
+    pub nonce_stream_bytes: usize,
     pub estimated_root_direct_payload_bytes: usize,
     pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
@@ -823,6 +839,7 @@ impl FoldScheduleEstimate {
     pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
         self.estimated_direct_proof_payload_bytes()?
             .checked_add(self.estimated_stage3_payload_bytes()?)
+            .and_then(|value| value.checked_add(self.nonce_stream_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

@@ -1,5 +1,6 @@
 //! Protocol transcript contracts and implementations.
 
+mod grinding;
 mod label;
 pub mod labels;
 #[cfg(feature = "logging-transcript")]
@@ -16,9 +17,14 @@ compile_error!("enable exactly one transcript backend: transcript-blake2b or tra
 #[cfg(all(feature = "transcript-blake2b", feature = "transcript-keccak"))]
 compile_error!("enable exactly one transcript backend: transcript-blake2b or transcript-keccak");
 
-use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::AkitaSerialize;
+use jolt_field::{CanonicalEncoding, ExtField, Field};
 
+pub use grinding::{
+    grinding_payload, grinding_predicate_accepts, preview_grinding_predicate,
+    search_grinding_nonce, TranscriptChallengePreview, GRINDING_LITTLE_ENDIAN_BIT_ORDER,
+    GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_BYTES, GRINDING_PREDICATE_LEN, MAX_GRINDING_BITS,
+};
 pub use label::Label;
 #[cfg(feature = "logging-transcript")]
 pub use logging::{clear_thread_events, thread_events, LoggingTranscript, TranscriptEvent};
@@ -34,11 +40,8 @@ pub use sponge::{AkitaTranscript, TranscriptSponge, PROTOCOL_TAG};
 /// all absorbed values.
 pub trait Transcript<F>: Send
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
-    /// Construct a new transcript under a domain label.
-    fn new(domain_label: &[u8]) -> Self;
-
     /// Bind canonical instance-descriptor bytes before replaying a proof.
     ///
     /// Implementations must absorb these bytes with transcript-specific domain
@@ -51,6 +54,18 @@ where
 
     /// Record verifier-side canonical bytes for logging checks.
     fn record_wire_bytes(&mut self, _label: &[u8], _bytes: &[u8]) {}
+
+    /// Record one compact public grinding-plan run for feature-gated audits.
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_plan_query(&mut self, _site: &[u8], _multiplicity: u64) {}
+
+    /// Record the protected challenge that discharged one pending PoW site.
+    #[cfg(feature = "logging-transcript")]
+    fn record_grinding_actual_query(&mut self, _site: &[u8], _label: &[u8]) {}
+
+    /// Record the indexed coordinate range sampled by one live fold draw.
+    #[cfg(feature = "logging-transcript")]
+    fn record_fold_challenge_range(&mut self, _group_index: usize, _coordinate_count: usize) {}
 
     /// Record a structured proof field for logging checks *and* absorb it into
     /// the transcript, in one call.
@@ -86,26 +101,56 @@ where
 
     /// Squeeze `len` challenge bytes under the provided label.
     fn challenge_bytes(&mut self, label: &[u8], len: usize) -> Vec<u8>;
+
+    /// Squeeze one native 32-byte transcript block.
+    fn challenge_block(&mut self, label: &[u8]) -> [u8; TRANSCRIPT_CHALLENGE_BLOCK_LEN];
+
+    /// Apply one public transcript proof-of-work transition.
+    ///
+    /// A zero-bit target is an explicit no-op and returns `None`. A nonzero
+    /// target absorbs the canonical payload and consumes one 32-byte predicate
+    /// block. The site label is diagnostic and is not part of the production
+    /// sponge input.
+    fn grinding_predicate(
+        &mut self,
+        _site_label: &[u8],
+        grind_bits: u8,
+        nonce_bits: u8,
+        counter: u32,
+    ) -> Option<[u8; GRINDING_PREDICATE_LEN]> {
+        let grind_bits = std::num::NonZeroU8::new(grind_bits)?;
+        let payload = grinding_payload(grind_bits, nonce_bits, counter);
+        self.append_bytes(labels::ABSORB_TRANSCRIPT_GRINDING, &payload);
+        Some(self.challenge_block(labels::CHALLENGE_GRINDING_PREDICATE))
+    }
 }
 
+/// Construction contract for owned transcript implementations.
+///
+/// Keeping construction separate from replay lets protocol adapters borrow an
+/// existing transcript while still implementing [`Transcript`].
+pub trait TranscriptFactory<F>: Transcript<F>
+where
+    F: Field + CanonicalEncoding,
+{
+    /// Construct a new transcript under a domain label.
+    fn new(domain_label: &[u8]) -> Self;
+}
+
+/// Byte length of one native transcript squeeze block.
+pub const TRANSCRIPT_CHALLENGE_BLOCK_LEN: usize = 32;
 /// Byte length of every fold-challenge seed.
-pub const FOLD_CHALLENGE_SEED_LEN: usize = 32;
-
-/// Preview-only seed derivation for prover-side fold Fiat–Shamir grinding.
-pub trait FoldChallengeSeedPreview {
-    /// Derive the final seed after a hypothetical sequence of fold draws.
-    fn preview_fold_challenge_seed(&self, absorb_payloads: &[&[u8]]) -> Vec<u8>;
-}
+pub const FOLD_CHALLENGE_SEED_LEN: usize = TRANSCRIPT_CHALLENGE_BLOCK_LEN;
 
 /// Append an extension-field element by absorbing its base-field coordinates.
 pub fn append_ext_field<F, E, T>(transcript: &mut T, label: &[u8], x: &E)
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: Transcript<F>,
 {
     let coeffs = x.to_base_vec();
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         for coeff in coeffs.iter().take(1) {
             transcript.append_field(label, coeff);
         }
@@ -119,20 +164,20 @@ where
 
 /// Sample an extension-field challenge from base-field transcript limbs.
 ///
-/// This draws `E::EXT_DEGREE` base-field challenges under distinct limb labels
+/// This draws `E::DEGREE` base-field challenges under distinct limb labels
 /// and assembles the extension element with [`ExtField::from_base_slice`].
 pub fn sample_ext_challenge<F, E, T>(transcript: &mut T, label: &[u8]) -> E
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F>,
     T: Transcript<F>,
 {
-    if E::EXT_DEGREE == 1 {
+    if E::DEGREE == 1 {
         let coeff = transcript.challenge_scalar(label);
         return E::from_base_slice(&[coeff]);
     }
 
-    let coeffs = (0..E::EXT_DEGREE)
+    let coeffs = (0..E::DEGREE)
         .map(|limb| transcript.challenge_scalar(&ext_limb_label(label, limb)))
         .collect::<Vec<_>>();
     E::from_base_slice(&coeffs)

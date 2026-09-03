@@ -1,8 +1,8 @@
 use super::*;
-use akita_types::{FoldLinfProtocolBinding, OpeningClaimsLayout};
+use akita_types::OpeningClaimsLayout;
 
 /// Verifier state carried between suffix fold levels.
-pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
+pub(super) struct SuffixVerifierState<'a, F: Field, E: Field> {
     /// Current opening point for the committed suffix witness.
     pub opening_point: Vec<E>,
     /// Claimed opening value for the current commitment.
@@ -16,7 +16,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
 }
 
-pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
+pub(super) enum SuffixWitnessState<'a, F: Field> {
     Commitment(&'a RingVec<F>),
     TerminalT(Vec<u8>),
 }
@@ -28,7 +28,7 @@ fn suffix_commitment_payloads<F, E>(
     witness_commitment: &RingVec<F>,
 ) -> Result<Vec<RingVec<F>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
@@ -53,7 +53,7 @@ where
     }
 
     let relation_geometry =
-        RelationWitnessGeometry::for_level(lp, opening_batch, <E as ExtField<F>>::EXT_DEGREE)?;
+        RelationWitnessGeometry::for_level(lp, opening_batch, <E as ExtField<F>>::DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     let mut ordered = Vec::with_capacity(group_payloads.len());
     for (relation_group_index, group_index) in
@@ -74,13 +74,12 @@ where
     Ok(ordered)
 }
 
-struct FoldReplayPayload<'a, F: FieldCore, E: FieldCore> {
+struct FoldReplayPayload<'a, F: Field, E: Field> {
     extension_opening_reduction: Option<&'a ExtensionOpeningReductionProof<E>>,
-    fold_grind_nonce: u32,
     kind: FoldReplayKind<'a, F, E>,
 }
 
-enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
+enum FoldReplayKind<'a, F: Field, E: Field> {
     Recursive {
         v: &'a RingVec<F>,
         stage1: &'a AkitaStage1Proof<E>,
@@ -110,14 +109,9 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     mut current_state: SuffixVerifierState<'a, F, E>,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     for (offset, fold) in recursive_folds.iter().enumerate() {
         let level_index = offset + 1;
@@ -176,7 +170,6 @@ where
         let prepared = prepare_fold_replay::<F, E, T>(
             FoldReplayPayload {
                 extension_opening_reduction: fold.extension_opening_reduction(),
-                fold_grind_nonce: fold.fold_grind_nonce,
                 kind: FoldReplayKind::Recursive {
                     v: &fold.opening_payload,
                     stage1: &fold.stage1,
@@ -188,6 +181,7 @@ where
             },
             setup,
             transcript,
+            u32::try_from(level_index).map_err(|_| AkitaError::InvalidProof)?,
             &current_state,
             current_lp,
             step.output_witness_len,
@@ -231,6 +225,7 @@ where
         terminal,
         setup,
         transcript,
+        u32::try_from(terminal_level).map_err(|_| AkitaError::InvalidProof)?,
         &current_state,
         &schedule.terminal,
     )
@@ -245,18 +240,14 @@ fn verify_terminal_suffix<F, E, T>(
     proof: &TerminalLevelProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
+    level: u32,
     current_state: &SuffixVerifierState<'_, F, E>,
     scheduled: &TerminalFoldParams,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let params = &scheduled;
     let t_state = match &current_state.witness {
@@ -281,8 +272,6 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    FoldLinfProtocolBinding::CURRENT.validate_grind_nonce(proof.fold_grind_nonce)?;
-
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
@@ -292,7 +281,7 @@ where
     }
     let protocol_point = current_state.opening_point.clone();
     let opening_batch = OpeningClaimsLayout::new(protocol_point.len(), 1)?;
-    let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let (prepared_points, final_relation) = if const { <E as ExtField<F>>::DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -313,6 +302,7 @@ where
             current_state.basis,
             params,
             transcript,
+            level,
         )?;
         (
             replay
@@ -328,6 +318,8 @@ where
         proof.terminal_response(),
         scheduled.response_shape.logical_num_elems(),
     )?;
+    let fold_response_nonce =
+        transcript.read_fold_response(akita_types::GrindingSite::FoldResponse { level })?;
     let operator_rejection = if params.response_l2_sq_cap().is_some() {
         Some(
             akita_challenges::selective_l2_operator_norm_rejection(
@@ -346,9 +338,10 @@ where
         params.blocks.live_blocks,
         1,
         &scheduled.fold_challenge_config,
-        proof.fold_grind_nonce,
+        fold_response_nonce,
         operator_rejection,
     )?;
+    transcript.record_fold_challenges(level, 0, params.blocks.live_blocks)?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
     super::terminal_direct::verify_terminal_ring_relations(
         setup,
@@ -385,19 +378,15 @@ fn prepare_fold_replay<'a, F, E, T>(
     proof: FoldReplayPayload<'a, F, E>,
     setup: &'a AkitaVerifierSetup<F>,
     transcript: &mut T,
+    level: u32,
     current_state: &'a SuffixVerifierState<'a, F, E>,
     lp: &'a CommittedGroupParams,
     output_witness_len: usize,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let role_dims = lp.role_dims();
     let commit_d = lp.outer_payload_geometry()?.transcript_ring_dimension();
@@ -468,7 +457,7 @@ where
             lp,
             transcript,
         )?
-    } else if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    } else if const { <E as ExtField<F>>::DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -501,11 +490,11 @@ where
             current_state.basis,
             lp,
             transcript,
+            level,
         )?
     };
 
     let witness_len = output_witness_len;
-    let fold_grind_nonce = proof.fold_grind_nonce;
     let (opening_payload, payload) = match proof.kind {
         FoldReplayKind::Recursive {
             v,
@@ -539,6 +528,7 @@ where
         &opening_payload,
         claim_state,
         transcript,
+        level,
     )?;
     let current_commitment = match &current_state.witness {
         SuffixWitnessState::Commitment(commitment) => *commitment,
@@ -548,7 +538,7 @@ where
         suffix_commitment_payloads::<F, E>(setup, lp, &opening_batch, current_commitment)?;
     Ok(PreparedFoldReplay {
         lp,
-        fold_grind_nonce,
+        level,
         opening_payload,
         opening_shape: opening_batch,
         commitment_payloads,

@@ -48,13 +48,16 @@ use super::super::two_round_prefix::{
 };
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, CompactPairFoldLut, EqFactoredSumcheckInstanceProver, EqFactoredUniPoly,
 };
 use akita_types::DigitRangePlan;
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Fold, Unreduced};
+use std::ops::Range;
+
+use crate::backend::packed_digits::{PackedSignedDigitIter, PackedSignedDigits};
 
 const MAX_DIRECT_RANGE_COEFFICIENTS: usize = 5;
 
@@ -226,9 +229,9 @@ impl RangePolynomialPrecomputation {
 }
 
 #[inline]
-fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+fn accumulate_compact_coeff_slot<E: Field + Unreduced>(
+    pos_accum: &mut [E::SmallProduct],
+    neg_accum: &mut [E::SmallProduct],
     slot: usize,
     e_in: E,
     coeff: &CompactCoeffEntry,
@@ -245,9 +248,9 @@ fn accumulate_compact_coeff_slot<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
-    pos_accum: &mut [E::MulU64Accum],
-    neg_accum: &mut [E::MulU64Accum],
+fn accumulate_compact_coeffs<E: Field + Unreduced>(
+    pos_accum: &mut [E::SmallProduct],
+    neg_accum: &mut [E::SmallProduct],
     e_in: E,
     coeffs: &[CompactCoeffEntry],
 ) {
@@ -260,16 +263,13 @@ fn accumulate_compact_coeffs<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn reduce_small_coeff_accum<E: FieldCore + HasUnreducedOps>(
-    pos: E::MulU64Accum,
-    neg: E::MulU64Accum,
-) -> E {
-    E::reduce_mul_u64_accum(pos) - E::reduce_mul_u64_accum(neg)
+fn reduce_small_coeff_accum<E: Field + Unreduced>(pos: E::SmallProduct, neg: E::SmallProduct) -> E {
+    E::reduce_small_product(pos) - E::reduce_small_product(neg)
 }
 
 #[inline]
-fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
-    accum: &mut [E::ProductAccum],
+fn accumulate_dense_entry_coeffs<E: Field + Unreduced>(
+    accum: &mut [E::Product],
     entry_coeffs: &[E],
     e_in: E,
 ) {
@@ -278,12 +278,12 @@ fn accumulate_dense_entry_coeffs<E: FieldCore + HasUnreducedOps>(
     }
 
     for (acc, &entry) in accum.iter_mut().zip(entry_coeffs.iter()) {
-        *acc += e_in.mul_to_product_accum(entry);
+        *acc += e_in.mul_unreduced(entry);
     }
 }
 
 #[inline]
-fn compute_entry_coefficients<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_entry_coefficients<E: Field + Ring + Unreduced>(
     out: &mut [E],
     precomp: &RangePolynomialPrecomputation,
     left_range_image: E,
@@ -325,7 +325,7 @@ fn compute_entry_coefficients<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>
 }
 
 #[inline]
-fn compute_entry_coefficients_x4<E: FieldCore + FromPrimitiveInt + HasUnreducedOps>(
+fn compute_entry_coefficients_x4<E: Field + Ring + Unreduced>(
     out: &mut [[E; MAX_DIRECT_RANGE_COEFFICIENTS]; 4],
     precomp: &RangePolynomialPrecomputation,
     left_range_image: [E; 4],
@@ -341,9 +341,7 @@ fn compute_entry_coefficients_x4<E: FieldCore + FromPrimitiveInt + HasUnreducedO
     }
 }
 
-fn compute_range_round_polynomial_from_range_image<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
->(
+fn compute_range_round_polynomial_from_range_image<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (E, E) + Sync,
@@ -355,10 +353,10 @@ fn compute_range_round_polynomial_from_range_image<
 
     let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
-        || vec![E::ProductAccum::zero(); num_coeffs_q],
+        || vec![E::Product::zero(); num_coeffs_q],
         |mut outer_accum, j_high| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-            let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             let base_j = j_high * num_first;
             let full_chunks = e_first.len() / 4;
             let mut batch_out = [[E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS]; 4];
@@ -411,8 +409,8 @@ fn compute_range_round_polynomial_from_range_image<
 
             let e_out = e_second[j_high];
             for k in 0..num_coeffs_q {
-                let inner_reduced = E::reduce_product_accum(inner_accum[k]);
-                outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                let inner_reduced = E::reduce_product(inner_accum[k]);
+                outer_accum[k] += e_out.mul_unreduced(inner_reduced);
             }
             outer_accum
         },
@@ -424,16 +422,14 @@ fn compute_range_round_polynomial_from_range_image<
         }
     )
     .into_iter()
-    .map(E::reduce_product_accum)
+    .map(E::reduce_product)
     .collect::<Vec<_>>();
 
     let _ = split_eq;
     EqFactoredUniPoly::from_q_coeffs(q_coeffs)
 }
 
-fn compute_range_round_polynomial_from_compact_image_pairs<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
->(
+fn compute_range_round_polynomial_from_compact_image_pairs<E: Field + Ring + Unreduced>(
     split_eq: &GruenSplitEq<E>,
     polynomial_precomputation: &RangePolynomialPrecomputation,
     range_image_pair: impl Fn(usize) -> (i16, i16) + Sync,
@@ -446,11 +442,11 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
 
     let q_coeffs = cfg_fold_reduce!(
         0..e_second.len(),
-        || vec![E::ProductAccum::zero(); num_coeffs_q],
+        || vec![E::Product::zero(); num_coeffs_q],
         |mut outer_accum, j_high| {
             debug_assert!(full_num_coeffs_q <= MAX_DIRECT_RANGE_COEFFICIENTS);
-            let mut inner_pos = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
-            let mut inner_neg = [E::MulU64Accum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut inner_pos = [E::SmallProduct::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+            let mut inner_neg = [E::SmallProduct::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
             for (j_low, &e_in) in e_first.iter().enumerate() {
                 let j = j_high * num_first + j_low;
                 let (left_range_image_integer, right_range_image_integer) = range_image_pair(j);
@@ -466,7 +462,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
             let e_out = e_second[j_high];
             for k in 0..num_coeffs_q {
                 let inner_reduced = reduce_small_coeff_accum(inner_pos[k], inner_neg[k]);
-                outer_accum[k] += e_out.mul_to_product_accum(inner_reduced);
+                outer_accum[k] += e_out.mul_unreduced(inner_reduced);
             }
             outer_accum
         },
@@ -478,7 +474,7 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
         }
     )
     .into_iter()
-    .map(E::reduce_product_accum)
+    .map(E::reduce_product)
     .collect::<Vec<_>>();
 
     let _ = split_eq;
@@ -486,11 +482,11 @@ fn compute_range_round_polynomial_from_compact_image_pairs<
 }
 
 fn compute_range_round_polynomial_from_compact_image<
-    E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
-    V: CompactRangeImageValue,
+    E: Field + Ring + Unreduced,
+    S: CompactRangeImageSource + ?Sized,
 >(
     split_eq: &GruenSplitEq<E>,
-    compact_range_image: &[V],
+    compact_range_image: &S,
     polynomial_precomputation: &RangePolynomialPrecomputation,
 ) -> EqFactoredUniPoly<E> {
     compute_range_round_polynomial_from_compact_image_pairs(
@@ -498,20 +494,184 @@ fn compute_range_round_polynomial_from_compact_image<
         polynomial_precomputation,
         |j| {
             (
-                compact_range_image[2 * j].range_image_value(),
-                compact_range_image[2 * j + 1].range_image_value(),
+                compact_range_image.range_image_value(2 * j),
+                compact_range_image.range_image_value(2 * j + 1),
             )
         },
     )
 }
 
-enum LowBasisRangeImageStorage<E: FieldCore> {
-    Compact(std::sync::Arc<[i8]>),
+enum LowBasisRangeImageStorage<E: Field> {
+    Compact(PackedSignedDigits),
     Materialized(Vec<E>),
 }
 
 pub(crate) trait CompactRangeImageValue: Copy + Send + Sync {
     fn range_image_value(self) -> i16;
+}
+
+pub(crate) trait CompactRangeImageSource: Sync {
+    type QuadIter<'a>: ExactSizeIterator<Item = usize>
+    where
+        Self: 'a;
+
+    fn len(&self) -> usize;
+    fn range_image_value(&self, index: usize) -> i16;
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_>;
+}
+
+pub(crate) struct CompactRangeImageQuadIter<I> {
+    values: I,
+    basis: usize,
+}
+
+impl<I, V> Iterator for CompactRangeImageQuadIter<I>
+where
+    I: Iterator<Item = V>,
+    V: CompactRangeImageValue,
+{
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut index = 0usize;
+        let class_bits = self.basis.trailing_zeros() as usize - 1;
+        for offset in 0..4 {
+            let range_image = self.values.next()?.range_image_value();
+            let class = match self.basis {
+                4 => stage1_b4_digit_from_compact_range_image(range_image),
+                8 => stage1_b8_digit_from_compact_range_image(range_image),
+                _ => unreachable!("unsupported compact range-image basis"),
+            };
+            index |= class << (class_bits * offset);
+        }
+        Some(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (minimum, maximum) = self.values.size_hint();
+        (minimum / 4, maximum.map(|maximum| maximum / 4))
+    }
+}
+
+impl<I, V> ExactSizeIterator for CompactRangeImageQuadIter<I>
+where
+    I: ExactSizeIterator<Item = V>,
+    V: CompactRangeImageValue,
+{
+}
+
+pub(crate) struct PackedRangeImageQuadIter<'a> {
+    digits: PackedSignedDigitIter<'a>,
+    class_bits: usize,
+    class_count: usize,
+}
+
+impl Iterator for PackedRangeImageQuadIter<'_> {
+    type Item = usize;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let digits = self.digits.next_array::<4>()?;
+        let mut index = 0usize;
+        for (offset, digit) in digits.into_iter().enumerate() {
+            let class = if digit >= 0 {
+                digit as usize
+            } else {
+                usize::from(digit.unsigned_abs()) - 1
+            };
+            debug_assert!(class < self.class_count);
+            index |= class << (self.class_bits * offset);
+        }
+        Some(index)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.digits.len() / 4;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for PackedRangeImageQuadIter<'_> {}
+
+impl<V: CompactRangeImageValue> CompactRangeImageSource for [V] {
+    type QuadIter<'a>
+        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn len(&self) -> usize {
+        <[V]>::len(self)
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        self[index].range_image_value()
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        CompactRangeImageQuadIter {
+            values: self[range].iter().copied(),
+            basis,
+        }
+    }
+}
+
+impl<V: CompactRangeImageValue> CompactRangeImageSource for Vec<V> {
+    type QuadIter<'a>
+        = CompactRangeImageQuadIter<std::iter::Copied<std::slice::Iter<'a, V>>>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        self.as_slice()[index].range_image_value()
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        CompactRangeImageQuadIter {
+            values: self[range].iter().copied(),
+            basis,
+        }
+    }
+}
+
+impl CompactRangeImageSource for PackedSignedDigits {
+    type QuadIter<'a> = PackedRangeImageQuadIter<'a>;
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline(always)]
+    fn range_image_value(&self, index: usize) -> i16 {
+        range_image_from_digit(
+            self.get(index)
+                .expect("packed range-image index is in bounds"),
+        )
+    }
+
+    fn quad_lookup_iter(&self, range: Range<usize>, basis: usize) -> Self::QuadIter<'_> {
+        debug_assert_eq!(range.len() % 4, 0);
+        PackedRangeImageQuadIter {
+            digits: self
+                .view()
+                .slice(range)
+                .expect("compact range-image quad iterator range is in bounds")
+                .iter(),
+            class_bits: basis.trailing_zeros() as usize - 1,
+            class_count: basis / 2,
+        }
+    }
 }
 
 impl CompactRangeImageValue for i16 {
@@ -545,7 +705,7 @@ fn build_compact_range_image(digit_witness: &[i8]) -> Vec<i16> {
         .collect()
 }
 
-struct DirectRangePrefixState<E: FieldCore> {
+struct DirectRangePrefixState<E: Field> {
     skip_state: Stage1BivariateSkipState<E>,
     first_challenge: Option<E>,
     second_challenge: Option<E>,
@@ -558,7 +718,7 @@ struct DirectRangePrefixState<E: FieldCore> {
 /// several stage-1 instances over one shared equality point can drive its
 /// rounds directly instead of going through the single-instance
 /// [`DigitRangeProver`](crate::DigitRangeProver) wrapper.
-pub struct LowBasisRangeCheckProver<E: FieldCore> {
+pub struct LowBasisRangeCheckProver<E: Field> {
     range_image: LowBasisRangeImageStorage<E>,
     split_eq: GruenSplitEq<E>,
     polynomial_precomputation: RangePolynomialPrecomputation,

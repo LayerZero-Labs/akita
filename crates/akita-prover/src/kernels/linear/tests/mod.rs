@@ -12,19 +12,19 @@ use akita_algebra::ntt::{
     PrimeWidth,
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
-use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
 use akita_types::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
     prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
+use jolt_field::{CanonicalEncoding, Field, Fp64, One, Prime128Offset275, Prime64Offset59, Ring};
 
-fn prepare_both_transforms<F: FieldCore + CanonicalField, const D: usize>(
+fn prepare_both_transforms<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
 ) -> Result<PreparedNttCache<D>, akita_error::AkitaError> {
     prepare_ntt_cache(matrix, NttCacheMode::BothTransforms)
 }
 
-fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+fn build_negacyclic_ntt_slot<F: Field + CanonicalEncoding, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
 ) -> Result<PreparedNttCache<D>, akita_error::AkitaError> {
     prepare_ntt_cache(
@@ -36,13 +36,13 @@ fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     )
 }
 
-fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
+fn centered_i32_ring<F: jolt_field::Field + jolt_field::CanonicalEncoding, const D: usize>(
     coeffs: &[i32; D],
 ) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| F::from_i64(coeffs[idx] as i64)))
 }
 
-fn cyclic_product<F: akita_field::FieldCore, const D: usize>(
+fn cyclic_product<F: jolt_field::Field, const D: usize>(
     lhs: &CyclotomicRing<F, D>,
     rhs: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -61,7 +61,7 @@ fn cyclic_product<F: akita_field::FieldCore, const D: usize>(
 }
 
 fn mat_vec_mul_i8_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -76,7 +76,7 @@ fn mat_vec_mul_i8_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_i8_dense_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -91,7 +91,7 @@ fn mat_vec_mul_i8_dense_with_params_for_log_basis<
 }
 
 fn mat_vec_mul_digits_i8_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
@@ -104,10 +104,7 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
 }
 
-fn quotient_from_cyclic_and_negacyclic<
-    F: akita_field::FieldCore + akita_field::HalvingField,
-    const D: usize,
->(
+fn quotient_from_cyclic_and_negacyclic<F: jolt_field::Field, const D: usize>(
     cyclic: &CyclotomicRing<F, D>,
     negacyclic: &CyclotomicRing<F, D>,
 ) -> CyclotomicRing<F, D> {
@@ -116,7 +113,7 @@ fn quotient_from_cyclic_and_negacyclic<
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| (cyc[idx] - neg[idx]).half()))
 }
 
-fn schoolbook_digit_mat_vec<F: FieldCore + CanonicalField, const D: usize>(
+fn schoolbook_digit_mat_vec<F: Field + CanonicalEncoding, const D: usize>(
     mat: &[Vec<CyclotomicRing<F, D>>],
     blocks: &[Vec<[i8; D]>],
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {

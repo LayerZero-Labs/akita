@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     #[inline]
     pub(super) fn direct_fold_range_image_quad_to_round2(
         range_image_00: i16,
@@ -20,30 +20,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b4_quad_lookup_index_from_row<V: CompactRangeImageValue>(
-        row: &[V],
+    pub(super) fn stage1_b4_quad_lookup_index_from_row<S: CompactRangeImageSource + ?Sized>(
+        row: &S,
         base: usize,
     ) -> usize {
-        let d0 = row
-            .get(base)
-            .copied()
-            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d1 = row
-            .get(base + 1)
-            .copied()
-            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d2 = row
-            .get(base + 2)
-            .copied()
-            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d3 = row
-            .get(base + 3)
-            .copied()
-            .map(|value| stage1_b4_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
+        let d0 = stage1_b4_digit_from_compact_range_image(row.range_image_value(base));
+        let d1 = stage1_b4_digit_from_compact_range_image(row.range_image_value(base + 1));
+        let d2 = stage1_b4_digit_from_compact_range_image(row.range_image_value(base + 2));
+        let d3 = stage1_b4_digit_from_compact_range_image(row.range_image_value(base + 3));
         d0 | (d1 << 1) | (d2 << 2) | (d3 << 3)
     }
 
@@ -65,21 +49,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 )
             })
             .collect()
-    }
-
-    #[inline(always)]
-    pub(super) fn stage1_b4_octet_lookup_index_from_row<V: CompactRangeImageValue>(
-        row: &[V],
-        base: usize,
-    ) -> usize {
-        debug_assert!(base + 8 <= row.len());
-        let mut table_index = 0usize;
-        for offset in 0..8 {
-            table_index |=
-                stage1_b4_digit_from_compact_range_image(row[base + offset].range_image_value())
-                    << offset;
-        }
-        table_index
     }
 
     /// Build `Q(left + X(right-left))` for every binary range-image octet.
@@ -106,10 +75,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         name = "LowBasisRangeCheckProver::compute_binary_range_image_third_round_from_compact_octets"
     )]
     pub(super) fn compute_binary_range_image_third_round_from_compact_octets<
-        V: CompactRangeImageValue,
+        S: CompactRangeImageSource + ?Sized,
     >(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
         r0: E,
         r1: E,
     ) -> EqFactoredUniPoly<E> {
@@ -121,33 +90,35 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             Self::build_binary_range_image_third_round_coefficient_table(r0, r1);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
+        let live_octets = self.live_x_cols * octets_per_column;
 
         let accumulated = cfg_fold_reduce!(
             0..e_second.len(),
-            || [E::ProductAccum::zero(); 3],
+            || [E::Product::zero(); 3],
             |mut outer_accum, j_high| {
-                let mut inner_accum = [E::ProductAccum::zero(); 3];
+                let mut inner_accum = [E::Product::zero(); 3];
                 let base_j = j_high * num_first;
+                let live_end = (base_j + num_first).min(live_octets);
+                let source_start = (8 * base_j).min(compact_range_image.len());
+                let mut quads = compact_range_image.quad_lookup_iter(source_start..8 * live_end, 4);
                 for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
                     let pair_index = base_j + j_low;
-                    let x = pair_index / octets_per_column;
-                    if x >= self.live_x_cols {
+                    if pair_index >= live_octets {
                         continue;
                     }
-                    let octet = pair_index % octets_per_column;
-                    let row = &compact_range_image[x * y_len..(x + 1) * y_len];
-                    let table_index = Self::stage1_b4_octet_lookup_index_from_row(row, 8 * octet);
+                    let left = quads.next().expect("compact octet left quad");
+                    let right = quads.next().expect("compact octet right quad");
+                    let table_index = left | (right << 4);
                     for (accumulator, &coefficient) in inner_accum
                         .iter_mut()
                         .zip(coefficient_table[table_index].iter())
                     {
-                        *accumulator += inner_equality_weight.mul_to_product_accum(coefficient);
+                        *accumulator += inner_equality_weight.mul_unreduced(coefficient);
                     }
                 }
                 let outer_equality_weight = e_second[j_high];
                 for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
-                    *accumulator +=
-                        outer_equality_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+                    *accumulator += outer_equality_weight.mul_unreduced(E::reduce_product(inner));
                 }
                 outer_accum
             },
@@ -159,12 +130,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             }
         );
 
-        EqFactoredUniPoly::from_q_coeffs(
-            accumulated
-                .into_iter()
-                .map(E::reduce_product_accum)
-                .collect(),
-        )
+        EqFactoredUniPoly::from_q_coeffs(accumulated.into_iter().map(E::reduce_product).collect())
     }
 
     /// Fold every binary range-image octet through all three initial challenges.
@@ -181,8 +147,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::materialize_binary_range_image_after_third_round"
     )]
-    pub(super) fn materialize_binary_range_image_after_third_round<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn materialize_binary_range_image_after_third_round<
+        S: CompactRangeImageSource + ?Sized,
+    >(
+        compact_range_image: &S,
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -196,9 +164,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         cfg_chunks_mut!(output, next_y_len)
             .enumerate()
             .for_each(|(x, column_output)| {
-                let row = &compact_range_image[x * y_len..(x + 1) * y_len];
-                for (octet, value) in column_output.iter_mut().enumerate() {
-                    let table_index = Self::stage1_b4_octet_lookup_index_from_row(row, 8 * octet);
+                let column_start = x * y_len;
+                let mut quads =
+                    compact_range_image.quad_lookup_iter(column_start..column_start + y_len, 4);
+                for value in column_output {
+                    let left = quads.next().expect("compact octet left quad");
+                    let right = quads.next().expect("compact octet right quad");
+                    let table_index = left | (right << 4);
                     *value = fold_table[table_index];
                 }
             });
@@ -206,30 +178,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
     }
 
     #[inline(always)]
-    pub(super) fn stage1_b8_quad_lookup_index_from_row<V: CompactRangeImageValue>(
-        row: &[V],
+    pub(super) fn stage1_b8_quad_lookup_index_from_row<S: CompactRangeImageSource + ?Sized>(
+        row: &S,
         base: usize,
     ) -> usize {
-        let d0 = row
-            .get(base)
-            .copied()
-            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d1 = row
-            .get(base + 1)
-            .copied()
-            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d2 = row
-            .get(base + 2)
-            .copied()
-            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
-        let d3 = row
-            .get(base + 3)
-            .copied()
-            .map(|value| stage1_b8_digit_from_compact_range_image(value.range_image_value()))
-            .unwrap_or(0);
+        let d0 = stage1_b8_digit_from_compact_range_image(row.range_image_value(base));
+        let d1 = stage1_b8_digit_from_compact_range_image(row.range_image_value(base + 1));
+        let d2 = stage1_b8_digit_from_compact_range_image(row.range_image_value(base + 2));
+        let d3 = stage1_b8_digit_from_compact_range_image(row.range_image_value(base + 3));
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
@@ -314,10 +270,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         name = "LowBasisRangeCheckProver::compute_quartic_range_image_third_round_from_compact_octets"
     )]
     pub(super) fn compute_quartic_range_image_third_round_from_compact_octets<
-        V: CompactRangeImageValue,
+        S: CompactRangeImageSource + ?Sized,
     >(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
         r0: E,
         r1: E,
     ) -> EqFactoredUniPoly<E> {
@@ -329,30 +285,25 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let taylor_coefficients = Self::build_quartic_taylor_coefficient_table(&folded_quads);
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
-
-        let octet_class = |pair_index: usize| {
-            let x = pair_index / octets_per_column;
-            if x >= self.live_x_cols {
-                return None;
-            }
-            let octet = pair_index % octets_per_column;
-            let row = &compact_range_image[x * y_len..(x + 1) * y_len];
-            let base = 8 * octet;
-            let left_index = Self::stage1_b8_quad_lookup_index_from_row(row, base);
-            let right_index = Self::stage1_b8_quad_lookup_index_from_row(row, base + 4);
-            Some((left_index << 8) | right_index)
-        };
+        let live_octets = self.live_x_cols * octets_per_column;
         let accumulated = cfg_fold_reduce!(
             0..e_second.len(),
-            || [E::ProductAccum::zero(); 5],
+            || [E::Product::zero(); 5],
             |mut outer_accum, j_high| {
-                let mut inner_accum = [E::ProductAccum::zero(); 5];
+                let mut inner_accum = [E::Product::zero(); 5];
                 let mut coefficients = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
                 let base_j = j_high * num_first;
+                let live_end = (base_j + num_first).min(live_octets);
+                let source_start = (8 * base_j).min(compact_range_image.len());
+                let mut quads = compact_range_image.quad_lookup_iter(source_start..8 * live_end, 8);
                 for (j_low, &inner_equality_weight) in e_first.iter().enumerate() {
-                    let Some(class) = octet_class(base_j + j_low) else {
+                    let octet_index = base_j + j_low;
+                    if octet_index >= live_octets {
                         continue;
-                    };
+                    }
+                    let left = quads.next().expect("compact octet left quad");
+                    let right = quads.next().expect("compact octet right quad");
+                    let class = (left << 8) | right;
                     Self::quartic_affine_coefficients_from_octet_class(
                         &mut coefficients,
                         class,
@@ -367,8 +318,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 }
                 let outer_equality_weight = e_second[j_high];
                 for (accumulator, inner) in outer_accum.iter_mut().zip(inner_accum) {
-                    *accumulator +=
-                        outer_equality_weight.mul_to_product_accum(E::reduce_product_accum(inner));
+                    *accumulator += outer_equality_weight.mul_unreduced(E::reduce_product(inner));
                 }
                 outer_accum
             },
@@ -380,20 +330,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             }
         );
 
-        EqFactoredUniPoly::from_q_coeffs(
-            accumulated
-                .into_iter()
-                .map(E::reduce_product_accum)
-                .collect(),
-        )
+        EqFactoredUniPoly::from_q_coeffs(accumulated.into_iter().map(E::reduce_product).collect())
     }
 
     #[tracing::instrument(
         skip_all,
         name = "LowBasisRangeCheckProver::materialize_quartic_range_image_after_third_round"
     )]
-    pub(super) fn materialize_quartic_range_image_after_third_round<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn materialize_quartic_range_image_after_third_round<
+        S: CompactRangeImageSource + ?Sized,
+    >(
+        compact_range_image: &S,
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -407,12 +354,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         cfg_chunks_mut!(output, next_y_len)
             .enumerate()
             .for_each(|(x, column_output)| {
-                let row = &compact_range_image[x * y_len..(x + 1) * y_len];
-                for (octet, value) in column_output.iter_mut().enumerate() {
-                    let base = 8 * octet;
-                    let left = folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base)];
-                    let right =
-                        folded_quads[Self::stage1_b8_quad_lookup_index_from_row(row, base + 4)];
+                let column_start = x * y_len;
+                let mut quads =
+                    compact_range_image.quad_lookup_iter(column_start..column_start + y_len, 8);
+                for value in column_output {
+                    let left = folded_quads[quads.next().expect("compact octet left quad")];
+                    let right = folded_quads[quads.next().expect("compact octet right quad")];
                     *value = left + r2 * (right - left);
                 }
             });
@@ -423,8 +370,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::fold_compact_range_image_to_round2"
     )]
-    pub(super) fn fold_compact_range_image_to_round2<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn fold_compact_range_image_to_round2<S: CompactRangeImageSource + ?Sized>(
+        compact_range_image: &S,
         live_x_cols: usize,
         y_len: usize,
         r0: E,
@@ -434,14 +381,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let next_y_len = y_len / 4;
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
         for (x, col_out) in out.chunks_mut(next_y_len).enumerate() {
-            let col = &compact_range_image[x * y_len..(x + 1) * y_len];
+            let col_start = x * y_len;
             for (quad_y, dst) in col_out.iter_mut().enumerate() {
                 let base = 4 * quad_y;
                 *dst = Self::direct_fold_range_image_quad_to_round2(
-                    col[base].range_image_value(),
-                    col[base + 1].range_image_value(),
-                    col[base + 2].range_image_value(),
-                    col[base + 3].range_image_value(),
+                    compact_range_image.range_image_value(col_start + base),
+                    compact_range_image.range_image_value(col_start + base + 1),
+                    compact_range_image.range_image_value(col_start + base + 2),
+                    compact_range_image.range_image_value(col_start + base + 3),
                     r0,
                     r1,
                 );
@@ -454,9 +401,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::fuse_compact_to_round2_and_compute_round"
     )]
-    pub(super) fn fuse_compact_to_round2_and_compute_round<V: CompactRangeImageValue>(
+    pub(super) fn fuse_compact_to_round2_and_compute_round<S: CompactRangeImageSource + ?Sized>(
         &self,
-        compact_range_image: &[V],
+        compact_range_image: &S,
         r0: E,
         r1: E,
     ) -> (Vec<E>, EqFactoredUniPoly<E>) {
@@ -482,16 +429,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         let mut out = vec![E::zero(); live_x_cols * next_y_len];
 
         let process_column = |(x, col_out): (usize, &mut [E])| {
-            let col = &compact_range_image[x * y_len..(x + 1) * y_len];
+            let col_start = x * y_len;
             let j_base = x * current_y_half;
-            let mut outer_accum = vec![E::ProductAccum::zero(); num_coeffs_q];
+            let mut outer_accum = vec![E::Product::zero(); num_coeffs_q];
             let mut entry_buf = [E::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
             let mut block_start = 0usize;
             while block_start < live_pairs {
                 let block_end = (block_start + block_size).min(live_pairs);
                 let outer_equality_index = (j_base + block_start) >> first_bits;
-                let mut inner_accum = [E::ProductAccum::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
+                let mut inner_accum = [E::Product::zero(); MAX_DIRECT_RANGE_COEFFICIENTS];
 
                 for pair_y in block_start..block_end {
                     let inner_equality_index = (j_base + pair_y) & (num_first - 1);
@@ -499,12 +446,24 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     let output_offset = 2 * pair_y;
                     let input_offset = 8 * pair_y;
                     let left_range_image = quad_fold_lut[match self.basis {
-                        4 => Self::stage1_b4_quad_lookup_index_from_row(col, input_offset),
-                        _ => Self::stage1_b8_quad_lookup_index_from_row(col, input_offset),
+                        4 => Self::stage1_b4_quad_lookup_index_from_row(
+                            compact_range_image,
+                            col_start + input_offset,
+                        ),
+                        _ => Self::stage1_b8_quad_lookup_index_from_row(
+                            compact_range_image,
+                            col_start + input_offset,
+                        ),
                     }];
                     let right_range_image = quad_fold_lut[match self.basis {
-                        4 => Self::stage1_b4_quad_lookup_index_from_row(col, input_offset + 4),
-                        _ => Self::stage1_b8_quad_lookup_index_from_row(col, input_offset + 4),
+                        4 => Self::stage1_b4_quad_lookup_index_from_row(
+                            compact_range_image,
+                            col_start + input_offset + 4,
+                        ),
+                        _ => Self::stage1_b8_quad_lookup_index_from_row(
+                            compact_range_image,
+                            col_start + input_offset + 4,
+                        ),
                     }];
                     col_out[output_offset] = left_range_image;
                     col_out[output_offset + 1] = right_range_image;
@@ -523,15 +482,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
                 let outer_equality_weight = e_second[outer_equality_index];
                 for coefficient_index in 0..num_coeffs_q {
-                    let inner_reduced = E::reduce_product_accum(inner_accum[coefficient_index]);
+                    let inner_reduced = E::reduce_product(inner_accum[coefficient_index]);
                     outer_accum[coefficient_index] +=
-                        outer_equality_weight.mul_to_product_accum(inner_reduced);
+                        outer_equality_weight.mul_unreduced(inner_reduced);
                 }
                 block_start = block_end;
             }
             outer_accum
         };
-        let merge_accumulators = |mut left: Vec<E::ProductAccum>, right: Vec<E::ProductAccum>| {
+        let merge_accumulators = |mut left: Vec<E::Product>, right: Vec<E::Product>| {
             for (left_coefficient, right_coefficient) in left.iter_mut().zip(right) {
                 *left_coefficient += right_coefficient;
             }
@@ -543,21 +502,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
             .enumerate()
             .map(process_column)
             .reduce(
-                || vec![E::ProductAccum::zero(); num_coeffs_q],
+                || vec![E::Product::zero(); num_coeffs_q],
                 merge_accumulators,
             );
         #[cfg(not(feature = "parallel"))]
         let accumulated = cfg_chunks_mut!(out, next_y_len)
             .enumerate()
             .map(process_column)
-            .fold(
-                vec![E::ProductAccum::zero(); num_coeffs_q],
-                merge_accumulators,
-            );
-        let q_coeffs = accumulated
-            .into_iter()
-            .map(E::reduce_product_accum)
-            .collect();
+            .fold(vec![E::Product::zero(); num_coeffs_q], merge_accumulators);
+        let q_coeffs = accumulated.into_iter().map(E::reduce_product).collect();
 
         let poly = EqFactoredUniPoly::from_q_coeffs(q_coeffs);
         (out, poly)

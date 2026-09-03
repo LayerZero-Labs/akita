@@ -17,11 +17,11 @@ use crate::compute::{
 /// dispatch dimension: the underlying polynomial stores flat logical data,
 /// and the view fixes the ring dimension the kernels operate at.
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     pub(super) poly: &'a OneHotPoly<F, I>,
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
+impl<'a, F: Field, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
     /// Per-chunk hot positions. `None` denotes an all-zero chunk.
     pub fn indices(&self) -> &'a [Option<I>] {
         &self.poly.indices
@@ -42,18 +42,18 @@ impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotView<'a, F, D, I> {
 ///
 /// `D` is the kernel dispatch dimension, as in [`OneHotView`].
 #[derive(Debug, Clone, Copy)]
-pub struct OneHotBatchView<'a, F: FieldCore, const D: usize, I: OneHotIndex = usize> {
+pub struct OneHotBatchView<'a, F: Field, const D: usize, I: OneHotIndex = usize> {
     polys: &'a [&'a OneHotPoly<F, I>],
 }
 
-impl<'a, F: FieldCore, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
+impl<'a, F: Field, const D: usize, I: OneHotIndex> OneHotBatchView<'a, F, D, I> {
     /// Validated semantic views in source order.
     pub fn views(&self) -> impl ExactSizeIterator<Item = OneHotView<'a, F, D, I>> + '_ {
         self.polys.iter().map(|&poly| OneHotView { poly })
     }
 }
 
-impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     fn source_view<const D: usize>(&self) -> Result<OneHotView<'_, F, D, I>, AkitaError> {
         self.validate_ring_dimension(D)?;
         Ok(OneHotView { poly: self })
@@ -62,7 +62,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
 
 impl<F, I> RootPolyMeta<F> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_vars(&self) -> usize {
@@ -76,7 +76,7 @@ where
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     fn num_ring_elems(&self) -> usize {
@@ -94,7 +94,7 @@ where
 
 impl<F, const D: usize, I> RootCommitSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type CommitView<'a>
@@ -114,7 +114,7 @@ where
         _centering_threshold: u128,
     ) -> Result<(u128, u128), AkitaError>
     where
-        F: akita_field::CanonicalField,
+        F: jolt_field::CanonicalEncoding,
     {
         Ok((0, 1))
     }
@@ -122,7 +122,7 @@ where
 
 impl<F, const D: usize, I> RootOpeningSource<F, D> for OneHotPoly<F, I>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     type OpeningView<'a>
@@ -149,7 +149,7 @@ where
 
 impl<F, const D: usize, I> RootCommitKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide + HasCommitAccum,
+    F: Field + CanonicalEncoding + Unreduced + WithCommitAccumulator,
     I: OneHotIndex,
 {
     fn commit_inner_group(
@@ -183,7 +183,7 @@ where
 
 impl<F, const D: usize, I> OpeningFoldKernel<OneHotView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn evaluate_and_fold(
@@ -235,7 +235,7 @@ where
 
 impl<F, const D: usize, I> OpeningBatchKernel<OneHotBatchView<'_, F, D, I>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
     I: OneHotIndex,
 {
     fn decompose_fold_batch(
@@ -263,165 +263,247 @@ where
     }
 }
 
+pub(in crate::backend) trait PackingWeightAccessor<E: Field>: Sync {
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E>;
+
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError>;
+}
+
+struct DirectPackingWeights<'a, E: Field> {
+    point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+}
+
+impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
+        self.point
+    }
+
+    #[inline(always)]
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
+        let position_weight = *self
+            .point
+            .position_weights()
+            .get(position)
+            .ok_or(AkitaError::InvalidProof)?;
+        let packing_weight = *self
+            .point
+            .packing_weights()
+            .get(low_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(position_weight * packing_weight)
+    }
+}
+
+impl<E: Field> PackingWeightAccessor<E>
+    for crate::backend::coefficient_packing::FusedPackingWeights<'_, E>
+{
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
+        self.point()
+    }
+
+    #[inline(always)]
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
+        let index = akita_error::checked::mul_add(
+            position,
+            self.point().geometry().subring_embedding_stride(),
+            low_index,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        self.values()
+            .get(index)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)
+    }
+}
+
+#[tracing::instrument(skip_all, name = "coefficient_packing_onehot_partials")]
+pub(in crate::backend) fn onehot_coefficient_packing_partials<F, E, const D: usize, I, W>(
+    source: OneHotBatchView<'_, F, D, I>,
+    weights: &W,
+) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    I: OneHotIndex,
+    W: PackingWeightAccessor<E>,
+{
+    let point = weights.point();
+    let plan = SubringCoefficientPackingPlan { point };
+    for poly in source.polys {
+        plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
+    }
+    let geometry = point.geometry();
+    if E::DEGREE != geometry.extension_degree() || D != geometry.a_ring_dimension() {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing field or ring dimension mismatch".into(),
+        ));
+    }
+    let expected_field_len = point.num_live_positions().checked_mul(D).ok_or_else(|| {
+        AkitaError::InvalidInput("coefficient-packing one-hot length overflow".into())
+    })?;
+    let output_len = point
+        .num_live_blocks()
+        .checked_mul(geometry.partial_base_field_width())
+        .ok_or_else(|| {
+            AkitaError::InvalidInput("coefficient-packing output length overflow".into())
+        })?;
+    let stride = geometry.subring_embedding_stride();
+    let stride_mask = stride - 1;
+    let stride_shift = stride.trailing_zeros();
+    let ring_mask = D - 1;
+    let ring_shift = D.trailing_zeros();
+    let s = geometry.challenge_subring_dimension();
+    let num_blocks = point.num_live_blocks();
+
+    source
+        .polys
+        .iter()
+        .map(|poly| {
+            let actual_field_len = poly
+                .indices
+                .len()
+                .checked_mul(poly.onehot_k)
+                .ok_or_else(|| AkitaError::InvalidInput("one-hot source length overflow".into()))?;
+            // One-hot roots authenticate their complete Boolean domain.
+            // Unlike recursive witness storage, they cannot discard a
+            // padded suffix merely because the opening plan names a live
+            // prefix.
+            if actual_field_len != expected_field_len {
+                return Err(AkitaError::InvalidSize {
+                    expected: expected_field_len,
+                    actual: actual_field_len,
+                });
+            }
+            if poly.onehot_k == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "coefficient-packing one-hot chunk size must be nonzero".into(),
+                ));
+            }
+            debug_assert!(poly.onehot_k.is_power_of_two());
+            let block_coordinates = cfg_into_iter!(0..num_blocks)
+                .map(|block_index| {
+                    let first_position = block_index
+                        .checked_mul(point.num_positions_per_block())
+                        .ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "coefficient-packing one-hot block offset overflow".into(),
+                        )
+                    })?;
+                    let end_position = first_position
+                        .checked_add(point.num_positions_per_block())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput(
+                                "coefficient-packing one-hot block end overflow".into(),
+                            )
+                        })?
+                        .min(point.num_live_positions());
+                    let first_field = first_position.checked_mul(D).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "coefficient-packing one-hot field offset overflow".into(),
+                        )
+                    })?;
+                    let end_field = end_position.checked_mul(D).ok_or_else(|| {
+                        AkitaError::InvalidInput(
+                            "coefficient-packing one-hot field end overflow".into(),
+                        )
+                    })?;
+                    let first_chunk = first_field / poly.onehot_k;
+                    let end_chunk = end_field.div_ceil(poly.onehot_k).min(poly.indices.len());
+                    let mut block = vec![F::zero(); geometry.partial_base_field_width()];
+                    for chunk_index in first_chunk..end_chunk {
+                        let Some(hot_index) = poly
+                            .indices
+                            .get(chunk_index)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)?
+                        else {
+                            continue;
+                        };
+                        let field_index = chunk_index
+                            .checked_mul(poly.onehot_k)
+                            .and_then(|base| base.checked_add(hot_index.as_usize()))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("one-hot source index overflow".into())
+                            })?;
+                        if field_index < first_field || field_index >= end_field {
+                            continue;
+                        }
+                        let position_in_block = (field_index >> ring_shift) - first_position;
+                        let coefficient_index = field_index & ring_mask;
+                        let low_index = coefficient_index & stride_mask;
+                        let subring_index = coefficient_index >> stride_shift;
+                        let value = weights.weight(position_in_block, low_index)?;
+                        let extension_coordinates = value.ext_coords();
+                        if extension_coordinates.len() != geometry.extension_degree() {
+                            return Err(AkitaError::InvalidSetup(
+                                "coefficient-packing extension encoding width mismatch".into(),
+                            ));
+                        }
+                        for (coordinate_block, coordinate) in block
+                            .chunks_exact_mut(s)
+                            .zip(extension_coordinates.iter().copied())
+                        {
+                            *coordinate_block
+                                .get_mut(subring_index)
+                                .ok_or(AkitaError::InvalidProof)? += coordinate;
+                        }
+                    }
+                    Ok(block)
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let mut coordinates = Vec::new();
+            coordinates.try_reserve_exact(output_len).map_err(|_| {
+                AkitaError::InvalidInput(
+                    "coefficient-packing one-hot output allocation failed".into(),
+                )
+            })?;
+            for block in block_coordinates {
+                coordinates.extend(block);
+            }
+            SubringCoefficientPackingPartials::new(geometry, point.num_live_blocks(), coordinates)
+        })
+        .collect()
+}
+
 impl<F, E, const D: usize, I>
     SubringCoefficientPackingBatchKernel<OneHotBatchView<'_, F, D, I>, F, E, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F>,
     I: OneHotIndex,
 {
-    #[tracing::instrument(skip_all, name = "coefficient_packing_onehot_partials")]
     fn coefficient_packing_partials_batch(
         &self,
         _prepared: Option<&Self::PreparedSetup>,
         source: OneHotBatchView<'_, F, D, I>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
-        for poly in source.polys {
-            plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
-        }
-        let point = plan.point;
-        let geometry = point.geometry();
-        if E::EXT_DEGREE != geometry.extension_degree() {
-            return Err(AkitaError::InvalidSetup(
-                "coefficient-packing field extension degree mismatch".into(),
-            ));
-        }
-        let expected_field_len = point.num_live_positions().checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidInput("coefficient-packing one-hot length overflow".into())
-        })?;
-        let output_len = point
-            .num_live_blocks()
-            .checked_mul(geometry.partial_base_field_width())
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("coefficient-packing output length overflow".into())
-            })?;
-        let stride = geometry.subring_embedding_stride();
-        let s = geometry.challenge_subring_dimension();
-        let num_blocks = point.num_live_blocks();
-
-        source
+        let fused_len =
+            crate::backend::coefficient_packing::FusedPackingWeights::<E>::required_len(
+                plan.point,
+            )?;
+        let should_prepare = source
             .polys
             .iter()
-            .map(|poly| {
-                let actual_field_len =
-                    poly.indices
-                        .len()
-                        .checked_mul(poly.onehot_k)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("one-hot source length overflow".into())
-                        })?;
-                // One-hot roots authenticate their complete Boolean domain.
-                // Unlike recursive witness storage, they cannot discard a
-                // padded suffix merely because the opening plan names a live
-                // prefix.
-                if actual_field_len != expected_field_len {
-                    return Err(AkitaError::InvalidSize {
-                        expected: expected_field_len,
-                        actual: actual_field_len,
-                    });
-                }
-                if poly.onehot_k == 0 {
-                    return Err(AkitaError::InvalidSetup(
-                        "coefficient-packing one-hot chunk size must be nonzero".into(),
-                    ));
-                }
-                let block_coordinates = cfg_into_iter!(0..num_blocks)
-                    .map(|block_index| {
-                        let first_position = block_index
-                            .checked_mul(point.num_positions_per_block())
-                            .ok_or_else(|| {
-                                AkitaError::InvalidInput(
-                                    "coefficient-packing one-hot block offset overflow".into(),
-                                )
-                            })?;
-                        let end_position = first_position
-                            .checked_add(point.num_positions_per_block())
-                            .ok_or_else(|| {
-                                AkitaError::InvalidInput(
-                                    "coefficient-packing one-hot block end overflow".into(),
-                                )
-                            })?
-                            .min(point.num_live_positions());
-                        let first_field = first_position.checked_mul(D).ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "coefficient-packing one-hot field offset overflow".into(),
-                            )
-                        })?;
-                        let end_field = end_position.checked_mul(D).ok_or_else(|| {
-                            AkitaError::InvalidInput(
-                                "coefficient-packing one-hot field end overflow".into(),
-                            )
-                        })?;
-                        let first_chunk = first_field / poly.onehot_k;
-                        let end_chunk = end_field.div_ceil(poly.onehot_k).min(poly.indices.len());
-                        let mut block = vec![F::zero(); geometry.partial_base_field_width()];
-                        for chunk_index in first_chunk..end_chunk {
-                            let Some(hot_index) = poly
-                                .indices
-                                .get(chunk_index)
-                                .copied()
-                                .ok_or(AkitaError::InvalidProof)?
-                            else {
-                                continue;
-                            };
-                            let field_index = chunk_index
-                                .checked_mul(poly.onehot_k)
-                                .and_then(|base| base.checked_add(hot_index.as_usize()))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidInput("one-hot source index overflow".into())
-                                })?;
-                            if field_index < first_field || field_index >= end_field {
-                                continue;
-                            }
-                            let position_in_block = field_index / D - first_position;
-                            let coefficient_index = field_index % D;
-                            let low_index = coefficient_index % stride;
-                            let subring_index = coefficient_index / stride;
-                            let value = point.position_weights()[position_in_block]
-                                * point.packing_weights()[low_index];
-                            let extension_coordinates = value.ext_coords();
-                            if extension_coordinates.len() != geometry.extension_degree() {
-                                return Err(AkitaError::InvalidSetup(
-                                    "coefficient-packing extension encoding width mismatch".into(),
-                                ));
-                            }
-                            for (extension_coordinate, coordinate) in
-                                extension_coordinates.iter().copied().enumerate()
-                            {
-                                let local_index = extension_coordinate
-                                    .checked_mul(s)
-                                    .and_then(|base| base.checked_add(subring_index))
-                                    .ok_or(AkitaError::InvalidProof)?;
-                                *block.get_mut(local_index).ok_or(AkitaError::InvalidProof)? +=
-                                    coordinate;
-                            }
-                        }
-                        Ok(block)
-                    })
-                    .collect::<Result<Vec<_>, AkitaError>>()?;
-                let mut coordinates = Vec::new();
-                coordinates.try_reserve_exact(output_len).map_err(|_| {
-                    AkitaError::InvalidInput(
-                        "coefficient-packing one-hot output allocation failed".into(),
-                    )
-                })?;
-                for block in block_coordinates {
-                    coordinates.extend(block);
-                }
-                SubringCoefficientPackingPartials::new(
-                    geometry,
-                    point.num_live_blocks(),
-                    coordinates,
-                )
-            })
-            .collect()
+            .flat_map(|poly| poly.indices.iter())
+            .filter(|index| index.is_some())
+            .take(fused_len)
+            .count()
+            == fused_len;
+        if should_prepare {
+            let weights =
+                crate::backend::coefficient_packing::FusedPackingWeights::new(plan.point)?;
+            onehot_coefficient_packing_partials(source, &weights)
+        } else {
+            let weights = DirectPackingWeights { point: plan.point };
+            onehot_coefficient_packing_partials(source, &weights)
+        }
     }
 }
 
 impl<F, I: OneHotIndex> OneHotPoly<F, I>
 where
-    F: FieldCore + CanonicalField + HasWide,
+    F: Field + CanonicalEncoding + Unreduced,
 {
     pub(crate) fn fold_blocks<const D: usize>(
         &self,

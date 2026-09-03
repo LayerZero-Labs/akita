@@ -1,7 +1,9 @@
 //! CpuBackend kernels over dense polynomial views.
 
 use super::views::{DenseBatchView, DenseView};
-use crate::backend::coefficient_packing::partials_from_position_source;
+use crate::backend::coefficient_packing::{
+    coefficient_packing_partials_from_position_source, FusedPackingWeights,
+};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -10,12 +12,12 @@ use crate::compute::{
 };
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 impl<F, const D: usize> RootCommitKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn commit_inner_group(
         &self,
@@ -43,7 +45,7 @@ where
 
 impl<F, const D: usize> OpeningFoldKernel<DenseView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn evaluate_and_fold(
         &self,
@@ -100,7 +102,7 @@ where
 
 impl<F, const D: usize> OpeningBatchKernel<DenseBatchView<'_, F, D>, F, D> for CpuBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn decompose_fold_batch(
         &self,
@@ -112,11 +114,54 @@ where
     }
 }
 
+pub(in crate::backend) fn dense_coefficient_packing_partials<F, E, const D: usize>(
+    source: DenseBatchView<'_, F, D>,
+    fused_weights: &FusedPackingWeights<'_, E>,
+) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
+{
+    let point = fused_weights.point();
+    source
+        .polys
+        .iter()
+        .map(|poly| {
+            let rings = poly.ring_coeffs::<D>()?;
+            // Dense roots authenticate the complete Boolean hypercube, so
+            // every stored ring is live. Exact-prefix storage is reserved
+            // for recursive witness views.
+            if rings.len() != point.num_live_positions() {
+                return Err(AkitaError::InvalidSize {
+                    expected: point.num_live_positions(),
+                    actual: rings.len(),
+                });
+            }
+            let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
+                fused_weights,
+                RootPolyMeta::<F>::num_vars(*poly),
+                |position| {
+                    rings
+                        .get(position)
+                        .map(|ring| ring.coefficients())
+                        .ok_or(AkitaError::InvalidProof)
+                },
+                |_, coefficient, source| source[coefficient],
+            )?;
+            SubringCoefficientPackingPartials::new(
+                point.geometry(),
+                point.num_live_blocks(),
+                coordinates,
+            )
+        })
+        .collect()
+}
+
 impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
-    F: FieldCore + CanonicalField,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
     fn coefficient_packing_partials_batch(
         &self,
@@ -124,37 +169,7 @@ where
         source: DenseBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
-        source
-            .polys
-            .iter()
-            .map(|poly| {
-                let rings = poly.ring_coeffs::<D>()?;
-                // Dense roots authenticate the complete Boolean hypercube, so
-                // every stored ring is live. Exact-prefix storage is reserved
-                // for recursive witness views.
-                if rings.len() != plan.point.num_live_positions() {
-                    return Err(AkitaError::InvalidSize {
-                        expected: plan.point.num_live_positions(),
-                        actual: rings.len(),
-                    });
-                }
-                let coordinates = partials_from_position_source::<F, E, F, D>(
-                    plan,
-                    RootPolyMeta::<F>::num_vars(*poly),
-                    |position| {
-                        rings
-                            .get(position)
-                            .map(|ring| ring.coefficients())
-                            .ok_or(AkitaError::InvalidProof)
-                    },
-                    |_, _, coefficient| coefficient,
-                )?;
-                SubringCoefficientPackingPartials::new(
-                    plan.point.geometry(),
-                    plan.point.num_live_blocks(),
-                    coordinates,
-                )
-            })
-            .collect()
+        let fused_weights = FusedPackingWeights::new(plan.point)?;
+        dense_coefficient_packing_partials(source, &fused_weights)
     }
 }

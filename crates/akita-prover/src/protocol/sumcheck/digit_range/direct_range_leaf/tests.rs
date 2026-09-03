@@ -1,9 +1,13 @@
 use super::*;
-use akita_field::Prime128Offset275;
 use akita_sumcheck::{advance_eq_factored_claim, multilinear_eval};
 use akita_types::DigitRangeEqualityPoint;
+use jolt_field::{One, Prime128Offset275};
 
 type F = Prime128Offset275;
+
+fn packed(witness: &[i8]) -> PackedSignedDigits {
+    PackedSignedDigits::from_i8_digits_auto(witness.to_vec())
+}
 
 fn ordered_equality_point(
     challenges: &[F],
@@ -23,7 +27,7 @@ fn ordered_equality_point(
 fn stage1_new_rejects_malformed_shapes_without_panicking() {
     let tau = vec![F::zero(); usize::BITS as usize];
     assert!(LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from([]),
+        packed(&[]),
         &tau,
         DigitRangePlan::new(4).unwrap(),
         1,
@@ -34,7 +38,7 @@ fn stage1_new_rejects_malformed_shapes_without_panicking() {
 
     let tau = vec![F::zero(); usize::BITS as usize + 1];
     assert!(LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from([]),
+        packed(&[]),
         &tau,
         DigitRangePlan::new(4).unwrap(),
         3,
@@ -44,7 +48,7 @@ fn stage1_new_rejects_malformed_shapes_without_panicking() {
     .is_err());
 
     assert!(LowBasisRangeCheckProver::<F>::new(
-        std::sync::Arc::from([]),
+        packed(&[]),
         &[],
         DigitRangePlan::new(16).unwrap(),
         1,
@@ -133,7 +137,7 @@ fn stage1_round0_matches_dense_reference() {
             (0..n).map(|i| ((i * 5 + 3) % basis) as i8 - half).collect();
 
         let mut prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(compact_digit_witness.as_slice()),
+            packed(&compact_digit_witness),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             1usize << col_bits,
@@ -174,7 +178,7 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
                 .collect();
             let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
             let mut prefix_prover = LowBasisRangeCheckProver::new(
-                std::sync::Arc::from(digit_witness_prefix.as_slice()),
+                packed(&digit_witness_prefix),
                 &tau0,
                 DigitRangePlan::new(basis).unwrap(),
                 live_x_cols,
@@ -183,7 +187,7 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             )
             .unwrap();
             let mut padded_prover = LowBasisRangeCheckProver::new(
-                std::sync::Arc::from(padded_digit_witness.as_slice()),
+                packed(&padded_digit_witness),
                 &tau0,
                 DigitRangePlan::new(basis).unwrap(),
                 1usize << col_bits,
@@ -276,7 +280,7 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
             .collect();
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
         let mut prefix_prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -285,7 +289,7 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
         )
         .unwrap();
         let mut padded_prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(padded_digit_witness.as_slice()),
+            packed(&padded_digit_witness),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             1usize << col_bits,
@@ -369,7 +373,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
         let mut prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -404,7 +408,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
                 r1,
             );
         let mut expected = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -454,7 +458,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
             .collect();
         let compact_range_image = build_compact_range_image(&digit_witness);
         let mut deferred = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness.as_slice()),
+            packed(&digit_witness),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -481,7 +485,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
             r1,
         );
         let mut reference = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness.as_slice()),
+            packed(&digit_witness),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -531,7 +535,7 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
         let mut prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -566,7 +570,7 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
             advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
 
         let mut expected = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -635,7 +639,7 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         let tau0 = ordered_equality_point(&tau0, col_bits, ring_bits);
 
         let mut prover = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,
@@ -670,7 +674,7 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
             advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
 
         let mut expected = LowBasisRangeCheckProver::new(
-            std::sync::Arc::from(digit_witness_prefix.as_slice()),
+            packed(&digit_witness_prefix),
             &tau0,
             DigitRangePlan::new(basis).unwrap(),
             live_x_cols,

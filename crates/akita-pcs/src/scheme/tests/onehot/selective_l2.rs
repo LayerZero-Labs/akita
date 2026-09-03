@@ -145,6 +145,12 @@ fn selective_l2_proof_rejects_transcript_mutations() {
     assert!(verify(&bad_sumcheck).is_err());
 
     let mut bad_nonce = proof;
-    bad_nonce.recursive_folds[l2_index].fold_grind_nonce += 1;
+    let mut nonce_bytes = bad_nonce.nonce_stream.as_bytes().to_vec();
+    nonce_bytes[0] ^= 1;
+    bad_nonce.nonce_stream = akita_types::TranscriptNonceStream::from_bytes(
+        nonce_bytes,
+        bad_nonce.nonce_stream.bit_len(),
+    )
+    .unwrap();
     assert!(verify(&bad_nonce).is_err());
 }

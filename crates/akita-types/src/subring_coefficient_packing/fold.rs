@@ -1,7 +1,7 @@
 use super::SubringCoefficientPackingGeometry;
 use akita_challenges::SparseChallenge;
 use akita_error::{checked, AkitaError};
-use akita_field::{ExtField, FieldCore, FromPrimitiveInt};
+use jolt_field::{ExtField, Field, Ring};
 use std::mem;
 
 const MAX_REFERENCE_ALLOCATION_BYTES: usize = 1 << 30;
@@ -15,7 +15,7 @@ fn require_len(label: &str, actual: usize, expected: usize) -> Result<(), AkitaE
     Ok(())
 }
 
-fn zero_vec<T: FieldCore>(label: &str, len: usize) -> Result<Vec<T>, AkitaError> {
+fn zero_vec<T: Field>(label: &str, len: usize) -> Result<Vec<T>, AkitaError> {
     let bytes = len.checked_mul(mem::size_of::<T>().max(1)).ok_or_else(|| {
         AkitaError::InvalidInput(format!("subring packing {label} allocation overflow"))
     })?;
@@ -38,14 +38,14 @@ fn validate_extension_degree<F, E>(
     geometry: SubringCoefficientPackingGeometry,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
-    if E::EXT_DEGREE != geometry.extension_degree() {
+    if E::DEGREE != geometry.extension_degree() {
         return Err(AkitaError::InvalidSetup(format!(
             "subring packing extension degree mismatch: geometry has {}, field has {}",
             geometry.extension_degree(),
-            E::EXT_DEGREE
+            E::DEGREE
         )));
     }
     Ok(())
@@ -68,7 +68,7 @@ pub(super) fn coefficient_packing_map<F, E>(
     packing_weights: &[E],
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     validate_extension_degree::<F, E>(geometry)?;
@@ -123,7 +123,7 @@ pub fn coefficient_packing_partials<F, E>(
     packing_weights: &[E],
 ) -> Result<Vec<F>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     validate_extension_degree::<F, E>(geometry)?;
@@ -251,7 +251,7 @@ pub fn coefficient_packing_scalar_opening<F, E>(
     tail_weights: &[E],
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     validate_extension_degree::<F, E>(geometry)?;
@@ -334,7 +334,7 @@ where
 /// Returns an error when the challenge length is not `s` or the bounded
 /// reference allocation fails.
 #[cfg(test)]
-pub(super) fn embed_subring_challenge_in_a_ring<F: FieldCore + FromPrimitiveInt>(
+pub(super) fn embed_subring_challenge_in_a_ring<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenge: &SparseChallenge,
 ) -> Result<Vec<F>, AkitaError> {
@@ -352,7 +352,7 @@ pub(super) fn embed_subring_challenge_in_a_ring<F: FieldCore + FromPrimitiveInt>
 }
 
 #[cfg(test)]
-fn negacyclic_product_reference<T: FieldCore>(
+fn negacyclic_product_reference<T: Field>(
     dimension: usize,
     lhs: &[T],
     rhs: &[T],
@@ -397,7 +397,7 @@ fn negacyclic_product_reference<T: FieldCore>(
 /// Returns an error when either input length disagrees with `geometry` or a
 /// bounded reference allocation fails.
 #[cfg(test)]
-pub(super) fn multiply_a_ring_by_subring_challenge<F: FieldCore + FromPrimitiveInt>(
+pub(super) fn multiply_a_ring_by_subring_challenge<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenge: &SparseChallenge,
     a_ring_coefficients: &[F],
@@ -417,13 +417,13 @@ pub(super) fn multiply_a_ring_by_subring_challenge<F: FieldCore + FromPrimitiveI
 /// `[extension coordinate][subring coefficient]`. Their length is `k s`, but
 /// the polynomial modulus used to derive them is `Y^s + 1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoefficientPackingFoldProduct<F: FieldCore> {
+pub struct CoefficientPackingFoldProduct<F: Field> {
     geometry: SubringCoefficientPackingGeometry,
     reduced_base_field_coordinates: Vec<F>,
     quotient_high_half_base_field_coordinates: Vec<F>,
 }
 
-impl<F: FieldCore> CoefficientPackingFoldProduct<F> {
+impl<F: Field> CoefficientPackingFoldProduct<F> {
     /// Geometry under which both paired outputs were constructed.
     #[must_use]
     pub fn geometry(&self) -> SubringCoefficientPackingGeometry {
@@ -456,7 +456,7 @@ impl<F: FieldCore> CoefficientPackingFoldProduct<F> {
     }
 }
 
-fn accumulate_small_signed_product<F: FieldCore + FromPrimitiveInt>(
+fn accumulate_small_signed_product<F: Field + Ring>(
     destination: &mut F,
     value: F,
     coefficient: i8,
@@ -490,7 +490,7 @@ fn accumulate_small_signed_product<F: FieldCore + FromPrimitiveInt>(
 /// Returns an error when a challenge is malformed at dimension `s`, the
 /// partial length disagrees with the challenge count and geometry, or a
 /// bounded reference allocation fails.
-pub fn fold_coefficient_packing_partials<F: FieldCore + FromPrimitiveInt>(
+pub fn fold_coefficient_packing_partials<F: Field + Ring>(
     geometry: SubringCoefficientPackingGeometry,
     challenges: &[SparseChallenge],
     partial_coordinates: &[F],

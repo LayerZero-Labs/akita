@@ -7,12 +7,9 @@ use akita_config::{
     ensure_verifier_schedule_fits_setup, CommitmentConfig, TrustedScheduleCatalog,
 };
 use akita_error::AkitaError;
-use akita_field::{
-    CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
-};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring};
 
 /// Reject malformed proof carriers against the selected schedule before any
 /// transcript replay or proof-owned buffer is cloned.
@@ -21,8 +18,8 @@ fn validate_proof_against_schedule<F, E>(
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + Valid,
-    E: FieldCore + Valid,
+    F: Field + Valid,
+    E: Field + Valid,
 {
     proof.check().map_err(|_| AkitaError::InvalidProof)?;
 
@@ -143,14 +140,9 @@ pub(crate) fn verify<F, E, T>(
     schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + PseudoMersenne,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let root_step = schedule.root_fold();
     let first_recursive_params = schedule.recursive_folds.first();
@@ -230,20 +222,20 @@ pub fn batched_verify<Cfg, T>(
 ) -> Result<(), AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field:
-        FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField + Valid,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>
-        + FrobeniusExtField<Cfg::Field>
-        + FromPrimitiveInt
-        + AkitaSerialize
+    Cfg::Field: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + PseudoMersenne
+        + Field
         + Valid,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field> + ExtField<Cfg::Field> + Ring + AkitaSerialize + Valid,
     T: Transcript<Cfg::Field>,
 {
     let selection = statement.selection();
     let claims = statement.into_claims();
     claims
-        .validate(setup.expanded.seed())
+        .validate(setup.expanded.descriptor())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims
         .committed_layout()
@@ -338,7 +330,7 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    {
+    let grinding_plan = {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
         bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
             &setup.expanded,
@@ -347,8 +339,13 @@ where
             schedule,
             basis,
             transcript,
-        )?;
-    }
+        )?
+    };
+    let mut grinding_transcript = akita_types::VerifierGrindingTranscript::<T>::new(
+        transcript,
+        &proof.nonce_stream,
+        &grinding_plan,
+    )?;
 
     let raw_groups = claims
         .groups()
@@ -364,23 +361,24 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     let raw_claims =
         OpeningClaims::from_groups(raw_groups).map_err(|_| AkitaError::InvalidProof)?;
-    verify::<Cfg::Field, Cfg::ExtField, T>(
+    verify::<Cfg::Field, Cfg::ExtField, _>(
         proof,
         setup,
-        transcript,
+        &mut grinding_transcript,
         raw_claims,
         &opening_batch,
         basis,
         schedule,
     )
+    .and_then(|()| grinding_transcript.finish())
     .map_err(|error| AkitaError::InvalidInput(format!("compressed proof replay failed: {error:?}")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp32;
     use akita_types::{RingVec, RingView};
+    use jolt_field::{Fp32, Zero};
 
     type F = Fp32<251>;
     const D: usize = 32;

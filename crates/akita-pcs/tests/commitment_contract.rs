@@ -13,8 +13,6 @@ use akita_algebra::CyclotomicRing;
 use akita_config::proof_optimized::fp64;
 use akita_config::CommitmentConfig;
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{
     CommitInnerPlan, CompressionComputeBackend, CompressionRowsProducts, ComputeBackendSetup,
@@ -24,6 +22,8 @@ use akita_prover::{
     AkitaProverSetup, CpuBackend, CpuPreparedSetup, DensePoly, GroupContext, UniformProverStack,
 };
 use akita_types::{CommittedSourceEncoding, NttCacheKey, OpeningClaimsLayout};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Cfg = fp64::Dense;
@@ -107,7 +107,7 @@ struct ContractCommitBackend;
 
 impl<F> ComputeBackendSetup<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
@@ -136,22 +136,22 @@ where
 
 impl<F> DigitRowsComputeBackend<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn digit_rows<const RING_D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
         row_len: usize,
-        digits: &[[i8; RING_D]],
+        digit_vectors: &[&[[i8; RING_D]]],
         log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
-        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digits, log_basis)
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend::DEFAULT.digit_rows(prepared, row_len, digit_vectors, log_basis)
     }
 }
 
 impl<F> CompressionComputeBackend<F> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
 {
     fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
         CpuBackend::DEFAULT.compression_cache_bytes(prepared)
@@ -168,8 +168,8 @@ where
 
 impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    F: Field + CanonicalEncoding + Ring + Unreduced,
+    <F as Unreduced>::Wide: From<F>,
 {
     fn commit_inner_group(
         &self,
@@ -225,7 +225,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         expanded,
         &schedules,
         &contract_stack,
-        GroupContext::explicit_without_precommitted_groups(&params),
+        GroupContext::explicit(&params.own_group().profile),
     )
     .expect("contract commit");
 
@@ -239,7 +239,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         expanded,
         &schedules,
         &cpu_stack,
-        GroupContext::explicit_without_precommitted_groups(&params),
+        GroupContext::explicit(&params.own_group().profile),
     )
     .expect("dense oracle commit");
 
@@ -250,21 +250,16 @@ fn custom_commit_source_runs_unified_explicit_commit() {
     assert_eq!(contract_output.hint, dense_output.hint);
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 
-    let mut malformed_params = params.clone();
-    malformed_params
-        .own_group_mut()
-        .profile
-        .inner
-        .digits
-        .num_digits += 1;
+    let mut malformed_profile = params.own_group().profile;
+    malformed_profile.inner.digits.num_digits += 1;
     let error = akita_prover::commit::<Cfg, ContractRootPoly, _>(
         std::slice::from_ref(&contract),
         expanded,
         &schedules,
         &contract_stack,
-        GroupContext::explicit_without_precommitted_groups(&malformed_params),
+        GroupContext::explicit(&malformed_profile),
     )
-    .expect_err("malformed explicit params must reject before arithmetic");
+    .expect_err("malformed explicit profile must reject before arithmetic");
     assert!(matches!(error, AkitaError::InvalidSetup(_)));
     assert_eq!(COMMIT_KERNEL_CALLS.load(Ordering::Relaxed), 1);
 }

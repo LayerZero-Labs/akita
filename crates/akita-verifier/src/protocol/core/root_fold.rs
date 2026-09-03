@@ -29,14 +29,9 @@ pub(super) fn verify_root<F, E, T>(
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if proof.extension_opening_reduction().is_some()
         || root_lp.source_encoding
@@ -89,8 +84,7 @@ where
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
-    let relation_geometry =
-        RelationWitnessGeometry::for_level(root_lp, opening_batch, E::EXT_DEGREE)?;
+    let relation_geometry = RelationWitnessGeometry::for_level(root_lp, opening_batch, E::DEGREE)?;
     let relation_layout = relation_geometry.rhs_layout();
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
@@ -166,14 +160,9 @@ fn verify_root_inner<F, E, T>(
     next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + RandomSampling + HalvingField,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + FrobeniusExtField<F>
-        + FromPrimitiveInt
-        + AkitaSerialize
-        + MulBaseUnreduced<F>,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize + MulBaseUnreduced<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let claim_material = verify_coefficient_packing_root_prefix::<F, E>(
         claims,
@@ -192,8 +181,7 @@ where
         commitment_payloads.push(commitment.rows().clone());
     }
 
-    let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::EXT_DEGREE)?;
-    let fold_grind_nonce = proof.fold_grind_nonce;
+    let witness_len = root_lp.output_witness_len::<F>(opening_batch, E::DEGREE)?;
     let opening_payload = proof.opening_payload.clone();
     let prefix = bind_opening_payload_and_finalize_claims(
         root_lp,
@@ -201,12 +189,13 @@ where
         &opening_payload,
         claim_material,
         transcript,
+        0,
     )?;
     let committed_witness_len =
         akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        fold_grind_nonce,
+        level: 0,
         opening_payload,
         opening_shape: opening_batch.clone(),
         commitment_payloads,

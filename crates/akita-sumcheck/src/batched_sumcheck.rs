@@ -10,10 +10,10 @@
 
 use crate::{SumcheckInstanceProver, SumcheckInstanceVerifier, SumcheckProof, UniPoly};
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_serialization::AkitaSerialize;
 use akita_transcript::labels;
 use akita_transcript::Transcript;
+use jolt_field::{CanonicalEncoding, Field, Ring};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -27,7 +27,7 @@ use rayon::prelude::*;
 #[cfg(feature = "parallel")]
 const PARALLEL_MIN_ROUND_WORK: u64 = 1 << 13;
 
-fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
+fn mul_pow_2<E: Field>(x: E, k: usize) -> E {
     let mut result = x;
     for _ in 0..k {
         result = result + result;
@@ -35,7 +35,7 @@ fn mul_pow_2<E: FieldCore>(x: E, k: usize) -> E {
     result
 }
 
-fn linear_combination<E: FieldCore>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPoly<E> {
+fn linear_combination<E: Field>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPoly<E> {
     let max_len = polys.iter().map(|p| p.coeffs.len()).max().unwrap_or(0);
     let mut result = vec![E::zero(); max_len];
     for (poly, coeff) in polys.iter().zip(coeffs.iter()) {
@@ -53,7 +53,7 @@ fn linear_combination<E: FieldCore>(polys: &[UniPoly<E>], coeffs: &[E]) -> UniPo
 /// claim through an external reduction (e.g. Greyhound) before enforcing
 /// equality.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchedSumcheckRoundResult<E: FieldCore> {
+pub struct BatchedSumcheckRoundResult<E: Field> {
     /// Final claim produced by replaying all sumcheck rounds.
     pub output_claim: E,
     /// Challenge vector sampled during replay.
@@ -91,9 +91,9 @@ pub fn prove_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<(SumcheckProof<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
-    E: FieldCore + FromPrimitiveInt + HalvingField + AkitaSerialize + Send + Sync,
+    E: Field + Ring + AkitaSerialize + Send + Sync,
     S: FnMut(&mut T) -> E,
 {
     if instances.is_empty() {
@@ -273,9 +273,9 @@ pub fn verify_batched_sumcheck_rounds<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<BatchedSumcheckRoundResult<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     if verifiers.is_empty() {
@@ -314,7 +314,7 @@ where
         max_num_rounds,
         max_degree,
         transcript,
-        &mut sample_challenge,
+        |transcript| Ok(sample_challenge(transcript)),
     )?;
 
     Ok(BatchedSumcheckRoundResult {
@@ -332,7 +332,7 @@ where
 ///
 /// Returns an error if batching metadata is inconsistent, or propagates errors
 /// from verifier `expected_output_claim` calls.
-pub fn compute_batched_expected_output_claim<E: FieldCore>(
+pub fn compute_batched_expected_output_claim<E: Field>(
     verifiers: Vec<&dyn SumcheckInstanceVerifier<E>>,
     batching_coeffs: &[E],
     max_num_rounds: usize,
@@ -375,7 +375,7 @@ pub fn compute_batched_expected_output_claim<E: FieldCore>(
 /// # Errors
 ///
 /// Returns an error if `output_claim != expected_output_claim`.
-pub fn check_batched_output_claim<E: FieldCore>(
+pub fn check_batched_output_claim<E: Field>(
     output_claim: E,
     expected_output_claim: E,
 ) -> Result<(), AkitaError> {
@@ -403,9 +403,9 @@ pub fn verify_batched_sumcheck<F, T, E, S>(
     mut sample_challenge: S,
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding,
     T: Transcript<F>,
-    E: FieldCore + AkitaSerialize,
+    E: Field + AkitaSerialize,
     S: FnMut(&mut T) -> E,
 {
     let round_result = verify_batched_sumcheck_rounds::<F, T, E, _>(

@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
-use akita_field::Fp64;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::{CanonicalEncoding, Prime64Offset59};
 
-type F = Fp64<4294967197>;
+type F = Prime64Offset59;
 
 #[test]
 fn label_namespace_does_not_include_dory_literals() {
@@ -39,10 +39,26 @@ fn run_akita_schedule<T: Transcript<F>>(transcript: &mut T) -> (F, F, F) {
 fn schedule_is_replayable_with_akita_labels() {
     let mut prover = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let mut verifier = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
-    assert_eq!(
-        run_akita_schedule(&mut prover),
-        run_akita_schedule(&mut verifier)
-    );
+    let prover_challenges = run_akita_schedule(&mut prover);
+    assert_eq!(prover_challenges, run_akita_schedule(&mut verifier));
+    #[cfg(feature = "transcript-blake2b")]
+    let expected = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/jolt-field-cutover/transcript.txt"
+    ));
+    #[cfg(feature = "transcript-keccak")]
+    let expected = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/jolt-field-cutover/transcript-keccak.txt"
+    ));
+    let actual = [
+        prover_challenges.0.to_u64_checked().unwrap(),
+        prover_challenges.1.to_u64_checked().unwrap(),
+        prover_challenges.2.to_u64_checked().unwrap(),
+    ];
+    for (challenge, expected) in actual.into_iter().zip(expected.lines()) {
+        assert_eq!(format!("{challenge:016x}"), expected);
+    }
 }
 
 #[test]

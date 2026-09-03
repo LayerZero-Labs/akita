@@ -1,11 +1,11 @@
 use super::*;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::{Ext2, ExtField, Prime64Offset59};
 use akita_types::{
     relation_rhs_coeff_len, BasisMode, CommitmentPayloadMode, OpenCommitMatrixParams,
     OpeningClaimsLayout, OpeningMethod, PreparedSubringCoefficientPackingPoint,
     RelationWitnessGeometry, SisModulusProfileId, SubringCoefficientPackingGeometry,
 };
+use jolt_field::{Ext2, ExtField, Prime64Offset59, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -46,7 +46,7 @@ fn fixture() -> (
     );
     let opening_batch = OpeningClaimsLayout::new(11, 2).unwrap();
     let relation_geometry =
-        RelationWitnessGeometry::for_level(&params, &opening_batch, <E as ExtField<F>>::EXT_DEGREE)
+        RelationWitnessGeometry::for_level(&params, &opening_batch, <E as ExtField<F>>::DEGREE)
             .unwrap();
     let geometry = SubringCoefficientPackingGeometry::try_new(2, d_a, s).unwrap();
     let public_point = (0..11)
@@ -81,7 +81,7 @@ fn fixture() -> (
         vec![RingRelationGroupOpening::coefficient_packing(
             akita_types::CoefficientPackingChallenges::new(geometry, challenges).unwrap(),
         )],
-        <E as ExtField<F>>::EXT_DEGREE,
+        <E as ExtField<F>>::DEGREE,
         opening_batch.clone(),
         vec![F::from_u64(3), F::from_u64(5)],
         RingVec::from_coeffs_with_ring_dim(

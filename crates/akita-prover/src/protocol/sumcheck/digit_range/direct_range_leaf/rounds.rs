@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
+impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
     pub(super) fn compute_current_round_eq_poly_from_state(&mut self) -> EqFactoredUniPoly<E> {
         let use_two_round_prefix = self.using_two_round_prefix();
         let use_prefix_x_round = !use_two_round_prefix && self.use_prefix_x_round();
@@ -69,23 +69,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
         skip_all,
         name = "LowBasisRangeCheckProver::fold_compact_range_image_to_materialized"
     )]
-    pub(super) fn fold_compact_range_image_to_materialized<V: CompactRangeImageValue>(
-        compact_range_image: &[V],
+    pub(super) fn fold_compact_range_image_to_materialized<S: CompactRangeImageSource + ?Sized>(
+        compact_range_image: &S,
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
         cfg_into_iter!(0..compact_range_image.len() / 2)
             .map(|j| {
                 fold_lut.fold(
-                    compact_range_image[2 * j].range_image_value(),
-                    compact_range_image[2 * j + 1].range_image_value(),
+                    compact_range_image.range_image_value(2 * j),
+                    compact_range_image.range_image_value(2 * j + 1),
                 )
             })
             .collect()
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
-    EqFactoredSumcheckInstanceProver<E> for LowBasisRangeCheckProver<E>
+impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
+    for LowBasisRangeCheckProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars

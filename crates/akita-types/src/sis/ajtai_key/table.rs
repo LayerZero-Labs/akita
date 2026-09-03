@@ -1,4 +1,4 @@
-use super::super::coverage::{sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
+use super::super::coverage::{inner_coeff_linf_bounds, sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
 use super::super::generated_sis_table::{
     sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST,
 };
@@ -86,7 +86,7 @@ impl SisMatrixRole {
     serde::Deserialize,
 )]
 pub enum SisSecurityPolicyId {
-    /// ADPS16 quantum LGSA estimator at a 128-bit target.
+    /// Corrected ADPS16 quantum LGSA estimator at a 128-bit target.
     #[default]
     Quantum128BitADPS16,
 }
@@ -112,6 +112,19 @@ impl SisSecurityPolicyId {
             1 => Some(Self::Quantum128BitADPS16),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_id_tests {
+    use super::SisSecurityPolicyId;
+
+    #[test]
+    fn policy_has_the_unversioned_stable_tag() {
+        let policy = SisSecurityPolicyId::Quantum128BitADPS16;
+        assert_eq!(policy.tag(), 1);
+        assert_eq!(SisSecurityPolicyId::from_tag(1), Some(policy));
+        assert_eq!(SisSecurityPolicyId::from_tag(2), None);
     }
 }
 
@@ -195,16 +208,6 @@ pub const DEFAULT_SIS_SECURITY_POLICY: SisSecurityPolicyId =
 /// Policies with checked-in SIS table support.
 pub const SUPPORTED_SIS_SECURITY_POLICIES: &[SisSecurityPolicyId] = &[DEFAULT_SIS_SECURITY_POLICY];
 
-/// Coefficient-`L∞` collision buckets for norm-bound sizing.
-///
-/// Keep in lockstep with `COEFF_LINF_BUCKETS` in
-/// `crates/akita-sis-estimator/src/width_table.rs`.
-pub const COEFF_LINF_BUCKETS: &[u128] = &[
-    2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535, 131_071,
-    262_143, 524_287, 1_048_575, 2_097_151, 4_194_303, 8_388_607, 16_777_215, 33_554_431,
-    67_108_863,
-];
-
 /// Canonical key for a generated SIS floor row.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
@@ -220,23 +223,18 @@ pub struct SisTableKey {
     pub role: SisMatrixRole,
     /// Ring dimension.
     pub ring_dimension: u32,
-    /// Rounded coefficient-`L∞` bound.
+    /// Exact role coefficient-`L∞` bound.
     pub coeff_linf_bound: u128,
 }
 
-/// Smallest coefficient-`L∞` bucket with `B >= linf`.
-#[must_use]
-pub fn ceil_coeff_linf_bucket(linf: u128) -> Option<u128> {
-    if linf == 0 {
-        return None;
-    }
-    COEFF_LINF_BUCKETS
-        .iter()
-        .copied()
-        .find(|&bucket| linf <= bucket)
-}
-
-/// Round a raw coefficient-`L∞` bound up to a generated table bucket.
+/// Resolve a raw coefficient-`L∞` bound to a generated role cell.
+///
+/// A-role collisions first use the exact protocol-derived target, then round
+/// upward to the smallest audited A cell for the selected profile and ring
+/// dimension. One-response targets are themselves audited cells. Chunked
+/// responses can land between those cells, so this conservative rounding lets
+/// them reuse the existing table without adding a chunk-count coverage axis.
+/// B and D round up to the smallest exact gadget anchor.
 #[must_use]
 pub fn ceil_supported_linf_bound(
     policy: SisSecurityPolicyId,
@@ -249,16 +247,18 @@ pub fn ceil_supported_linf_bound(
     if linf == 0 {
         return None;
     }
-    let bucket = match role {
-        SisMatrixRole::Inner => ceil_coeff_linf_bucket(linf)?,
+    let bound = match role {
+        SisMatrixRole::Inner => inner_coeff_linf_bounds(sis_modulus_profile, d)
+            .into_iter()
+            .find(|&candidate| linf <= candidate)?,
         SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()
             .find(|&candidate| linf <= candidate)?,
     };
-    sis_role_cell(role, sis_modulus_profile, d, bucket)?;
-    sis_max_widths(policy, table_digest, sis_modulus_profile, d, bucket)?;
-    Some(bucket)
+    sis_role_cell(role, sis_modulus_profile, d, bound)?;
+    sis_max_widths(policy, table_digest, sis_modulus_profile, d, bound)?;
+    Some(bound)
 }
 
 /// Canonical generated-table key for a raw coefficient-`L∞` bound.

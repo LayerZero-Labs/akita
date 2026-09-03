@@ -8,7 +8,7 @@ use rotations::{add_rotated, prepare_rotations, PreparedRotations};
 const TASKS_PER_RAYON_WORKER: usize = 4;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
 
-struct DecomposeSource<'a, F: FieldCore, I: OneHotIndex> {
+struct DecomposeSource<'a, F: Field, I: OneHotIndex> {
     poly: &'a OneHotPoly<F, I>,
     challenge_start: usize,
     active_blocks: usize,
@@ -25,7 +25,7 @@ fn accumulate_ring_range<F, I, const D: usize>(
     dst: &mut [[i32; D]],
     rotations: &PreparedRotations<'_, D>,
 ) where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     let poly = source.poly;
@@ -98,7 +98,7 @@ fn accumulate_indices<F, I, const D: usize>(
     num_positions_per_block: usize,
 ) -> Vec<[i32; D]>
 where
-    F: FieldCore,
+    F: Field,
     I: OneHotIndex,
 {
     let rotations = {
@@ -190,11 +190,14 @@ fn expand_onehot_accum<const D: usize>(
     expanded
 }
 
-pub(super) fn finish_decompose_fold<F: CanonicalField, const D: usize>(
+pub(super) fn finish_decompose_fold<F: Field + CanonicalEncoding, const D: usize>(
     compressed_accum: Vec<[i32; D]>,
     num_digits: usize,
 ) -> DecomposeFoldWitness<F> {
-    let modulus = (-F::one()).to_canonical_u128() + 1;
+    let modulus = (-F::one())
+        .to_u128_checked()
+        .expect("Akita field element must fit in u128")
+        + 1;
     let coeff_accum = {
         let _span = tracing::info_span!("onehot_expand_accum").entered();
         expand_onehot_accum(compressed_accum, num_digits)
@@ -203,7 +206,7 @@ pub(super) fn finish_decompose_fold<F: CanonicalField, const D: usize>(
     build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
 }
 
-impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
+impl<F: Field, I: OneHotIndex> OneHotPoly<F, I> {
     pub(super) fn decompose_fold_batched_onehot<const D: usize>(
         polys: &[&Self],
         challenges: &[SparseChallenge],
@@ -211,7 +214,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         num_digits: usize,
     ) -> Option<DecomposeFoldWitness<F>>
     where
-        F: CanonicalField,
+        F: Field + CanonicalEncoding,
     {
         let mut challenge_start = 0usize;
         let mut sources = Vec::with_capacity(polys.len());

@@ -19,16 +19,11 @@ use akita_types::{
     AkitaBatchedProof, BasisMode, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
 };
 
-use akita_field::unreduced::{
-    HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo,
-};
-use akita_field::{
-    CanonicalBytes, CanonicalField, ExtField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling, TranscriptChallenge, Zero,
-};
 use akita_prover::SelectedProverOpeningData;
 use akita_serialization::Valid;
 use akita_types::FpExtEncoding;
+use jolt_field::{CanonicalBytes, CanonicalEncoding, ExtField, Field, PseudoMersenne, Ring, Zero};
+use jolt_field::{Fold, Unreduced, WithCommitAccumulator};
 
 /// Single committed group, no precommits: commit `poly`, prove its opening at
 /// `point`, round-trip the proof through serialization, and verify `expected`.
@@ -41,27 +36,29 @@ pub(super) fn single_group_roundtrip<Cfg>(
     what: &str,
 ) where
     Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalField
+    Cfg::Field: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + HasWide
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + PseudoMersenneField
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Unreduced
+        + Field
+        + Ring
+        + Field
+        + PseudoMersenne
+        + WithCommitAccumulator
         + Valid
+        + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
+    Cfg::ExtField: ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
         + FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + Valid
+        + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
     let setup = AkitaCommitmentScheme::<Cfg>::from_embedded_schedule_catalog()
         .expect("embedded schedule catalog")
@@ -171,27 +168,28 @@ pub(super) fn two_group_verify_roundtrip<Cfg>(
     what: &str,
 ) where
     Cfg: CommitmentConfig,
-    Cfg::Field: CanonicalField
+    Cfg::Field: CanonicalEncoding
         + CanonicalBytes
-        + TranscriptChallenge
-        + HasWide
-        + RandomSampling
-        + FromPrimitiveInt
-        + HalvingField
-        + PseudoMersenneField
-        + HasCommitAccum
+        + CanonicalEncoding
+        + Unreduced
+        + Field
+        + Ring
+        + Field
+        + PseudoMersenne
+        + WithCommitAccumulator
         + Valid
+        + AkitaSerialize
         + AkitaDeserialize<Context = ()>
         + 'static,
-    Cfg::ExtField: FrobeniusExtField<Cfg::Field>
-        + HasUnreducedOps
-        + HasOptimizedFold
+    Cfg::ExtField: ExtField<Cfg::Field>
+        + Unreduced
+        + Fold
         + FpExtEncoding<Cfg::Field>
         + ExtField<Cfg::Field>
         + Valid
         + AkitaDeserialize<Context = ()>
         + AkitaSerialize,
-    <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
+    <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
     let (pre_commitment, pre_point, pre_opening) = pre;
     let (final_commitment, final_point, final_opening) = fin;

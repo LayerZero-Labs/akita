@@ -6,9 +6,7 @@ pub(super) use opening_oracles::*;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::RecursiveCommitmentConfig;
-use akita_field::Zero;
-pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
+use akita_config::{derive_transcript_grinding_plan, RecursiveCommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -28,6 +26,8 @@ pub(super) use akita_types::{
     BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims, PrecommittedGroupProfiles,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
+pub(super) use jolt_field::{CanonicalBytes, CanonicalEncoding, Field};
+use jolt_field::{One, Zero};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::{Arc, Once};
@@ -67,7 +67,7 @@ pub(super) fn init_rayon_pool() {
 pub(super) fn random_point(nv: usize, seed: u64) -> Vec<F> {
     let mut rng = StdRng::seed_from_u64(seed);
     (0..nv)
-        .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+        .map(|_| F::from_u128_reduced(rng.gen::<u128>()))
         .collect()
 }
 
@@ -78,6 +78,115 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
+}
+
+/// Require a logging transcript to consume exactly the public grinding plan
+/// and to expose the corresponding live challenge boundaries.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn assert_production_grinding_audit(
+    events: &[TranscriptEvent],
+    plan: &akita_types::GrindingPlan,
+) -> Vec<(akita_types::GrindingSite, usize)> {
+    use akita_types::{GrindingQueryKind, GrindingSite};
+
+    let expected_plan = plan
+        .runs()
+        .iter()
+        .map(|run| (run.site().canonical_bytes(), run.multiplicity()))
+        .collect::<Vec<_>>();
+    let consumed_plan = events
+        .iter()
+        .filter_map(|event| match event {
+            TranscriptEvent::GrindingPlanQuery { site, multiplicity } => {
+                Some((site.clone(), *multiplicity))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        consumed_plan, expected_plan,
+        "adapter consumption must equal the public plan"
+    );
+
+    let mut run_index = 0usize;
+    let mut active_pow = None;
+    let mut actual_draw_counts = Vec::new();
+    for event in events {
+        match event {
+            TranscriptEvent::GrindingPlanQuery { .. } => {
+                let run = plan
+                    .runs()
+                    .get(run_index)
+                    .expect("validated plan event count");
+                run_index += 1;
+                active_pow = (run.kind() == GrindingQueryKind::ProofOfWork).then(|| {
+                    actual_draw_counts.push((run.site(), 0));
+                    actual_draw_counts.len() - 1
+                });
+            }
+            TranscriptEvent::GrindingActualQuery { site, label } => {
+                let index = active_pow.expect("actual challenge must follow a proof-of-work run");
+                let (expected_site, count) = &mut actual_draw_counts[index];
+                assert_eq!(site, &expected_site.canonical_bytes());
+                let normalized_label =
+                    akita_transcript::ext_limb_base_label(label).unwrap_or(label);
+                assert_eq!(
+                    normalized_label,
+                    expected_site.proof_of_work_label().unwrap()
+                );
+                *count += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(run_index, plan.runs().len());
+    assert!(
+        actual_draw_counts.iter().all(|(_, count)| *count > 0),
+        "every proof-of-work run must protect at least one live draw"
+    );
+
+    let expected_ranges = plan
+        .runs()
+        .iter()
+        .filter_map(|run| match run.site() {
+            GrindingSite::FoldChallengeGroup { group, .. } => Some((
+                group as usize,
+                run.fold_coordinate_count().unwrap() as usize,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let actual_ranges = events
+        .iter()
+        .filter_map(|event| match event {
+            TranscriptEvent::FoldChallengeRange {
+                group_index,
+                coordinate_count,
+            } => Some((*group_index, *coordinate_count)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_ranges, expected_ranges,
+        "live indexed draws must equal coordinate runs"
+    );
+
+    let expected_roots = plan
+        .runs()
+        .iter()
+        .filter(|run| run.kind() == GrindingQueryKind::FoldChallengeGroup)
+        .count();
+    let actual_roots = events
+        .iter()
+        .filter(|event| {
+            matches!(event, TranscriptEvent::Squeeze { label, .. } if label == akita_transcript::labels::CHALLENGE_SPARSE_CHALLENGE)
+        })
+        .count();
+    assert_eq!(
+        actual_roots, expected_roots,
+        "live fold roots must equal group runs"
+    );
+    actual_draw_counts
 }
 
 /// Canonical byte encoding of an ordered logging-transcript event stream.
@@ -122,6 +231,44 @@ pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8>
                 bytes.extend_from_slice(bytes_digest);
                 bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
             }
+            TranscriptEvent::Grinding {
+                site_label,
+                grind_bits,
+                nonce_bits,
+                nonce,
+                predicate_len,
+                predicate,
+            } => {
+                bytes.push(4);
+                bytes.extend_from_slice(&u64::try_from(site_label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(site_label);
+                bytes.push(*grind_bits);
+                bytes.push(*nonce_bits);
+                bytes.extend_from_slice(&nonce.to_le_bytes());
+                bytes.extend_from_slice(&u64::try_from(*predicate_len).unwrap().to_le_bytes());
+                bytes.extend_from_slice(predicate);
+            }
+            TranscriptEvent::GrindingPlanQuery { site, multiplicity } => {
+                bytes.push(5);
+                bytes.extend_from_slice(&u64::try_from(site.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(site);
+                bytes.extend_from_slice(&multiplicity.to_le_bytes());
+            }
+            TranscriptEvent::GrindingActualQuery { site, label } => {
+                bytes.push(6);
+                bytes.extend_from_slice(&u64::try_from(site.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(site);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+            }
+            TranscriptEvent::FoldChallengeRange {
+                group_index,
+                coordinate_count,
+            } => {
+                bytes.push(7);
+                bytes.extend_from_slice(&u64::try_from(*group_index).unwrap().to_le_bytes());
+                bytes.extend_from_slice(&u64::try_from(*coordinate_count).unwrap().to_le_bytes());
+            }
         }
     }
     bytes
@@ -130,7 +277,7 @@ pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8>
 /// Canonical Stage 1 payload bytes in fold-wire order.
 pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
 where
-    FF: FieldCore + AkitaSerialize,
+    FF: Field + AkitaSerialize,
 {
     let mut bytes = Vec::new();
     for stage in &proof.stages {
@@ -154,7 +301,7 @@ where
 /// Stable digest used by versioned protocol epochs.
 pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
 where
-    FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+    FF: Field + CanonicalEncoding + CanonicalBytes + 'static,
 {
     let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
     transcript.append_bytes(labels::ABSORB_OPENING_PAYLOAD, payload);
@@ -375,7 +522,7 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     let mut state = seed;
     for _ in 0..n {
         let v = splitmix64_next(&mut state);
-        out.push(F::from_canonical_u128_reduced(v as u128));
+        out.push(F::from_u128_reduced(v as u128));
     }
     out
 }
@@ -405,7 +552,7 @@ pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
             continue;
         }
         let draw = splitmix64_next(&mut state);
-        let magnitude = F::from_canonical_u128_reduced(u128::from(draw));
+        let magnitude = F::from_u128_reduced(u128::from(draw));
         out.push(if draw & 1 == 0 { magnitude } else { -magnitude });
     }
     out
@@ -418,7 +565,7 @@ pub(super) fn u64_dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
 /// reach further negative than positive, so a guard stated only on the positive
 /// side would miss it.
 pub(super) fn u64_magnitude_endpoints() -> [F; 4] {
-    let max = F::from_canonical_u128_reduced(u128::from(u64::MAX));
+    let max = F::from_u128_reduced(u128::from(u64::MAX));
     [max, -max, F::one(), -F::one()]
 }
 
@@ -483,11 +630,11 @@ fn verifier_setup_with_alternate_full_prefix(
         &original[natural_len..n_prefix]
     );
 
-    let seed = setup.expanded.seed().clone();
-    let setup_seed = seed.setup_seed.clone();
+    let descriptor = setup.expanded.descriptor().clone();
+    let setup_seed = descriptor.setup_seed.clone();
     let altered_expanded = Arc::new(
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            seed,
+            descriptor,
             FlatMatrix::from_flat_data(altered),
         ),
     );
@@ -537,307 +684,9 @@ fn verifier_setup_with_alternate_full_prefix(
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
 /// recursion adapter and standalone profiles are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
-pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
-    transcript_domain: &'static [u8],
-    on_schedule: fn(&FoldSchedule),
-) where
-    BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
-{
-    type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-
-    const PRE_NV: usize = 16;
-    const FINAL_NV: usize = 32;
-    const PRE_GROUPS: usize = 2;
-    const PRE_GROUP_SIZE: usize = 1;
-    const FINAL_GROUP_SIZE: usize = 2;
-    const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
-
-    init_rayon_pool();
-    run_on_large_stack(move || {
-        let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_frozen =
-            BaseCfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
-        let schedule_key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
-            precommitteds: vec![pre_frozen, pre_frozen],
-        };
-        let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule =
-            RecursiveCommitmentConfig::<BaseCfg>::resolve_catalog_row_for_key(&schedule_key)
-                .expect("recursive profile schedule resolves")
-                .into_schedule();
-        assert!(
-            schedule_uses_setup_prefix(&schedule),
-            "recursive profile must carry setup-prefix metadata"
-        );
-        on_schedule(&schedule);
-
-        let setup = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
-            .expect("recursive setup");
-        assert!(
-            !setup.prefix_slots.is_empty(),
-            "recursive setup must precompute setup-prefix slots for the generated profile"
-        );
-        let prepared = CpuBackend::DEFAULT
-            .prepare_setup(&setup)
-            .expect("prepared setup");
-        let stack = akita_prover::UniformProverStack::uniform(
-            &CpuBackend::DEFAULT,
-            &prepared,
-            setup.expanded.as_ref(),
-        )
-        .expect("stack");
-
-        let mut pre_polys_by_group = Vec::new();
-        let mut pre_commitments = Vec::new();
-        let mut pre_hints = Vec::new();
-        for group_idx in 0..PRE_GROUPS {
-            let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let akita_prover::CommitOutput {
-                committed_group: commitment,
-                hint,
-            } = AkitaCommitmentScheme::<BaseCfg>::from_embedded_schedule_catalog()
-                .expect("embedded schedule catalog")
-                .commit(
-                    &setup,
-                    std::slice::from_ref(&poly),
-                    &stack,
-                    akita_prover::GroupContext::scheduler_without_precommitted_groups(),
-                )
-                .expect("precommit group");
-            pre_polys_by_group.push(vec![poly]);
-            pre_commitments.push(commitment);
-            pre_hints.push(hint);
-        }
-
-        let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
-            .collect();
-        let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
-            .expect("nonempty precommitted groups");
-        let akita_prover::CommitOutput {
-            committed_group: final_commitment,
-            hint: final_hint,
-        } = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .commit(
-                &setup,
-                &final_polys,
-                &stack,
-                akita_prover::GroupContext::scheduler_with_precommitted_groups(&precommitteds),
-            )
-            .expect("final generated-profile commitment");
-
-        let point = random_point(FINAL_NV, 0xcafe_2026_0001);
-        // Independent oracles: sums of Lagrange weights at the hot indices.
-        let pre_openings: Vec<Vec<F>> = pre_polys_by_group
-            .iter()
-            .map(|polys| {
-                polys
-                    .iter()
-                    .map(|poly| onehot_opening_lagrange(poly, &point[..PRE_NV]))
-                    .collect()
-            })
-            .collect();
-        let final_openings: Vec<F> = final_polys
-            .iter()
-            .map(|poly| onehot_opening_lagrange(poly, &point))
-            .collect();
-
-        let pre_refs_by_group: Vec<Vec<&OneHotPoly<F, u8>>> = pre_polys_by_group
-            .iter()
-            .map(|polys| polys.iter().collect())
-            .collect();
-        let final_refs: Vec<&OneHotPoly<F, u8>> = final_polys.iter().collect();
-
-        let mut prover_groups = Vec::new();
-        for (group_idx, openings) in pre_openings.iter().enumerate() {
-            prover_groups.push(
-                PolynomialGroupClaims::new(
-                    point[..PRE_NV].to_vec(),
-                    openings.clone(),
-                    pre_commitments[group_idx].clone(),
-                )
-                .expect("pre prover group"),
-            );
-        }
-        prover_groups.push(
-            PolynomialGroupClaims::new(
-                point.clone(),
-                final_openings.clone(),
-                final_commitment.clone(),
-            )
-            .expect("final prover group"),
-        );
-
-        let mut prover_polys: Vec<&[&OneHotPoly<F, u8>]> = Vec::new();
-        for refs in &pre_refs_by_group {
-            prover_polys.push(&refs[..]);
-        }
-        prover_polys.push(&final_refs[..]);
-        let mut prover_hints = pre_hints;
-        prover_hints.push(final_hint);
-
-        let prover_claims = selected_prover_data::<RecursiveCommitmentConfig<BaseCfg>, _>(
-            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
-            prover_hints,
-            prover_polys,
-        );
-        let selection = prover_claims.selection();
-
-        let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let proof = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .batched_prove(
-                &setup,
-                prover_claims,
-                &stack,
-                &mut prover_transcript,
-                BasisMode::Lagrange,
-            )
-            .expect("generated-profile recursive proof");
-        assert!(
-            proof_has_recursive_setup_sumcheck(&proof),
-            "recursive proof must carry stage-3 setup sumcheck evidence"
-        );
-
-        let shape = proof.shape();
-        assert_eq!(
-            shape,
-            canonical_proof_shape(&schedule, &opening_layout, 1)
-                .expect("canonical schedule proof shape"),
-            "a produced proof must have the verifier's canonical schedule-derived shape"
-        );
-        let mut bytes = Vec::new();
-        proof
-            .serialize_compressed(&mut bytes)
-            .expect("serialize generated-profile proof");
-        let proof = AkitaBatchedProof::<F, F>::deserialize_compressed(
-            &mut std::io::Cursor::new(bytes),
-            &shape,
-        )
-        .expect("deserialize generated-profile proof");
-
-        let verifier_setup = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
-            .expect("verifier setup");
-        let verify_claims = |final_openings: Vec<F>| {
-            let mut verifier_groups = Vec::new();
-            for (group_idx, openings) in pre_openings.iter().enumerate() {
-                verifier_groups.push(
-                    PolynomialGroupClaims::new(
-                        point[..PRE_NV].to_vec(),
-                        openings.clone(),
-                        &pre_commitments[group_idx],
-                    )
-                    .expect("pre verifier group"),
-                );
-            }
-            verifier_groups.push(
-                PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
-                    .expect("final verifier group"),
-            );
-            let claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
-            GroupBatchStatement::new(selection, claims).expect("verifier statement")
-        };
-
-        let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                verify_claims(final_openings.clone()),
-                BasisMode::Lagrange,
-            )
-            .expect("generated-profile recursive verify");
-
-        if let Some(alternate_verifier_setup) = verifier_setup_with_alternate_full_prefix(
-            &setup,
-            &verifier_setup,
-            &first_setup_prefix_slot(&schedule),
-        ) {
-            let mut alternate_transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let alternate_result = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-                .expect("embedded schedule catalog")
-                .batched_verify(
-                    &proof,
-                    &alternate_verifier_setup,
-                    &mut alternate_transcript,
-                    verify_claims(final_openings.clone()),
-                    BasisMode::Lagrange,
-                );
-            assert!(
-                alternate_result.is_err(),
-                "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
-            );
-        }
-
-        let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
-            let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
-            let result = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-                .expect("embedded schedule catalog")
-                .batched_verify(
-                    &tampered_proof,
-                    &verifier_setup,
-                    &mut transcript,
-                    verify_claims(final_openings.clone()),
-                    BasisMode::Lagrange,
-                );
-            assert!(
-                result.is_err(),
-                "{label} must be rejected without panicking, got {result:?}"
-            );
-        };
-
-        let mut tampered_claim = proof.clone();
-        first_stage3_proof_mut(&mut tampered_claim)
-            .expect("recursive profile Stage 3 proof")
-            .claim += F::one();
-        reject_stage3_tamper(tampered_claim, "tampered Stage 3 claim");
-
-        let mut tampered_prefix_eval = proof.clone();
-        first_stage3_proof_mut(&mut tampered_prefix_eval)
-            .expect("recursive profile Stage 3 proof")
-            .setup_prefix_eval += F::one();
-        reject_stage3_tamper(
-            tampered_prefix_eval,
-            "tampered Stage 3 setup-prefix evaluation",
-        );
-
-        let mut tampered_round = proof.clone();
-        let coefficient = first_stage3_proof_mut(&mut tampered_round)
-            .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
-            .and_then(|round| round.coeffs_except_linear_term.first_mut())
-            .expect("recursive profile Stage 3 round coefficient");
-        *coefficient += F::one();
-        reject_stage3_tamper(
-            tampered_round,
-            "tampered Stage 3 round polynomial and derived point",
-        );
-
-        let mut tampered = final_openings;
-        tampered[0] += F::from_canonical_u128_reduced(1);
-        let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let tampered_result = Recursive::<BaseCfg>::from_embedded_schedule_catalog()
-            .expect("embedded schedule catalog")
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut tampered_transcript,
-                verify_claims(tampered),
-                BasisMode::Lagrange,
-            );
-        assert!(
-            tampered_result.is_err(),
-            "recursive verify must reject a tampered final opening"
-        );
-    });
-}
+mod recursive;
+#[allow(unused_imports)]
+pub(super) use recursive::recursive_multi_group_round_trip;
 
 pub(super) fn make_onehot_poly_with_k(nv: usize, k: usize, seed: u64) -> OneHotPoly<F, u8> {
     let total_chunks = (1usize << nv) / k;
@@ -865,7 +714,11 @@ pub(super) fn event_label(event: &akita_transcript::TranscriptEvent) -> Option<&
         akita_transcript::TranscriptEvent::Absorb { label, .. }
         | akita_transcript::TranscriptEvent::Squeeze { label, .. }
         | akita_transcript::TranscriptEvent::Wire { label, .. } => Some(label),
-        akita_transcript::TranscriptEvent::Preamble { .. } => None,
+        akita_transcript::TranscriptEvent::Grinding { site_label, .. } => Some(site_label),
+        akita_transcript::TranscriptEvent::Preamble { .. }
+        | akita_transcript::TranscriptEvent::GrindingPlanQuery { .. }
+        | akita_transcript::TranscriptEvent::GrindingActualQuery { .. }
+        | akita_transcript::TranscriptEvent::FoldChallengeRange { .. } => None,
     }
 }
 

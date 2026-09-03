@@ -43,8 +43,8 @@ use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use akita_error::{checked, AkitaError};
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced};
 
 fn divide_aligned(
     value: usize,

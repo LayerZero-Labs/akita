@@ -2,9 +2,9 @@
 
 use akita_algebra::{eq_poly::EqPolynomial, CyclotomicRing};
 use akita_error::AkitaError;
-use akita_field::FieldCore;
-use akita_field::FromPrimitiveInt;
 use akita_serialization::DEFAULT_MAX_SEQUENCE_LEN;
+use jolt_field::Field;
+use jolt_field::Ring;
 
 use crate::field_reduction::{embed_ring_subfield_scalar, FpExtEncoding};
 const BLOCK_EMBED_ERROR: &str = "fold opening weight does not embed in the ring-subfield basis";
@@ -40,7 +40,7 @@ pub enum BasisMode {
 /// basis weight evaluations (Lagrange or monomial) and are always constant
 /// (scalar) ring elements when embedded into the ring.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingOpeningPoint<F: FieldCore> {
+pub struct RingOpeningPoint<F: Field> {
     /// Position weights, with exactly one entry per block position.
     pub position_weights: Vec<F>,
     /// Block-select weights, truncated to the exact live block prefix.
@@ -53,7 +53,7 @@ pub struct RingOpeningPoint<F: FieldCore> {
 ///
 /// Returns an error if the implied weight table would overflow or exceed the
 /// verifier sequence bound.
-pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError> {
+pub fn lagrange_weights<F: Field>(point: &[F]) -> Result<Vec<F>, AkitaError> {
     basis_weight_len(point.len())?;
     EqPolynomial::evals(point)
 }
@@ -66,7 +66,7 @@ pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError>
 ///
 /// Returns an error if the implied weight table would overflow or exceed the
 /// verifier sequence bound.
-pub fn monomial_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError> {
+pub fn monomial_weights<F: Field>(point: &[F]) -> Result<Vec<F>, AkitaError> {
     let len = basis_weight_len(point.len())?;
     let mut weights = vec![F::zero(); len];
     weights[0] = F::one();
@@ -80,7 +80,7 @@ pub fn monomial_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError>
 }
 
 /// Return tensor-product weights for one opening point under the chosen basis.
-pub fn basis_weights<F: FieldCore>(point: &[F], basis: BasisMode) -> Result<Vec<F>, AkitaError> {
+pub fn basis_weights<F: Field>(point: &[F], basis: BasisMode) -> Result<Vec<F>, AkitaError> {
     match basis {
         BasisMode::Lagrange => lagrange_weights(point),
         BasisMode::Monomial => monomial_weights(point),
@@ -89,7 +89,7 @@ pub fn basis_weights<F: FieldCore>(point: &[F], basis: BasisMode) -> Result<Vec<
 
 /// Return the first `live_len` tensor-product weights without retaining the
 /// padded Boolean suffix.
-pub fn basis_weights_prefix<F: FieldCore>(
+pub fn basis_weights_prefix<F: Field>(
     point: &[F],
     basis: BasisMode,
     live_len: usize,
@@ -186,7 +186,7 @@ pub fn checked_opening_source_index(
 /// # Errors
 ///
 /// Returns an error if the point dimension does not match `layout`.
-pub fn ring_opening_point_from_field<F: FieldCore>(
+pub fn ring_opening_point_from_field<F: Field>(
     opening_point: &[F],
     num_positions_per_block: usize,
     num_live_blocks: usize,
@@ -229,7 +229,7 @@ pub fn ring_opening_point_from_field<F: FieldCore>(
 ///
 /// Returns an error if the number of basis weights implied by `inner_point`
 /// does not match `D`.
-pub fn reduce_inner_opening_to_ring_element<F: FieldCore, const D: usize>(
+pub fn reduce_inner_opening_to_ring_element<F: Field, const D: usize>(
     inner_point: &[F],
     basis: BasisMode,
 ) -> Result<CyclotomicRing<F, D>, AkitaError> {
@@ -249,8 +249,8 @@ pub fn block_rings_at_opening<F, E, const D: usize>(
     num_live_blocks: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F> + FieldCore,
+    F: Field + Ring,
+    E: FpExtEncoding<F> + Field,
 {
     basis_weights_prefix(fold_open, BasisMode::Lagrange, num_live_blocks)?
         .into_iter()
@@ -266,7 +266,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use jolt_field::One;
+    use jolt_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
 

@@ -83,56 +83,63 @@ use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
 };
-use super::two_round_prefix::{stage2_b4_w_digit, stage2_b8_w_digit};
+use super::two_round_prefix::{
+    stage2_b4_lookup_index_from_digits, stage2_b4_w_digit, stage2_b8_lookup_index_from_digits,
+    stage2_b8_w_digit,
+};
 use akita_algebra::poly::trim_trailing_zeros;
 use akita_algebra::split_eq::GruenSplitEq;
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
-use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
+use jolt_field::solinas::parallel::*;
+use jolt_field::{Field, Ring, Zero};
+use jolt_field::{Fold, Unreduced};
 use std::mem;
 use std::time::Instant;
 
-enum WitnessState<E: FieldCore> {
-    CompactPrefix(std::sync::Arc<[i8]>),
+use crate::backend::packed_digits::{
+    PackedSignedDigitIter, PackedSignedDigitView, PackedSignedDigits,
+};
+
+enum WitnessState<E: Field> {
+    CompactPrefix(PackedSignedDigits),
     FoldedSuffix(Vec<E>),
 }
 
-struct TwoRoundCompactPrefix<E: FieldCore> {
+struct TwoRoundCompactPrefix<E: Field> {
     skip_state: Stage2BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
 
 #[derive(Clone, Copy)]
-enum NormRoundTerms<E: FieldCore> {
+enum NormRoundTerms<E: Field> {
     Full([E; 3]),
     SkipLinear([E; 2]),
 }
 
-type CompactVirtAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 4];
-type CompactVirtSkipLinearAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 2];
-type CompactRelAccum<E> = [<E as HasUnreducedOps>::MulU64Accum; 6];
+type CompactVirtAccum<E> = [<E as Unreduced>::SmallProduct; 4];
+type CompactVirtSkipLinearAccum<E> = [<E as Unreduced>::SmallProduct; 2];
+type CompactRelAccum<E> = [<E as Unreduced>::SmallProduct; 6];
 
 #[inline]
-fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
+fn coeffs_to_poly<E: Field>(coeffs: [E; 3]) -> UniPoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
     trim_trailing_zeros(&mut coeffs);
     UniPoly::from_coeffs(coeffs)
 }
 
 #[inline]
-fn fold_two_round_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
+fn fold_two_round_quad<E: Field>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
     let x0 = v00 + r0 * (v10 - v00);
     let x1 = v01 + r0 * (v11 - v01);
     x0 + r1 * (x1 - x0)
 }
 
 #[inline]
-fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
-    accum: &mut [E::MulU64Accum],
+fn accum_small_signed<E: Field + Unreduced>(
+    accum: &mut [E::SmallProduct],
     pos_idx: usize,
     coeff: E,
     signed: i64,
@@ -149,26 +156,26 @@ fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
 }
 
 #[inline]
-fn reduce_compact_virt<E: FieldCore + HasUnreducedOps>(virt: CompactVirtAccum<E>) -> [E; 3] {
+fn reduce_compact_virt<E: Field + Unreduced>(virt: CompactVirtAccum<E>) -> [E; 3] {
     [
-        E::reduce_mul_u64_accum(virt[0]),
+        E::reduce_small_product(virt[0]),
         reduce_signed_accum::<E>(virt[1], virt[2]),
-        E::reduce_mul_u64_accum(virt[3]),
+        E::reduce_small_product(virt[3]),
     ]
 }
 
 #[inline]
-fn reduce_compact_virt_skip_linear<E: FieldCore + HasUnreducedOps>(
+fn reduce_compact_virt_skip_linear<E: Field + Unreduced>(
     virt: CompactVirtSkipLinearAccum<E>,
 ) -> [E; 2] {
     [
-        E::reduce_mul_u64_accum(virt[0]),
-        E::reduce_mul_u64_accum(virt[1]),
+        E::reduce_small_product(virt[0]),
+        E::reduce_small_product(virt[1]),
     ]
 }
 
 #[inline]
-fn reduce_compact_rel<E: FieldCore + HasUnreducedOps>(rel: CompactRelAccum<E>) -> [E; 3] {
+fn reduce_compact_rel<E: Field + Unreduced>(rel: CompactRelAccum<E>) -> [E; 3] {
     [
         reduce_signed_accum::<E>(rel[0], rel[1]),
         reduce_signed_accum::<E>(rel[2], rel[3]),
@@ -194,13 +201,7 @@ fn stage2_eq_block(
 }
 
 #[inline]
-pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
-    rel: &mut [E; 3],
-    w0: E,
-    dw: E,
-    p0: E,
-    p1: E,
-) {
+pub(crate) fn accumulate_relation_coeffs<E: Field>(rel: &mut [E; 3], w0: E, dw: E, p0: E, p1: E) {
     let dp = p1 - p0;
     rel[0] += w0 * p0;
     rel[1] += w0 * dp + dw * p0;
@@ -208,8 +209,8 @@ pub(crate) fn accumulate_relation_coeffs<E: FieldCore>(
 }
 
 #[inline]
-pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
-    rel: &mut [E::MulU64Accum; 6],
+pub(crate) fn accumulate_relation_coeffs_signed<E: Field + Unreduced>(
+    rel: &mut [E::SmallProduct; 6],
     w0: i64,
     dw: i64,
     p0: E,
@@ -229,7 +230,7 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 /// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub struct RelationRangeImageProver<E: FieldCore> {
+pub struct RelationRangeImageProver<E: Field> {
     witness_state: WitnessState<E>,
     b: usize,
     batching_coeff: E,
@@ -265,6 +266,7 @@ mod dense_terms;
 mod evaluation_trace;
 mod lane_prefix;
 mod lifecycle;
+mod prepared_linear_lane;
 mod round_flow;
 
 pub(crate) use additional_terms::AdditionalRelationTerms;
@@ -274,8 +276,9 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+pub(crate) use prepared_linear_lane::PreparedLinearLane;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
     // Fused relation (`alpha * m`) + structured-linear addend for one witness
     // corner. `witness_idx0` is the first flat index of an adjacent pair in
     // the Boolean `w` table (`lane * coeff_count + coefficient`).
@@ -302,7 +305,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     #[allow(clippy::too_many_arguments)]
     pub(super) fn accumulate_fused_relation_linear_signed(
         &self,
-        rel: &mut [E::MulU64Accum; 6],
+        rel: &mut [E::SmallProduct; 6],
         w0: i64,
         dw: i64,
         witness_idx0: usize,

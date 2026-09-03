@@ -179,10 +179,19 @@ const FP128_DENSE_BOUNDED_KEYS: &[PolynomialGroupLayout] = &[
 const FP32_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] =
-    onehot_keys![(14, 1), (16, 1), (16, 2), (20, 1), (28, 1), (30, 1)];
+const FP32_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![
+    (14, 1),
+    (16, 1),
+    (16, 2),
+    (20, 1),
+    (28, 1),
+    (30, 1),
+    (34, 1)
+];
 
 const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(14),
@@ -192,9 +201,12 @@ const FP64_DENSE_KEYS: &[PolynomialGroupLayout] = &[
     PolynomialGroupLayout::singleton(16),
     PolynomialGroupLayout::singleton(20),
     PolynomialGroupLayout::singleton(26),
+    PolynomialGroupLayout::singleton(28),
+    PolynomialGroupLayout::singleton(29),
+    PolynomialGroupLayout::singleton(30),
 ];
 
-const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1)];
+const FP64_ONEHOT_KEYS: &[PolynomialGroupLayout] = onehot_keys![(28, 1), (30, 1), (34, 1), (35, 1)];
 
 /// One generated schedule-table family.
 ///
@@ -221,7 +233,8 @@ pub struct GeneratedFamily {
     /// Grouped-root keys enumerated for this generated family.
     pub grouped_requests: GroupedRequestGenerator,
     /// Strict table-backed runtime resolution. A missing row is unsupported.
-    pub resolve_catalog_row_for_key: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub resolve_catalog_row_for_key:
+        fn(AkitaScheduleLookupKey) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError>,
     /// The generated catalog linked for this family, when its feature is active.
     pub schedule_catalog: fn() -> Option<GeneratedScheduleTable>,
     pub policy: fn() -> PlannerPolicy,
@@ -307,8 +320,8 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
 
 fn resolve_catalog_row_for_key<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-) -> Result<FoldSchedule, AkitaError> {
-    Cfg::resolve_catalog_row_for_key(&key).map(akita_schedules::ResolvedScheduleRow::into_schedule)
+) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+    Cfg::resolve_catalog_row_for_key(&key)
 }
 
 fn schedule_catalog<Cfg: CommitmentConfig>() -> Option<GeneratedScheduleTable> {
@@ -355,9 +368,9 @@ fn fp128_onehot_grouped_requests(
 fn fp128_onehot_multichunk_grouped_requests(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    Ok(sorted_grouped_requests(recursive_onehot_profile_keys::<
-        fp128::OneHotMultiChunk,
-    >(preplans)?))
+    Ok(sorted_grouped_requests(
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>(preplans)?,
+    ))
 }
 
 fn fp128_onehot_multichunk_w2r2_grouped_requests(
@@ -448,16 +461,37 @@ fn fp128_dense_grouped_requests(
 fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
+    // Keep the historical (32, 2) profiling key for e2e catalog tests, and ship
+    // (34, 2) as the larger profile-bench fixture.
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34])
+}
+
+fn recursive_onehot_chunked_profile_keys<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+) -> Result<GroupedGenerationRequests, AkitaError> {
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34])
+}
+
+fn recursive_onehot_profile_keys_for_finals<BaseCfg: CommitmentConfig + 'static>(
+    preplans: &GenerationPreplans,
+    final_num_vars: &[usize],
+) -> Result<GroupedGenerationRequests, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted =
         planned_profile_without_precommitted_groups::<BaseCfg>(preplans, precommitted_group)?;
-    Ok(vec![GroupedGenerationRequest::new(
-        PolynomialGroupLayout::new(32, 2),
-        vec![
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-            PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
-        ],
-    )])
+    let producers = vec![
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+        PrecommittedProducer::from_config::<BaseCfg>(precommitted)?,
+    ];
+    Ok(final_num_vars
+        .iter()
+        .map(|&num_vars| {
+            GroupedGenerationRequest::new(
+                PolynomialGroupLayout::new(num_vars, 2),
+                producers.clone(),
+            )
+        })
+        .collect())
 }
 
 fn heterogeneous_onehot_catalog_key(
@@ -668,7 +702,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         &[],
         RecursiveCommitmentConfig<fp128::OneHotMultiChunk>,
         fp128::OneHotMultiChunk,
-        recursive_onehot_profile_keys::<fp128::OneHotMultiChunk>
+        recursive_onehot_chunked_profile_keys::<fp128::OneHotMultiChunk>
     ),
     family_row!(
         "fp128_dense",

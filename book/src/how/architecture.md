@@ -12,7 +12,7 @@ orchestration lives in `akita-pcs`.
 | Crate | Role |
 |-------|------|
 | `akita-error` | Shared protocol error and reusable checked integer formulas for exact sizes, offsets, and ranges |
-| `akita-field` | Field traits, prime/extension fields, unreduced/packed helpers, FFT, parallel macros |
+| `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
 | `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
@@ -36,7 +36,8 @@ Key structural facts:
 - `akita-error` is the lowest shared failure layer. It owns `AkitaError` and
   reusable exact `usize` formulas in `akita_error::checked`. These formulas
   return `Option`; each caller maps failure to the `AkitaError` variant that
-  describes its protocol boundary. Field arithmetic remains in `akita-field`.
+  describes its protocol boundary. Field arithmetic lives in the shared
+  external `jolt-field` crate.
 - `akita-planner` owns offline schedule search and table emission. Normal
   search is `Cfg`-free and is not on the verifier runtime dependency path. The
   optional `catalog-gen` feature enables `akita-config`, so table-emission

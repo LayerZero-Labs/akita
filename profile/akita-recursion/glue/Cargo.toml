@@ -26,7 +26,10 @@ trusted-benchmark-artifact = []
 akita-error = { version = "0.1.0", path = "../../../crates/akita-error" }
 akita-algebra = { version = "0.1.0", path = "../../../crates/akita-algebra" }
 akita-config = { version = "0.1.0", path = "../../../crates/akita-config", default-features = false }
-akita-field = { version = "0.1.0", path = "../../../crates/akita-field" }
+jolt-field = { version = "=0.1.0", git = "https://github.com/a16z/jolt", rev = "72dc6451628d8b1dd794147a1f1cc40be0d77963", default-features = false, features = [
+  "asm",
+  "solinas",
+] }
 akita-serialization = { version = "0.1.0", path = "../../../crates/akita-serialization" }
 akita-types = { version = "0.1.0", path = "../../../crates/akita-types", default-features = false }
 

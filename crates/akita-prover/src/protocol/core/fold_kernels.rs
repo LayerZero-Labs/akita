@@ -10,17 +10,17 @@ use crate::compute::{
     ComputeBackendSetup, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
 };
 /// Batched trace-target data derived from folded claim openings.
-pub(in crate::protocol::core) struct TraceTarget<E: FieldCore> {
+pub(in crate::protocol::core) struct TraceTarget<E: Field> {
     pub(in crate::protocol::core) trace_eval_target: E,
 }
 
 /// Prepared public evaluation-trace claim and its per-opening coefficients (#314 Stage-2).
-pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: Field> {
     pub(in crate::protocol::core) claimed_evaluation: E,
     pub(in crate::protocol::core) claim_coefficients: Vec<E>,
 }
 
-fn resolve_evaluation_trace_claim<E: FieldCore>(
+fn resolve_evaluation_trace_claim<E: Field>(
     reduction: Option<&ExtensionOpeningReduction<E>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -67,7 +67,7 @@ fn evaluate_poly_at_multiplier_point<F, Q, B, const D: usize>(
     num_positions_per_block: usize,
 ) -> Result<(CyclotomicRing<F, D>, Vec<CyclotomicRing<F, D>>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -99,8 +99,8 @@ pub(in crate::protocol::core) fn evaluate_claims_at_prepared_point<F, E, Q, B, c
     num_positions_per_block: usize,
 ) -> Result<FoldedClaimEvals<F, D>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FieldCore,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
+    E: Field,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -146,7 +146,7 @@ pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, Q, B, 
     alpha_bits: usize,
 ) -> Result<(PreparedOpeningPoint<F, E>, FoldedClaimEvals<F, D>), AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize,
     E: FpExtEncoding<F> + ExtField<F>,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
@@ -178,11 +178,12 @@ pub(in crate::protocol::core) fn compute_trace_target<F, E, T, const D: usize>(
     basis: BasisMode,
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(TraceTarget<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if prepared_points.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidSize {
@@ -232,9 +233,9 @@ where
     if reduction.is_none() {
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(
@@ -258,10 +259,10 @@ pub(in crate::protocol::core) fn scalar_opening_from_folded_ring<F, E, const D: 
     basis: BasisMode,
 ) -> Result<E, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
-    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+    if <E as ExtField<F>>::DEGREE == 1 {
         return (*folded_ring * prepared_point.packed_inner_trusted::<D>()?.sigma_m1())
             .coefficients()
             .first()
@@ -269,15 +270,15 @@ where
             .map(E::lift_base)
             .ok_or_else(|| AkitaError::InvalidInput("empty folded opening ring".to_string()));
     }
-    if !D.is_multiple_of(<E as ExtField<F>>::EXT_DEGREE)
-        || !(D / <E as ExtField<F>>::EXT_DEGREE).is_power_of_two()
+    if !D.is_multiple_of(<E as ExtField<F>>::DEGREE)
+        || !(D / <E as ExtField<F>>::DEGREE).is_power_of_two()
     {
         return Err(AkitaError::InvalidInput(
             "extension-field degree must divide the ring dimension into power-of-two slots"
                 .to_string(),
         ));
     }
-    let packed_slots = D / <E as ExtField<F>>::EXT_DEGREE;
+    let packed_slots = D / <E as ExtField<F>>::DEGREE;
     let packed_inner_bits = packed_slots.trailing_zeros() as usize;
     if inner_opening_point.len() > packed_inner_bits
         && inner_opening_point[packed_inner_bits..]
@@ -306,7 +307,7 @@ pub(in crate::protocol::core) fn row_coefficient_rings<F, E, const D: usize>(
     coefficients: &[E],
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + FromPrimitiveInt,
+    F: Field + Ring,
     E: FpExtEncoding<F>,
 {
     coefficients
@@ -328,11 +329,12 @@ pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     transcript: &mut T,
+    level: u32,
 ) -> Result<(PreparedEvaluationTraceClaim<E>, Vec<E>), AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: Field + CanonicalEncoding + akita_serialization::AkitaSerialize + Ring,
     E: FpExtEncoding<F> + ExtField<F>,
-    T: Transcript<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
 {
     if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
@@ -340,9 +342,9 @@ where
             actual: openings.len(),
         });
     }
-    let row_coefficients = sample_row_coefficients::<F, E, T>(
+    let row_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
         opening_batch,
-        akita_transcript::labels::CHALLENGE_EVAL_BATCH,
+        akita_types::GrindingSite::EvaluationBatch { level },
         transcript,
     )?;
     let resolved = resolve_evaluation_trace_claim(
@@ -357,7 +359,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Fp32;
+    use jolt_field::{Fp32, One};
 
     type TestF = Fp32<251>;
 

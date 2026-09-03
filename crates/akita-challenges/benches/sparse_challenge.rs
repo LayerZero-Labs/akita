@@ -4,7 +4,8 @@
 //! the same ring degree to bracket position-shuffle vs sign-decode cost.
 //!
 //! Each `batch_<N>` case measures one `sample_sparse_challenges(N)` call:
-//! one transcript absorb, one XOF seeding, and `N` per-challenge decodes.
+//! one transcript absorb, one group-root squeeze, and `N` indexed coordinate
+//! streams with one sparse decode each.
 //!
 //! Run with:
 //!
@@ -18,16 +19,16 @@ use akita_challenges::{
     sample_sparse_challenges, Challenges, SparseChallengeConfig, D64_PRODUCTION_PM1_COUNT,
     D64_PRODUCTION_PM2_COUNT,
 };
-use akita_field::Prime128OffsetA7F7;
 use akita_transcript::labels::DOMAIN_AKITA_PROTOCOL;
 use akita_transcript::{AkitaTranscript, Transcript};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use jolt_field::{One, Prime128OffsetA7F7, Ring};
 
 type F = Prime128OffsetA7F7;
 
 const D: usize = 64;
 
-const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 12, 1 << 15];
+const BATCH_SIZES: &[usize] = &[1, 1 << 6, 1 << 8, 1 << 9, 1 << 10, 1 << 12, 1 << 15];
 
 fn fresh_transcript() -> AkitaTranscript<F> {
     let mut t = AkitaTranscript::<F>::new(DOMAIN_AKITA_PROTOCOL);

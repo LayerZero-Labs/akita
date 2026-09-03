@@ -1,8 +1,8 @@
 use akita_algebra::CyclotomicRing;
-use akita_field::FieldCore;
+use jolt_field::Field;
 
 /// Internal dense CPU commit representation.
-pub(crate) enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
+pub(crate) enum DenseCommitInput<'a, F: Field, const D: usize> {
     /// Balanced digit planes are already cached by the polynomial.
     CachedDigits {
         /// Per-block digit slices.
@@ -23,7 +23,7 @@ pub(crate) enum DenseCommitInput<'a, F: FieldCore, const D: usize> {
 
 /// Named ring-switch relation rows returned by a backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RingSwitchRelationRows<F: FieldCore, const D: usize> {
+pub struct RingSwitchRelationRows<F: Field, const D: usize> {
     /// D-side negacyclic reduced rows used as the transcript-visible `v`.
     pub d_negacyclic: Vec<CyclotomicRing<F, D>>,
     /// D-side cyclic rows.

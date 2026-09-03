@@ -21,7 +21,7 @@ with smaller field types used by tests and auxiliary paths. The CRT NTT primes
 are separate primes. They are chosen for the roots of unity required by the
 active ring degree.
 
-**Code:** `crates/akita-field/src/prime/` and
+**Code:** Jolt's `jolt-field` Solinas backend and
 `crates/akita-algebra/src/ntt/tables.rs`.
 
 ## Deferred reduction and balanced digits
@@ -54,7 +54,7 @@ The ordinary production profiles use 30 bit CRT primes stored in `i32` limbs:
 | --- | ---: | --- |
 | Q32 | 2 | 2 `i32` residues |
 | Q64 | 3 | 3 `i32` residues |
-| Q128 | 5 | 5 `i32` residues |
+| Q128 | 6 | 6 `i32` residues |
 
 The pointwise products and inverse transforms run independently for each CRT
 prime. Garner reconstruction then combines the residues into the protocol
@@ -76,12 +76,13 @@ Production runtime dispatch does not select this wide i32 transform. It is
 kept for direct architecture tests and benchmark experiments because the
 measured AVX2 transform is faster on the target workloads.
 
-The second path is AVX-512IFMA. It is used for exact signed `i16` NTT caches.
-The selector enables it only when all of the following hold:
+The second path is AVX-512IFMA. It is used for exact signed NTT caches,
+including selected dense q128 commitments whose digits fit in `i8`. The
+selector enables it only when all of the following hold:
 
 - the process has `avx512f`, `avx512dq`, and `avx512ifma`;
 - `AKITA_SCALAR_NTT` is not set to `1`;
-- the ring degree is `D64` through `D512`; and
+- the ring degree is `D64` through `D2048`; and
 - the exact cache request can be represented by the selected IFMA CRT
   product, with an optional exactness tail where that profile supports one.
 
@@ -102,14 +103,15 @@ The exact cache uses the smallest CRT representation that meets the strict CRT b
 | --- | ---: | --- |
 | Q32 | 1 `u64` residue | Use the base residue when it fits. Add 12289 when the base does not fit but the mixed product does. Otherwise use the ordinary Q32 profile. |
 | Q64 | 2 `u64` residues | Use the IFMA form only when the two base residues fit. Otherwise use the ordinary Q64 profile, which can add 12289. |
-| Q128 | 3 `u64` residues | Use the base residues when they fit. Add 12289 when the mixed product fits. Otherwise use the ordinary Q128 profile. |
+| Q128 | 3 `u64` residues | Use the base residues when they fit. Add the 30-bit prime 1073707009 when the hybrid product fits. Otherwise use the ordinary Q128 profile. |
 
 For the full signed `i16` bound, the one prime Q32 base is not sufficient at
 the eligible degrees, so Q32 exact caches use the mixed tail. The two prime Q64
-base supports much larger widths without a tail. The three prime Q128 base has
-less capacity relative to its larger field, so sufficiently wide exact requests
-use the tail. This is why one AVX-512IFMA host can use different cache
-representations for different field and schedule shapes.
+base supports much larger widths without a tail. The three-prime Q128 base is
+roughly 150 bits; its optional 30-bit tail raises the exact reach to roughly
+180 bits, matching the portable six-prime profile. This is why one
+AVX-512IFMA host can use different cache representations for different field
+and schedule shapes.
 
 This representation is used by `ExactNegacyclic` cache requests. Ordinary
 `Negacyclic`, `Cyclic`, and `BothTransforms` requests use the selected i32
@@ -117,9 +119,17 @@ profile. The exact selector uses the field modulus, ring degree, matrix width,
 and signed RHS bound. It does not select IFMA merely because the host has
 AVX-512.
 
+Dense q128 commitments add one further performance rule. If the complete row
+exceeds the three-prime IFMA capacity but fits after adding 1073707009, an eligible
+AVX-512IFMA host accumulates the row exactly. This avoids repeatedly
+transforming and reconstructing many small chunks. Scalar, AVX2, and NEON
+hosts keep the chunked `i8` path, which is faster and uses less prepared-cache
+memory on those architectures. The rule depends on CPU capability and the
+capacity bound, not on a machine name or a fixed problem size.
+
 The IFMA matrix stores one transformed negacyclic matrix for each selected
-50 bit prime. When a tail is needed, the cache stores a shorter prefix of the
-same matrix under the 14 bit prime 12289. The matvec transforms the signed
+50 bit prime. When a Q128 tail is needed, the cache stores a shorter prefix of
+the same matrix under the 30 bit prime 1073707009. The matvec transforms the signed
 `i16` RHS, accumulates pointwise products, reconstructs with all selected
 residues, and returns canonical protocol field elements. The tail does not
 change setup bytes, proof bytes, transcript bytes, or setup digests.
@@ -169,7 +179,7 @@ an iterative mixed radix Cooley Tukey FFT over a smooth subgroup. The
 implementation includes radix 2, 3, 5, and 7 kernels and evaluates on a coset
 when the requested domain requires it.
 
-**Code:** `crates/akita-field/src/fft.rs`.
+**Code:** `crates/akita-algebra/src/fft.rs`.
 
 ## Further reading
 

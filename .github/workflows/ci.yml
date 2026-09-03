@@ -86,18 +86,14 @@ jobs:
       - name: Check unused dependencies
         run: cargo machete --with-metadata
 
-  jolt-compat:
-    name: Jolt compatibility
+  shared-field:
+    name: Shared field identity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-        with:
-          components: clippy
-      - name: Clippy akita-field jolt-compat
-        run: cargo clippy -p akita-field --all-targets --release --features jolt-compat -- -D warnings
-      - name: Test akita-field jolt-compat
-        run: cargo test --release -p akita-field --features jolt-compat
+      - name: Require one jolt-field identity and no akita-field
+        run: scripts/check-shared-field-identity.sh
 
   doc:
     name: Documentation
@@ -205,6 +201,11 @@ jobs:
             crates/akita-schedules/src/generated \
             specs/evidence/subring-coefficient-packing/head.tsv \
             specs/evidence/subring-coefficient-packing/comparison.tsv
+      - name: Direct modeled SIS cost for every schedule
+        run: |
+          cargo run --release -p akita-planner \
+            --features catalog-security \
+            --example catalog_security -- --check
       - name: Recursive setup-prefix slots
         run: |
           cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
@@ -226,6 +227,7 @@ jobs:
   test-transcript-backends:
     name: Transcript semantics (${{ matrix.backend }})
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       matrix:
         backend: [transcript-blake2b, transcript-keccak]
@@ -239,6 +241,28 @@ jobs:
           --test transcript_hardening_proptest
           --no-default-features
           --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
+      # The structural challenge audit only runs under `logging-transcript`, so
+      # the protocol suites must also be exercised with it enabled. Without this
+      # step the audit is only ever checked against the two hardening targets at
+      # a single opening shape.
+      - name: Run protocol suites under the challenge audit
+        run: >-
+          cargo test --release -p akita-pcs
+          --test protocol_soundness
+          --test fold_linf
+          --test stage1_roundtrip
+          --test transcript
+          --test label_schedule
+          --no-default-features
+          --features parallel,schedules-default,logging-transcript,${{ matrix.backend }}
+          --
+          --test-threads=1
+      - name: Audit the grinding plan across akita-types shapes
+        run: >-
+          cargo test --release -p akita-types
+          --features logging-transcript
 
   test-timing:
     name: Test timing

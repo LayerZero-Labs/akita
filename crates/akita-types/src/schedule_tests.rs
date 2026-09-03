@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     let estimate = FoldScheduleEstimate {
+        nonce_stream_bytes: 0,
         estimated_root_direct_payload_bytes: 100,
         estimated_root_stage3_payload_bytes: 11,
         estimated_recursive_direct_payload_bytes: vec![200, 300],
@@ -22,21 +23,22 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
+use crate::GrindingPlan;
 use crate::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, sumcheck_rounds,
-    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, Commitment,
-    CommitmentPayloadMode, CommittedGroup, CommittedGroupBatchProfile, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, OpeningClaimsLayout,
-    PolynomialGroupLayout, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    canonical_proof_shape, extension_opening_reduction_level_bytes, level_proof_bytes,
+    sumcheck_rounds, terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof,
+    AkitaStage2Proof, Commitment, CommitmentPayloadMode, CommittedGroup,
+    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, OpeningClaimsLayout, PolynomialGroupLayout, RingVec, SisModulusProfileId,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof, TerminalResponse,
+    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7};
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Zero};
 
 #[path = "schedule_tests/descriptor.rs"]
 mod descriptor;
@@ -44,9 +46,12 @@ mod descriptor;
 mod execution_admission;
 #[path = "schedule_tests/group_topology.rs"]
 mod group_topology;
+#[path = "schedule_tests/proof_shapes.rs"]
+mod proof_shapes;
+#[path = "schedule_tests/sis_occurrences.rs"]
+mod sis_occurrences;
 type F = Prime128OffsetA7F7;
-// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
-const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+const TEST_TERMINAL_A_BOUND: u128 = 104_244;
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
     committed_params_with_geometry(ring_dimension, 4, 4)
 }
@@ -63,7 +68,8 @@ fn committed_params_with_geometry(
         2,
         2,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            .expect("production test challenge"),
     )
     .with_decomp(
         num_positions_per_block,
@@ -73,6 +79,7 @@ fn committed_params_with_geometry(
         2,
     )
     .expect("schedule validation params");
+    let a_bound = execution_admission::exact_test_a_bound(&params);
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::try_new(
         inner.security_policy(),
@@ -83,7 +90,7 @@ fn committed_params_with_geometry(
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        TEST_TERMINAL_A_BUCKET,
+        a_bound,
         inner.ring_dimension(),
     )
     .expect("audited schedule A matrix");
@@ -524,6 +531,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     group_params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
+    let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = &group_params.inner().matrix;
     group_params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::new_unchecked(
@@ -535,7 +543,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            a_bound,
             inner.ring_dimension(),
         );
     let outer = &group_params.outer().matrix;
@@ -631,7 +639,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            TEST_TERMINAL_A_BUCKET,
+            TEST_TERMINAL_A_BOUND,
             inner.ring_dimension(),
         );
     let expected_inner = committed.inner().matrix;
@@ -650,7 +658,7 @@ fn terminal_response_fixture(
     lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
-    let field_bits = F::modulus_bits();
+    let field_bits = F::MODULUS_BITS;
     let shape = TerminalResponseShape::from_groups(
         lp,
         field_bits,
@@ -679,7 +687,7 @@ fn terminal_response_fixture(
     (witness, shape)
 }
 
-fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
+fn dummy_sumcheck<F: Field>(rounds: usize, degree: usize) -> SumcheckProof<F> {
     SumcheckProof {
         round_polys: (0..rounds)
             .map(|_| CompressedUniPoly {
@@ -689,7 +697,7 @@ fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F
     }
 }
 
-fn dummy_eq_factored_sumcheck<F: FieldCore>(
+fn dummy_eq_factored_sumcheck<F: Field>(
     rounds: usize,
     degree: usize,
 ) -> EqFactoredSumcheckProof<F> {
@@ -705,7 +713,7 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
     }
 }
 
-fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
+fn dummy_stage1_proof<F: Field>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: DigitRangePlan::new(b)
             .expect("test range basis")
@@ -721,7 +729,7 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
     }
 }
 
-fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
+fn exact_level_proof_bytes<F: Field + CanonicalEncoding + AkitaSerialize>(
     lp: &CommittedGroupParams,
     next_lp: &CommittedGroupParams,
     output_witness_len: usize,
@@ -754,7 +762,6 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
         opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
-        fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -796,14 +803,21 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
+        let opening_layout =
+            OpeningClaimsLayout::new(sumcheck_rounds(D, output_witness_len), 1).unwrap();
         assert_eq!(
                 level_proof_bytes(
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -842,7 +856,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                TEST_TERMINAL_A_BUCKET,
+                TEST_TERMINAL_A_BOUND,
                 inner.ring_dimension(),
             );
 
@@ -851,21 +865,17 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
             terminal_response,
-            0,
         );
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level: a direct terminal level
-        // carries only the `fold_grind_nonce` (plus any extension-opening
-        // reduction, absent from this fixture), matching the planner's
-        // terminal-direct accounting.
+        // it from the serialized terminal level. The proof-level packed nonce
+        // stream is accounted separately.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            crate::FOLD_GRIND_NONCE_BYTES,
-            serialized_without_witness,
+            0, serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
         );
@@ -907,6 +917,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, output_witness_len);
+        let opening_layout = OpeningClaimsLayout::new(rounds, 1).unwrap();
         let b = 1usize << log_basis;
         let level_proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -919,7 +930,6 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 .unwrap()
                 .terminal_coefficients()
             ]),
-            fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -941,9 +951,14 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     128,
                     128,
                     &lp,
+                    lp.relation_address_geometry(
+                        &opening_layout,
+                        1,
+                        next_lp.d_a(),
+                        output_witness_len,
+                    )
+                    .unwrap(),
                     Some(&next_lp),
-                    output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
@@ -1028,7 +1043,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
             modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
             role: crate::sis::SisMatrixRole::Inner,
             ring_dimension: 64,
-            coeff_linf_bound: 32_767,
+            coeff_linf_bound: TEST_TERMINAL_A_BOUND,
         },
         16,
     )
@@ -1404,96 +1419,6 @@ fn schedule_row_identity_binds_main_opening_method() {
         digest,
         crate::schedule_row_digest(&profiles, &changed)
             .expect("changed main opening-method digest")
-    );
-    assert!(changed.validate_structure().is_ok());
-    assert!(changed.validate_nonterminal_opening_execution(1).is_err());
-}
-
-#[test]
-fn schedule_row_identity_binds_root_precommitted_opening_method() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    let group_layout = PolynomialGroupLayout::singleton(8);
-    let mut group_params = schedule.root.params.clone();
-    group_params.own_group_mut().opening.fold_challenge_config =
-        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
-            .expect("precommitted test group production challenge");
-    let inner = group_params.inner().matrix;
-    group_params.own_group_mut().profile.inner.matrix =
-        crate::sis::InnerCommitMatrixParams::new_unchecked(
-            inner.security_policy(),
-            inner
-                .sis_table_key()
-                .expect("L infinity matrix")
-                .table_digest,
-            inner.sis_modulus_profile(),
-            inner.output_rank(),
-            inner.input_width(),
-            2,
-            inner.ring_dimension(),
-        );
-    let outer = group_params.outer().matrix;
-    group_params.own_group_mut().profile.outer.matrix =
-        crate::sis::OuterCommitMatrixParams::new_unchecked(
-            outer.security_policy(),
-            outer.sis_table_key().table_digest,
-            outer.sis_modulus_profile(),
-            outer.output_rank(),
-            outer.input_width(),
-            3,
-            outer.ring_dimension(),
-        );
-    let precommitted = preceding_group_params(&group_params, group_layout);
-    let extra_d_width = precommitted
-        .d_segment_width(1, schedule.root.params.role_dims().d_d())
-        .expect("root precommitted D width");
-    let open = schedule.root.params.open().matrix;
-    let widened_open = crate::sis::OpenCommitMatrixParams::new_unchecked(
-        open.security_policy(),
-        open.sis_table_key().table_digest,
-        open.sis_modulus_profile(),
-        open.output_rank(),
-        open.input_width() + extra_d_width,
-        open.coeff_linf_bound(),
-        open.ring_dimension(),
-    );
-    schedule.root.params.open_matrix = widened_open;
-    schedule
-        .root
-        .params
-        .set_precommitted_groups(vec![precommitted])
-        .unwrap();
-    schedule.root.params.open_matrix = widened_open;
-    schedule
-        .root
-        .params
-        .set_precommitted_groups(vec![precommitted])
-        .unwrap();
-    schedule
-        .validate_structure()
-        .expect("valid root precommitted schedule");
-
-    let profiles = CommittedGroupBatchProfile {
-        final_group: GroupCommitPhaseParams::from_params_unchecked_for_test(
-            PolynomialGroupLayout::singleton(8),
-            &schedule.root.params,
-        ),
-        precommitteds: vec![schedule.root.params.precommitted_groups()[0].profile],
-    };
-    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
-    let mut changed = schedule;
-    changed
-        .root
-        .params
-        .preceding_group_mut_for_test(0)
-        .unwrap()
-        .opening
-        .opening_method = crate::OpeningMethod::SubringCoefficientPacking {
-        challenge_subring_dimension: 64,
-    };
-    assert_ne!(
-        digest,
-        crate::schedule_row_digest(&profiles, &changed)
-            .expect("changed root precommitted opening-method digest")
     );
     assert!(changed.validate_structure().is_ok());
     assert!(changed.validate_nonterminal_opening_execution(1).is_err());

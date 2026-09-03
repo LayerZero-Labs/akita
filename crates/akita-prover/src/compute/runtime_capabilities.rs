@@ -7,8 +7,8 @@ use super::poly::{
     RootOpeningSource, RootPolyMeta, RootTensorSource, TensorBackendFor,
 };
 use crate::backend::{RecursiveFoldSource, RecursiveWitnessFlat};
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{CanonicalField, ExtField, FieldCore, FromPrimitiveInt, RandomSampling};
+use jolt_field::Unreduced;
+use jolt_field::{CanonicalEncoding, ExtField, Field, Ring};
 
 macro_rules! runtime_capabilities {
     (
@@ -21,13 +21,13 @@ macro_rules! runtime_capabilities {
             $(+ RingSwitchProveBackend<F, $rest>)*
             $(+ RingSwitchProveBackend<F, $ring_switch_only>)*
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
         {
         }
 
         impl<F, B> RuntimeRingSwitchProveBackend<F> for B
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             B: RingSwitchProveBackend<F, $first>
                 $(+ RingSwitchProveBackend<F, $rest>)*
                 $(+ RingSwitchProveBackend<F, $ring_switch_only>)*,
@@ -39,15 +39,15 @@ macro_rules! runtime_capabilities {
             OpeningProveBackendFor<F, RecursiveWitnessFlat, $first>
             $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
         {
         }
 
         impl<F, B> SuffixOpeningProveBackend<F> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             B: OpeningProveBackendFor<F, RecursiveWitnessFlat, $first>
                 $(+ OpeningProveBackendFor<F, RecursiveWitnessFlat, $rest>)*,
         {
@@ -58,16 +58,16 @@ macro_rules! runtime_capabilities {
             TensorBackendFor<F, RecursiveWitnessFlat, E, $first>
             $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
         {
         }
 
         impl<F, E, B> SuffixTensorProveBackend<F, E> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             B: TensorBackendFor<F, RecursiveWitnessFlat, E, $first>
                 $(+ TensorBackendFor<F, RecursiveWitnessFlat, E, $rest>)*,
@@ -78,13 +78,13 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeOpeningSource<F>:
             RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*
         where
-            F: FieldCore,
+            F: Field,
         {
         }
 
         impl<F, P> RuntimeOpeningSource<F> for P
         where
-            F: FieldCore,
+            F: Field,
             P: RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*,
         {
         }
@@ -93,13 +93,13 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeTensorSource<F>:
             RootTensorSource<F, $first> $(+ RootTensorSource<F, $rest>)*
         where
-            F: FieldCore,
+            F: Field,
         {
         }
 
         impl<F, P> RuntimeTensorSource<F> for P
         where
-            F: FieldCore,
+            F: Field,
             P: RootTensorSource<F, $first> $(+ RootTensorSource<F, $rest>)*,
         {
         }
@@ -108,13 +108,13 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeCommitSource<F>:
             RootPolyMeta<F> + RootCommitSource<F, $first> $(+ RootCommitSource<F, $rest>)*
         where
-            F: FieldCore,
+            F: Field,
         {
         }
 
         impl<F, P> RuntimeCommitSource<F> for P
         where
-            F: FieldCore,
+            F: Field,
             P: RootPolyMeta<F> + RootCommitSource<F, $first> $(+ RootCommitSource<F, $rest>)*,
         {
         }
@@ -123,13 +123,13 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeRootProvePoly<F>:
             RootPolyMeta<F> + RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*
         where
-            F: FieldCore,
+            F: Field,
         {
         }
 
         impl<F, P> RuntimeRootProvePoly<F> for P
         where
-            F: FieldCore,
+            F: Field,
             P: RootPolyMeta<F> + RootOpeningSource<F, $first> $(+ RootOpeningSource<F, $rest>)*,
         {
         }
@@ -138,16 +138,16 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeOpeningProveBackendFor<F, P>:
             OpeningProveBackendFor<F, P, $first> $(+ OpeningProveBackendFor<F, P, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             P: RuntimeOpeningSource<F>,
         {
         }
 
         impl<F, P, B> RuntimeOpeningProveBackendFor<F, P> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             P: RuntimeOpeningSource<F>,
             B: OpeningProveBackendFor<F, P, $first> $(+ OpeningProveBackendFor<F, P, $rest>)*,
         {
@@ -163,7 +163,7 @@ macro_rules! runtime_capabilities {
                 <P as RootOpeningSource<F, $rest>>::OpeningBatchView<'a>, F, E, $rest
             >)*
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             E: ExtField<F>,
             P: RuntimeOpeningSource<F>,
         {
@@ -171,7 +171,7 @@ macro_rules! runtime_capabilities {
 
         impl<F, P, E, B> RuntimeCoefficientPackingBackendFor<F, P, E> for B
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             E: ExtField<F>,
             P: RuntimeOpeningSource<F>,
             B: ComputeBackendSetup<F>
@@ -188,8 +188,8 @@ macro_rules! runtime_capabilities {
         pub trait RuntimeTensorBackendFor<F, P, E>:
             TensorBackendFor<F, P, E, $first> $(+ TensorBackendFor<F, P, E, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             P: RuntimeTensorSource<F>,
         {
@@ -197,8 +197,8 @@ macro_rules! runtime_capabilities {
 
         impl<F, P, E, B> RuntimeTensorBackendFor<F, P, E> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             P: RuntimeTensorSource<F>,
             B: TensorBackendFor<F, P, E, $first> $(+ TensorBackendFor<F, P, E, $rest>)*,
@@ -215,14 +215,14 @@ macro_rules! runtime_capabilities {
                 <P as RootCommitSource<F, $rest>>::CommitView<'a>, F, $rest
             >)*
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             P: RuntimeCommitSource<F>,
         {
         }
 
         impl<F, P, B> RuntimeCommitBackendFor<F, P> for B
         where
-            F: FieldCore + CanonicalField,
+            F: Field + CanonicalEncoding,
             P: RuntimeCommitSource<F>,
             B: DigitRowsComputeBackend<F>
                 + for<'a> RootCommitKernel<
@@ -238,8 +238,8 @@ macro_rules! runtime_capabilities {
         pub trait RootProveFlowBackend<F, P, E>:
             ProveFlowBackendFor<F, P, E, $first> $(+ ProveFlowBackendFor<F, P, E, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             P: RuntimeRootProvePoly<F>,
         {
@@ -247,8 +247,8 @@ macro_rules! runtime_capabilities {
 
         impl<F, P, E, B> RootProveFlowBackend<F, P, E> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             P: RuntimeRootProvePoly<F>,
             B: ProveFlowBackendFor<F, P, E, $first> $(+ ProveFlowBackendFor<F, P, E, $rest>)*,
@@ -262,16 +262,16 @@ macro_rules! runtime_capabilities {
             $(+ ProveFlowBackendFor<F, RecursiveWitnessFlat, E, $rest>
                 + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, $rest>)*
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
         {
         }
 
         impl<F, E, B> RuntimeRecursiveWitnessProveBackend<F, E> for B
         where
-            F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
-            <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+            F: Field + CanonicalEncoding + Ring + Unreduced + 'static,
+            <F as Unreduced>::Wide: From<F>,
             E: ExtField<F>,
             B: ProveFlowBackendFor<F, RecursiveWitnessFlat, E, $first>
                 + ProveFlowBackendFor<F, RecursiveFoldSource<F>, E, $first>

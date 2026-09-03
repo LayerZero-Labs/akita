@@ -3,15 +3,13 @@
 use std::time::Duration;
 
 use akita_algebra::CyclotomicRing;
-use akita_field::{
-    CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
-};
 use akita_prover::kernels::linear::mat_vec_mul_ntt_digits_i8;
 use akita_types::{prepare_ntt_cache, FlatMatrix, NttCacheMode, PreparedNttCache};
 use criterion::{
     black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId,
     Criterion, Throughput,
 };
+use jolt_field::{CanonicalEncoding, Field, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
 type F = Prime128OffsetA7F7;
 
@@ -20,10 +18,10 @@ const RANKS: [usize; 4] = [1, 2, 4, 8];
 const WIDTHS: [usize; 4] = [128, 256, 512, 1024];
 const COMMON_LOG_BASES: [u32; 7] = [2, 3, 4, 5, 6, 7, 8];
 
-fn sample_matrix_for<Field: FieldCore + CanonicalField, const D: usize>(
+fn sample_matrix_for<Fld: Field + CanonicalEncoding, const D: usize>(
     rank: usize,
     width: usize,
-) -> Vec<CyclotomicRing<Field, D>> {
+) -> Vec<CyclotomicRing<Fld, D>> {
     (0..rank * width)
         .map(|entry| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
@@ -31,14 +29,14 @@ fn sample_matrix_for<Field: FieldCore + CanonicalField, const D: usize>(
                     .wrapping_mul(0x9E37_79B1_85EB_CA87)
                     .wrapping_add((coefficient as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
                 let high = low.rotate_left(29) ^ 0xD6E8_FEB8_6659_FD93;
-                Field::from_canonical_u128_reduced(u128::from(low) | (u128::from(high) << 64))
+                Fld::from_u128_reduced(u128::from(low) | (u128::from(high) << 64))
             }))
         })
         .collect()
 }
 
-fn prepare_for<Field: FieldCore + CanonicalField, const D: usize>(
-    matrix: &[CyclotomicRing<Field, D>],
+fn prepare_for<Fld: Field + CanonicalEncoding, const D: usize>(
+    matrix: &[CyclotomicRing<Fld, D>],
     rank: usize,
     width: usize,
     mode: NttCacheMode,
@@ -75,12 +73,12 @@ fn sample_i16_digits<const D: usize>(width: usize, log_basis: u32) -> Vec<[i16; 
         .collect()
 }
 
-fn bench_full_i16_shape<Field: FieldCore + CanonicalField, const D: usize>(
+fn bench_full_i16_shape<Fld: Field + CanonicalEncoding, const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     rank: usize,
     width: usize,
 ) {
-    let matrix = sample_matrix_for::<Field, D>(rank, width);
+    let matrix = sample_matrix_for::<Fld, D>(rank, width);
     let cache = prepare_for(
         &matrix,
         rank,
@@ -91,8 +89,8 @@ fn bench_full_i16_shape<Field: FieldCore + CanonicalField, const D: usize>(
         },
     );
     let profile = if cache.uses_ifma52() {
-        if cache.has_i16_tail() {
-            "ifma52_i16"
+        if cache.has_exactness_tail() {
+            "ifma52_tail"
         } else {
             "ifma52"
         }
@@ -107,7 +105,7 @@ fn bench_full_i16_shape<Field: FieldCore + CanonicalField, const D: usize>(
             bench.iter(|| {
                 black_box(
                     cache
-                        .mat_vec_i16::<Field>(16, rank, black_box(&rhs))
+                        .mat_vec_i16::<Fld>(16, rank, black_box(&rhs))
                         .expect("full-i16 exact matvec"),
                 )
             })
@@ -163,7 +161,11 @@ fn bench_shape<const D: usize>(
         } else {
             sample_i16_digits::<D>(width, log_basis)
         };
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         let variant = format!("i16_l{log_basis}_{layout}");
         if log_basis == 8 {
             assert_eq!(
@@ -187,13 +189,13 @@ fn bench_shape<const D: usize>(
     }
 }
 
-fn bench_exact_profile_shape<Field: FieldCore + CanonicalField, const D: usize>(
+fn bench_exact_profile_shape<Fld: Field + CanonicalEncoding, const D: usize>(
     group: &mut BenchmarkGroup<'_, WallTime>,
     rank: usize,
     width: usize,
 ) {
     let shape = format!("d{D}_r{rank}_w{width}");
-    let matrix = sample_matrix_for::<Field, D>(rank, width);
+    let matrix = sample_matrix_for::<Fld, D>(rank, width);
     group.throughput(Throughput::Elements((rank * width * D) as u64));
 
     for log_basis in [8, 11, 16] {
@@ -207,14 +209,18 @@ fn bench_exact_profile_shape<Field: FieldCore + CanonicalField, const D: usize>(
             },
         );
         let digits = sample_i16_digits::<D>(width, log_basis);
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
             |bench| {
                 bench.iter(|| {
                     black_box(
                         cache
-                            .mat_vec_i16::<Field>(log_basis, rank, black_box(&digits))
+                            .mat_vec_i16::<Fld>(log_basis, rank, black_box(&digits))
                             .expect("exact-profile benchmark matvec"),
                     )
                 })
@@ -249,7 +255,11 @@ fn bench_equal_output_shape<const D: usize>(
                 rhs_abs_bound: 1 << (log_basis - 1),
             },
         );
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         assert_eq!(
             cache
                 .mat_vec_i16::<F>(log_basis, rank, &i16_digits)
@@ -297,7 +307,11 @@ fn bench_equal_output_shape<const D: usize>(
                 rhs_abs_bound: 1 << (log_basis - 1),
             },
         );
-        let layout = if cache.has_i16_tail() { "tail" } else { "base" };
+        let layout = if cache.has_exactness_tail() {
+            "tail"
+        } else {
+            "base"
+        };
         group.bench_function(
             BenchmarkId::new(format!("i16_l{log_basis}_{layout}"), &shape),
             |bench| {

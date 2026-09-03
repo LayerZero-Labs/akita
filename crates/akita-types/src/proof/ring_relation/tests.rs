@@ -12,7 +12,7 @@ use crate::{
     PolynomialGroupLayout, RingOpeningPoint,
 };
 use akita_challenges::{SparseChallenge, SparseChallengeConfig};
-use akita_field::Fp32;
+use jolt_field::{Fp32, One, Zero};
 use support::{flatten_markers, marker};
 
 type F = Fp32<251>;
@@ -30,6 +30,12 @@ fn relation_layout(
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
+    let inner_bound = *crate::sis::inner_coeff_linf_bounds(
+        lp.inner().matrix.sis_modulus_profile(),
+        u32::try_from(lp.d_a()).expect("test ring dimension"),
+    )
+    .first()
+    .expect("exact test A bounds");
     lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner().matrix.security_policy(),
         lp.inner()
@@ -40,7 +46,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.inner().matrix.sis_modulus_profile(),
         lp.inner().matrix.output_rank(),
         lp.inner().matrix.input_width(),
-        2,
+        inner_bound,
         lp.d_a(),
     );
     lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
@@ -588,31 +594,28 @@ fn multi_group_segment_layout_resolves_group_shard_product() {
             MULTI_GROUP_D,
         )
         .expect("T digits");
-        emit_witness_e_planes::<MULTI_GROUP_D>(
-            &mut emitted,
-            &layout,
-            group_index,
-            MULTI_GROUP_D,
-            num_claims,
-            depth_open,
-            &e_digits,
-            num_live_blocks,
-        )
-        .expect("emit E");
-        emit_witness_t_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
-            &mut emitted,
-            &layout,
-            group_index,
-            num_claims,
-            n_a,
-            depth_commit,
-            &t_digits,
-            num_live_blocks,
-        )
-        .expect("emit T");
-
         let depth_fold = params.num_digits_fold();
         for unit in layout.units_for_group(group_index).expect("units") {
+            emit_witness_e_planes::<MULTI_GROUP_D>(
+                &mut emitted,
+                unit,
+                MULTI_GROUP_D,
+                num_claims,
+                depth_open,
+                &e_digits,
+                num_live_blocks,
+            )
+            .expect("emit E");
+            emit_witness_t_planes::<MULTI_GROUP_D, MULTI_GROUP_D>(
+                &mut emitted,
+                unit,
+                num_claims,
+                n_a,
+                depth_commit,
+                &t_digits,
+                num_live_blocks,
+            )
+            .expect("emit T");
             let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
                 .map(|index| {
                     marker::<MULTI_GROUP_D>(500 * group_index + 100 * unit.chunk_index() + index)
@@ -787,8 +790,7 @@ fn packing_instance_emits_all_physical_e_coordinate_planes() {
     let mut emitted = vec![0i8; layout.live_coeff_len()];
     emit_witness_e_planes::<PACK_D_D>(
         &mut emitted,
-        &layout,
-        0,
+        unit,
         packing_geometry.partial_base_field_width(),
         1,
         depth_open,

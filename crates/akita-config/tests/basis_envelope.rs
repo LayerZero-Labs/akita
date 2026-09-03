@@ -10,6 +10,46 @@ use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 const BASIS_ENVELOPE_NUM_VARS: &[usize] = &[10, 16, 28, 30, 64, 120];
 
 #[test]
+fn large_fields_search_the_complete_i16_inner_basis_domain() {
+    assert_eq!(fp128::Dense::inner_basis_range(), (3, 16));
+    assert_eq!(
+        akita_config::proof_optimized::fp64::Dense::inner_basis_range(),
+        (3, 16)
+    );
+    assert_eq!(
+        akita_config::proof_optimized::fp32::Dense::inner_basis_range(),
+        (3, 10)
+    );
+}
+
+#[test]
+fn large_field_dense_presets_search_the_extended_a_dimension_domain() {
+    for (mode, expected_a) in [
+        (
+            fp128::Dense::RING_DIMENSION_SCHEDULE_MODE,
+            &[64, 128, 256, 512, 1024][..],
+        ),
+        (
+            akita_config::proof_optimized::fp64::Dense::RING_DIMENSION_SCHEDULE_MODE,
+            &[64, 128, 256, 512, 1024, 2048][..],
+        ),
+    ] {
+        let akita_schedules::RingDimensionScheduleMode::AdaptiveDimension {
+            potential_a_dimensions,
+            potential_b_dimensions,
+            potential_d_dimensions,
+            ..
+        } = mode
+        else {
+            panic!("large-field dense presets must use adaptive dimensions");
+        };
+        assert_eq!(potential_a_dimensions, expected_a);
+        assert!(potential_b_dimensions.iter().all(|&d| d <= 256));
+        assert!(potential_d_dimensions.iter().all(|&d| d <= 256));
+    }
+}
+
+#[test]
 fn adaptive_onehot_schedule_stays_within_basis_envelope() {
     type Cfg = fp128::OneHot;
     let inner_basis_max = Cfg::inner_basis_range().1;

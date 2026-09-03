@@ -1,13 +1,20 @@
 use super::wire::extension_opening_reduction_serialized_size;
 use super::*;
 use akita_algebra::CompressedUniPoly;
-use akita_field::{Prime128Offset275, RandomSampling};
 use akita_serialization::Valid;
 use akita_sumcheck::SumcheckProof;
 use akita_transcript::{labels, AkitaTranscript, Transcript};
+use jolt_field::{One, Prime128Offset275, Prime128OffsetA7F7, Ring, Zero};
 use rand::SeedableRng;
 
-type F = Prime128Offset275;
+type F = Prime128OffsetA7F7;
+
+fn test_fold_response_nonce(site: crate::GrindingSite) -> u32 {
+    site.canonical_bytes()
+        .into_iter()
+        .fold(0u32, |value, byte| value.wrapping_add(u32::from(byte)))
+        % crate::FOLD_RESPONSE_ATTEMPTS
+}
 
 fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
@@ -232,7 +239,6 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     let with_reduction = FoldLevelProof {
         extension_opening_reduction: Some(tiny_reduction()),
         opening_payload: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        fold_grind_nonce: 0,
         stage1: tiny_stage1(),
         stage2: AkitaStage2Proof {
             sumcheck_proof: SumcheckProof {
@@ -311,17 +317,13 @@ fn terminal_level_proof_serde_round_trip() {
     let terminal_response =
         test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
 
-    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
-        None,
-        terminal_response.clone(),
-        7,
-    );
+    let without_reduction =
+        TerminalLevelProof::new_with_extension_opening_reduction(None, terminal_response.clone());
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
         .extension_opening_reduction
         .is_none());
-    assert_eq!(without_reduction.fold_grind_nonce, 7);
 
     let mut bytes = Vec::new();
     without_reduction
@@ -337,7 +339,6 @@ fn terminal_level_proof_serde_round_trip() {
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
         terminal_response,
-        0,
     );
     let mut bytes_with_reduction = Vec::new();
     with_reduction
@@ -361,7 +362,6 @@ fn direct_terminal_relation_proof_serde_round_trip() {
     let terminal_response = test_terminal_witness(vec![F::one(), -F::one()]);
     let proof = TerminalLevelProof {
         extension_opening_reduction: None,
-        fold_grind_nonce: 3,
         terminal_response,
     };
 
@@ -381,7 +381,42 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         tiny_stage2::<D>(),
     );
     root.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    let grinding_plan = crate::GrindingPlan::new(
+        vec![
+            crate::GrindingRun::proof_of_work(
+                crate::GrindingSite::EvaluationBatch { level: 0 },
+                3,
+                128,
+            )
+            .expect("grinding run"),
+            crate::GrindingRun::fold_response(0),
+            crate::GrindingRun::fold_response(1),
+        ],
+        128,
+    )
+    .expect("grinding plan");
+    let first_fold_site = crate::GrindingSite::FoldResponse { level: 0 };
+    let second_fold_site = crate::GrindingSite::FoldResponse { level: 1 };
+    let first_fold_nonce = test_fold_response_nonce(first_fold_site);
+    let second_fold_nonce = test_fold_response_nonce(second_fold_site);
+    let evaluation_batch_site = crate::GrindingSite::EvaluationBatch { level: 0 };
+    let evaluation_batch_nonce = evaluation_batch_site
+        .canonical_bytes()
+        .into_iter()
+        .fold(u32::default(), |value, byte| value ^ u32::from(byte))
+        & ((1 << 9) - 1);
+    let mut nonce_writer = crate::TranscriptNonceWriter::new(&grinding_plan).unwrap();
+    nonce_writer
+        .write(evaluation_batch_site, evaluation_batch_nonce)
+        .unwrap();
+    nonce_writer
+        .write_fold_response(first_fold_site, first_fold_nonce)
+        .unwrap();
+    nonce_writer
+        .write_fold_response(second_fold_site, second_fold_nonce)
+        .unwrap();
     let batched = AkitaBatchedProof {
+        nonce_stream: nonce_writer.finish().unwrap(),
         root,
         recursive_folds: Vec::new(),
         terminal: proof.clone(),
@@ -391,6 +426,28 @@ fn direct_terminal_relation_proof_serde_round_trip() {
         .serialize_uncompressed(&mut batched_bytes)
         .expect("serialize batched proof");
     let shape = batched.shape();
+    let public_shape = batched.shape();
+    public_shape
+        .validate_grinding_plan(&grinding_plan)
+        .expect("plan-owned stream width");
+    let mut public_shape_bytes = Vec::new();
+    public_shape
+        .serialize_uncompressed(&mut public_shape_bytes)
+        .expect("serialize public proof shape");
+    assert_eq!(
+        &public_shape_bytes[..8],
+        &(public_shape.nonce_stream_bits as u64).to_le_bytes()
+    );
+    assert_eq!(
+        AkitaBatchedProofShape::deserialize_uncompressed_exact(&public_shape_bytes, &())
+            .expect("public proof-shape roundtrip"),
+        public_shape
+    );
+    let mut wrong_plan_shape = public_shape.clone();
+    wrong_plan_shape.nonce_stream_bits += 1;
+    assert!(wrong_plan_shape
+        .validate_grinding_plan(&grinding_plan)
+        .is_err());
     let mut oversized_shape = shape.clone();
     oversized_shape.root.opening_payload_coeffs = DEFAULT_MAX_SEQUENCE_LEN;
     assert!(matches!(
@@ -452,7 +509,7 @@ fn typed_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: CanonicalField,
+    F: CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     t.append_serde(label, &TypedRingSliceSerializer(ring_elems));
@@ -468,7 +525,7 @@ fn flat_challenge<const D: usize>(
     challenge_len: usize,
 ) -> Vec<u8>
 where
-    F: AkitaSerialize + CanonicalField,
+    F: AkitaSerialize + CanonicalEncoding,
 {
     let mut t = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let rv = RingVec::from_ring_elems(ring_elems);

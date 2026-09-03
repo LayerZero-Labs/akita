@@ -1,8 +1,8 @@
-use akita_field::{
+use criterion::Criterion;
+use jolt_field::{
     Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59, Prime56Offset27,
     Prime64Offset59,
 };
-use criterion::Criterion;
 
 use super::arithmetic::bench_arithmetic_case;
 use super::cases::*;

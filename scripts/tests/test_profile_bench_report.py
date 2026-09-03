@@ -1029,6 +1029,108 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         with self.assertRaisesRegex(ValueError, "accepted nonce plus one"):
             extract_summary(impossible_log, "onehot_fp128_d64", 24, 1)
 
+    def test_grinding_plan_reports_exact_bits_by_fold_and_query(self) -> None:
+        from scripts.profile_bench_report import extract_summary, render_fold_details
+
+        log = "\n".join(
+            [
+                "INFO proof summary label=onehot_fp128 levels=1 proof_size_bytes=107 "
+                "accounted_bytes=107 akita_fold_bytes=100 nonce_stream_bytes=7 tail_bytes=0",
+                "INFO grinding plan summary label=onehot_fp128 nominal_capacity_bits=256 "
+                "total_nonce_bits=54 nonce_stream_bytes=7 padding_bits=2 run_count=5 "
+                "expanded_query_count=12",
+                "INFO grinding plan run label=onehot_fp128 run_index=0 level=0 "
+                "component=fold_response query=response_search protocol=none stage=None "
+                "round=None group=None kind=fold_response loss_factor=0 grind_bits=0 "
+                "nonce_bits=12 multiplicity=1 run_nonce_bits=12",
+                "INFO grinding plan run label=onehot_fp128 run_index=1 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(2) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=2 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(3) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=3 level=0 "
+                "component=stage1 query=sumcheck_round protocol=stage1 stage=Some(0) "
+                "round=Some(4) group=None kind=proof_of_work loss_factor=4 grind_bits=3 "
+                "nonce_bits=14 multiplicity=1 run_nonce_bits=14",
+                "INFO grinding plan run label=onehot_fp128 run_index=4 level=0 "
+                "component=fold_challenge query=challenge_coordinates protocol=none "
+                "stage=None round=None group=Some(1) kind=fold_challenge_coordinates "
+                "loss_factor=0 grind_bits=0 nonce_bits=0 multiplicity=8 run_nonce_bits=0",
+                "INFO proof fold level label=onehot_fp128 level=0 d=64 total_bytes=100 "
+                "fold_grind_nonce_bytes=0 grind_nonce=0 grind_attempts=1 root_variant=terminal",
+            ]
+        )
+        summary = extract_summary(log, "onehot_fp128", 24, 1)
+        plan = summary["grinding_plan"]
+
+        self.assertEqual(summary["nonce_stream_bits"], 54)
+        self.assertEqual(summary["nonce_stream_padding_bits"], 2)
+        self.assertEqual(plan["runs"][1]["stage"], 0)
+        self.assertEqual(plan["runs"][1]["round"], 2)
+        self.assertEqual(plan["runs"][4]["group"], 1)
+
+        baseline_proof = [{"level": 0, "fold_grind_nonce_bytes": 4}]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_fold_details(
+                [],
+                summary["proof_levels"],
+                None,
+                None,
+                baseline_proof,
+                None,
+                plan,
+                None,
+            )
+        report = output.getvalue()
+
+        self.assertIn("Transcript grinding bits", report)
+        self.assertIn("Proof-global packed nonce stream", report)
+        self.assertIn("54<br><sub>Merge base</sub><br>12", report)
+        self.assertIn("2<br><sub>Merge base</sub><br>20", report)
+        self.assertIn(
+            "Stage 1 | sumcheck stage 0, rounds 2 to 4 | 4 | 3 | 14 | 3 | 42",
+            report,
+        )
+        self.assertEqual(report.count("Stage 1 | sumcheck stage 0"), 1)
+        self.assertNotIn("challenge coordinates group 1", report)
+        self.assertIn("8 plan queries across 1 entry", report)
+        self.assertIn("because they require no nonce bits", report)
+        self.assertIn("**L0 subtotal**", report)
+        self.assertIn("rounds are shown as ranges", report)
+        self.assertIn("rounds the stream to bytes once", report)
+        self.assertIn("stored in a 32 bit field", report)
+        self.assertIn("12 bit fold response", report)
+
+    def test_grinding_round_groups_split_when_security_terms_change(self) -> None:
+        from scripts.profile_bench_fold_details import aggregate_grinding_runs
+
+        common = {
+            "level": 0,
+            "component": "stage1",
+            "query": "sumcheck_round",
+            "protocol": "stage1",
+            "stage": 0,
+            "group": None,
+            "kind": "proof_of_work",
+            "loss_factor": 4,
+            "nonce_bits": 14,
+            "multiplicity": 1,
+            "run_nonce_bits": 14,
+        }
+        runs = [
+            {**common, "round": 0, "grind_bits": 3},
+            {**common, "round": 1, "grind_bits": 4},
+        ]
+
+        grouped = aggregate_grinding_runs(runs)
+
+        self.assertEqual(len(grouped), 2)
+        self.assertEqual([run["grind_bits"] for run in grouped], [3, 4])
+
     def test_l2_grinding_observations_survive_sample_aggregation(self) -> None:
         from scripts.profile_bench_report import (
             combine_case_run_summaries,
@@ -1260,8 +1362,12 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             human_case_label(summary), "Fp128 one-hot nv32, direct setup check"
         )
 
-    def test_adaptive_multi_group_case_label_omits_ring_dimensions(self) -> None:
-        from scripts.profile_bench_report import human_case_label, normalize_case_summary
+    def test_adaptive_multi_group_case_label_exposes_workload_shape(self) -> None:
+        from scripts.profile_bench_report import (
+            human_case_label,
+            normalize_case_summary,
+            render_matrix_summary,
+        )
 
         summary = normalize_case_summary(
             {
@@ -1277,7 +1383,22 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         self.assertEqual(
             human_case_label(summary),
-            "Fp128 multi-group, direct setup check",
+            "Fp128 multi-group (final nv32, 4 polys total), direct setup check",
+        )
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_matrix_summary([summary], None)
+        self.assertIn(
+            "two precommitted nv16 singleton polynomials and two polynomials "
+            "in the displayed final group",
+            output.getvalue(),
+        )
+
+        summary["config"] = "adaptive recursive multi-group W8R2"
+        self.assertEqual(
+            human_case_label(summary),
+            "Fp128 multi-group W8R2 (final nv32, 4 polys total), direct setup check",
         )
 
     def test_recursive_singleton_case_label_matches_direct_workload(self) -> None:
@@ -1328,7 +1449,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         summary = normalize_case_summary(
             {
                 "mode": "onehot_fp128_multi_group_recursive",
-                "num_vars": 32,
+                "num_vars": 34,
                 "num_polys": 4,
                 "setup_contribution_mode": "recursive",
                 "exit_code": 0,
@@ -1348,7 +1469,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
                             },
                             {
                                 "group_role": "final",
-                                "public_num_vars": 32,
+                                "public_num_vars": 34,
                                 "public_num_polynomials": 2,
                             },
                         ],
@@ -1359,14 +1480,15 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
 
         statement = public_opening_statement(summary)
         name = benchmark_name(
-            "onehot_fp128_multi_group_recursive", 32, 4, "recursive"
+            "onehot_fp128_multi_group_recursive", 34, 4, "recursive"
         )
         self.assertIn("one 16 variable polynomial", statement)
         self.assertIn("at its own point", statement)
-        self.assertIn("2 32 variable polynomials", statement)
+        self.assertIn("2 34 variable polynomials", statement)
         self.assertEqual(
             name,
-            "fp128 multi-group opening with 4 polynomials (recursive setup contribution)",
+            "fp128 multi-group opening, final nv34, 4 polynomials total "
+            "(recursive setup contribution)",
         )
         self.assertNotIn("same-point", name)
 
@@ -1377,14 +1499,6 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             normalize_case_summary(
                 {
                     "mode": "dense_fp32",
-                    "num_vars": 26,
-                    "num_polys": 1,
-                    "benchmark_shard": "1-fp32-base",
-                }
-            ),
-            normalize_case_summary(
-                {
-                    "mode": "onehot_fp32",
                     "num_vars": 30,
                     "num_polys": 1,
                     "benchmark_shard": "1-fp32-base",
@@ -1392,8 +1506,16 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             ),
             normalize_case_summary(
                 {
+                    "mode": "onehot_fp32",
+                    "num_vars": 34,
+                    "num_polys": 1,
+                    "benchmark_shard": "1-fp32-base",
+                }
+            ),
+            normalize_case_summary(
+                {
                     "mode": "dense_fp64",
-                    "num_vars": 26,
+                    "num_vars": 29,
                     "num_polys": 1,
                     "benchmark_shard": "2-fp64-base",
                 }
@@ -1408,24 +1530,24 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
         shard_section, statement_section = report.split("### Public opening statements")
         self.assertIn("### Benchmark shards", shard_section)
         self.assertIn(
-            "| <code>1-fp32-base</code> | Fp32 dense nv26, direct setup check<br>Fp32 one\\-hot nv30, direct setup check |",
+            "| <code>1-fp32-base</code> | Fp32 dense nv30, direct setup check<br>Fp32 one\\-hot nv34, direct setup check |",
             shard_section,
         )
         self.assertIn(
-            "| <code>2-fp64-base</code> | Fp64 dense nv26, direct setup check |",
+            "| <code>2-fp64-base</code> | Fp64 dense nv29, direct setup check |",
             shard_section,
         )
         self.assertIn("Over Fp32", statement_section)
-        self.assertIn("Fp32 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp32 dense nv30, direct setup check", statement_section)
         self.assertIn("Over Fp64", statement_section)
-        self.assertIn("Fp64 dense nv26, direct setup check", statement_section)
+        self.assertIn("Fp64 dense nv29, direct setup check", statement_section)
 
     def test_partial_merge_base_coverage_is_explicit(self) -> None:
         from scripts.profile_bench_report import render_report
 
         case = {
             "mode": "dense_fp32",
-            "num_vars": 26,
+            "num_vars": 30,
             "num_polys": 1,
             "benchmark_shard": "1-fp32-base",
             "exit_code": 1,
@@ -1831,7 +1953,7 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
             write_aggregate_summaries,
         )
 
-        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=26, num_polys=1)
+        case = BenchmarkCaseSpec(mode="dense_fp32", num_vars=30, num_polys=1)
         summary = {
             "case_id": case.case_id,
             "exit_code": 0,

@@ -1,15 +1,14 @@
 //! Linear algebra helpers for ring commitment.
 
-use akita_algebra::ntt::MontCoeff;
-use akita_algebra::ntt::PrimeWidth;
+use akita_algebra::ntt::{MontCoeff, PrimeWidth, I32_LAZY_DOT_BATCH};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     cyclic_ntt_with_i16_tail_to_ring, ntt_with_i16_tail_to_ring, CenteredMontLut, CrtNttParamSet,
     CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
+use jolt_field::solinas::parallel::*;
+use jolt_field::{CanonicalEncoding, Field};
 use std::array::from_fn;
 use std::mem::size_of;
 
@@ -35,7 +34,6 @@ use block_parallel::*;
 use capacity::*;
 pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile};
 use chunked_matvec::*;
-pub(crate) use common::digit_blocks_are_balanced;
 use common::*;
 pub(crate) use compression::validate_compression_batch_shape;
 #[cfg(test)]
@@ -64,4 +62,5 @@ pub use ntt_matvec::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
 };
+pub(crate) use ntt_matvec::{mat_vec_mul_ntt_packed_digits_i8, mat_vec_mul_ntt_packed_raw_i8};
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

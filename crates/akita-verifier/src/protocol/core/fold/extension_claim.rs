@@ -4,12 +4,12 @@ use super::super::*;
 use super::{absorb_protocol_opening_points, FoldClaimMaterial, PreparedFoldOpeningPoint};
 use akita_types::{dispatch_for_field, TerminalFoldParams};
 
-pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct PreparedProtocolPoint<F: Field, E: Field> {
     pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
     pub(in crate::protocol::core) protocol: Vec<E>,
 }
 
-pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
+pub(in crate::protocol::core) struct FoldEorReplay<F: Field, E: Field> {
     pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
     pub(in crate::protocol::core) final_relation: Option<(Vec<E>, Vec<E>)>,
 }
@@ -21,7 +21,7 @@ struct EorReductionShape {
     num_rounds: usize,
 }
 
-struct EorSumcheckReplay<E: FieldCore> {
+struct EorSumcheckReplay<E: Field> {
     rho: Vec<E>,
     final_claims: Vec<E>,
     final_factors: Vec<E>,
@@ -32,7 +32,7 @@ fn eor_reduction_shape<F, E>(
     reduction: &ExtensionOpeningReductionProof<E>,
 ) -> Result<EorReductionShape, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     let (split_bits, width) =
@@ -55,7 +55,7 @@ fn eor_input_claims_from_partials<F, E>(
     eta: &[E],
 ) -> Result<Vec<E>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     E: ExtField<F>,
 {
     if shape.width == 0 || !partials.len().is_multiple_of(shape.width) {
@@ -77,11 +77,12 @@ fn verify_eor_sumcheck<F, E, T>(
     opening_batch: &OpeningClaimsLayout,
     requires_reduction: bool,
     transcript: &mut T,
+    level: u32,
 ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: Field + CanonicalEncoding + AkitaSerialize,
     E: ExtField<F> + AkitaSerialize,
-    T: Transcript<F>,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims || group_points.len() != opening_batch.num_groups() {
@@ -134,6 +135,7 @@ where
     if claim_offset != num_claims {
         return Err(AkitaError::InvalidProof);
     }
+    transcript.grind_query(akita_types::GrindingSite::ExtensionOpeningPoint { level })?;
     let eta = (0..shape.split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
@@ -141,20 +143,34 @@ where
     if input_claims.len() != num_claims || reduction.final_claims.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let claim_coefficients =
-        sample_row_coefficients::<F, E, T>(opening_batch, CHALLENGE_EOR_CLAIM_BATCH, transcript)?;
+    let claim_coefficients = akita_types::sample_row_coefficients::<F, E, T>(
+        opening_batch,
+        akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
+        transcript,
+    )?;
     let batched_input_claim = input_claims
         .iter()
         .zip(&claim_coefficients)
         .fold(E::zero(), |acc, (&claim, &coefficient)| {
             acc + coefficient * claim
         });
+    let mut round = 0u32;
     let (batched_final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
         batched_input_claim,
         shape.num_rounds,
         &reduction.sumcheck,
         transcript,
-        |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+        |tr| {
+            let challenge = akita_types::sample_grinded_sumcheck_challenge::<F, E, T>(
+                tr,
+                akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                level,
+                0,
+                round,
+            )?;
+            round = round.checked_add(1).ok_or(AkitaError::InvalidProof)?;
+            Ok(challenge)
+        },
     )?;
     let expected_batched_final = reduction
         .final_claims
@@ -210,11 +226,12 @@ pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     num_live_blocks: usize,
     requires_reduction: bool,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_terminal_fold_eor_kernel::<F, E, T, D>(
@@ -228,6 +245,7 @@ where
             d_a.trailing_zeros() as usize,
             requires_reduction,
             transcript,
+            level,
         )
     })
 }
@@ -244,11 +262,12 @@ fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
     alpha_bits: usize,
     requires_reduction: bool,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     if challenge_point.len() > opening_batch.max_num_vars() || opening_batch.num_groups() != 1 {
         return Err(AkitaError::InvalidProof);
@@ -262,6 +281,7 @@ where
         opening_batch,
         requires_reduction,
         transcript,
+        level,
     )?;
     let groups = if let Some(replay) = &replay {
         let protocol_point =
@@ -301,11 +321,12 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     lp: &CommittedGroupParams,
     requires_reduction: bool,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let replay = verify_eor_sumcheck::<F, E, T>(
         extension_opening_reduction,
@@ -314,6 +335,7 @@ where
         opening_batch,
         requires_reduction,
         transcript,
+        level,
     )?;
     let mut groups = Vec::new();
     if let Some(replay) = &replay {
@@ -372,11 +394,12 @@ pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>
     basis: BasisMode,
     params: &TerminalFoldParams,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
     let FoldEorReplay {
@@ -391,8 +414,9 @@ where
         params.d_a(),
         params.blocks.positions_per_block,
         params.blocks.live_blocks,
-        E::EXT_DEGREE > 1,
+        E::DEGREE > 1,
         transcript,
+        level,
     )
     .map_err(|error| {
         AkitaError::InvalidInput(format!(
@@ -422,11 +446,12 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     basis: BasisMode,
     lp: &CommittedGroupParams,
     transcript: &mut T,
+    level: u32,
 ) -> Result<FoldClaimMaterial<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
+    F: Field + CanonicalEncoding + AkitaSerialize,
+    E: FpExtEncoding<F> + ExtField<F> + Ring + AkitaSerialize,
+    T: akita_types::VerifierTranscriptGrinding<F>,
 {
     let FoldEorReplay {
         groups,
@@ -438,8 +463,9 @@ where
         opening_batch,
         basis,
         lp,
-        E::EXT_DEGREE > 1,
+        E::DEGREE > 1,
         transcript,
+        level,
     )?;
     let protocol_point_refs = groups
         .iter()
@@ -462,10 +488,10 @@ where
 mod tests {
     use super::*;
     use akita_algebra::CompressedUniPoly;
-    use akita_field::{FpExt4, Prime32Offset99};
     use akita_sumcheck::SumcheckProof;
     use akita_transcript::AkitaTranscript;
     use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
+    use jolt_field::{FpExt4, One, Prime32Offset99, Zero};
 
     type F = Prime32Offset99;
     type E = FpExt4<F>;
@@ -482,6 +508,56 @@ mod tests {
                 ])
             })
             .collect()
+    }
+
+    fn verify_eor_for_test(
+        reduction: Option<&ExtensionOpeningReductionProof<E>>,
+        group_points: &[&[E]],
+        openings: &[E],
+        opening_batch: &OpeningClaimsLayout,
+        requires_reduction: bool,
+        transcript: &mut AkitaTranscript<F>,
+    ) -> Result<Option<EorSumcheckReplay<E>>, AkitaError> {
+        let level = 1;
+        let mut runs = Vec::new();
+        if reduction.is_some() == requires_reduction && requires_reduction {
+            runs.push(akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningPoint { level },
+                1,
+                128,
+            )?);
+            runs.push(akita_types::GrindingRun::proof_of_work(
+                akita_types::GrindingSite::ExtensionOpeningClaimBatch { level },
+                1,
+                128,
+            )?);
+            for round in 0..reduction.map_or(0, ExtensionOpeningReductionProof::num_rounds) {
+                runs.push(akita_types::GrindingRun::proof_of_work(
+                    akita_types::GrindingSite::SumcheckRound {
+                        protocol: akita_types::SumcheckProtocol::ExtensionOpeningReduction,
+                        level,
+                        stage: 0,
+                        round: u32::try_from(round).map_err(|_| AkitaError::InvalidProof)?,
+                    },
+                    1,
+                    128,
+                )?);
+            }
+        }
+        let plan = akita_types::GrindingPlan::new(runs, 128)?;
+        let stream = akita_types::TranscriptNonceStream::from_bytes(Vec::new(), 0)
+            .map_err(|_| AkitaError::InvalidProof)?;
+        let mut transcript =
+            akita_types::VerifierGrindingTranscript::<_>::new(transcript, &stream, &plan)?;
+        verify_eor_sumcheck::<F, E, _>(
+            reduction,
+            group_points,
+            openings,
+            opening_batch,
+            requires_reduction,
+            &mut transcript,
+            level,
+        )
     }
 
     #[test]
@@ -517,7 +593,7 @@ mod tests {
         };
 
         let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
-        let replay = verify_eor_sumcheck::<F, E, _>(
+        let replay = verify_eor_for_test(
             Some(&reduction),
             &group_point_refs,
             &openings,
@@ -534,7 +610,7 @@ mod tests {
         missing_final_claim.final_claims.pop();
         let mut missing_claim_transcript =
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
-        let missing_claim_result = verify_eor_sumcheck::<F, E, _>(
+        let missing_claim_result = verify_eor_for_test(
             Some(&missing_final_claim),
             &group_point_refs,
             &openings,
@@ -551,7 +627,7 @@ mod tests {
         tampered.partials[0] += E::one();
         let mut tampered_transcript =
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
-        let tampered_result = verify_eor_sumcheck::<F, E, _>(
+        let tampered_result = verify_eor_for_test(
             Some(&tampered),
             &group_point_refs,
             &openings,
@@ -566,7 +642,7 @@ mod tests {
 
         let mut missing_transcript =
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
-        let missing_result = verify_eor_sumcheck::<F, E, _>(
+        let missing_result = verify_eor_for_test(
             None,
             &group_point_refs,
             &openings,
@@ -607,7 +683,7 @@ mod tests {
 
         // Honest gate-off level: no payload, predicate off, replay is a no-op.
         let mut idle_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
-        let idle_replay = verify_eor_sumcheck::<F, E, _>(
+        let idle_replay = verify_eor_for_test(
             None,
             &group_point_refs,
             &openings,
@@ -620,7 +696,7 @@ mod tests {
 
         // Unsolicited payload at a gate-off level must fail closed.
         let mut unsolicited_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
-        let unsolicited_result = verify_eor_sumcheck::<F, E, _>(
+        let unsolicited_result = verify_eor_for_test(
             Some(&reduction),
             &group_point_refs,
             &openings,

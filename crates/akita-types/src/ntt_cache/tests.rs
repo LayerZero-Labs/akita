@@ -1,10 +1,10 @@
 use super::*;
 use akita_algebra::CyclotomicRing;
-use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
 use core::mem::size_of;
+use jolt_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-fn flat_zeros<F: FieldCore, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
+fn flat_zeros<F: Field, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
     crate::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
 }
 
@@ -62,7 +62,7 @@ fn verifier_cache_preserves_strong_entry_across_weaker_growth() {
         rhs_abs_bound: 1 << 15,
     };
     let strong_tail = usize::from(
-        ntt_cache_requires_i16_tail::<Prime128Offset275, D>(8, 1 << 15)
+        ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(8, 1 << 15)
             .expect("strong exactness requirement"),
     ) * 8;
     let strong = cache
@@ -79,7 +79,7 @@ fn verifier_cache_preserves_strong_entry_across_weaker_growth() {
         .expect("strong small prefix");
 
     let weak_tail = usize::from(
-        ntt_cache_requires_i16_tail::<Prime128Offset275, D>(16, 1)
+        ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(16, 1)
             .expect("weak exactness requirement"),
     ) * 16;
     cache
@@ -139,7 +139,7 @@ fn prepare_materializes_exactly_the_requested_layout() {
     let both = prepare_ntt_cache(view, NttCacheMode::BothTransforms).expect("both transforms");
     assert!(both.has_negacyclic());
     assert!(both.has_cyclic());
-    assert!(!both.has_i16_tail());
+    assert!(!both.has_exactness_tail());
 
     let view = flat.ring_view::<D>(1, 10).expect("matrix view");
     let tail_pair =
@@ -167,11 +167,11 @@ fn prepare_materializes_exactly_the_requested_layout() {
     .expect("base negacyclic");
     assert!(exact.has_negacyclic());
     assert!(!exact.has_cyclic());
-    assert_eq!(exact.has_i16_tail(), ifma52_cache_enabled::<D>());
+    assert_eq!(exact.has_exactness_tail(), ifma52_cache_enabled::<D>());
 
     let flat = flat_zeros::<Prime128Offset275, D>(10);
     let view = flat.ring_view::<D>(1, 10).expect("matrix view");
-    let tail = prepare_ntt_cache(
+    let q128_exact = prepare_ntt_cache(
         view,
         NttCacheMode::ExactNegacyclic {
             width: 5,
@@ -179,14 +179,15 @@ fn prepare_materializes_exactly_the_requested_layout() {
         },
     )
     .expect("tail negacyclic");
-    assert!(!tail.has_cyclic());
-    assert!(tail.has_i16_tail());
+    assert!(!q128_exact.has_cyclic());
+    assert_eq!(q128_exact.has_exactness_tail(), ifma52_cache_enabled::<D>());
     let bytes_per_ring = if ifma52_cache_enabled::<D>() {
-        3 * size_of::<u64>() + size_of::<i16>()
+        IFMA52_PRIMES.len() * size_of::<u64>()
+            + usize::from(q128_exact.has_exactness_tail()) * size_of::<i32>()
     } else {
-        Q128_NUM_PRIMES * size_of::<i32>() + size_of::<i16>()
+        Q128_NUM_PRIMES * size_of::<i32>()
     };
-    assert_eq!(tail.cache_bytes(), 10 * D * bytes_per_ring);
+    assert_eq!(q128_exact.cache_bytes(), 10 * D * bytes_per_ring);
 }
 
 #[test]
@@ -219,15 +220,19 @@ fn exact_selector_changes_layout_at_the_strict_capacity_boundary() {
     else {
         panic!("Q128 field must select Q128 params");
     };
-    let safe = params
-        .crt_capacity()
+    let capacity = if ifma52_cache_enabled::<D>() {
+        CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from))
+    } else {
+        params.crt_capacity()
+    };
+    let safe = capacity
         .max_safe_width::<Prime128Offset275, D>(1 << 15)
         .expect("one term fits");
-    assert!(!ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe, 1 << 15).unwrap());
-    assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 1 << 15).unwrap());
+    assert!(!ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(safe, 1 << 15).unwrap());
+    assert!(ntt_cache_requires_exactness_tail::<Prime128Offset275, D>(safe + 1, 1 << 15).unwrap());
 }
 
-fn assert_quotient_tail_selectors_agree<F: CanonicalField, const D: usize>(
+fn assert_quotient_tail_selectors_agree<F: Field + CanonicalEncoding, const D: usize>(
     profile: SisModulusProfileId,
 ) {
     for rhs_abs_bound in [1, 1 << 15, 1_000_000, u64::from(u32::MAX)] {
@@ -259,6 +264,46 @@ fn quotient_tail_planning_and_runtime_selectors_agree_for_all_fields() {
 }
 
 #[test]
+fn dense_i8_exact_ifma52_requires_q128_tail_capacity() {
+    let q128 = SisModulusProfileId::Q128OffsetA7F7.modulus();
+    let base_max = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from))
+        .max_safe_width_for_modulus(512, q128, 64)
+        .expect("three-prime IFMA base capacity");
+    let hybrid_max = CrtCapacity::from_prime_moduli(IFMA52_PRIMES.map(u128::from))
+        .with_prime_modulus(q128_primes()[0].p as u128)
+        .max_safe_width_for_modulus(512, q128, 64)
+        .expect("hybrid IFMA capacity");
+    assert!(dense_i8_exact_ifma52_is_profitable(
+        q128,
+        512,
+        base_max + 1,
+        64,
+        true,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        q128,
+        512,
+        hybrid_max + 1,
+        64,
+        true,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        q128,
+        512,
+        base_max + 1,
+        64,
+        false,
+    ));
+    assert!(!dense_i8_exact_ifma52_is_profitable(
+        SisModulusProfileId::Q64Offset59.modulus(),
+        512,
+        19_456,
+        64,
+        true,
+    ));
+}
+
+#[test]
 fn q128_a7f7_selector_accepts_d512() {
     assert!(matches!(
         select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),
@@ -278,8 +323,13 @@ fn q64_exact_cache_uses_ifma52_when_enabled() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<Prime64Offset59, D>(2, 2, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
-        assert!(ntt_cache_requires_i16_tail::<Prime32Offset99, D>(2, 1 << 15).unwrap());
+        assert!(ntt_cache_requires_exactness_tail::<Prime32Offset99, D>(2, 1 << 15).unwrap());
         assert!(cache.uses_ifma52());
         assert_eq!(cache.cache_bytes(), 2 * 2 * D * size_of::<u64>());
     } else {
@@ -325,9 +375,14 @@ fn q32_exact_cache_uses_mixed_ifma52_when_enabled() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<Prime32Offset99, D>(2, 2, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
         assert!(cache.uses_ifma52());
-        assert!(cache.has_i16_tail());
+        assert!(cache.has_exactness_tail());
         assert_eq!(
             cache.cache_bytes(),
             2 * D * (size_of::<u64>() + size_of::<i16>())
@@ -398,24 +453,38 @@ fn assert_q32_exact_cache_matches_ring_arithmetic<const D: usize>() {
     assert_eq!(actual, expected);
 }
 
+fn run_with_large_test_stack(f: impl FnOnce() + Send + 'static) {
+    std::thread::Builder::new()
+        .name("exact-ntt-cache-test".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn exact NTT cache test")
+        .join()
+        .expect("exact NTT cache test thread");
+}
+
 #[test]
 fn q32_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
-    assert_q32_exact_cache_matches_ring_arithmetic::<64>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<128>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<256>();
-    assert_q32_exact_cache_matches_ring_arithmetic::<512>();
+    run_with_large_test_stack(|| {
+        assert_q32_exact_cache_matches_ring_arithmetic::<64>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<128>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<256>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<512>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<1024>();
+        assert_q32_exact_cache_matches_ring_arithmetic::<2048>();
+    });
 }
 
 fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
     const ROWS: usize = 2;
     const COLS: usize = 3;
     type F = Prime128OffsetA7F7;
-    let modulus = u128::MAX - (<F as PseudoMersenneField>::MODULUS_OFFSET - 1);
+    let modulus = u128::MAX - (<F as PseudoMersenne>::OFFSET - 1);
     let matrix = (0..ROWS * COLS)
         .map(|entry| {
             CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
                 let magnitude = modulus / 2 - (entry * 257 + coefficient * 17) as u128;
-                let value = F::from_canonical_u128_reduced(magnitude);
+                let value = F::from_u128_reduced(magnitude);
                 if (entry + coefficient) % 2 == 0 {
                     value
                 } else {
@@ -433,12 +502,17 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
         },
     )
     .expect("exact cache");
+    assert_eq!(
+        planned_exact_ntt_cache_bytes::<F, D>(ROWS * COLS, COLS, 1 << 15)
+            .expect("planned exact cache bytes"),
+        cache.cache_bytes()
+    );
     if ifma52_cache_enabled::<D>() {
         assert!(cache.uses_ifma52());
-        assert!(cache.has_i16_tail());
+        assert!(cache.has_exactness_tail());
         assert_eq!(
             cache.cache_bytes(),
-            ROWS * COLS * D * (3 * size_of::<u64>() + size_of::<i16>())
+            ROWS * COLS * D * (IFMA52_PRIMES.len() * size_of::<u64>() + size_of::<i32>())
         );
     }
     let rhs = (0..COLS)
@@ -473,10 +547,13 @@ fn assert_q128_exact_cache_matches_ring_arithmetic<const D: usize>() {
 
 #[test]
 fn q128_exact_cache_matches_ring_arithmetic_at_all_ifma_dimensions() {
-    assert_q128_exact_cache_matches_ring_arithmetic::<64>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<128>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<256>();
-    assert_q128_exact_cache_matches_ring_arithmetic::<512>();
+    run_with_large_test_stack(|| {
+        assert_q128_exact_cache_matches_ring_arithmetic::<64>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<128>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<256>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<512>();
+        assert_q128_exact_cache_matches_ring_arithmetic::<1024>();
+    });
 }
 
 #[test]

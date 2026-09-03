@@ -7,8 +7,8 @@
 
 use akita_error::AkitaError;
 
-use crate::FieldCore;
-use akita_field::parallel::*;
+use crate::Field;
+use jolt_field::solinas::parallel::*;
 
 mod tensor_pair;
 pub use tensor_pair::{
@@ -26,7 +26,7 @@ pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
 /// `F`. Keeping these operations abstract lets the trace evaluator preserve
 /// its factored extension coordinates without introducing another address
 /// kernel.
-pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
+pub trait AffineWeight<F: Field>: Clone + Send + Sync {
     /// Additive identity carrying the same algebra metadata as `self`.
     fn zero_like(&self) -> Self;
 
@@ -49,7 +49,7 @@ pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
 /// weight only when the contraction reaches its row. The callback keeps dense
 /// values borrowed while allowing computed values to remain stack-local.
 #[allow(clippy::len_without_is_empty)]
-pub trait AffineWeightSource<F: FieldCore, A: AffineWeight<F>>: Sync {
+pub trait AffineWeightSource<F: Field, A: AffineWeight<F>>: Sync {
     /// Number of available outer weights.
     fn len(&self) -> usize;
 
@@ -59,7 +59,7 @@ pub trait AffineWeightSource<F: FieldCore, A: AffineWeight<F>>: Sync {
 
 impl<F, A, H> AffineWeightSource<F, A> for H
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
     H: AsRef<[A]> + Sync + ?Sized,
 {
@@ -94,7 +94,7 @@ impl<'a, A> AffineWeightProduct<'a, A> {
     }
 }
 
-impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProduct<'_, A> {
+impl<F: Field, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeightProduct<'_, A> {
     fn len(&self) -> usize {
         self.len
     }
@@ -110,7 +110,7 @@ impl<F: FieldCore, A: AffineWeight<F>> AffineWeightSource<F, A> for AffineWeight
     }
 }
 
-impl<F: FieldCore> AffineWeight<F> for F {
+impl<F: Field> AffineWeight<F> for F {
     fn zero_like(&self) -> Self {
         Self::zero()
     }
@@ -179,7 +179,7 @@ pub fn eval_affine_digit_intervals<F, A, H>(
     base_scales: &[F],
 ) -> Result<A, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
     H: AffineWeightSource<F, A> + ?Sized,
 {
@@ -409,7 +409,7 @@ fn try_eval_bit_aligned_digit_intervals<F, A, H>(
     base_scales: &[F],
 ) -> Result<Option<A>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
     H: AffineWeightSource<F, A> + ?Sized,
 {
@@ -518,7 +518,7 @@ fn accumulate_affine_rows<F, A, H>(
     rows: usize,
 ) -> Result<(), AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
     H: AffineWeightSource<F, A> + ?Sized,
 {
@@ -685,7 +685,7 @@ fn build_affine_low_summaries<F, A>(
     carry_count: usize,
 ) -> Result<Vec<A>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     if low_weights.is_empty() {
@@ -796,7 +796,7 @@ fn build_geometric_low_summaries<F, A>(
     carry_count: usize,
 ) -> Result<Option<Vec<A>>, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
 {
     let delta = digit_weights.len();
@@ -993,7 +993,7 @@ fn accumulate_high_rows_bucketed<F, A, H>(
     summaries: &[A],
 ) -> Result<bool, AkitaError>
 where
-    F: FieldCore,
+    F: Field,
     A: AffineWeight<F>,
     H: AffineWeightSource<F, A> + ?Sized,
 {
@@ -1158,7 +1158,7 @@ pub const OFFSET_EQ_HIGH_BITS_CAP: usize = 16;
 /// This obeys the verifier no-panic contract: construction validates and caps
 /// both table widths, the lookups are range-checked, and no unbounded
 /// allocation is performed.
-pub struct OffsetEqWindow<F: FieldCore> {
+pub struct OffsetEqWindow<F: Field> {
     low_bits: usize,
     low_mask: usize,
     eq_low: Vec<F>,
@@ -1166,7 +1166,7 @@ pub struct OffsetEqWindow<F: FieldCore> {
     high_challenges: Vec<F>,
 }
 
-impl<F: FieldCore> OffsetEqWindow<F> {
+impl<F: Field> OffsetEqWindow<F> {
     /// Build a window over `challenges` using the default low-bit cap.
     ///
     /// # Errors
@@ -1331,7 +1331,7 @@ impl<F: FieldCore> OffsetEqWindow<F> {
 }
 
 /// Evaluate `eq(r, index)` for a single hypercube index in little-endian order.
-pub fn eq_eval_at_index<F: FieldCore>(x_challenges: &[F], index: usize) -> F {
+pub fn eq_eval_at_index<F: Field>(x_challenges: &[F], index: usize) -> F {
     if x_challenges.len() < usize::BITS as usize && index >= (1usize << x_challenges.len()) {
         return F::zero();
     }

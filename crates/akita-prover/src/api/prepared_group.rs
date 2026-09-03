@@ -1,12 +1,10 @@
 //! Typed borrowed group carriers for prover execution.
 
 use akita_error::AkitaError;
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::{
-    AdditiveGroup, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
-};
 use akita_serialization::AkitaSerialize;
 use akita_types::FpExtEncoding;
+use jolt_field::Unreduced;
+use jolt_field::{AdditiveGroup, CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
 /// Homogeneous polynomial storage for one prepared prover group.
 ///
@@ -66,8 +64,8 @@ impl<'a, P> PreparedProverGroup<'a, P> {
 pub trait PreparedGroupProveOps<F, E, O>:
     crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
 {
@@ -75,8 +73,8 @@ where
 
 impl<F, E, O, G> PreparedGroupProveOps<F, E, O> for G
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: Field + CanonicalEncoding + Ring + Unreduced + AkitaSerialize + 'static,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F> + ExtField<F> + MulBaseUnreduced<F> + AkitaSerialize,
     O: crate::compute::ComputeBackendSetup<F> + crate::compute::DigitRowsComputeBackend<F>,
     G: crate::protocol::core::RootProverGroupOpening<F, E, O> + Clone,

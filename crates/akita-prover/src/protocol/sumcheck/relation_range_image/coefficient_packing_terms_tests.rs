@@ -1,7 +1,6 @@
 use super::*;
 
 use akita_challenges::{Challenges, SparseChallenge, SparseChallengeConfig};
-use akita_field::{Ext2, Prime64Offset59};
 use akita_types::{
     prepare_coefficient_packing_batch_semantics,
     prepare_coefficient_packing_verifier_batch_semantics, r_decomp_levels, relation_rhs_coeff_len,
@@ -13,6 +12,7 @@ use akita_types::{
     RelationWeightEvent, RelationWitnessGeometry, RingRelationGroupOpening, RingRelationInstance,
     RingVec, SisModulusProfileId, SubringCoefficientPackingGeometry, WitnessLayout,
 };
+use jolt_field::{Ext2, One, Prime64Offset59, Ring, Zero};
 
 type F = Prime64Offset59;
 type E = Ext2<F>;
@@ -301,31 +301,29 @@ fn prover_adapter_folds_to_shared_stage2_point_evaluation() {
 }
 
 #[test]
-fn consumed_packing_groups_merge_without_reencoding_sources() {
+fn duplicate_packing_group_support_is_rejected() {
     let first = fixture_for_basis(BasisMode::Lagrange);
     let second = fixture_for_basis(BasisMode::Monomial);
-    let mut expected = materialize_shared(&first.batch.groups()[0]);
-    for (sum, value) in expected
-        .iter_mut()
-        .zip(materialize_shared(&second.batch.groups()[0]))
-    {
-        *sum += value;
-    }
-
-    let mut combined: Option<PreparedProverLinearTerms<E>> = None;
-    for batch in [first.batch, second.batch] {
-        for semantics in batch.into_groups() {
-            let prepared = prepare_coefficient_packing_linear_terms(semantics, E::zero()).unwrap();
-            if let Some(linear_terms) = combined.as_mut() {
-                linear_terms.merge(prepared.linear_terms).unwrap();
-            } else {
-                combined = Some(prepared.linear_terms);
-            }
-        }
-    }
-    let combined = combined.expect("two nonempty packing batches");
-    assert_eq!(combined.source_count(), 4);
-    assert_eq!(combined.materialize_dense(), expected);
+    let mut combined = prepare_coefficient_packing_linear_terms(
+        first.batch.into_groups().into_iter().next().unwrap(),
+        E::zero(),
+    )
+    .unwrap()
+    .linear_terms;
+    let duplicate = prepare_coefficient_packing_linear_terms(
+        second.batch.into_groups().into_iter().next().unwrap(),
+        E::zero(),
+    )
+    .unwrap()
+    .linear_terms;
+    let source_count = combined.source_count();
+    let materialized = combined.materialize_dense();
+    assert!(matches!(
+        combined.merge(duplicate),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+    assert_eq!(combined.source_count(), source_count);
+    assert_eq!(combined.materialize_dense(), materialized);
 }
 
 #[test]

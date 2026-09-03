@@ -282,6 +282,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn response_chunks_keep_uniform_z_width_across_ragged_block_partitions() {
+        for (num_live_blocks, num_chunks) in [(10, 4), (4, 8)] {
+            let mut params = base_params(false);
+            params.own_group_mut().profile.blocks.live_blocks = num_live_blocks;
+            let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+            let relation_geometry =
+                RelationWitnessGeometry::for_evaluation_trace_execution(&params, &opening_batch)
+                    .expect("relation geometry");
+            let layout =
+                WitnessLayout::new(&params, &opening_batch, &relation_geometry, num_chunks, 2)
+                    .expect("chunked witness layout");
+
+            let units = layout.units();
+            let z_len = units[0].z_range().len();
+            assert!(units.iter().all(|unit| unit.z_range().len() == z_len));
+            for unit in units {
+                let blocks = unit.num_live_blocks();
+                assert_eq!(
+                    unit.e_range().len(),
+                    2 * blocks
+                        * params.open().digits.num_digits
+                        * relation_geometry
+                            .group_opening_geometry(0)
+                            .expect("opening geometry")
+                            .physical_coefficient_width()
+                );
+                assert_eq!(
+                    unit.t_range().len(),
+                    2 * blocks
+                        * params.inner().matrix.output_rank()
+                        * params.outer().digits.num_digits
+                        * params.d_a()
+                );
+            }
+        }
+    }
+
     fn coefficient_packing_params(
         payload_mode: crate::CommitmentPayloadMode,
     ) -> CommittedGroupParams {
@@ -372,11 +410,11 @@ mod tests {
                     .map(RelationRowGeometry::physical_coefficient_width)
                     .sum::<usize>()
             );
-            let v = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
+            let v = crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
                 Default::default();
                 params.open().matrix.output_rank() * 128
             ]);
-            let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
+            let u = crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
                 Default::default();
                 params.outer().matrix.output_rank() * 256
             ]);
@@ -708,14 +746,24 @@ mod tests {
                 ..
             }
         ));
-        let v = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
-            Default::default();
-            overlap.open().matrix.output_rank() * 128
-        ]);
-        let u = crate::RingVec::<akita_field::Prime128OffsetA7F7>::from_coeffs(vec![
-            Default::default();
-            overlap.outer().matrix.output_rank() * 128
-        ]);
+        let v =
+            crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+                Default::default();
+                overlap
+                    .open()
+                    .matrix
+                    .output_rank()
+                    * 128
+            ]);
+        let u =
+            crate::RingVec::<jolt_field::Prime128OffsetA7F7>::from_coeffs(vec![
+                Default::default();
+                overlap
+                    .outer()
+                    .matrix
+                    .output_rank()
+                    * 128
+            ]);
         assert!(crate::assemble_relation_rhs(overlap_relation.rhs_layout(), &v, &u).is_ok());
     }
 

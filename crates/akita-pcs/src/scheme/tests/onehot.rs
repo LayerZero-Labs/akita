@@ -312,32 +312,12 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
             &setup,
             &final_polys,
             &stack,
-            akita_prover::GroupContext::explicit_with_precommitted_groups(
-                &precommitteds,
-                main_params,
-            ),
+            akita_prover::GroupContext::explicit(&main_params.own_group().profile),
         )
         .expect("explicit final multi-group commitment");
 
     assert_eq!(explicit_output.committed_group, final_commitment);
     assert_eq!(explicit_output.hint, final_hint);
-
-    let missing_precommitted_groups =
-        akita_types::PrecommittedGroupProfiles::from_profiles(vec![pre_a_commitment.profile])
-            .expect("nonempty precommitted groups");
-    let error = OneHotScheme::from_embedded_schedule_catalog()
-        .expect("embedded schedule catalog")
-        .commit(
-            &setup,
-            &final_polys,
-            &stack,
-            akita_prover::GroupContext::explicit_with_precommitted_groups(
-                &missing_precommitted_groups,
-                main_params,
-            ),
-        )
-        .expect_err("explicit grouped params must bind precommitted profile count");
-    assert!(matches!(error, AkitaError::InvalidSetup(_)));
 
     assert_eq!(
         pre_a_commitment.rows().count(),
@@ -961,6 +941,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
+    assert_eq!(
+        expected_shape.nonce_stream_bits,
+        actual_shape.nonce_stream_bits
+    );
     assert_eq!(
         expected_shape.root.opening_payload_coeffs,
         actual_shape.root.opening_payload_coeffs

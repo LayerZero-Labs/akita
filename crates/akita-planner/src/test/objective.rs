@@ -80,7 +80,7 @@ fn setup_first_score_compares_padded_capacity_not_natural_length() {
 fn objective_bounds_prune_only_strict_numeric_losses() {
     let incumbent = super::super::CandidateMetrics {
         first_direct_setup_capacity: super::super::SetupPrefixCapacity::for_natural_len(10),
-        proof_bytes: 20,
+        cost: super::super::PackedProofCost::new(20, 0).unwrap(),
         setup_field_elements: 30,
     };
     assert!(CompleteObjectiveBound::SetupFirst {
@@ -121,7 +121,11 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
     .is_strictly_worse_for_recursive_payload(incumbent));
 }
 
-fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::ScheduleCandidate {
+fn complete_candidate(
+    proof_bytes: usize,
+    setup_field_elements: usize,
+    output_witness_len: usize,
+) -> super::ScheduleCandidate {
     let challenge = akita_challenges::SparseChallengeConfig::pm1_only(3);
     let mut params = akita_types::CommittedGroupParams::params_only(
         akita_types::SisModulusProfileId::Q128OffsetA7F7,
@@ -164,8 +168,8 @@ fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::S
     };
     super::ScheduleCandidate {
         first_direct_setup_field_len: NonZeroUsize::new(1),
-        total_bytes: proof_bytes,
-        setup_field_elements: 64,
+        cost: super::super::PackedProofCost::new(proof_bytes, 0).unwrap(),
+        setup_field_elements,
         folds: CandidateFoldChain::default().prepend(
             akita_schedules::planner_support::CandidateFoldStep {
                 params: Arc::new(params),
@@ -183,8 +187,8 @@ fn complete_candidate(proof_bytes: usize, output_witness_len: usize) -> super::S
 fn actual_policy_can_select_a_noncontractive_complete_candidate() {
     let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
     policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
-    let contractive = complete_candidate(101, 1_000);
-    let noncontractive = complete_candidate(100, 12_000);
+    let contractive = complete_candidate(101, 64, 1_000);
+    let noncontractive = complete_candidate(100, 64, 12_000);
     let input_bits = 256 * policy.decomposition.field_bits() as usize;
     assert!(1_000 * 3 < input_bits);
     assert!(12_000 * 3 >= input_bits);
@@ -197,5 +201,23 @@ fn actual_policy_can_select_a_noncontractive_complete_candidate() {
             .expect("complete candidate selection")
             .expect("selected complete candidate");
         assert!(std::ptr::eq(selected, &noncontractive));
+    }
+}
+
+#[test]
+fn exact_proof_tie_selects_the_smaller_setup_envelope() {
+    let mut policy = akita_config::policy_of::<akita_config::proof_optimized::fp128::Dense>();
+    policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayload;
+    let larger_setup = complete_candidate(100, 65, 1_000);
+    let smaller_setup = complete_candidate(100, 64, 1_000);
+
+    for candidates in [
+        [&larger_setup, &smaller_setup],
+        [&smaller_setup, &larger_setup],
+    ] {
+        let selected = select_complete_candidate(&policy, candidates, None)
+            .expect("complete candidate selection")
+            .expect("selected complete candidate");
+        assert!(std::ptr::eq(selected, &smaller_setup));
     }
 }

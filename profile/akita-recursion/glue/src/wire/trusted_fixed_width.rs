@@ -1,9 +1,9 @@
 //! Trusted canonical fixed-width setup decoding for Jolt benchmarks.
 
 use super::*;
-use akita_field::{Fp128, Fp32, Fp64};
+use jolt_field::{Fp128, Fp32, Fp64};
 
-trait TrustedFixedWidthField: FieldCore + CanonicalField {
+trait TrustedFixedWidthField: Field + CanonicalEncoding {
     const NAME: &'static str;
     const WIRE_BYTES: usize;
     const WIRE_ALIGNMENT: usize;
@@ -79,7 +79,7 @@ impl<const P: u128> TrustedFixedWidthField for Fp128<P> {
             }
         };
         let canonical = (u128::from(u64::from_le(high)) << 64) | u128::from(u64::from_le(low));
-        Self::from_canonical_u128_checked(canonical)
+        Self::from_u128_checked(canonical)
     }
 }
 
@@ -89,13 +89,8 @@ impl<const P: u128> TrustedFixedWidthField for Fp128<P> {
 #[allow(private_bounds)]
 impl<F, const D: usize, E> AkitaJoltInputs<F, D, E>
 where
-    F: TrustedFixedWidthField
-        + FromPrimitiveInt
-        + RandomSampling
-        + AkitaSerialize
-        + AkitaDeserialize<Context = ()>
-        + Valid,
-    E: FieldCore + ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: TrustedFixedWidthField + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    E: ExtField<F> + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     #[inline(never)]
     fn decode_trusted_fixed_width_payload<const ALIGNED: bool>(
@@ -224,7 +219,7 @@ where
 mod tests {
     use super::*;
     use akita_config::proof_optimized::{fp128, fp32, fp64};
-    use akita_field::PseudoMersenneField;
+    use jolt_field::{One, PseudoMersenne, Ring, Zero};
 
     const TEST_D: usize = 256;
 
@@ -319,12 +314,12 @@ mod tests {
         type TestInputs = AkitaJoltInputs<TestF, TEST_D>;
 
         fn encoded_matrix() -> (FlatMatrix<TestF>, Vec<u8>) {
-            let p_minus_one = u128::MAX - <TestF as PseudoMersenneField>::MODULUS_OFFSET;
+            let p_minus_one = u128::MAX - <TestF as PseudoMersenne>::OFFSET;
             let expected = FlatMatrix::from_flat_data(vec![
                 TestF::zero(),
                 TestF::one(),
                 TestF::from_u64(7),
-                TestF::from_canonical_u128_checked(p_minus_one).expect("P - 1 is canonical"),
+                TestF::from_u128_checked(p_minus_one).expect("P - 1 is canonical"),
             ]);
             let mut encoded = Vec::new();
             expected

@@ -3,8 +3,8 @@ use akita_algebra::offset_eq::{
     EqPairTensorAxis, EqPairTensorFamily, MAX_COMPACT_STRIDE_TERMS,
 };
 use akita_error::AkitaError;
-use akita_field::parallel::*;
-use akita_field::FieldCore;
+use jolt_field::solinas::parallel::*;
+use jolt_field::Field;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use crate::{
 
 /// One verifier group's compact coefficient-packing semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierGroupSemantics<E: FieldCore> {
+pub struct CoefficientPackingVerifierGroupSemantics<E: Field> {
     pub(super) group_index: usize,
     pub(super) geometry: SubringCoefficientPackingGeometry,
     pub(super) group_claim_range: Range<usize>,
@@ -24,7 +24,7 @@ pub struct CoefficientPackingVerifierGroupSemantics<E: FieldCore> {
 
 /// Compact tensor factors used by the verifier at the Stage 2 final point.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingCompactFactors<E: FieldCore> {
+pub struct CoefficientPackingCompactFactors<E: Field> {
     pub(super) basis: crate::BasisMode,
     pub(super) physical_field_len: usize,
     pub(super) direct_opening_point: Arc<[E]>,
@@ -36,7 +36,7 @@ pub struct CoefficientPackingCompactFactors<E: FieldCore> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
+pub(super) struct CoefficientPackingAffineRelationFamily<E: Field> {
     pub(super) scalar: E,
     pub(super) coefficient_weights: Arc<[E]>,
     pub(super) coefficient_len: usize,
@@ -53,18 +53,18 @@ pub(super) struct CoefficientPackingAffineRelationFamily<E: FieldCore> {
 /// Unlike the prover batch, this carrier never builds the expanded event and
 /// segment representation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CoefficientPackingVerifierBatchSemantics<E: FieldCore> {
+pub struct CoefficientPackingVerifierBatchSemantics<E: Field> {
     pub(super) groups: Vec<CoefficientPackingVerifierGroupSemantics<E>>,
 }
 
-impl<E: FieldCore> CoefficientPackingVerifierBatchSemantics<E> {
+impl<E: Field> CoefficientPackingVerifierBatchSemantics<E> {
     #[must_use]
     pub fn groups(&self) -> &[CoefficientPackingVerifierGroupSemantics<E>] {
         &self.groups
     }
 }
 
-impl<E: FieldCore> CoefficientPackingVerifierGroupSemantics<E> {
+impl<E: Field> CoefficientPackingVerifierGroupSemantics<E> {
     #[must_use]
     pub const fn group_index(&self) -> usize {
         self.group_index
@@ -91,7 +91,7 @@ impl<E: FieldCore> CoefficientPackingVerifierGroupSemantics<E> {
     }
 }
 
-impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
+impl<E: Field> CoefficientPackingAffineRelationFamily<E> {
     fn shares_contraction_geometry(&self, other: &Self) -> bool {
         self.coefficient_len == other.coefficient_len
             && self.outer_len == other.outer_len
@@ -124,7 +124,7 @@ impl<E: FieldCore> CoefficientPackingAffineRelationFamily<E> {
     }
 }
 
-impl<E: FieldCore> CoefficientPackingCompactFactors<E> {
+impl<E: Field> CoefficientPackingCompactFactors<E> {
     fn validate_point(&self, point: &[E]) -> Result<(), AkitaError> {
         let point_variables = u32::try_from(point.len())
             .map_err(|_| AkitaError::InvalidSetup("packing point domain overflow".into()))?;
@@ -253,7 +253,7 @@ impl<E: FieldCore> CoefficientPackingCompactFactors<E> {
     }
 }
 
-pub(super) struct CompactFactorInputs<'a, E: FieldCore> {
+pub(super) struct CompactFactorInputs<'a, E: Field> {
     pub geometry: SubringCoefficientPackingGeometry,
     pub prepared_point: &'a PreparedSubringCoefficientPackingPoint<E>,
     pub witness_layout: &'a WitnessLayout,
@@ -296,7 +296,7 @@ fn dyadic_segments(range: Range<usize>) -> Result<Vec<Range<usize>>, AkitaError>
     Ok(segments)
 }
 
-fn geometric_axis<E: FieldCore>(
+fn geometric_axis<E: Field>(
     left_stride: usize,
     right_stride: usize,
     weights: &[E],
@@ -331,7 +331,7 @@ fn geometric_axis<E: FieldCore>(
     Ok(axis)
 }
 
-fn shared_slice<E: FieldCore>(values: &[E], label: &'static str) -> Result<Arc<[E]>, AkitaError> {
+fn shared_slice<E: Field>(values: &[E], label: &'static str) -> Result<Arc<[E]>, AkitaError> {
     let mut owned = Vec::new();
     owned
         .try_reserve_exact(values.len())
@@ -340,7 +340,7 @@ fn shared_slice<E: FieldCore>(values: &[E], label: &'static str) -> Result<Arc<[
     Ok(owned.into())
 }
 
-fn geometric_axes<E: FieldCore>(
+fn geometric_axes<E: Field>(
     left_stride: usize,
     right_stride: usize,
     weights: &[E],
@@ -377,7 +377,7 @@ fn reserve_families<T>(families: &mut Vec<T>, additional: usize) -> Result<(), A
         .map_err(|_| AkitaError::InvalidInput("packing tensor family allocation failed".into()))
 }
 
-fn extend_point<E: FieldCore>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaError> {
+fn extend_point<E: Field>(target: &mut Vec<E>, point: &[E]) -> Result<(), AkitaError> {
     target
         .try_reserve(point.len())
         .map_err(|_| AkitaError::InvalidInput("packing point allocation failed".into()))?;
@@ -385,7 +385,7 @@ fn extend_point<E: FieldCore>(target: &mut Vec<E>, point: &[E]) -> Result<(), Ak
     Ok(())
 }
 
-pub(super) fn prepare_compact_factors<E: FieldCore>(
+pub(super) fn prepare_compact_factors<E: Field>(
     inputs: CompactFactorInputs<'_, E>,
 ) -> Result<CoefficientPackingCompactFactors<E>, AkitaError> {
     let s = inputs.geometry.challenge_subring_dimension();

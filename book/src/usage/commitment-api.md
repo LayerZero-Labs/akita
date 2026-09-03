@@ -183,14 +183,15 @@ throughout commitment and opening.
 ## Explicit commitment parameters
 
 Normal applications should use generated schedule selection. A caller that
-already owns reviewed root parameters may use
-`GroupContext::explicit_without_precommitted_groups(&params)` or
-`GroupContext::explicit_with_precommitted_groups(&prior, &params)`.
+already owns a reviewed commit profile may use
+`GroupContext::explicit(&profile)`.
 
-Explicit mode validates the supplied parameters but does not select a catalog
-row for the commitment. Use it only when the application has its own reviewed
-parameter distribution process. The opening method and committed source
-encoding become part of commitment identity and cannot be reinterpreted later.
+Explicit mode commits the supplied `GroupCommitPhaseParams` but does not select
+a catalog row. The profile fully determines the A/B commitment; any opening
+schedule the caller intends to use later — including a grouped root over
+precommitted groups — is validated where the opening consumes it, not at commit
+time. Use explicit mode only when the application has its own reviewed parameter
+distribution process.
 
 ## What the verifier receives
 

@@ -4,14 +4,13 @@ use std::time::Instant;
 
 use akita_algebra::poly::multilinear_eval;
 use akita_error::AkitaError;
-use akita_field::Fp64;
-use akita_field::{FieldCore, RandomSampling};
 use akita_sumcheck::{
     CompressedUniPoly, SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckInstanceVerifier,
     SumcheckInstanceVerifierExt, SumcheckProof, UniPoly,
 };
 use akita_transcript::labels;
 use akita_transcript::{AkitaTranscript, Transcript};
+use jolt_field::{Field, Fp64, One, Ring, Zero};
 use rand::rngs::StdRng;
 use rand::RngCore;
 use rand::SeedableRng;
@@ -70,7 +69,7 @@ fn sumcheck_proof_verifier_driver_is_transcript_deterministic() {
     let mut t1 = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
     let (final_claim_1, r_1) = proof
         .verify::<F, _, _>(claim0, num_rounds, degree_bound, &mut t1, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -94,7 +93,7 @@ struct DenseSumcheckProver<E> {
     num_vars: usize,
 }
 
-impl<E: FieldCore> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
+impl<E: Field> SumcheckInstanceProver<E> for DenseSumcheckProver<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -134,7 +133,7 @@ struct DenseSumcheckVerifier<E> {
     claim: E,
 }
 
-impl<E: FieldCore> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
+impl<E: Field> SumcheckInstanceVerifier<E> for DenseSumcheckVerifier<E> {
     fn num_rounds(&self) -> usize {
         self.num_vars
     }
@@ -169,7 +168,7 @@ fn prove_and_verify_single_sumcheck() {
 
     let (proof, prover_challenges, _final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -183,7 +182,7 @@ fn prove_and_verify_single_sumcheck() {
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -208,7 +207,7 @@ fn verify_rejects_wrong_claim() {
 
     let (proof, _, _) = prover
         .prove::<F, _, _>(&mut pt, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -221,7 +220,7 @@ fn verify_rejects_wrong_claim() {
     let mut vt = AkitaTranscript::<F>::new(labels::DOMAIN_AKITA_PROTOCOL);
 
     let result = verifier.verify::<F, _, _>(&proof, &mut vt, |tr| {
-        tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+        Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
     });
 
     assert!(result.is_err());
@@ -251,7 +250,7 @@ fn e2e_sumcheck_2_pow_20() {
 
     let (proof, prover_challenges, final_claim) = prover
         .prove::<F, _, _>(&mut prover_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 
@@ -275,7 +274,7 @@ fn e2e_sumcheck_2_pow_20() {
 
     let verifier_challenges = verifier
         .verify::<F, _, _>(&proof, &mut verifier_transcript, |tr| {
-            tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND)
+            Ok(tr.challenge_scalar(labels::CHALLENGE_SUMCHECK_ROUND))
         })
         .unwrap();
 

@@ -1,7 +1,8 @@
 use super::coeffs::balanced_decompose_centered_i32_i8_into;
 use super::evals::build_w_evals_compact;
+use crate::backend::packed_digits::PackedSignedDigits;
 use akita_algebra::CyclotomicRing;
-use akita_field::Prime128OffsetA7F7;
+use jolt_field::{Prime128OffsetA7F7, Ring};
 use std::array::from_fn;
 
 #[test]
@@ -34,10 +35,15 @@ fn centered_i32_decompose_matches_ring_decompose() {
 #[test]
 fn compact_witness_keeps_exact_live_prefix() {
     let witness = (0..(5 * 8)).map(|value| value as i8).collect::<Vec<_>>();
-    let (compact, col_bits, ring_bits) =
-        build_w_evals_compact(witness.clone().into(), 8, 1, 7).expect("valid compact witness");
+    let (compact, col_bits, ring_bits) = build_w_evals_compact(
+        PackedSignedDigits::from_i8_digits_auto(witness.clone()),
+        8,
+        1,
+        7,
+    )
+    .expect("valid compact witness");
 
-    assert_eq!(compact.as_ref(), witness.as_slice());
+    assert_eq!(compact.decode(), witness);
     assert_eq!(col_bits, 3);
     assert_eq!(ring_bits, 3);
 }
@@ -46,7 +52,8 @@ fn compact_witness_keeps_exact_live_prefix() {
 fn packed_compact_witness_keeps_exact_live_prefix() {
     let witness = (0..(5 * 8)).map(|value| value as i8).collect::<Vec<_>>();
     let (compact, col_bits, ring_bits) =
-        build_w_evals_compact(witness.clone().into(), 8, 2, 7).expect("valid packed witness");
+        build_w_evals_compact(PackedSignedDigits::from_i8_digits_auto(witness), 8, 2, 7)
+            .expect("valid packed witness");
 
     assert_eq!(compact.len(), 5 * 4);
     assert_eq!(col_bits, 3);

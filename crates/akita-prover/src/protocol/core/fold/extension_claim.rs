@@ -3,8 +3,8 @@ use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, Prepa
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeRingSwitchProveBackend,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AdditiveGroup;
+use jolt_field::AdditiveGroup;
+use jolt_field::Unreduced;
 
 pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
     Logical(&'a [G]),
@@ -19,27 +19,29 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     eor_source: ExtensionOpeningSource<'_, P>,
     pad_base_evals: bool,
     transcript: &mut T,
+    level: u32,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore
-        + CanonicalField
-        + FromPrimitiveInt
-        + HalvingField
-        + HasWide
-        + RandomSampling
+    F: Field
+        + CanonicalEncoding
+        + akita_serialization::AkitaSerialize
+        + Ring
+        + Field
+        + Unreduced
+        + Field
         + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    <F as Unreduced>::Wide: From<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
+        + Unreduced
+        + Fold
+        + Ring
         + MulBaseUnreduced<F>
         + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
+    T: akita_types::ProverTranscriptGrinding<F>,
     P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     V: FnOnce() -> Result<(), AkitaError>,
     TS: ComputeBackendSetup<F>,
@@ -83,6 +85,7 @@ where
             Some(tensor.prepared()),
             &eor_inputs,
             transcript,
+            level,
             if pad_base_evals { "recursive" } else { "root" },
         )
         .map_err(|err| {
@@ -101,6 +104,7 @@ where
         protocol_points: &protocol_points,
         reduction,
         trace_opening_batch: &opening_batch,
+        level,
         level_params,
         basis,
         pad_base_evals,
