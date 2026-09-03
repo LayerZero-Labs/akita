@@ -1259,15 +1259,14 @@ It does not add a semantic preference for smaller `s` or larger `d_A`.
 
 ### Objective and exact pricing
 
-Adaptive direct catalogs use
-`MinSetupEnvelopeThenFirstDirectThenPayloadV3`: exact total setup field
-elements, first-direct padded setup capacity, proof payload, root
-output-witness length, and the canonical descriptor. Recursive catalogs use
-`MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4`, which replaces the first
-coordinate with the next-power-of-two capacity covering the total setup
-envelope. Exact setup differences within one recursive capacity bucket are
-tolerated before comparing first-direct capacity. No objective component for
-`s`, `d_A`, rank, fold count, or prover time is added.
+Adaptive direct catalogs retain `MinFirstDirectSetupThenPayloadV2`:
+first-direct padded setup capacity, proof payload, exact total setup field
+elements, root output-witness length, and the canonical descriptor. Recursive
+catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
+compares the next-power-of-two capacity covering the total setup envelope.
+Exact setup differences within one recursive capacity bucket are tolerated
+before comparing first-direct capacity and proof payload. No objective
+component for `s`, `d_A`, rank, fold count, or prover time is added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1308,29 +1307,29 @@ rows. The removed row is the unsupported fp128 dense `final=44:1` catalog
 stress point. All 67 retained rows change exact schedule identity, as expected
 for this breaking protocol and planner-policy cutover.
 
-Across the 67 retained logical keys, setup improves on every row. Its sum falls
-from 7,022,341,504 to 3,474,665,600 field elements, a 50.52% reduction. Proof
-payload improves on 32 rows and regresses on 35. Its sum rises from 4,965,430
-to 44,962,951 bytes because setup-primary adaptive rows may select substantially
-larger proofs. Thirty-six rows use fewer fold levels, 27 retain their count,
-and four use more levels.
+Across the 67 retained logical keys, setup improves on 45 rows, is equal on
+six, and regresses on 16. Its sum falls from 7,022,341,504 to 3,483,331,328
+field elements, a 50.40% reduction. Proof payload improves on 66 rows and
+regresses on one. Its sum falls from 4,965,430 to 4,433,327 bytes, a 10.72%
+reduction. Fourteen rows use fewer fold levels, 41 retain their count, and 12
+use more levels.
 
-The first-direct setup capacity improves on 63 retained rows, is equal on four,
-and regresses on none. Its sum falls from 10,278,666,240 to 5,088,002,048 field
+The first-direct setup capacity improves on 64 retained rows, is equal on three,
+and regresses on none. Its sum falls from 10,278,666,240 to 5,087,879,168 field
 elements, a 50.50% reduction. These baseline values were
 reconstructed at the pinned base commit from each exact materialized schedule;
 the comparator treats a missing coordinate as drift rather than a wildcard.
 
 This closes the missing-row, objective, and comparison-report evidence gaps.
-The retained catalog improves in aggregate under both setup coordinates. The
-35 proof regressions remain explicit per-row review data; setup-primary
-selection does not imply proof nonregression.
+The retained catalog improves in aggregate under both setup coordinates and
+proof payload. The one proof regression remains explicit in the per-row review
+data; setup-primary selection does not imply per-row proof nonregression.
 
 At the checked head, the fp32 dense nv20 adaptive direct rows use
-`MinSetupEnvelopeThenFirstDirectThenPayloadV3`. Their first-direct padded
-capacities are 131,072 and 262,144 fields. Their three-level schedules use
-131,072 and 180,224 total setup fields and produce 160,592 and 197,783 proof
-bytes. The checked decision is recorded in the
+`MinFirstDirectSetupThenPayloadV2`. Their first-direct padded
+capacities are 131,072 and 262,144 fields. Their six-level schedules use
+458,752 and 524,288 total setup fields and produce 62,447 and 63,254 proof
+bytes across six fold levels. The checked decision is recorded in the
 [catalog evidence note](evidence/subring-coefficient-packing/README.md#current-fp32-nv20-adaptive-objective).
 
 ### B slicing interaction

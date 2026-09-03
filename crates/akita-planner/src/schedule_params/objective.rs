@@ -26,11 +26,6 @@ pub(crate) enum CompleteObjectiveBound {
         proof_bytes: usize,
         setup_field_elements: usize,
     },
-    SetupEnvelopeFirst {
-        setup_field_elements: usize,
-        first_direct_setup_capacity: usize,
-        proof_bytes: usize,
-    },
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
@@ -55,14 +50,7 @@ impl CompleteObjectiveBound {
                 proof_bytes,
                 setup_field_elements,
             },
-            SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
-                Self::SetupEnvelopeFirst {
-                    setup_field_elements,
-                    first_direct_setup_capacity,
-                    proof_bytes,
-                }
-            }
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
                 Self::PaddedSetupEnvelopeFirst {
                     setup_envelope_capacity: akita_types::padded_setup_prefix_len(
                         setup_field_elements,
@@ -107,21 +95,6 @@ impl CompleteObjectiveBound {
                     incumbent.setup_field_elements,
                 )
             }
-            Self::SetupEnvelopeFirst {
-                setup_field_elements,
-                first_direct_setup_capacity,
-                proof_bytes,
-            } => {
-                (
-                    setup_field_elements,
-                    first_direct_setup_capacity,
-                    proof_bytes,
-                ) > (
-                    incumbent.setup_field_elements,
-                    incumbent.first_direct_setup_capacity.field_elements(),
-                    incumbent.proof_bytes(),
-                )
-            }
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
@@ -160,19 +133,6 @@ impl CompleteObjectiveBound {
                         incumbent.proof_bytes(),
                     )
             }
-            Self::SetupEnvelopeFirst {
-                setup_field_elements,
-                first_direct_setup_capacity,
-                proof_bytes,
-                ..
-            } => {
-                setup_field_elements >= incumbent.setup_field_elements
-                    && (first_direct_setup_capacity, proof_bytes)
-                        > (
-                            incumbent.first_direct_setup_capacity.field_elements(),
-                            incumbent.proof_bytes(),
-                        )
-            }
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
@@ -200,14 +160,6 @@ impl CompleteObjectiveBound {
     ) -> bool {
         match self {
             Self::SetupFirst { proof_bytes, .. } => proof_bytes > incumbent.proof_bytes(),
-            Self::SetupEnvelopeFirst {
-                setup_field_elements,
-                proof_bytes,
-                ..
-            } => {
-                setup_field_elements >= incumbent.setup_field_elements
-                    && proof_bytes > incumbent.proof_bytes()
-            }
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 proof_bytes,
@@ -223,10 +175,6 @@ impl CompleteObjectiveBound {
 
     pub(crate) fn setup_envelope_is_strictly_worse_than(self, incumbent: CandidateMetrics) -> bool {
         match self {
-            Self::SetupEnvelopeFirst {
-                setup_field_elements,
-                ..
-            } => setup_field_elements > incumbent.setup_field_elements,
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 ..
@@ -261,8 +209,7 @@ pub(crate) fn complete_schedule_score(
     if matches!(
         policy.selection_policy,
         SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            | SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) && candidate.first_direct_setup_field_len.is_none()
     {
         return Err(AkitaError::InvalidSetup(

@@ -581,10 +581,7 @@ pub(crate) fn prune_locally_unprofitable_slices(
             crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2 => {
                 padded_setup_prefix_len(active_setup_field_len(&params, opening_layout)?)
             }
-            crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3 => {
-                level_setup_field_elements(&params)?
-            }
-            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4 => {
+            crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3 => {
                 padded_setup_prefix_len(level_setup_field_elements(&params)?)
             }
             crate::SelectionPolicyId::MinEstimatedProofPayloadV2 => unreachable!(),

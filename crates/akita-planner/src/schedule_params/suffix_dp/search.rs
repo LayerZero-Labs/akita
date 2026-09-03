@@ -133,8 +133,7 @@ fn price_planned_fold_candidate(
             });
     if matches!(
         ctx.policy.selection_policy,
-        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) && matches!(search.guide_scope, Some(GuideScope::CompleteRoot))
         && guide.is_some_and(|(lower_bound, _)| {
             complete_root_setup_bound_is_strictly_worse(lower_bound, &frontiers.projected)

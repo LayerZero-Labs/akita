@@ -25,7 +25,7 @@ The public-matrix derivation, setup-capacity unit, and NTT-cache contracts in
 this document are historical where they conflict with
 [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 This document remains authoritative for recursive offloading feasibility,
-contraction, and the shared adaptive setup-envelope-first selection objective.
+contraction, and the mode-specific schedule-selection objectives.
 
 The current target is the planner-selected policy in this revision. It
 supersedes the original rollout rule that forced setup offloading at fold
@@ -302,19 +302,19 @@ The generated catalog binds:
 ```text
 cost model      = ExactPayloadAndSetupEnvelope
 uniform direct policy = MinEstimatedProofPayloadV2
-adaptive direct policy = MinSetupEnvelopeThenFirstDirectThenPayloadV3
-recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+adaptive direct policy = MinFirstDirectSetupThenPayloadV2
+recursive policy = MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
 optional setup field budget = policy.setup_field_budget
 minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The selection objective is an explicit catalog-identity input derived from the
 schedule mode. Uniform direct planning selects `MinEstimatedProofPayloadV2`.
-Adaptive direct planning selects
-`MinSetupEnvelopeThenFirstDirectThenPayloadV3`. Recursive setup planning
-selects `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4`. The scalar
-boundary disables recursive setup search but retains the adaptive objective
-when its dimension domain remains adaptive.
+Adaptive direct planning retains `MinFirstDirectSetupThenPayloadV2`.
+Recursive setup planning selects
+`MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`. The scalar boundary
+disables recursive setup search but retains the adaptive objective when its
+dimension domain remains adaptive.
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -1071,7 +1071,7 @@ the candidate score that decides whether and how long to offload.
       full-field prefix inputs, and strictly reduces the padded capacity of the
       first remaining direct setup scan.
 - [x] The selected recursive schedule lexicographically minimizes padded total
-      setup-envelope capacity, first-direct padded setup capacity, exact
+      total setup-envelope capacity, first-direct padded setup capacity, exact
       estimated proof bytes, root output-witness length, and the canonical
       descriptor.
 - [x] The materialized estimate reports the exact setup envelope and selected

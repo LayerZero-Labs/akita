@@ -267,8 +267,7 @@ pub(super) fn find_schedule(
     let cached_first_direct_setup_field_len = if matches!(
         policy.selection_policy,
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-            | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) {
         selected.first_direct_setup_field_len.map(NonZeroUsize::get)
     } else {

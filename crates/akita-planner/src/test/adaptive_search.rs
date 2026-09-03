@@ -754,21 +754,21 @@ fn adaptive_nv36_minimizes_setup_envelope_before_first_direct_setup() {
         }
     }
     let selected_score = (
-        selected.estimate.estimated_num_setup_field_elements,
         estimated_first_direct_setup_capacity(&selected),
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        selected.estimate.estimated_num_setup_field_elements,
     );
     let rank_one_capped_score = (
-        rank_one_capped.estimate.estimated_num_setup_field_elements,
         estimated_first_direct_setup_capacity(&rank_one_capped),
         rank_one_capped
             .estimate
             .estimated_proof_payload_bytes()
             .unwrap(),
+        rank_one_capped.estimate.estimated_num_setup_field_elements,
     );
     assert!(
         selected_score <= rank_one_capped_score,
-        "the expanded domain must not lose on the setup-envelope-first objective"
+        "the expanded domain must not lose on the adaptive direct objective"
     );
 }
 
@@ -954,13 +954,17 @@ fn adaptive_search_applies_setup_budget_in_physical_fields() {
         akita_types::setup_matrix_field_elements_for_schedule(&budgeted.schedule).unwrap();
     assert_eq!(budgeted_fields, exact_fields);
 
-    policy.setup_field_budget = Some(exact_fields - 1);
-    assert!(find_schedule(
+    let smaller_budget = exact_fields - 1;
+    policy.setup_field_budget = Some(smaller_budget);
+    let tighter = find_schedule(
         onehot_group(16, 1),
         &policy,
         akita_config::honest_fold_policy_of::<OneHot>(),
         &domain,
         OneHot::ring_challenge_config,
     )
-    .is_err());
+    .expect("a tighter feasible budget should select an admitted alternative");
+    let tighter_fields =
+        akita_types::setup_matrix_field_elements_for_schedule(&tighter.schedule).unwrap();
+    assert!(tighter_fields <= smaller_budget);
 }

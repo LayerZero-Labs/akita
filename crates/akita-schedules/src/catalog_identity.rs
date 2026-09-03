@@ -803,19 +803,13 @@ mod selection_policy_identity_tests {
         assert_eq!(SelectionPolicyId::MinEstimatedProofPayloadV2.tag(), 4);
         assert_eq!(SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag(), 5);
         assert_eq!(
-            SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3.tag(),
+            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag(),
             6
-        );
-        assert_eq!(
-            SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4.tag(),
-            7
         );
         assert!(![1, 2, 3].contains(&SelectionPolicyId::MinEstimatedProofPayloadV2.tag()));
         assert!(![1, 2, 3].contains(&SelectionPolicyId::MinFirstDirectSetupThenPayloadV2.tag()));
-        assert!(![1, 2, 3, 4, 5]
-            .contains(&SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3.tag()));
-        assert!(![1, 2, 3, 4, 5, 6].contains(
-            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4.tag()
+        assert!(![1, 2, 3, 4, 5].contains(
+            &SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3.tag()
         ));
     }
 }

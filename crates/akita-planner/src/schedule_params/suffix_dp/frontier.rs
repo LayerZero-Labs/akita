@@ -157,7 +157,7 @@ fn setup_envelope_score(
     setup_field_elements: usize,
 ) -> usize {
     if selection_policy
-        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        == crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     {
         akita_types::padded_setup_prefix_len(setup_field_elements)
     } else {
@@ -435,8 +435,7 @@ impl ProjectedFrontier {
                 matches!(
                 policy.selection_policy,
                 crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2
-                    | crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+                    | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
             ) && !choices.is_some_and(|choices| {
                     choices.projected(projection).iter().any(|existing| {
                         setup_primary_strictly_dominates(
@@ -636,8 +635,7 @@ fn setup_primary_strictly_dominates(
     }
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) {
         return left_score.setup_field_elements <= right_score.setup_field_elements
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
@@ -678,8 +676,7 @@ fn setup_projection_dominates(
         && left.descriptor <= right.descriptor;
     if matches!(
         selection_policy,
-        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            | crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
     ) {
         return left.score.setup_field_elements <= right.score.setup_field_elements
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
@@ -737,9 +734,7 @@ fn payload_primary_strictly_dominates(
             .cost
             .strictly_better_for_every_parent(right_score.cost)
         && (selection_policy
-            != crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            && selection_policy
-                != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
             || left_score.setup_field_elements <= right_score.setup_field_elements)
 }
 
@@ -750,9 +745,7 @@ fn payload_projection_dominates(
 ) -> bool {
     left.admission.admits_every_parent_of(right.admission)
         && (selection_policy
-            != crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3
-            && selection_policy
-                != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV4
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3
             || left.score.setup_field_elements <= right.score.setup_field_elements)
         && (left
             .score
@@ -798,8 +791,8 @@ mod tests {
 
     const SETUP_FIRST: crate::SelectionPolicyId =
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadV2;
-    const ENVELOPE_FIRST: crate::SelectionPolicyId =
-        crate::SelectionPolicyId::MinSetupEnvelopeThenFirstDirectThenPayloadV3;
+    const PADDED_ENVELOPE_FIRST: crate::SelectionPolicyId =
+        crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3;
 
     fn context(fold_count: usize, first_fold: u8) -> DescriptorOrderContext {
         DescriptorOrderContext {
@@ -960,18 +953,18 @@ mod tests {
         let compatible = admission(2, 8);
 
         assert!(!payload_projection_dominates(
-            ENVELOPE_FIRST,
+            PADDED_ENVELOPE_FIRST,
             order(payload_score(99, 0, 128), &[1], &context, compatible),
             order(payload_score(100, 0, 64), &[2], &context, compatible),
         ));
         assert!(payload_projection_dominates(
-            ENVELOPE_FIRST,
+            PADDED_ENVELOPE_FIRST,
             order(payload_score(99, 0, 64), &[2], &context, compatible),
             order(payload_score(100, 0, 128), &[1], &context, compatible),
         ));
 
         assert!(!setup_projection_dominates(
-            ENVELOPE_FIRST,
+            PADDED_ENVELOPE_FIRST,
             order(
                 setup_score(SetupPrefixCapacity::for_natural_len(16), 99, 0, 64),
                 &[1],
@@ -986,7 +979,7 @@ mod tests {
             ),
         ));
         assert!(setup_projection_dominates(
-            ENVELOPE_FIRST,
+            PADDED_ENVELOPE_FIRST,
             order(
                 setup_score(SetupPrefixCapacity::for_natural_len(4), 101, 0, 64),
                 &[2],
