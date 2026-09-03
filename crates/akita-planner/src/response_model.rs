@@ -670,6 +670,7 @@ pub(crate) fn root_group_source_moments(
 ) -> Result<Vec<SourceMomentEstimate>, AkitaError> {
     let field_bits = decomposition.field_bits();
     let final_group_index = opening_layout.root_final_group_index()?;
+    params.validate_opening_batch(opening_layout)?;
     if precommitted_policies.len() != final_group_index {
         return Err(AkitaError::InvalidSetup(
             "root response model requires one policy per precommitted group".into(),
@@ -678,7 +679,16 @@ pub(crate) fn root_group_source_moments(
     let mut moments = Vec::with_capacity(opening_layout.num_groups());
     for group_index in 0..opening_layout.num_groups() {
         let group_layout = *opening_layout.group_layout(group_index)?;
-        let group_params = params.group_params_geometry(opening_layout, group_index)?;
+        // Validate the grouped batch once above, then resolve each source view
+        // directly. The public group accessor would revalidate every group for
+        // every root candidate.
+        let group_params = if group_index == final_group_index {
+            params.final_group()
+        } else {
+            *params
+                .preceding_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let logical_len =
             checked_logical_group_len(group_layout.num_vars(), group_layout.num_polynomials())?;
         let policy = if group_index == final_group_index {
@@ -787,10 +797,20 @@ pub(crate) fn next_source_moment(
         akita_types::RelationQuotientPlan::for_field_bits(params, field_bits)?,
     )?;
     let mut logical_components = [SourceMomentComponent::default(); SOURCE_COMPONENT_COUNT];
+    let final_group_index = opening_layout.root_final_group_index()?;
 
     for unit in layout.units() {
         let group_index = unit.group_index();
-        let group_params = params.group_params_geometry(opening_layout, group_index)?;
+        // Relation and witness geometry construction already validated the
+        // complete opening batch. Resolve the group directly here instead of
+        // repeating that validation for every group-and-chunk unit.
+        let group_params = if group_index == final_group_index {
+            params.final_group()
+        } else {
+            *params
+                .preceding_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+        };
         let group_source = source_groups
             .get(group_index)
             .copied()

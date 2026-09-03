@@ -208,6 +208,71 @@ fn finish_state(retains_setup_projection: bool, frontiers: StateFrontiers) -> Su
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn process_candidate_batch(
+    ctx: &SuffixCtx<'_>,
+    memo: &mut ScheduleMemo,
+    state: SuffixState,
+    depth: usize,
+    open_log_basis: u32,
+    opening_layout: &OpeningClaimsLayout,
+    is_root_level: bool,
+    require_child_fold: bool,
+    generated: candidates::GeneratedCandidates,
+    frontiers: &mut StateFrontiers,
+) -> Result<(), AkitaError> {
+    let generated_candidate_count = generated
+        .terminal
+        .len()
+        .saturating_add(generated.folds.len());
+    let terminal_candidate_count = generated.terminal.len();
+    for candidate in generated.terminal {
+        let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
+        price_terminal_candidate(
+            ctx,
+            state,
+            &candidate.params,
+            candidate.opening_reduction_bytes,
+            natural_len,
+            frontiers,
+        )?;
+    }
+    let candidates_with_source =
+        attach_source_moments(ctx, state, is_root_level, opening_layout, generated.folds)?;
+    // Complete-root candidates are traversed in exact lower-bound order.
+    // Recursive states do not have that global admission rule and retain
+    // local Pareto pruning.
+    let candidates = if is_root_level {
+        candidates_with_source
+    } else {
+        prune::level_candidates(opening_layout, candidates_with_source)?
+    };
+    if let Some(diagnostics) = ctx.diagnostics {
+        diagnostics.record_candidates(
+            generated_candidate_count,
+            terminal_candidate_count.saturating_add(candidates.len()),
+        );
+    }
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let incoming_setup_prefix = state.topology.incoming_setup_prefix();
+    let guide_scope = GuideScope::for_state(ctx.policy, is_root_level, incoming_setup_prefix);
+    let traversal = candidate_traversal(ctx.policy, guide_scope, opening_layout, candidates)?;
+    let search = OpeningSearch {
+        state,
+        depth,
+        open_log_basis,
+        opening_layout,
+        require_child_fold,
+        guide_scope,
+    };
+    for (guide, candidate) in traversal {
+        price_planned_fold_candidate(ctx, memo, &search, guide, candidate, frontiers)?;
+    }
+    Ok(())
+}
+
 /// Derive the suffix frontier for the selected recursive schedule at
 /// `(level, current_witness_len, current_lb)`.
 pub(crate) fn derive_selected_suffix_schedule(
@@ -249,60 +314,40 @@ pub(crate) fn derive_selected_suffix_schedule(
     let opening_layout = &candidate_domain.opening_layout;
     let mut frontiers = StateFrontiers::new();
     for open_log_basis in candidate_domain.opening_basis_range.clone() {
-        let generated = candidate_domain.generate_for_opening_basis(
-            ctx,
-            state,
-            open_log_basis,
-            &mut memo.setup_prefixes,
-        )?;
-        let generated_candidate_count = generated
-            .terminal
-            .len()
-            .saturating_add(generated.folds.len());
-        let terminal_candidate_count = generated.terminal.len();
-        for candidate in generated.terminal {
-            let natural_len = active_setup_field_len(&candidate.params, opening_layout)?;
-            price_terminal_candidate(
+        if root_level_key.is_some() {
+            candidate_domain.visit_root_batches(ctx, state, open_log_basis, |generated| {
+                process_candidate_batch(
+                    ctx,
+                    memo,
+                    state,
+                    depth,
+                    open_log_basis,
+                    opening_layout,
+                    true,
+                    candidate_domain.require_child_fold,
+                    generated,
+                    &mut frontiers,
+                )
+            })?;
+        } else {
+            let generated = candidate_domain.generate_for_opening_basis(
                 ctx,
                 state,
-                &candidate.params,
-                candidate.opening_reduction_bytes,
-                natural_len,
+                open_log_basis,
+                &mut memo.setup_prefixes,
+            )?;
+            process_candidate_batch(
+                ctx,
+                memo,
+                state,
+                depth,
+                open_log_basis,
+                opening_layout,
+                false,
+                candidate_domain.require_child_fold,
+                generated,
                 &mut frontiers,
             )?;
-        }
-        let candidates = prune::level_candidates(
-            opening_layout,
-            attach_source_moments(
-                ctx,
-                state,
-                root_level_key.is_some(),
-                opening_layout,
-                generated.folds,
-            )?,
-        )?;
-        if let Some(diagnostics) = ctx.diagnostics {
-            diagnostics.record_candidates(
-                generated_candidate_count,
-                terminal_candidate_count.saturating_add(candidates.len()),
-            );
-        }
-        if candidates.is_empty() {
-            continue;
-        }
-        let guide_scope =
-            GuideScope::for_state(policy, root_level_key.is_some(), incoming_setup_prefix);
-        let traversal = candidate_traversal(policy, guide_scope, opening_layout, candidates)?;
-        let search = OpeningSearch {
-            state,
-            depth,
-            open_log_basis,
-            opening_layout,
-            require_child_fold: candidate_domain.require_child_fold,
-            guide_scope,
-        };
-        for (guide, candidate) in traversal {
-            price_planned_fold_candidate(ctx, memo, &search, guide, candidate, &mut frontiers)?;
         }
     }
     if let Some(diagnostics) = ctx.diagnostics {
