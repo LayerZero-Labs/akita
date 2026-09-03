@@ -463,6 +463,26 @@ fn compact_factors_cover_overlap_and_fp32_h4_geometries() {
         );
         assert_compact_factors_match_dense(&h4);
     }
+    let recursive_role_subcolumns = fixture::<Prime128OffsetA7F7, Prime128OffsetA7F7>(
+        SisModulusProfileId::Q128OffsetA7F7,
+        512,
+        64,
+        512,
+        6,
+        4,
+        12,
+        2,
+        2,
+    );
+    assert_compact_factors_match_dense(&recursive_role_subcolumns);
+    let compact = prepare_compact(&recursive_role_subcolumns, Prime128OffsetA7F7::from_u64(19));
+    let role_stride = recursive_role_subcolumns.params.open().digits.num_digits * 64;
+    let direct_families = &compact.compact_factors().direct_opening_families;
+    assert!(direct_families
+        .iter()
+        .any(|family| family.axes.iter().any(|axis| axis.len == 8
+            && axis.left_stride == 64
+            && axis.right_stride == role_stride)));
 }
 
 #[test]

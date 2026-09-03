@@ -549,6 +549,7 @@ where
     } else {
         None
     };
+    let mut high_window = None;
     let mut accumulate_group = |address_low: usize,
                                 addresses: &[AffineAddress<F>]|
      -> Result<(), AkitaError> {
@@ -614,6 +615,13 @@ where
             return Ok(());
         }
 
+        let high_window = if let Some(window) = &high_window {
+            window
+        } else {
+            high_window = Some(OffsetEqWindow::new(high_challenges)?);
+            high_window.as_ref().ok_or(AkitaError::InvalidProof)?
+        };
+
         for &AffineAddress {
             first: first_address,
             scale: base_scale,
@@ -639,8 +647,7 @@ where
                 high_weights
                     .with_weight(high_index, |high_factor| {
                         for (carry, summary) in summaries.iter().enumerate() {
-                            let eq_high = eq_eval_at_index(
-                                high_challenges,
+                            let eq_high = high_window.eval(
                                 address_high.checked_add(carry).ok_or_else(|| {
                                     AkitaError::InvalidInput("affine high address overflow".into())
                                 })?,
