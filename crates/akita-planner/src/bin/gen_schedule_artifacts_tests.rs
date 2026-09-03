@@ -14,7 +14,7 @@ fn positional_family_filters_are_checked_and_ordered() {
     assert_eq!(
         selected_families(one.family_filter.as_deref())
             .iter()
-            .map(|family| family.module_name)
+            .map(|family| family.family_name())
             .collect::<Vec<_>>(),
         vec!["fp32_dense"],
     );
@@ -28,7 +28,7 @@ fn positional_family_filters_are_checked_and_ordered() {
     assert_eq!(
         selected_families(multiple.family_filter.as_deref())
             .iter()
-            .map(|family| family.module_name)
+            .map(|family| family.family_name())
             .collect::<Vec<_>>(),
         vec!["fp64_dense", "fp32_dense"],
     );

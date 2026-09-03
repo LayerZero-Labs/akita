@@ -7,7 +7,19 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::FpExtEncoding;
 use jolt_field::{CanonicalEncoding, ExtField, Field, Fold, PseudoMersenne, Ring, Unreduced};
 
+/// Load and bind the checked-in workspace artifact at a test or tooling boundary.
+pub(crate) fn load_workspace_scheme<Cfg>() -> Result<AkitaCommitmentScheme<Cfg>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
+    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
+    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
+{
+    AkitaCommitmentScheme::new(akita_config::test_support::workspace_schedule_catalog::<Cfg>()?)
+}
+
 /// Extension used only by repository-owned development targets.
+#[allow(dead_code)]
 pub(crate) trait WorkspaceScheduleArtifactExt: Sized {
     fn from_workspace_schedule_artifact() -> Result<Self, AkitaError>;
 }
@@ -20,6 +32,6 @@ where
     Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
     fn from_workspace_schedule_artifact() -> Result<Self, AkitaError> {
-        Self::new(akita_config::test_support::workspace_schedule_catalog::<Cfg>()?)
+        load_workspace_scheme::<Cfg>()
     }
 }

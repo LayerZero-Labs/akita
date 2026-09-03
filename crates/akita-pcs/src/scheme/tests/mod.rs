@@ -1,20 +1,14 @@
 use super::*;
 use akita_config::test_support::TestScheduleProvider;
 
-trait WorkspaceScheduleArtifactExt: Sized {
-    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError>;
-}
-
-impl<C> WorkspaceScheduleArtifactExt for AkitaCommitmentScheme<C>
+fn workspace_scheme<C>() -> Result<AkitaCommitmentScheme<C>, AkitaError>
 where
     C: CommitmentConfig,
     C::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
     C::ExtField: FpExtEncoding<C::Field>,
     C::ExtField: ExtField<C::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
-    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError> {
-        Self::new(akita_config::test_support::workspace_schedule_catalog::<C>()?)
-    }
+    AkitaCommitmentScheme::new(akita_config::test_support::workspace_schedule_catalog::<C>()?)
 }
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
@@ -47,9 +41,12 @@ type Scheme = AkitaCommitmentScheme<Cfg>;
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::OneHot;
 const ONEHOT_D: usize = 256;
-// `fp128::OneHot` uses K=256 one-hot chunks at its root ring dimension.
-const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
+
+fn onehot_source_chunk_size<C: CommitmentConfig>() -> usize {
+    akita_config::unit_onehot_source_chunk_size::<C>()
+        .expect("one-hot fixture requires a unit-one-hot commitment config")
+}
 
 #[test]
 fn scheme_owns_one_catalog_for_setup_and_row_resolution() {
@@ -229,6 +226,18 @@ fn catalog_root_layout<C: CommitmentConfig>(
         .clone()
 }
 
+fn catalog_profile<C: CommitmentConfig>(
+    scheme: &AkitaCommitmentScheme<C>,
+    group: akita_types::PolynomialGroupLayout,
+) -> akita_types::GroupCommitPhaseParams {
+    scheme
+        .schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(group))
+        .expect("catalog profile")
+        .profiles()
+        .final_group
+}
+
 type VerifyFixture = (
     Scheme,
     AkitaVerifierSetup<F>,
@@ -240,7 +249,7 @@ type VerifyFixture = (
 );
 
 fn make_verify_fixture(num_vars: usize) -> VerifyFixture {
-    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout(&scheme, num_vars);
     let full_num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;
@@ -313,15 +322,20 @@ fn debug_make_onehot_poly(
     _ring_dimension: usize,
     seed: u64,
 ) -> OneHotPoly<OneHotF, u8> {
+    let onehot_k = onehot_source_chunk_size::<OneHotCfg>();
+    assert!(
+        onehot_k <= usize::from(u8::MAX) + 1,
+        "test u8 one-hot fixture cannot represent chunk size {onehot_k}"
+    );
     let total_field = 1usize << num_vars;
-    let total_chunks = total_field / BENCH_ONEHOT_K;
+    let total_chunks = total_field / onehot_k;
 
     let mut rng = StdRng::seed_from_u64(seed);
     let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..BENCH_ONEHOT_K) as u8))
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
 
-    OneHotPoly::<OneHotF, u8>::new(BENCH_ONEHOT_K, indices).expect("debug onehot poly")
+    OneHotPoly::<OneHotF, u8>::new(onehot_k, indices).expect("debug onehot poly")
 }
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {

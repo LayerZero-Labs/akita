@@ -5,16 +5,15 @@ fn profile_native_commit_group_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
+    let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
-    assert_eq!(total_field % BENCH_ONEHOT_K, 0);
+    assert_eq!(total_field % onehot_source_chunk_size::<OneHotCfg>(), 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let scheme =
-        OneHotScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
@@ -99,20 +98,17 @@ fn profile_native_commit_group_allows_independent_groups() {
     // cover the largest standalone group rather than the sum of all groups.
     const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
-    let pre_a_profile =
-        OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
-    let pre_b_profile =
-        OneHotCfg::profile_without_precommitted_groups(pre_b_key).expect("independent profile");
+    let pre_a_profile = catalog_profile(&scheme, pre_a_key);
+    let pre_b_profile = catalog_profile(&scheme, pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_1001)];
     let pre_b_polys = [
         debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2001),
         debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_2002),
     ];
 
-    let scheme =
-        OneHotScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     with_precommit_stack(&scheme, NV, SETUP_CAPACITY_SIZE, |setup, stack| {
         let akita_prover::CommitOutput {
             committed_group: pre_a_commitment,
@@ -164,21 +160,21 @@ fn group_batch_schedule_preserves_precommitted_order() {
     const PRE_C_SIZE: usize = 1;
     const MAIN_SIZE: usize = 4;
 
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_B_SIZE);
     let pre_c_key = akita_types::PolynomialGroupLayout::new(PRE_NV, PRE_C_SIZE);
-    let pre_a_frozen =
-        OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
-    let pre_b_frozen =
-        OneHotCfg::profile_without_precommitted_groups(pre_b_key).expect("independent profile");
-    let pre_c_frozen =
-        OneHotCfg::profile_without_precommitted_groups(pre_c_key).expect("independent profile");
+    let pre_a_frozen = catalog_profile(&scheme, pre_a_key);
+    let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
+    let pre_c_frozen = catalog_profile(&scheme, pre_c_key);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
-    let schedule = OneHotCfg::resolve_catalog_row_for_key(&multi_group_key)
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let root = multi_group_root_params(&schedule);
@@ -215,12 +211,11 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
     const FINAL_SIZE: usize = 4;
     const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
-    let pre_a_frozen =
-        OneHotCfg::profile_without_precommitted_groups(pre_a_key).expect("independent profile");
-    let pre_b_frozen =
-        OneHotCfg::profile_without_precommitted_groups(pre_b_key).expect("independent profile");
+    let pre_a_frozen = catalog_profile(&scheme, pre_a_key);
+    let pre_b_frozen = catalog_profile(&scheme, pre_b_key);
     let pre_a_polys = [debug_make_onehot_poly(
         PRE_NV,
         ONEHOT_D,
@@ -232,8 +227,6 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         0x0bee_fcaf_9a77_6001,
     )];
 
-    let scheme =
-        OneHotScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let setup = scheme
         .setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("protocol setup");
@@ -276,7 +269,9 @@ fn group_batch_commits_independent_arity_precommitted_groups() {
         .fits_setup_capacity(FINAL_NV, SETUP_CAPACITY_SIZE)
         .expect("setup capacity"));
 
-    let multi_group_schedule = OneHotCfg::resolve_catalog_row_for_key(&multi_group_key)
+    let multi_group_schedule = scheme
+        .schedules()
+        .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let main_params = multi_group_root_params(&multi_group_schedule);
@@ -351,16 +346,15 @@ fn commit_group_returns_frozen_exact_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
-    let profile = OneHotCfg::profile_without_precommitted_groups(key).expect("independent profile");
+    let profile = catalog_profile(&scheme, key);
     let total_field = (profile.blocks.live_blocks * profile.blocks.positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
-    assert_eq!(total_field % BENCH_ONEHOT_K, 0);
+    assert_eq!(total_field % onehot_source_chunk_size::<OneHotCfg>(), 0);
     let polys = [debug_make_onehot_poly(NV, ONEHOT_D, 0x0bee_fcaf_9a77_0001)];
 
-    let scheme =
-        OneHotScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
     let setup = scheme.setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend::DEFAULT
         .prepare_setup(&setup)
@@ -848,14 +842,14 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     const NV: usize = 20;
     const BATCH_SIZE: usize = 2;
 
-    let scheme =
-        OneHotScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let scheme = workspace_scheme::<OneHotCfg>().expect("workspace schedule artifact");
     let layout = catalog_root_layout(&scheme, NV, BATCH_SIZE);
     let total_field = (layout.blocks().live_blocks * layout.blocks().positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
-    let total_chunks = total_field / BENCH_ONEHOT_K;
-    assert_eq!(total_chunks * BENCH_ONEHOT_K, total_field);
+    let onehot_k = onehot_source_chunk_size::<OneHotCfg>();
+    let total_chunks = total_field / onehot_k;
+    assert_eq!(total_chunks * onehot_k, total_field);
 
     let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..BATCH_SIZE)
         .map(|poly_idx| {

@@ -51,23 +51,27 @@ fn preamble_separation_changes_first_challenge() {
 fn event_stream_equality_small() {
     init_rayon_pool();
     run_on_large_stack(move || {
+        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+        let layout = scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                opening_batch
+                    .root_final_group_layout()
+                    .expect("singleton group layout"),
+            ))
             .expect("layout")
             .schedule()
             .root
             .params
             .final_group();
-        let poly = make_onehot_poly(num_vars, 0x5151);
+        let poly = make_onehot_poly::<OneHotCfg>(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(num_vars, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -75,15 +79,11 @@ fn event_stream_equality_small() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -99,8 +99,7 @@ fn event_stream_equality_small() {
 
         let mut prover_transcript =
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
-        let proof = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<OneHotCfg, _>(
@@ -108,6 +107,7 @@ fn event_stream_equality_small() {
                     &poly_refs,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
+                    scheme.schedules(),
                 ),
                 &stack,
                 &mut prover_transcript,
@@ -118,13 +118,12 @@ fn event_stream_equality_small() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/onehot"));
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_E_HAT);
         verifier_transcript.expect_wire_label(labels::ABSORB_TERMINAL_W_REMAINDER);
-        Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
+                verify_input::<OneHotCfg>(&point, &openings, &commitments[0], scheme.schedules()),
                 BasisMode::Lagrange,
             )
             .expect("verify");
@@ -318,22 +317,26 @@ impl ProofTamper {
 fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper) {
     init_rayon_pool();
     run_on_large_stack(move || {
+        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
-        let layout = OneHotCfg::resolve_catalog_row_for_opening(&opening_batch)
+        let layout = scheme
+            .schedules()
+            .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+                opening_batch
+                    .root_final_group_layout()
+                    .expect("singleton group layout"),
+            ))
             .expect("layout")
             .schedule()
             .root
             .params
             .final_group();
-        let poly = make_onehot_poly(num_vars, 0x5151);
+        let poly = make_onehot_poly::<OneHotCfg>(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
         let opening = opening_from_poly_for_layout(&poly, &point, &layout, BasisMode::Lagrange);
 
-        let setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(num_vars, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -341,15 +344,11 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -364,8 +363,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         let hints = vec![hint];
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        let mut proof = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let mut proof = scheme
             .batched_prove(
                 &setup,
                 prove_input::<OneHotCfg, _>(
@@ -373,6 +371,7 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
                     &poly_refs,
                     &commitments[0],
                     hints.into_iter().next().unwrap(),
+                    scheme.schedules(),
                 ),
                 &stack,
                 &mut prover_transcript,
@@ -382,13 +381,12 @@ fn assert_proof_tamper_rejected_at_num_vars(num_vars: usize, tamper: ProofTamper
         tamper.apply(&mut proof);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"hardening/terminal-tamper");
-        Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &proof,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input::<OneHotCfg>(&point, &openings, &commitments[0]),
+                verify_input::<OneHotCfg>(&point, &openings, &commitments[0], scheme.schedules()),
                 BasisMode::Lagrange,
             )
             .expect_err("tampered terminal proof must reject");
@@ -424,14 +422,12 @@ fn terminal_shape_terminal_response_mut(
 fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
     init_rayon_pool();
     run_on_large_stack(|| {
+        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
         let num_vars = TRANSCRIPT_HARDENING_NUM_VARS;
-        let poly = make_onehot_poly(num_vars, 0x5151);
+        let poly = make_onehot_poly::<OneHotCfg>(num_vars, 0x5151);
         let point = random_point(num_vars, 0x6161);
 
-        let setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(num_vars, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(num_vars, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -442,8 +438,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -454,11 +449,16 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
 
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(b"hardening/shape-mismatch");
-        let proof = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove(
                 &setup,
-                prove_input::<OneHotCfg, _>(&point, &poly_refs, &commitment, hint),
+                prove_input::<OneHotCfg, _>(
+                    &point,
+                    &poly_refs,
+                    &commitment,
+                    hint,
+                    scheme.schedules(),
+                ),
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,

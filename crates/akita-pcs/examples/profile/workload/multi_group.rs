@@ -9,12 +9,8 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use crate::workspace_schedules::WorkspaceScheduleArtifactExt as _;
-use akita_config::{
-    derive_transcript_grinding_plan, test_support::TestScheduleProvider, CommitmentConfig,
-    RecursiveCommitmentConfig,
-};
-use akita_pcs::AkitaCommitmentScheme;
+use crate::workspace_schedules::load_workspace_scheme;
+use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, DensePoly,
     RuntimeCommitBackendFor,
@@ -96,9 +92,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     final_num_vars: usize,
     final_num_polys: usize,
 ) where
-    Cfg: CommitmentConfig<Field = FF>
-        + akita_config::recursive_commitment::RecursiveScheduleConfig
-        + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = FF> + akita_config::recursive_commitment::RecursiveScheduleConfig,
     FF: CanonicalEncoding
         + CanonicalBytes
         + CanonicalEncoding
@@ -150,8 +144,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     setup_contribution_mode: SetupContributionMode,
     validate_against_planner: bool,
 ) where
-    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
-    ProofCfg: CommitmentConfig<Field = FF, ExtField = Cfg::ExtField> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = FF>,
+    ProofCfg: CommitmentConfig<Field = FF, ExtField = Cfg::ExtField>,
     FF: CanonicalEncoding
         + CanonicalBytes
         + CanonicalEncoding
@@ -170,13 +164,20 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     const PRE_GROUPS: usize = 2;
     const PRE_POLYS_PER_GROUP: usize = 1;
 
+    let base_scheme = load_workspace_scheme::<Cfg>().expect("base workspace schedule artifact");
+    let proof_scheme =
+        load_workspace_scheme::<ProofCfg>().expect("proof workspace schedule artifact");
     let total_polys = PRE_GROUPS * PRE_POLYS_PER_GROUP + final_num_polys;
     let pools = ProfileThreadPools::get();
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pre_key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
-    let pre_descriptor =
-        Cfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
+    let pre_descriptor = base_scheme
+        .schedules()
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(pre_key))
+        .expect("independent profile")
+        .profiles()
+        .final_group;
     let final_group = PolynomialGroupLayout::new(final_num_vars, final_num_polys);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group,
@@ -185,7 +186,9 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let opening_layout = multi_group_key
         .opening_layout()
         .expect("multi-group layout");
-    let schedule = ProofCfg::resolve_catalog_row_for_key(&multi_group_key)
+    let schedule = proof_scheme
+        .schedules()
+        .resolve_key(&multi_group_key)
         .expect("multi-group runtime schedule")
         .into_schedule();
     let pre_points = (0..PRE_GROUPS)
@@ -204,8 +207,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         setup,
     ) = {
         let t0 = Instant::now();
-        let mut setup = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let mut setup = proof_scheme
             .setup_prover(final_num_vars, total_polys)
             .unwrap();
         let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -252,7 +254,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
         let t_commit = Instant::now();
         for (group_idx, pre_point) in pre_points.iter().enumerate() {
-            let polys = vec![make_profile_onehot_poly::<FF>(
+            let polys = vec![make_profile_onehot_poly::<Cfg>(
                 pre_num_vars,
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
             )];
@@ -263,8 +265,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let akita_prover::CommitOutput {
                 committed_group: commitment,
                 hint,
-            } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-                .expect("embedded schedule catalog")
+            } = base_scheme
                 .commit(
                     &setup,
                     &polys,
@@ -281,7 +282,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
-                make_profile_onehot_poly::<FF>(
+                make_profile_onehot_poly::<Cfg>(
                     final_num_vars,
                     0x0bee_fcaf_2800_0000 + poly_idx as u64,
                 )
@@ -297,8 +298,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = proof_scheme
             .commit(
                 &setup,
                 &final_polys,
@@ -348,19 +348,16 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             "profile setup-contribution mode"
         );
         eprintln!("[{label}] setup_contribution_mode: {setup_contribution_mode:?}");
-        let schedules = akita_config::test_support::workspace_schedule_catalog::<ProofCfg>()
-            .expect("trusted schedule catalog");
         let prover_data =
             akita_prover::SelectedProverOpeningData::from_committed_claims::<ProofCfg>(
                 OpeningClaims::from_groups(prover_groups).expect("prover claims"),
                 prover_hints,
                 prover_polys,
-                &schedules,
+                proof_scheme.schedules(),
             )
             .expect("multi-group prover data");
         let selection = prover_data.selection();
-        let proof = AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = proof_scheme
             .batched_prove::<_, _, _>(
                 &setup,
                 prover_data,
@@ -433,8 +430,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
 
     let t_verifier_setup = Instant::now();
     let verifier_setup = pools.in_verify_multi(|| {
-        AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        proof_scheme
             .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
             .expect("verifier setup")
     });
@@ -471,15 +467,13 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
     let verify = |statement| {
         let mut verifier_transcript = AkitaTranscript::<FF>::new(b"profile");
-        AkitaCommitmentScheme::<ProofCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .batched_verify(
-                &proof,
-                &verifier_setup,
-                &mut verifier_transcript,
-                statement,
-                BasisMode::Lagrange,
-            )
+        proof_scheme.batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut verifier_transcript,
+            statement,
+            BasisMode::Lagrange,
+        )
     };
     run_verifier_timings(label, pools, "multi-group profile", prepare, verify);
     report_verifier_ntt_cache_size(

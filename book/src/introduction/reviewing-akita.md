@@ -61,7 +61,7 @@ or prover implementation.
 | `akita-sumcheck` | Shared sumcheck proof types and drivers |
 | `akita-types` | Public proof, setup, schedule, commitment, and claim shapes |
 | `akita-planner` | Offline schedule search and cost evaluation |
-| `akita-schedules` | Generated schedules consumed by normal builds |
+| `akita-schedules` | External schedule artifact decoding, admission, and lookup |
 | `akita-config` | Concrete policy and schedule admission |
 | `akita-setup` | Public setup construction and setup artifacts |
 | `akita-prover` | Commitment and proof generation |
@@ -108,9 +108,10 @@ A schedule review should establish:
 - setup offloading metadata matches the carried setup commitment;
 - the terminal parameters cover the remaining relation.
 
-Generation scripts and continuous integration check that committed tables match
-the planner output. A generated file is still protocol source. Review changes
-to it with the same care as handwritten verifier code.
+Generation scripts and continuous integration byte-compare committed `.aks`
+artifacts with fresh planner output. An external schedule artifact is still
+protocol source. Review changes to it with the same care as handwritten
+verifier code.
 
 The [Configuration and planning](../how/configuration.md), [Setup
 offloading](../how/setup-offloading.md), and [Security
@@ -160,7 +161,7 @@ jobs.
 | Source | What it establishes |
 | --- | --- |
 | Current code | Runtime behavior and enforced API boundaries |
-| Generated tables | Concrete schedules and parameters accepted by normal builds |
+| External schedule artifacts | Concrete schedules and parameters admitted by normal builds |
 | Live specifications | Accepted designs that still contain details not folded into the Book |
 | The Book | The maintained explanation of current behavior |
 | Tests | Evidence for selected valid cases, rejection paths, and cross implementation agreement |

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::policy_digest::policy_digest;
 use crate::resolve::ResolvedScheduleRow;
+use crate::traversal::{visit_schedule_groups, ScheduleGroup, ScheduleGroupPosition};
 use crate::PlannerPolicy;
 
 const ARTIFACT_MAGIC: [u8; 8] = *b"AKSCHD01";
@@ -70,14 +71,15 @@ impl TrustedScheduleCatalog {
 
         let mut resolved = Vec::with_capacity(rows.len());
         for (profiles, schedule) in rows {
-            validate_schedule_challenge_hooks(&schedule, &ring_challenge_config)?;
             let row_digest = schedule_row_digest(&profiles, &schedule)?;
-            resolved.push(ResolvedScheduleRow::try_new(
+            let row = ResolvedScheduleRow::try_new(
                 OpeningScheduleSelection { row_digest },
                 profiles,
                 schedule,
                 policy,
-            )?);
+            )?;
+            validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
+            resolved.push(row);
         }
         resolved.sort_by_key(|row| row.selection().row_digest);
         let mut rows_by_key = resolved
@@ -373,20 +375,20 @@ fn validate_schedule_challenge_hooks(
                     method: akita_types::OpeningMethod,
                     ring_dimension: usize,
                     uses_l2: bool,
-                    context: &str| {
+                    position: ScheduleGroupPosition| {
         let expected = match method {
             akita_types::OpeningMethod::SubringCoefficientPacking {
                 challenge_subring_dimension,
             } => SparseChallengeConfig::production_for_ring_dim(challenge_subring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
-                        "{context} uses unsupported challenge subring D={challenge_subring_dimension}"
+                        "{position} uses unsupported challenge subring D={challenge_subring_dimension}"
                     ))
                 })?,
             akita_types::OpeningMethod::EvaluationTrace if uses_l2 => {
                 akita_challenges::selective_l2_challenge_config(ring_dimension).ok_or_else(|| {
                     AkitaError::InvalidSetup(format!(
-                        "{context} has no selective L2 challenge config for D={ring_dimension}"
+                        "{position} has no selective L2 challenge config for D={ring_dimension}"
                     ))
                 })?
             }
@@ -396,55 +398,48 @@ fn validate_schedule_challenge_hooks(
         };
         if actual != expected {
             return Err(AkitaError::InvalidSetup(format!(
-                "{context} challenge config does not match the trusted runtime hook for D={ring_dimension}"
+                "{position} challenge config does not match the trusted runtime hook for D={ring_dimension}"
             )));
         }
         Ok(())
     };
 
-    let root = &schedule.root.params;
-    validate(
-        root.fold_challenge_config(),
-        root.opening_method(),
-        root.d_a(),
-        matches!(
-            root.inner().matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
-        ),
-        "root fold",
-    )?;
-    for (index, group) in root.precommitted_groups().iter().enumerate() {
-        validate(
-            group.fold_challenge_config(),
-            group.opening_method(),
-            group.inner_commit_matrix_params().ring_dimension(),
+    visit_schedule_groups(schedule, |group| match group {
+        ScheduleGroup::Frozen {
+            position, params, ..
+        } => validate(
+            params.fold_challenge_config(),
+            params.opening_method(),
+            params.inner_commit_matrix_params().ring_dimension(),
             matches!(
-                group.inner_commit_matrix_params().security_route(),
+                params.inner_commit_matrix_params().security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             ),
-            &format!("root precommitted group {index}"),
-        )?;
-    }
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        validate(
-            step.params.fold_challenge_config(),
-            step.params.opening_method(),
-            step.params.d_a(),
+            position,
+        ),
+        ScheduleGroup::Final {
+            position, params, ..
+        } => validate(
+            params.fold_challenge_config(),
+            params.opening_method(),
+            params.d_a(),
             matches!(
-                step.params.inner().matrix.security_route(),
+                params.inner().matrix.security_route(),
                 akita_types::InnerCommitSecurityRoute::L2 { .. }
             ),
-            &format!("recursive fold {index}"),
-        )?;
-    }
-    validate(
-        schedule.terminal.fold_challenge_config,
-        akita_types::OpeningMethod::EvaluationTrace,
-        schedule.terminal.d_a(),
-        matches!(
-            schedule.terminal.inner.matrix.security_route(),
-            akita_types::InnerCommitSecurityRoute::L2 { .. }
+            position,
         ),
-        "terminal fold",
-    )
+        ScheduleGroup::Terminal {
+            position, params, ..
+        } => validate(
+            params.fold_challenge_config,
+            akita_types::OpeningMethod::EvaluationTrace,
+            params.d_a(),
+            matches!(
+                params.inner.matrix.security_route(),
+                akita_types::InnerCommitSecurityRoute::L2 { .. }
+            ),
+            position,
+        ),
+    })
 }

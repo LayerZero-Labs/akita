@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn verify_rejects_wrong_opening() {
-    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+    let scheme = workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let alpha = D.trailing_zeros() as usize;
     let layout = singleton_layout(&scheme, 16);
     let num_vars = layout.position_index_bits() + layout.block_index_bits() + alpha;

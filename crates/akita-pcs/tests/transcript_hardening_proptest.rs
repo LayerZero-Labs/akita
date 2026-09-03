@@ -25,11 +25,18 @@ fn batch_case(index: usize) -> (usize, usize) {
 
 fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64) {
     init_rayon_pool();
+    let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
 
     let (num_vars, total_claims) = batch_case(shape_index);
     let opening_batch =
         OpeningClaimsLayout::new(num_vars, total_claims).expect("valid opening batch");
-    let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
+    let layout = scheme
+        .schedules()
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            opening_batch
+                .root_final_group_layout()
+                .expect("batched group layout"),
+        ))
         .map(|row| row.schedule().root.params.final_group())
         .expect("batched commit layout");
 
@@ -43,10 +50,7 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .map(|poly| opening_from_poly_for_layout(*poly, &opening_point, &layout, basis_mode))
         .collect();
 
-    let setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_prover(num_vars, total_claims)
-        .unwrap();
+    let setup = scheme.setup_prover(num_vars, total_claims).unwrap();
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
     let stack = akita_prover::UniformProverStack::uniform(
         &CpuBackend::DEFAULT,
@@ -54,16 +58,12 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         setup.expanded.as_ref(),
     )
     .expect("stack");
-    let verifier_setup = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
-        .setup_verifier(&setup)
-        .expect("verifier setup");
+    let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
     let akita_prover::CommitOutput {
         committed_group: commitment,
         hint,
-    } = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    } = scheme
         .commit(
             &setup,
             &polys,
@@ -73,11 +73,16 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
         .expect("commit");
     let mut prover_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    let proof = Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    let proof = scheme
         .batched_prove(
             &setup,
-            prove_input::<DenseCfg, _>(&opening_point, &poly_refs, &commitment, hint),
+            prove_input::<DenseCfg, _>(
+                &opening_point,
+                &poly_refs,
+                &commitment,
+                hint,
+                scheme.schedules(),
+            ),
             &stack,
             &mut prover_transcript,
             basis_mode,
@@ -86,13 +91,12 @@ fn logged_dense_round_trip(shape_index: usize, basis_mode: BasisMode, seed: u64)
 
     let mut verifier_transcript =
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"hardening/proptest"));
-    Scheme::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog")
+    scheme
         .batched_verify(
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input::<DenseCfg>(&opening_point, &openings, &commitment),
+            verify_input::<DenseCfg>(&opening_point, &openings, &commitment, scheme.schedules()),
             basis_mode,
         )
         .expect("verify");

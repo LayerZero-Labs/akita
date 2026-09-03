@@ -6,42 +6,51 @@ use crate::{PlannerPolicy, RingDimensionScheduleMode};
 
 /// Fixed-width digest of every planner-policy field that affects an admitted row.
 pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
+    let PlannerPolicy {
+        cost_model,
+        selective_l2_response_model,
+        selection_policy,
+        recursive_split_search_policy,
+        recursive_setup_search_policy,
+        setup_field_budget,
+        min_offloaded_witness_contraction,
+        ring_dimension_schedule_mode,
+        decomposition,
+        sis_modulus_profile,
+        sis_security_policy,
+        sis_table_digest,
+        sis_l2_table_digest,
+        claim_ext_degree,
+        chal_ext_degree,
+        inner_basis_range,
+        opening_basis_range,
+        witness_chunk,
+        recursive_setup_planning,
+    } = *policy;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"AKITA-PLANNER-POLICY-V1");
-    write_u64(
-        &mut bytes,
-        sis_modulus_profile_tag(policy.sis_modulus_profile),
-    );
-    write_u64(&mut bytes, u64::from(policy.sis_security_policy.tag()));
-    bytes.extend_from_slice(&policy.sis_table_digest.0);
-    bytes.extend_from_slice(&policy.sis_l2_table_digest.0);
-    write_u64(
-        &mut bytes,
-        u64::from(policy.selective_l2_response_model.tag()),
-    );
-    write_ring_dimension_schedule_mode(&mut bytes, policy.ring_dimension_schedule_mode);
-    write_decomposition(&mut bytes, policy.decomposition);
-    write_u64(&mut bytes, policy.claim_ext_degree as u64);
-    write_u64(&mut bytes, policy.chal_ext_degree as u64);
-    write_u64(&mut bytes, u64::from(policy.inner_basis_range.0));
-    write_u64(&mut bytes, u64::from(policy.inner_basis_range.1));
-    write_u64(&mut bytes, u64::from(policy.opening_basis_range.0));
-    write_u64(&mut bytes, u64::from(policy.opening_basis_range.1));
-    write_u64(&mut bytes, policy.witness_chunk.num_chunks as u64);
-    write_u64(&mut bytes, policy.witness_chunk.num_activated_levels as u64);
-    write_u64(&mut bytes, u64::from(policy.recursive_setup_planning));
-    write_u64(&mut bytes, u64::from(policy.cost_model.tag()));
-    write_u64(&mut bytes, u64::from(policy.selection_policy.tag()));
-    write_u64(
-        &mut bytes,
-        u64::from(policy.recursive_split_search_policy.tag()),
-    );
-    write_u64(
-        &mut bytes,
-        u64::from(policy.recursive_setup_search_policy.tag()),
-    );
-    write_optional_usize(&mut bytes, policy.setup_field_budget);
-    write_u64(&mut bytes, policy.min_offloaded_witness_contraction as u64);
+    write_u64(&mut bytes, sis_modulus_profile_tag(sis_modulus_profile));
+    write_u64(&mut bytes, u64::from(sis_security_policy.tag()));
+    bytes.extend_from_slice(&sis_table_digest.0);
+    bytes.extend_from_slice(&sis_l2_table_digest.0);
+    write_u64(&mut bytes, u64::from(selective_l2_response_model.tag()));
+    write_ring_dimension_schedule_mode(&mut bytes, ring_dimension_schedule_mode);
+    write_decomposition(&mut bytes, decomposition);
+    write_u64(&mut bytes, claim_ext_degree as u64);
+    write_u64(&mut bytes, chal_ext_degree as u64);
+    write_u64(&mut bytes, u64::from(inner_basis_range.0));
+    write_u64(&mut bytes, u64::from(inner_basis_range.1));
+    write_u64(&mut bytes, u64::from(opening_basis_range.0));
+    write_u64(&mut bytes, u64::from(opening_basis_range.1));
+    write_u64(&mut bytes, witness_chunk.num_chunks as u64);
+    write_u64(&mut bytes, witness_chunk.num_activated_levels as u64);
+    write_u64(&mut bytes, u64::from(recursive_setup_planning));
+    write_u64(&mut bytes, u64::from(cost_model.tag()));
+    write_u64(&mut bytes, u64::from(selection_policy.tag()));
+    write_u64(&mut bytes, u64::from(recursive_split_search_policy.tag()));
+    write_u64(&mut bytes, u64::from(recursive_setup_search_policy.tag()));
+    write_optional_usize(&mut bytes, setup_field_budget);
+    write_u64(&mut bytes, min_offloaded_witness_contraction as u64);
     digest_descriptor_bytes(&bytes)
 }
 

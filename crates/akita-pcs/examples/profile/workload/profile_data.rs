@@ -1,3 +1,4 @@
+use akita_config::CommitmentConfig;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootProvePoly};
 use akita_prover::CpuBackend;
 use akita_prover::{OneHotIndex, OneHotPoly};
@@ -9,14 +10,19 @@ use jolt_field::{CanonicalEncoding, ExtField, Field};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-const ONEHOT_K: usize = 256;
-
-pub(super) fn make_profile_onehot_poly<FF>(num_vars: usize, seed: u64) -> OneHotPoly<FF, u8>
+pub(super) fn make_profile_onehot_poly<Cfg>(
+    num_vars: usize,
+    seed: u64,
+) -> OneHotPoly<Cfg::Field, u8>
 where
-    FF: CanonicalEncoding + Field,
+    Cfg: CommitmentConfig,
 {
     let total_field = 1usize << num_vars;
-    let onehot_k = onehot_k_for_num_vars(num_vars);
+    let onehot_k = onehot_k_for_num_vars::<Cfg>(num_vars);
+    assert!(
+        onehot_k <= usize::from(u8::MAX) + 1,
+        "profile u8 one-hot fixture cannot represent chunk size {onehot_k}"
+    );
     let total_chunks = total_field / onehot_k;
     assert_eq!(total_chunks * onehot_k, total_field);
 
@@ -24,13 +30,15 @@ where
     let indices = (0..total_chunks)
         .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
         .collect();
-    OneHotPoly::<FF, u8>::new(onehot_k, indices).expect("profile onehot poly")
+    OneHotPoly::<Cfg::Field, u8>::new(onehot_k, indices).expect("profile onehot poly")
 }
 
-pub(crate) fn onehot_k_for_num_vars(nv: usize) -> usize {
-    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
+pub(crate) fn onehot_k_for_num_vars<Cfg: CommitmentConfig>(nv: usize) -> usize {
+    let source_chunk_size = akita_config::unit_onehot_source_chunk_size::<Cfg>()
+        .expect("one-hot profile requires a unit-one-hot commitment config");
+    let max_supported_log_k = source_chunk_size.trailing_zeros() as usize;
     if nv >= max_supported_log_k {
-        ONEHOT_K
+        source_chunk_size
     } else {
         1usize << nv
     }

@@ -234,11 +234,11 @@ fn main() -> Result<(), String> {
     let preplans = GenerationPreplans::default();
     for family in ALL_GENERATED_FAMILIES {
         for key in emitted_scalar_keys(family)
-            .map_err(|error| format!("{} scalar keys: {error}", family.module_name))?
+            .map_err(|error| format!("{} scalar keys: {error}", family.family_name()))?
         {
             let label = format!(
                 "{}:scalar:nv={}:polys={}",
-                family.module_name,
+                family.family_name(),
                 key.num_vars(),
                 key.num_polynomials()
             );
@@ -251,7 +251,7 @@ fn main() -> Result<(), String> {
                 Err(error) => {
                     return Err(format!(
                         "{} regenerate {label}: {error}",
-                        family.module_name
+                        family.family_name()
                     ));
                 }
             };
@@ -265,10 +265,10 @@ fn main() -> Result<(), String> {
             schedules += 1;
         }
         for request in (family.grouped_requests)(&preplans)
-            .map_err(|error| format!("{} group keys: {error}", family.module_name))?
+            .map_err(|error| format!("{} group keys: {error}", family.family_name()))?
         {
             let key = request.key();
-            let label = format!("{}:group:{key:?}", family.module_name);
+            let label = format!("{}:group:{key:?}", family.family_name());
             let schedule = match (family.regen_group_batch)(request) {
                 Ok(schedule) => schedule,
                 Err(AkitaError::UnsupportedSchedule(_)) => {
@@ -276,7 +276,10 @@ fn main() -> Result<(), String> {
                     continue;
                 }
                 Err(error) => {
-                    return Err(format!("{} regenerate group: {error}", family.module_name));
+                    return Err(format!(
+                        "{} regenerate group: {error}",
+                        family.family_name()
+                    ));
                 }
             };
             record_schedule(&mut stats, family, &label, &schedule)?;

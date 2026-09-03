@@ -6,14 +6,17 @@ use akita_types::sis::{
     InnerCommitMatrixParams, InnerCommitSecurityRoute, OpenCommitMatrixParams,
     OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
+#[cfg(test)]
+use akita_types::TerminalResponseShape;
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommitmentSliceGeometry,
     CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    GroupOpenPhaseParams, TerminalFoldParams, TerminalResponseShape,
+    GroupOpenPhaseParams, TerminalFoldParams,
 };
 
 use crate::candidate::{selective_l2_inner_matrix, SelectiveL2CandidateGeometry};
 use crate::runtime::validate_policy;
+use crate::traversal::{visit_schedule_groups, ScheduleGroup, ScheduleGroupPosition};
 use crate::PlannerPolicy;
 
 fn invalid(label: &str, detail: &str) -> AkitaError {
@@ -93,7 +96,7 @@ fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<()
     Ok(())
 }
 
-fn audit_precommitted_group(
+fn audit_frozen_group(
     label: &str,
     params: &GroupOpenPhaseParams,
     num_response_chunks: usize,
@@ -119,12 +122,7 @@ fn audit_precommitted_group(
         .inner
         .matrix
         .coeff_linf_bound()
-        .ok_or_else(|| {
-            invalid(
-                label,
-                "precommitted groups cannot use an L2 A security route",
-            )
-        })?;
+        .ok_or_else(|| invalid(label, "frozen groups cannot use an L2 A security route"))?;
     audit_bound(
         label,
         declared_a_bound,
@@ -342,12 +340,12 @@ struct TerminalL2ModelState {
 
 fn audit_terminal(
     params: &TerminalFoldParams,
-    sparse: &akita_challenges::SparseChallengeConfig,
-    response_shape: &TerminalResponseShape,
     model_state: TerminalL2ModelState,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     let label = "terminal fold";
+    let sparse = &params.fold_challenge_config;
+    let response_shape = &params.response_shape;
     audit_inner_matrix(label, &params.inner.matrix, policy)?;
     sparse
         .validate_for_ring_dim(params.d_a())
@@ -486,17 +484,7 @@ pub(crate) fn audit_resolved_schedule(
     profiles.validate(policy.decomposition.field_bits())?;
     schedule.validate_structure()?;
 
-    let root = &schedule.root.params;
-    let final_params = &root;
-    if !matches!(
-        final_params.inner().matrix.security_route(),
-        InnerCommitSecurityRoute::Linf(_)
-    ) {
-        return Err(invalid(
-            "root final group",
-            "root cannot use an L2 A security route",
-        ));
-    }
+    let final_params = &schedule.root.params;
     // Four of the five comparisons that used to live here compared a field with
     // a copy of itself and are deleted with the merge: the shared D matrix, the
     // precommitted-group count (twice over), and each group's `descriptor`
@@ -524,39 +512,37 @@ pub(crate) fn audit_resolved_schedule(
                 "profile and consuming parameters disagree",
             ));
         }
-        audit_precommitted_group(
-            &format!("root precommitted group {index}"),
-            group,
-            final_params.witness_chunk.num_chunks,
-            policy,
-        )?;
     }
 
-    audit_committed_params(
-        "root final group",
-        final_params,
-        profiles.final_group.group.num_polynomials(),
-        0,
-        policy,
-    )?;
-    for (index, step) in schedule.recursive_folds.iter().enumerate() {
-        audit_committed_params(
-            &format!("recursive fold {index}"),
-            &step.params,
-            1,
-            index + 1,
-            policy,
-        )?;
-    }
-    audit_terminal(
-        &schedule.terminal,
-        &schedule.terminal.fold_challenge_config,
-        &schedule.terminal.response_shape,
-        TerminalL2ModelState {
-            fold_level: schedule.recursive_folds.len() + 1,
-        },
-        policy,
-    )
+    visit_schedule_groups(schedule, |group| {
+        let label = group.position().to_string();
+        match group {
+            ScheduleGroup::Frozen {
+                params,
+                num_response_chunks,
+                ..
+            } => audit_frozen_group(&label, params, num_response_chunks, policy),
+            ScheduleGroup::Final {
+                position,
+                params,
+                num_claims,
+                fold_level,
+            } => {
+                if position == ScheduleGroupPosition::RootFinal
+                    && !matches!(
+                        params.inner().matrix.security_route(),
+                        InnerCommitSecurityRoute::Linf(_)
+                    )
+                {
+                    return Err(invalid(&label, "root cannot use an L2 A security route"));
+                }
+                audit_committed_params(&label, params, num_claims, fold_level, policy)
+            }
+            ScheduleGroup::Terminal {
+                params, fold_level, ..
+            } => audit_terminal(params, TerminalL2ModelState { fold_level }, policy),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -641,14 +627,8 @@ mod tests {
         };
         terminal.response_shape =
             TerminalResponseShape::derive(&terminal, 10).expect("valid terminal response shape");
-        audit_terminal(
-            &terminal,
-            &sparse,
-            &terminal.response_shape,
-            TerminalL2ModelState { fold_level: 3 },
-            &policy,
-        )
-        .expect("canonical terminal matrix");
+        audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy)
+            .expect("canonical terminal matrix");
 
         let (table_key, norm_proof_shape) = match terminal.inner.matrix.security_route() {
             InnerCommitSecurityRoute::L2 {
@@ -665,13 +645,8 @@ mod tests {
             norm_proof_shape,
         )
         .expect("locally well-formed matrix with a stale table bucket");
-        assert!(audit_terminal(
-            &terminal,
-            &sparse,
-            &terminal.response_shape,
-            TerminalL2ModelState { fold_level: 3 },
-            &policy,
-        )
-        .is_err());
+        assert!(
+            audit_terminal(&terminal, TerminalL2ModelState { fold_level: 3 }, &policy,).is_err()
+        );
     }
 }

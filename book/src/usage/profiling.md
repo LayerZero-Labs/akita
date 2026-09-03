@@ -34,9 +34,9 @@ prover representation that lets Akita skip zero work. A host constraint system
 can prove the one hot property separately when its application needs that
 claim.
 
-Generated tables choose the ring dimensions for the root and every later fold.
-The report prints the selected sequence. The application does not choose a
-fixed ring dimension for this run.
+The admitted row from the external schedule artifact chooses the ring
+dimensions for the root and every later fold. The report prints the selected
+sequence. The application does not choose a fixed ring dimension for this run.
 
 ## Read the main phases
 

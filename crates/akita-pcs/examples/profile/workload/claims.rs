@@ -7,6 +7,7 @@ use akita_types::{
 use jolt_field::{Field, Zero};
 
 pub(super) fn prover_claims<'a, Cfg, P>(
+    schedules: &akita_config::TrustedScheduleCatalog,
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
@@ -29,13 +30,11 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-        .expect("trusted schedule catalog");
     let selected = SelectedProverOpeningData::from_committed_claims::<Cfg>(
         opening_claims,
         vec![hint],
         vec![polynomials],
-        &schedules,
+        schedules,
     )
     .expect("valid prover opening data");
     assert_eq!(selected.selection(), selection);

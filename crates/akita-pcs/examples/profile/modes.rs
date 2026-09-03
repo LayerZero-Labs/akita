@@ -357,8 +357,12 @@ fn assert_singleton_mode(mode: &str, num_polys: usize) {
 
 const SMALL_FIELD_SCHEDULE_SOURCE: &str = "generated schedule catalog";
 
-fn small_field_onehot_title(field_label: &str, nv: usize, num_polys: usize) -> String {
-    let onehot_k = onehot_k_for_num_vars(nv);
+fn small_field_onehot_title<Cfg: CommitmentConfig>(
+    field_label: &str,
+    nv: usize,
+    num_polys: usize,
+) -> String {
+    let onehot_k = onehot_k_for_num_vars::<Cfg>(nv);
     let schedule = SMALL_FIELD_SCHEDULE_SOURCE;
     if num_polys == 1 {
         format!(
@@ -540,7 +544,7 @@ fn run_profile_onehot_fp128_multi_chunk_named<
     num_polys: usize,
 ) {
     let prime = fp128_prime_label();
-    let onehot_k = onehot_k_for_num_vars(nv);
+    let onehot_k = onehot_k_for_num_vars::<Cfg>(nv);
     let title = format!(
         "=== {label} (fp128, {prime}, adaptive ring dimensions, 1-of-{onehot_k}, distributed chunked relation, num_chunks={} x {} leading levels) ===",
         profile.num_chunks(),
@@ -578,7 +582,7 @@ fn run_profile_onehot_fp128_multi_chunk_w4r2(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp32(nv: usize, num_polys: usize) {
     type Cfg = fp32::OneHot;
-    let title = small_field_onehot_title("fp32", nv, num_polys);
+    let title = small_field_onehot_title::<fp32::OneHot>("fp32", nv, num_polys);
     run_onehot_mode_for::<fp32::Field, 256, Cfg>("onehot_fp32", &title, nv, num_polys);
 }
 
@@ -598,7 +602,7 @@ fn run_profile_dense_fp64(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp64(nv: usize, num_polys: usize) {
     type Cfg = fp64::OneHot;
-    let title = small_field_onehot_title("fp64", nv, num_polys);
+    let title = small_field_onehot_title::<fp64::OneHot>("fp64", nv, num_polys);
     run_onehot_mode_for::<fp64::Field, 256, Cfg>("onehot_fp64", &title, nv, num_polys);
 }
 

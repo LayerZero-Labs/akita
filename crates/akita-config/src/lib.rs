@@ -12,8 +12,7 @@ use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout,
-    OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
+    AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity,
 };
 use akita_types::{ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId};
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
@@ -78,6 +77,8 @@ pub mod setup_prefix_slots;
 pub mod test_support;
 #[cfg(test)]
 use test_support::TestScheduleProvider;
+#[cfg(test)]
+mod schedule_artifact_tests;
 mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
@@ -189,6 +190,22 @@ pub fn validate_config_policy<Cfg: CommitmentConfig>() -> Result<(), AkitaError>
 pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
     Cfg::committed_source_class()
         .honest_fold_policy(<Cfg::Field as CanonicalEncoding>::MODULUS_BITS)
+}
+
+/// Return the config-owned chunk size for a unit-one-hot committed source.
+///
+/// # Errors
+///
+/// Returns [`AkitaError::InvalidSetup`] when `Cfg` does not declare a unit-one-hot source.
+pub fn unit_onehot_source_chunk_size<Cfg: CommitmentConfig>() -> Result<usize, AkitaError> {
+    match Cfg::committed_source_class() {
+        akita_types::sis::CommittedSourceClass::UnitOneHot { source_chunk_size } => {
+            Ok(source_chunk_size)
+        }
+        source_class => Err(AkitaError::InvalidSetup(format!(
+            "unit-one-hot fixture requires a unit-one-hot committed source, got {source_class:?}"
+        ))),
+    }
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -314,7 +331,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Whether schedule planning may emit recursive setup-contribution edges.
     ///
     /// Ordinary configs are direct-only. Config adapters that opt into recursive
-    /// setup offloading override this and use a separate generated catalog.
+    /// setup offloading override this and use a separate external family artifact.
     fn recursive_setup_planning() -> bool {
         false
     }
@@ -578,6 +595,7 @@ mod sis_schedule_width_audit {
 #[cfg(test)]
 mod fp128_policy_tests {
     use super::proof_optimized::fp128;
+    use super::schedule_artifact_tests::mutated_row_admission_error;
     use super::sis_schedule_width_audit::assert_schedule_stays_within_audited_sis_widths;
     use super::*;
 
@@ -697,25 +715,6 @@ mod fp128_policy_tests {
                 .into_schedule();
 
         assert_eq!(schedule.initial_witness_len(), 1usize << 30);
-    }
-
-    fn mutated_row_admission_error<Cfg: CommitmentConfig>(
-        row: &akita_schedules::ResolvedScheduleRow,
-        mutate: impl FnOnce(&mut FoldSchedule),
-    ) -> AkitaError {
-        let profiles = row.profiles().clone();
-        let mut schedule = row.schedule().clone();
-        mutate(&mut schedule);
-        let selection = OpeningScheduleSelection {
-            row_digest: schedule_row_digest(&profiles, &schedule).expect("mutated row digest"),
-        };
-        akita_schedules::ResolvedScheduleRow::try_new(
-            selection,
-            profiles,
-            schedule,
-            &policy_of::<Cfg>(),
-        )
-        .expect_err("noncanonical transition must fail at row admission")
     }
 
     #[test]

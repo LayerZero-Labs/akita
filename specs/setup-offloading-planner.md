@@ -119,7 +119,7 @@ setup-prefix commitment.
   direct alternative remains available.
 - **The successor edge is authoritative.** A recursive fold's
   `incoming_setup_prefix` identifies the setup prefix produced by its
-  predecessor. Prover, verifier, generated-table replay, setup preprocessing,
+  predecessor. Prover, verifier, artifact admission, setup preprocessing,
   descriptor hashing, and proof-size accounting derive the predecessor's
   offload action from that successor-owned edge.
 - **Offloaded edges must contract the balanced witness.** Let `W_in` be the
@@ -449,26 +449,26 @@ fold's own group. `CommittedGroupParams::setup_prefix` reads that entry. No
 second prefix identity or producer side `SetupContributionMode` may choose a
 different proof shape.
 
-### Generated Rows
+### Artifact Rows
 
-Generated rows store the selected successor topology rather than a duplicated
-producer side mode. A recursive fold consumes an offloaded prefix exactly when
-`setup_prefix` is present:
+Each `.aks` artifact row stores the selected successor topology as an expanded
+`FoldSchedule`, rather than as a compact Rust table entry or a duplicated
+producer-side mode. A recursive fold consumes an offloaded prefix exactly when
+`incoming_setup_prefix()` is present:
 
 ```rust
-pub struct GeneratedRecursiveFold {
-    pub core: GeneratedFoldCore,
-    pub setup_prefix: Option<GeneratedFrozenGroup>,
-    pub payload_mode: CommitmentPayloadMode,
-    pub response_l2_sq_cap: Option<u128>,
+pub struct FoldSchedule {
+    pub root: FoldParams,
+    pub recursive_folds: Vec<FoldParams>,
+    pub terminal: TerminalFoldParams,
 }
 ```
 
-The generated row records whichever offload count the planner selected. Replay
-must not derive that count from the fold index, a prefix-size threshold, or the
-artifact registry. It expands the exact stored successor edge and validates its
-prefix length, commitment parameters, shared opening matrix, witness size, and
-descriptor binding.
+The artifact row records whichever offload count the planner selected.
+Admission must not derive that count from the fold index, a prefix-size
+threshold, or the setup registry. It validates the exact stored successor edge,
+including its prefix length, commitment parameters, shared opening matrix,
+witness size, and descriptor binding.
 
 ### Setup-Prefix Slots
 
@@ -665,12 +665,12 @@ After the prefix group is inserted, derive one shared D key over:
 D_width_total = D_width_final_witness + D_width_setup_prefix
 ```
 
-and store its rank in the successor `CommittedGroupParams::d_key` / generated `n_d`.
-There is no per-group D key and no generated per-group `n_d`.
+and store its rank in the successor `CommittedGroupParams::d_key`. There is no
+per-group D key or duplicated per-group D-rank field.
 
 `setup_prefix_level_params` may still be used by setup-slot commitment code to
 construct the concrete commitment params for a prefix artifact, but planner
-successor fit and generated replay must not use it as a witness-group capacity
+successor fit and artifact admission must not use it as a witness-group capacity
 test. Reusing the successor witness group's A/B columns for the setup prefix is
 incorrect.
 
@@ -691,7 +691,7 @@ This value is necessary because equal-length main witnesses may arrive with
 different setup-prefix domains and therefore admit different current params.
 `natural_len` does not affect candidate fit and remains only in the eventual
 slot ID. Candidate fit always uses the complete `n_prefix` source: no planner,
-generated row, or runtime validator may substitute
+artifact row, or runtime validator may substitute
 `ceil(natural_len / D_setup)` for `n_prefix / D_setup`.
 
 ### Locally Minimized Candidate Derivation
@@ -816,68 +816,63 @@ Intermediate witness and tail functions accept the actual
 must reject an opening layout with more than one group. No grouped terminal
 shape helper is introduced.
 
-## Generated Replay
+## External Artifact Admission
 
-### Separate Catalogs
+### Separate Family Artifacts
 
-Generate direct and recursive artifacts independently:
+Generate direct and recursive family artifacts independently:
 
 ```text
 Cfg planner policy
-  -> ordinary generated module/table, including scalar keys
+  -> artifacts/schedules/<direct-family>.aks, including scalar keys
 
 RecursiveCommitmentConfig<Cfg> setup-aware planner policy
-  -> recursive generated module/table containing selected scalar and
-     multi-group keys
+  -> artifacts/schedules/<recursive-family>.aks containing selected scalar
+     and multi-group keys
 ```
 
-Use distinct generated module names and table constructors, for example:
+The configuration's compile-time `schedule_family_name()` selects one exact
+family identity, for example:
 
 ```text
-fp128_d64_onehot
-fp128_d64_onehot_recursive
+fp128_onehot
+fp128_onehot_recursive
 ```
 
-The exact suffix follows the existing generator naming policy. Recursive rows
-must never be appended to or looked up in the ordinary table. The recursion
-adapter resolves both scalar and grouped recursive keys from its companion
-catalog.
+Recursive rows must never be appended to or looked up in the direct artifact.
+The recursion adapter accepts only its companion family artifact and resolves
+both scalar and grouped recursive keys from the resulting
+`TrustedScheduleCatalog`.
 
-Extend generated-family metadata so an eligible family can opt into a recursive
-companion table. The generator runs the ordinary key grid with the ordinary
-policy, then runs the selected scalar and grouped recursive key grid with the
-recursion adapter policy. Drift guards independently regenerate and compare
-both catalogs.
+The offline generator manifest enumerates eligible direct and recursive
+families. It runs the direct key grid with the direct policy, then the selected
+scalar and grouped recursive key grid with the recursion adapter policy. The
+drift gate independently regenerates and byte-compares every `.aks` artifact.
 
 The recursive catalog identity binds the recursion-planning policy bit.
 Supplying a direct catalog to the recursion adapter's resolver, or a recursive
 catalog to an ordinary resolver, must fail identity validation even if a row
 key happens to match.
 
-### Canonical Replay
+### Canonical Admission
 
-The canonical generated walker expands the successor-owned edge directly. It
-tracks:
+Artifact decoding constructs a `TrustedScheduleCatalog`; each expanded row is
+admitted as a `ResolvedScheduleRow`. For each fold, admission:
 
-```rust
-let mut incoming_setup_prefix: Option<GeneratedFrozenGroup>;
-```
-
-For each fold it:
-
-1. Expands the root, recursive folds, and terminal step from the generated row.
-2. If a recursive fold has `setup_prefix`, reconstructs that prefix
+1. Reads the root, recursive folds, and terminal step from the artifact row.
+2. If a recursive fold has an incoming setup prefix, validates that prefix
    group's own inner and outer commitment matrices. It must not clone the
    ordinary witness group's matrix parameters.
 3. Recomputes the predecessor's `natural_len` and full-prefix length and
    validates them against the stored input.
 4. Recomputes and validates the shared opening-matrix rank, relation rows,
    complete next-witness length, Stage 3 bytes, and total proof bytes.
-5. Validates that the artifact's incoming prefix is compatible with the
+5. Validates that the incoming prefix is compatible with the
    predecessor setup envelope, successor group geometry, commitment params,
    witness partition, and supported ring dimensions.
-6. Forwards the exact stored prefix edge to the next recursive fold. Absence of
-   `incoming_setup_prefix` means the predecessor evaluates setup directly.
+6. Preserves the exact stored prefix edge on the consuming recursive fold.
+   Absence of an incoming setup prefix means the predecessor evaluates setup
+   directly.
 7. Rejects a terminal step carrying an incoming setup prefix.
 
 Artifact admission does not re-run the selection policy or derive an expected
@@ -979,7 +974,7 @@ The same invariant is enforced at each boundary for a different reason:
 
 1. The planner discards grouped direct and grouped terminal candidates. If no
    supported candidate remains, planning returns `AkitaError::InvalidSetup`.
-2. Canonical schedule validation rejects stale generated rows and manually
+2. Canonical artifact admission rejects stale artifact rows and manually
    constructed schedules whose successor prefix, group geometry, or terminal
    shape is inconsistent.
 3. Setup preprocessing must materialize every exact slot required by the selected
@@ -1110,7 +1105,7 @@ the candidate score that decides whether and how long to offload.
 - unsupported capability combinations reject offloaded candidates;
 - offline direct and recursive catalog generation uses the matching planner
   path and policy bit; runtime catalog misses reject;
-- recursive generated rows carry at least one `incoming_setup_prefix`,
+- recursive artifact rows carry at least one `incoming_setup_prefix`,
   regardless of whether the application root is scalar or grouped.
 
 `akita-setup`:
@@ -1141,8 +1136,8 @@ Prover/verifier end to end:
 
 Track:
 
-- dynamic planner and table-expansion time;
-- generated row count and table bytes;
+- offline planner and artifact-serialization time;
+- artifact row count and bytes;
 - setup-prefix preprocessing time and artifact bytes;
 - proof bytes per fold by mode;
 - Stage 3 bytes per offloaded edge;
@@ -1172,10 +1167,10 @@ described as globally optimal.
 3. Price the exact Stage 3 payload before comparing suffixes.
 4. Enforce threefold balanced-witness contraction and strict reduction of the
    first remaining direct setup scan.
-5. Store the exact successor-owned setup-prefix topology in generated rows and
-   replay it without re-running selection.
+5. Store the exact successor-owned setup-prefix topology in artifact rows and
+   admit it without re-running selection.
 6. Reuse the existing setup-envelope scan for complete slot materialization.
-7. Regenerate recursive catalogs and add topology, accounting, and malformed
+7. Regenerate recursive artifacts and add topology, accounting, and malformed
    schedule tests.
 8. Add profiling and audit output for the selected offload count and every
    comparator component.
@@ -1228,12 +1223,12 @@ one application group; when it offloads setup, the successor uses the existing
 multi-group machinery to carry the setup-prefix commitment beside the folded
 witness. Ordinary `Cfg` remains the stable direct-only path.
 
-### Mixing Recursive Rows into Ordinary Tables
+### Mixing Recursive Rows into Direct Artifacts
 
 Rejected. The same lookup key could then resolve to different schedules
 depending on an out-of-band mode, and direct-only users would pay table and
-planning complexity for recursion. Separate catalogs keep config identity,
-generated lookup, and DP fallback aligned.
+planning complexity for recursion. Separate artifacts keep config identity,
+runtime lookup, and offline generation aligned.
 
 ### Exhaustive suffix candidate frontier
 

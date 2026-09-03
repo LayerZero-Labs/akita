@@ -42,8 +42,8 @@ const fn proof_optimized_inner_basis_range(
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// This is an offline sizing-policy input, not runtime group geometry. Akita's
-/// built-in generated catalogs use K=256; downstream configurations may
-/// generate catalogs from another policy-owned chunk size.
+/// built-in external schedule artifacts use K=256; downstream configurations
+/// may generate artifacts from another policy-owned chunk size.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
     akita_types::sis::DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE;
 
@@ -51,7 +51,7 @@ pub const STANDARD_ONEHOT_CHUNK_SIZE: usize =
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
 /// [`akita_challenges::SparseChallengeConfig::production_for_ring_dim`].
-/// The planner and generated-table expansion call this hook with each
+/// Offline planning and artifact admission call this hook with each
 /// schedule-selected A dimension. The flat public matrix has no generation
 /// dimension.
 pub(crate) fn proof_optimized_ring_challenge_config(
@@ -96,7 +96,7 @@ impl SetupCapacityScan {
     fn finish(self, max_num_vars: usize) -> Result<SetupMatrixCapacity, AkitaError> {
         if !self.supported {
             return Err(AkitaError::InvalidSetup(format!(
-                "setup matrix sizing found no generated schedules for max_num_vars={max_num_vars}"
+                "setup matrix sizing found no admitted schedules for max_num_vars={max_num_vars}"
             )));
         }
         Ok(self.capacity)
@@ -106,7 +106,7 @@ impl SetupCapacityScan {
 /// Size the shared setup matrix from one validated trusted catalog.
 ///
 /// Every admitted row is already expanded and audited. Setup sizing therefore
-/// scans those exact rows instead of consulting the generated-table resolver.
+/// scans those exact rows instead of consulting any compiled schedule table.
 pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
     catalog: &akita_schedules::TrustedScheduleCatalog,
     max_num_vars: usize,

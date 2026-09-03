@@ -62,7 +62,7 @@ fn usage() -> &'static str {
      --bin gen_schedule_artifacts -- <output-dir> [--check-catalog] \
      [--catalog-report <path>] [--catalog-snapshot <path>] \
      [--catalog-baseline <snapshot>] [--row-progress] \
-     [family_module_name ...]\n\
+     [family_name ...]\n\
      positional family names select only those generated families; omit them \
      to generate every family \
      [--final-group family:num_vars_or_range:num_polys_or_range] \
@@ -72,13 +72,13 @@ fn usage() -> &'static str {
 fn known_family(name: &str) -> bool {
     ALL_GENERATED_FAMILIES
         .iter()
-        .any(|family| family.module_name == name)
+        .any(|family| family.family_name() == name)
 }
 
 fn family_by_name(name: &str) -> Option<&'static GeneratedFamily> {
     ALL_GENERATED_FAMILIES
         .iter()
-        .find(|family| family.module_name == name)
+        .find(|family| family.family_name() == name)
 }
 
 fn parse_usize(raw: &str, context: &str) -> Result<usize, String> {
@@ -258,7 +258,7 @@ fn selected_families(family_filter: Option<&[String]>) -> Vec<&'static Generated
     ALL_GENERATED_FAMILIES
         .iter()
         .filter(|family| {
-            family_filter.is_none_or(|names| names.iter().any(|name| name == family.module_name))
+            family_filter.is_none_or(|names| names.iter().any(|name| name == family.family_name()))
         })
         .collect()
 }
@@ -480,7 +480,7 @@ impl ExplicitRows {
     fn has_family(&self, family: &GeneratedFamily) -> bool {
         self.final_group
             .as_ref()
-            .is_some_and(|group| group.family == family.module_name)
+            .is_some_and(|group| group.family == family.family_name())
     }
 }
 
@@ -563,19 +563,19 @@ fn emit_spec_with_overrides(
 ) -> Result<EmitSpec, String> {
     if !explicit_rows.has_family(family) {
         return emit_spec_for_family(family, preplans, base_dir)
-            .map_err(|e| format!("{}: emit spec: {e}", family.module_name));
+            .map_err(|e| format!("{}: emit spec: {e}", family.family_name()));
     }
 
     // Explicit sweeps replace the catalog key set. Start from an empty request
     // shape so a one-key diagnostic does not first plan every default grouped
     // root merely to discard those rows below.
     let mut spec = empty_emit_spec(family, base_dir)
-        .map_err(|e| format!("{}: producer contract: {e}", family.module_name))?;
+        .map_err(|e| format!("{}: producer contract: {e}", family.family_name()))?;
 
     let final_group = explicit_rows
         .final_group
         .as_ref()
-        .ok_or_else(|| format!("{}: missing --final-group", family.module_name))?;
+        .ok_or_else(|| format!("{}: missing --final-group", family.family_name()))?;
     spec.keys.clear();
     spec.grouped_requests.clear();
     let final_layouts = final_group.layouts();
@@ -633,7 +633,7 @@ fn main() -> Result<(), String> {
             "preparing schedule family requests and dependency schedules {}/{}: {}",
             index + 1,
             family_count,
-            family.module_name
+            family.family_name()
         );
         let spec = emit_spec_with_overrides(
             family,
@@ -645,7 +645,7 @@ fn main() -> Result<(), String> {
             "prepared schedule family requests and dependency schedules {}/{}: {} ({} scalar keys, {} grouped keys) in {:.2?}",
             index + 1,
             family_count,
-            family.module_name,
+            family.family_name(),
             spec.keys.len(),
             spec.grouped_requests.len(),
             family_started.elapsed(),

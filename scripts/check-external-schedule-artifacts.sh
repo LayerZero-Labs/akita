@@ -30,6 +30,11 @@ report_matches \
         -- ':(glob)**/Cargo.toml' ':(glob)**/*.yml' ':(glob)**/*.yaml'
 
 report_matches \
+    "artifact generator family names must come from CommitmentConfig" \
+    git grep -n -E 'module_name|family_row!\([^)]*"fp(32|64|128)_' -- \
+        crates/akita-planner/src/generated_families.rs
+
+report_matches \
     "schedule artifacts must not be embedded in Rust binaries" \
     git grep -n -E 'include_bytes!\(.*(artifacts/schedules|\.aks)' \
         -- ':(glob)crates/**/*.rs' ':(glob)profile/**/*.rs'
@@ -40,6 +45,15 @@ report_matches \
         crates/akita-config/src crates/akita-pcs/src crates/akita-prover/src \
         crates/akita-schedules/src crates/akita-setup/src crates/akita-verifier/src \
         ':(exclude,glob)**/tests/**' ':(exclude,glob)**/test_support.rs'
+
+report_matches \
+    "live setup-offloading docs must not assign schedule ownership to compiled Rust tables" \
+    git grep -n -i -E \
+        'GeneratedFrozenGroup|GeneratedRecursiveFold|generated[- ]table|generated module|table constructor|generated replay|Rust schedule table|committed schedule table' \
+        -- specs/setup-offloading-planner.md book/src/how/setup-offloading.md \
+        book/src/usage/profiling.md book/src/introduction/reviewing-akita.md \
+        book/src/introduction/built-for-production.md \
+        crates/akita-config/src/proof_optimized.rs crates/akita-config/src/lib.rs
 
 if [ "$failures" -ne 0 ]; then
     exit 1

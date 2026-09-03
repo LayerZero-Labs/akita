@@ -26,7 +26,7 @@ const DETAIL_INSTANCE_HEADER: [&str; 10] = [
 fn usage() -> &'static str {
     "usage: cargo run --release -p akita-planner --features catalog-security \
      --example catalog_security -- [--check] [--details] \
-     [--final-group NUM_VARSxNUM_POLYNOMIALS] [--row-digest HEX] [family_module_name ...]"
+     [--final-group NUM_VARSxNUM_POLYNOMIALS] [--row-digest HEX] [family_name ...]"
 }
 
 fn parse_group(value: &str) -> Result<(usize, usize), String> {
@@ -52,7 +52,7 @@ fn selected_families(names: &[String]) -> Result<Vec<&'static GeneratedFamily>, 
         .map(|name| {
             ALL_GENERATED_FAMILIES
                 .iter()
-                .find(|family| family.module_name == name)
+                .find(|family| family.family_name() == name)
                 .ok_or_else(|| format!("unknown generated schedule family {name:?}\n{}", usage()))
         })
         .collect()
@@ -127,12 +127,12 @@ fn main() -> Result<(), String> {
         let policy = (family.policy)();
         let artifact_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../artifacts/schedules")
-            .join(format!("{}.aks", family.module_name));
+            .join(format!("{}.aks", family.family_name()));
         let bytes = fs::read(&artifact_path)
             .map_err(|error| format!("read {}: {error}", artifact_path.display()))?;
         let catalog = akita_schedules::TrustedScheduleCatalog::from_artifact_bytes(
             &bytes,
-            family.module_name,
+            family.family_name(),
             &policy,
             family.ring_challenge_config,
         )
@@ -162,7 +162,7 @@ fn main() -> Result<(), String> {
             matched_rows += 1;
             let schedule = resolved.schedule();
             let estimate = estimate_schedule_security(schedule)
-                .map_err(|error| format!("{} {:?}: {error}", family.module_name, key))?;
+                .map_err(|error| format!("{} {:?}: {error}", family.family_name(), key))?;
             let weakest = estimate.minimum();
             let precommitted = if key.precommitteds.is_empty() {
                 "-".to_string()
@@ -175,7 +175,7 @@ fn main() -> Result<(), String> {
             };
             println!(
                 "{}\t{}\t{}\t{}\t{}\t{:?}\t{:.6}\t{}\t{}\t{}\t{}\t{}",
-                family.module_name,
+                family.family_name(),
                 row_digest,
                 group_label(key.final_group),
                 precommitted,
@@ -192,7 +192,10 @@ fn main() -> Result<(), String> {
             if check && (!minimum_bits.is_finite() || minimum_bits < policy_minimum_bits) {
                 below_policy.push(format!(
                     "{} {}: {:.6} bits at {}",
-                    family.module_name, row_digest, minimum_bits, weakest.location
+                    family.family_name(),
+                    row_digest,
+                    minimum_bits,
+                    weakest.location
                 ));
             }
             if details {

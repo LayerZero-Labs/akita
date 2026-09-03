@@ -33,8 +33,7 @@ use akita_types::{
 #[allow(dead_code)]
 pub(super) fn prove_verify_recursive_direct_roundtrip<BaseCfg>(transcript_domain: &'static [u8])
 where
-    BaseCfg:
-        CommitmentConfig<Field = F, ExtField = F> + RecursiveScheduleConfig + TestScheduleProvider,
+    BaseCfg: CommitmentConfig<Field = F, ExtField = F> + RecursiveScheduleConfig,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
 
@@ -43,20 +42,22 @@ where
 
     init_rayon_pool();
     run_on_large_stack(move || {
+        let scheme = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
+            .expect("workspace schedule artifact");
         let schedule_key =
             AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE));
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
-        let schedule =
-            RecursiveCommitmentConfig::<BaseCfg>::resolve_catalog_row_for_key(&schedule_key)
-                .expect("recursive direct schedule")
-                .into_schedule();
+        let schedule = scheme
+            .schedules()
+            .resolve_key(&schedule_key)
+            .expect("recursive direct schedule")
+            .into_schedule();
         assert!(
             schedule_uses_setup_prefix(&schedule),
             "recursive schedule must carry setup-prefix metadata"
         );
 
-        let setup = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let setup = scheme
             .setup_prover(FINAL_NV, FINAL_GROUP_SIZE)
             .expect("recursive direct setup");
         assert!(
@@ -72,13 +73,12 @@ where
         .expect("stack");
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|i| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
+            .map(|i| make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2027_0000 + i as u64))
             .collect();
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit::<_, _>(
                 &setup,
                 &final_polys,
@@ -105,12 +105,12 @@ where
             .expect("prover claims"),
             vec![hint],
             vec![&poly_refs[..]],
+            scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        let proof = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove(
                 &setup,
                 prover_data,
@@ -133,8 +133,7 @@ where
         )
         .expect("deserialize");
 
-        let verifier_setup = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let verifier_setup = scheme
             .setup_verifier_for_schedule(&setup, &schedule, &opening_layout)
             .expect("verifier setup");
         let verify_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
@@ -145,8 +144,7 @@ where
         .expect("verifier group")])
         .expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
-        Recursive::<BaseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &proof,
                 &verifier_setup,
@@ -160,7 +158,7 @@ where
 
 pub(super) fn prove_verify_dense_roundtrip<Cfg>(nv_values: &[usize], label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     prove_verify_dense_roundtrip_with_evals::<Cfg>(nv_values, label, dense_field_evals);
 }
@@ -171,8 +169,10 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
     label: &[u8],
     evals_for: impl Fn(usize, u64) -> Vec<F>,
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
+        .expect("workspace schedule artifact");
     for &nv in nv_values {
         let seed = 0x7e57_0000_u64 ^ nv as u64;
         let evals = evals_for(nv, seed);
@@ -181,10 +181,7 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
         // Independent oracle: raw evaluations folded against the point.
         let expected_opening = dense_opening_lagrange(&evals, &pt);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(nv, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -192,16 +189,12 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit::<_, _>(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -211,11 +204,16 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
             .unwrap();
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove::<_, _, _>(
                 &setup,
-                prove_input::<Cfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                prove_input::<Cfg, _>(
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitment,
+                    hint,
+                    scheme.schedules(),
+                ),
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
@@ -233,13 +231,12 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
         let openings = [expected_opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment),
+                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
             .unwrap_or_else(|e| panic!("verify dense nv={nv}: {e:?}"));
@@ -248,8 +245,10 @@ pub(super) fn prove_verify_dense_roundtrip_with_evals<Cfg>(
 
 pub(super) fn prove_verify_onehot_roundtrip<Cfg>(nv_values: &[usize], k: usize, label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
+        .expect("workspace schedule artifact");
     for &nv in nv_values {
         let seed = 0x0bee_0000_u64 ^ nv as u64;
         let poly = make_onehot_poly_with_k(nv, k, seed);
@@ -257,10 +256,7 @@ where
         // Independent oracle: sum of Lagrange weights at the hot indices.
         let expected_opening = onehot_opening_lagrange(&poly, &pt);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(nv, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(nv, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -268,16 +264,12 @@ where
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit::<_, _>(
                 &setup,
                 std::slice::from_ref(&poly),
@@ -287,11 +279,16 @@ where
             .unwrap();
         let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove::<_, _, _>(
                 &setup,
-                prove_input::<Cfg, _>(&pt[..], &poly_refs[..], &commitment, hint),
+                prove_input::<Cfg, _>(
+                    &pt[..],
+                    &poly_refs[..],
+                    &commitment,
+                    hint,
+                    scheme.schedules(),
+                ),
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
@@ -309,13 +306,12 @@ where
 
         let openings = [expected_opening];
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,
                 &mut verifier_transcript,
-                verify_input::<Cfg>(&pt[..], &openings[..], &commitment),
+                verify_input::<Cfg>(&pt[..], &openings[..], &commitment, scheme.schedules()),
                 BasisMode::Lagrange,
             )
             .unwrap_or_else(|e| panic!("verify onehot nv={nv}: {e:?}"));
@@ -327,13 +323,12 @@ const PRE_NV: usize = 14;
 
 pub(super) fn prove_verify_dense_precommitted_roundtrip<Cfg>(final_nvs: &[usize], label: &[u8])
 where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
+        .expect("workspace schedule artifact");
     for &final_nv in final_nvs {
-        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(final_nv.max(PRE_NV), 2)
-            .unwrap();
+        let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -341,10 +336,7 @@ where
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_seed = 0xd0d0_0000_u64 ^ PRE_NV as u64;
         let pre_evals = dense_field_evals(PRE_NV, pre_seed);
@@ -353,8 +345,7 @@ where
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&pre_poly),
@@ -372,8 +363,7 @@ where
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&final_poly),
@@ -389,7 +379,9 @@ where
         // The openings come from independent oracles, so the schedule is not
         // needed to project them. Keep the lookup as a structural check that
         // the combined key resolves to a real catalog row.
-        let schedule = Cfg::resolve_catalog_row_for_key(&schedule_key)
+        let schedule = scheme
+            .schedules()
+            .resolve_key(&schedule_key)
             .expect("schedule")
             .into_schedule();
         assert_eq!(
@@ -423,12 +415,12 @@ where
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
+            scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove::<_, _, _>(
                 &setup,
                 prover_data,
@@ -463,8 +455,7 @@ where
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,
@@ -483,13 +474,12 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
     k: usize,
     label: &[u8],
 ) where
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 {
+    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
+        .expect("workspace schedule artifact");
     for &final_nv in final_nvs {
-        let setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(final_nv.max(PRE_NV), 2)
-            .unwrap();
+        let setup = scheme.setup_prover(final_nv.max(PRE_NV), 2).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend::DEFAULT,
@@ -497,17 +487,13 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
 
         let pre_poly = make_onehot_poly_with_k(PRE_NV, k, 0x0bee_f000_u64 ^ PRE_NV as u64);
         let akita_prover::CommitOutput {
             committed_group: pre_commitment,
             hint: pre_hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&pre_poly),
@@ -522,8 +508,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&final_poly),
@@ -557,12 +542,12 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             vec![pre_hint, final_hint],
             vec![&pre_refs[..], &final_refs[..]],
+            scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript = AkitaTranscript::<F>::new(label);
-        let proof = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = scheme
             .batched_prove::<_, _, _>(
                 &setup,
                 prover_data,
@@ -597,8 +582,7 @@ pub(super) fn prove_verify_onehot_precommitted_roundtrip<Cfg>(
         ];
         let verify_claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
         let mut verifier_transcript = AkitaTranscript::<F>::new(label);
-        AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,

@@ -6,6 +6,7 @@ mod candidate;
 mod policy_digest;
 mod resolve;
 mod runtime;
+mod traversal;
 
 pub use akita_types::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,

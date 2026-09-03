@@ -299,10 +299,15 @@ fn setup_matrix_payload_must_fit_remaining_blob_before_allocation() {
 
 #[test]
 fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
-    let row = TestCfg::resolve_catalog_row_for_opening(
-        &akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout"),
-    )
-    .expect("generated singleton row");
+    let schedules = schedules::<TestCfg>();
+    let opening_claims = akita_types::OpeningClaimsLayout::new(14, 1).expect("opening layout");
+    let row = schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            opening_claims
+                .root_final_group_layout()
+                .expect("singleton group layout"),
+        ))
+        .expect("trusted singleton row");
     let opening_layout = row.profiles().opening_layout().expect("opening layout");
     let grinding_plan = derive_transcript_grinding_plan::<TestCfg>(row.schedule(), &opening_layout)
         .expect("grinding plan");
@@ -313,7 +318,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
     huge.root.opening_payload_coeffs = usize::MAX;
     let budget_error = AkitaJoltInputs::<TestF, TEST_D>::validate_proof_shape_before_allocation::<
         TestCfg,
-    >(row.selection(), &huge, 0, &schedules::<TestCfg>())
+    >(row.selection(), &huge, 0, &schedules)
     .expect_err("huge shape must fail against remaining bytes");
     let budget_message = budget_error.to_string();
     assert!(
@@ -328,7 +333,7 @@ fn proof_shape_budget_and_schedule_identity_precede_proof_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
-            &schedules::<TestCfg>(),
+            &schedules,
         )
         .expect_err("noncanonical shape must fail before proof decoding");
     assert!(identity_error.to_string().contains("canonical schedule"));
@@ -341,8 +346,14 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
     type ExtE = <ExtCfg as CommitmentConfig>::ExtField;
 
     let layout = akita_types::OpeningClaimsLayout::new(30, 1).expect("opening layout");
-    let row =
-        ExtCfg::resolve_catalog_row_for_opening(&layout).expect("generated fp32 singleton row");
+    let schedules = schedules::<ExtCfg>();
+    let row = schedules
+        .resolve_key(&akita_types::AkitaScheduleLookupKey::single(
+            layout
+                .root_final_group_layout()
+                .expect("singleton group layout"),
+        ))
+        .expect("trusted fp32 singleton row");
     let opening_layout = row.profiles().opening_layout().expect("catalog layout");
     let grinding_plan = derive_transcript_grinding_plan::<ExtCfg>(row.schedule(), &opening_layout)
         .expect("grinding plan");
@@ -365,7 +376,7 @@ fn extension_proof_shape_must_match_the_selected_schedule_before_allocation() {
             row.selection(),
             &noncanonical,
             MAX_JOLT_BLOB_BYTES as usize,
-            &schedules::<ExtCfg>(),
+            &schedules,
         )
         .expect_err("noncanonical extension shape must fail before proof decoding");
     assert!(error.to_string().contains("canonical schedule"));

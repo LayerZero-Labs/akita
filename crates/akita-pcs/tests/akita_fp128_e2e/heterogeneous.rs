@@ -20,17 +20,19 @@ fn heterogeneous_group_types() {
         const ONEHOT_PRE_NV: usize = 14;
         const DENSE_PRE_NV: usize = 15;
         const FINAL_NV: usize = 16;
+        let onehot_scheme = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
+            .expect("embedded one-hot schedule catalog");
+        let dense_scheme = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
+            .expect("embedded dense schedule catalog");
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(FINAL_NV, 4)
-            .expect("setup");
+        let setup = onehot_scheme.setup_prover(FINAL_NV, 4).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("stack");
 
-        let onehot_k_pre = 256usize;
+        let onehot_k_pre =
+            akita_config::unit_onehot_source_chunk_size::<OneHotCfg>().expect("one-hot config");
         let pre_chunks = (1usize << ONEHOT_PRE_NV) / onehot_k_pre;
         let onehot_pre = akita_prover::OneHotPoly::<F, u8>::new(
             onehot_k_pre,
@@ -51,7 +53,7 @@ fn heterogeneous_group_types() {
         let dense_b = akita_prover::DensePoly::from_field_evals(DENSE_PRE_NV, &dense_evals_b)
             .expect("dense b");
 
-        let final_onehot = make_onehot_poly(FINAL_NV, 0x1701_0000);
+        let final_onehot = make_onehot_poly::<OneHotCfg>(FINAL_NV, 0x1701_0000);
 
         let dense_polys = [dense_a.clone(), dense_b.clone()];
         let final_polys = [MultilinearPolynomial::onehot(final_onehot.clone())];
@@ -60,8 +62,7 @@ fn heterogeneous_group_types() {
         let akita_prover::CommitOutput {
             committed_group: onehot_pre_commitment,
             hint: onehot_pre_hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = onehot_scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&onehot_pre),
@@ -72,8 +73,7 @@ fn heterogeneous_group_types() {
 
         // Dense pre-group committed with DenseCfg so its profile matches the
         // Dense descriptor in catalog entry {final_nv=16, pre=[onehot(14,1), dense(15,2)]}.
-        let dense_setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let dense_setup = dense_scheme
             .setup_prover(DENSE_PRE_NV, 2)
             .expect("dense setup");
         let dense_prepared = CpuBackend::DEFAULT
@@ -88,8 +88,7 @@ fn heterogeneous_group_types() {
         let akita_prover::CommitOutput {
             committed_group: dense_commitment,
             hint: dense_hint,
-        } = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = dense_scheme
             .commit(
                 &dense_setup,
                 &dense_polys,
@@ -106,8 +105,7 @@ fn heterogeneous_group_types() {
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = onehot_scheme
             .commit(
                 &setup,
                 &final_polys,
@@ -163,6 +161,7 @@ fn heterogeneous_group_types() {
             .expect("prover claims"),
             vec![onehot_pre_hint, dense_hint, final_hint],
             vec![&onehot_pre_refs, &dense_refs, &final_refs],
+            onehot_scheme.schedules(),
         );
         let selection = prover_data.selection();
 
@@ -170,7 +169,9 @@ fn heterogeneous_group_types() {
         // schedule is no longer needed to project them. Keep the resolution as
         // a structural check that the heterogeneous selection binds to the
         // two-precommit catalog entry.
-        let schedule = OneHotCfg::resolve_schedule_selection(selection)
+        let schedule = onehot_scheme
+            .schedules()
+            .resolve_selection(selection)
             .expect("heterogeneous schedule")
             .schedule()
             .clone();
@@ -182,8 +183,7 @@ fn heterogeneous_group_types() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = onehot_scheme
             .batched_prove(
                 &setup,
                 prover_data,
@@ -202,8 +202,7 @@ fn heterogeneous_group_types() {
         )
         .expect("deserialize");
 
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
             .expect("verifier setup");
         let verify_claims = OpeningClaims::from_groups(vec![
@@ -225,8 +224,7 @@ fn heterogeneous_group_types() {
         .expect("verifier claims");
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_group_types");
-        AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        onehot_scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,
@@ -253,6 +251,11 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
+        let bounded_scheme =
+            AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
+                .expect("embedded bounded-dense schedule catalog");
+        let onehot_scheme = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
+            .expect("embedded one-hot schedule catalog");
         // Full-width `u64` coefficients on both signs — the workload the bounded
         // preset exists for — including the `±u64::MAX` endpoints. `commit` must
         // accept all of them under `log_commit_bound = 65`, the signed bit width
@@ -261,15 +264,13 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let bounded_dense =
             akita_prover::DensePoly::from_field_evals(BOUNDED_PRE_NV, &bounded_evals)
                 .expect("bounded dense poly");
-        let final_onehot = make_onehot_poly(FINAL_NV, 0x8064_0000);
+        let final_onehot = make_onehot_poly::<OneHotCfg>(FINAL_NV, 0x8064_0000);
 
         // Each group commits under the config that owns its bound, so its frozen
         // profile matches the descriptor the catalog row carries.
-        let bounded_setup =
-            AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
-                .expect("embedded schedule catalog")
-                .setup_prover(BOUNDED_PRE_NV, 1)
-                .expect("bounded dense setup");
+        let bounded_setup = bounded_scheme
+            .setup_prover(BOUNDED_PRE_NV, 1)
+            .expect("bounded dense setup");
         let bounded_prepared = CpuBackend::DEFAULT
             .prepare_setup(&bounded_setup)
             .expect("bounded dense prepared");
@@ -282,8 +283,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let akita_prover::CommitOutput {
             committed_group: bounded_commitment,
             hint: bounded_hint,
-        } = AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = bounded_scheme
             .commit(
                 &bounded_setup,
                 std::slice::from_ref(&bounded_dense),
@@ -304,8 +304,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             "bounded precommit digit depth must be below same-basis full-width depth",
         );
 
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let setup = onehot_scheme
             .setup_prover(FINAL_NV, 2)
             .expect("one-hot root setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
@@ -320,8 +319,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let akita_prover::CommitOutput {
             committed_group: final_commitment,
             hint: final_hint,
-        } = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        } = onehot_scheme
             .commit(
                 &setup,
                 &final_polys,
@@ -362,10 +360,13 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             .expect("prover claims"),
             vec![bounded_hint, final_hint],
             vec![&bounded_refs, &final_refs],
+            onehot_scheme.schedules(),
         );
         let selection = prover_data.selection();
 
-        let schedule = OneHotCfg::resolve_schedule_selection(selection)
+        let schedule = onehot_scheme
+            .schedules()
+            .resolve_selection(selection)
             .expect("mixed-bound schedule")
             .schedule()
             .clone();
@@ -387,8 +388,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
-        let proof = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let proof = onehot_scheme
             .batched_prove(
                 &setup,
                 prover_data,
@@ -407,8 +407,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         )
         .expect("deserialize");
 
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let verifier_setup = onehot_scheme
             .setup_verifier(&setup)
             .expect("verifier setup");
         let verify_claims = OpeningClaims::from_groups(vec![
@@ -420,8 +419,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         .expect("verifier claims");
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
-        AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        onehot_scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,
@@ -451,8 +449,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         let mut tampered_transcript =
             AkitaTranscript::<F>::new(b"completeness/bounded_dense_precommit_with_onehot_final");
         assert!(
-            AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-                .expect("embedded schedule catalog")
+            onehot_scheme
                 .batched_verify(
                     &decoded,
                     &verifier_setup,
@@ -507,10 +504,9 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let setup = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(NV, 1)
-            .expect("setup");
+        let scheme = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
+            .expect("embedded schedule catalog");
+        let setup = scheme.setup_prover(NV, 1).expect("setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -523,8 +519,7 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         // Dense all-ones: inside the digit envelope, outside the source class.
         let dense = akita_prover::DensePoly::<F>::from_field_evals(NV, &[F::one(); 1usize << NV])
             .expect("dense poly");
-        let error = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let error = scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&dense),
@@ -552,15 +547,16 @@ fn commit_rejects_a_source_whose_representation_is_not_the_declared_class() {
         );
 
         // The proper one-hot representation at the same geometry is accepted.
+        let onehot_k =
+            akita_config::unit_onehot_source_chunk_size::<OneHotCfg>().expect("one-hot config");
         let onehot = akita_prover::OneHotPoly::<F, u8>::new(
-            256,
-            (0..(1usize << NV) / 256)
-                .map(|i| Some((i % 256) as u8))
+            onehot_k,
+            (0..(1usize << NV) / onehot_k)
+                .map(|i| Some((i % onehot_k) as u8))
                 .collect(),
         )
         .expect("one-hot poly");
-        AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .commit(
                 &setup,
                 std::slice::from_ref(&onehot),
@@ -637,10 +633,12 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let setup = AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(NV, 1)
-            .expect("bounded setup");
+        let bounded_scheme =
+            AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
+                .expect("embedded bounded-dense schedule catalog");
+        let dense_scheme = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
+            .expect("embedded dense schedule catalog");
+        let setup = bounded_scheme.setup_prover(NV, 1).expect("bounded setup");
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
         let stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
@@ -648,8 +646,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
 
         let commit = |evals: &[F]| {
             let poly = akita_prover::DensePoly::from_field_evals(NV, evals).expect("dense poly");
-            AkitaCommitmentScheme::<BoundedDenseCfg>::from_workspace_schedule_artifact()
-                .expect("embedded schedule catalog")
+            bounded_scheme
                 .commit(
                     &setup,
                     std::slice::from_ref(&poly),
@@ -712,10 +709,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         // A full-width dense commitment of the same out-of-range polynomial is
         // fine: it declares the whole field, so the guard is specific to a bounded
         // source and costs unbounded configs nothing.
-        let full_setup = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(NV, 1)
-            .expect("setup");
+        let full_setup = dense_scheme.setup_prover(NV, 1).expect("setup");
         let full_prepared = CpuBackend::DEFAULT
             .prepare_setup(&full_setup)
             .expect("prepared");
@@ -727,8 +721,7 @@ fn bounded_dense_commit_rejects_a_coefficient_above_the_declared_bound() {
         .expect("stack");
         let poly =
             akita_prover::DensePoly::from_field_evals(NV, &over_positive).expect("dense poly");
-        AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        dense_scheme
             .commit(
                 &full_setup,
                 std::slice::from_ref(&poly),
@@ -748,14 +741,12 @@ fn heterogeneous_compute_backends() {
         const NV: usize = 16;
         type Cfg = fp128::Dense;
         type Scheme = AkitaCommitmentScheme<Cfg>;
+        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
 
         let evals: Vec<F> = (0..(1usize << NV)).map(|i| F::from_u64(i as u64)).collect();
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).unwrap();
 
-        let setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_prover(NV, 1)
-            .unwrap();
+        let setup = scheme.setup_prover(NV, 1).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
 
         let commit_backend = CommitCluster;
@@ -771,22 +762,17 @@ fn heterogeneous_compute_backends() {
         )
         .expect("heterogeneous stack");
 
-        let verifier_setup = Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
-            .setup_verifier(&setup)
-            .expect("verifier setup");
+        let verifier_setup = scheme.setup_verifier(&setup).expect("verifier setup");
         let commit_stack =
             UniformProverStack::uniform(&CpuBackend::DEFAULT, &prepared, setup.expanded.as_ref())
                 .expect("commit stack");
-        let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-            .expect("embedded schedule catalog");
         let akita_prover::CommitOutput {
             committed_group: commitment,
             hint,
         } = akita_prover::commit::<Cfg, akita_prover::DensePoly<F>, CpuBackend>(
             std::slice::from_ref(&poly),
             setup.expanded.as_ref(),
-            &schedules,
+            scheme.schedules(),
             &commit_stack,
             akita_prover::GroupContext::scheduler_without_precommitted_groups(),
         )
@@ -807,17 +793,16 @@ fn heterogeneous_compute_backends() {
             .expect("prover claims"),
             vec![hint],
             vec![&poly_refs[..]],
+            scheme.schedules(),
         );
         let selection = prover_data.selection();
 
         let mut prover_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        let schedules = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
-            .expect("trusted schedule catalog");
         let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
             &setup.expanded,
             &setup.prefix_slots,
-            &schedules,
+            scheme.schedules(),
             &stack,
             prover_data,
             &mut prover_transcript,
@@ -836,8 +821,7 @@ fn heterogeneous_compute_backends() {
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"completeness/heterogeneous_compute_backends");
-        Scheme::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        scheme
             .batched_verify(
                 &decoded,
                 &verifier_setup,

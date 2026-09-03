@@ -5,8 +5,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
     on_schedule: fn(&FoldSchedule),
 ) where
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>
-        + akita_config::recursive_commitment::RecursiveScheduleConfig
-        + TestScheduleProvider,
+        + akita_config::recursive_commitment::RecursiveScheduleConfig,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
 
@@ -24,8 +23,12 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         let recursive_scheme = Recursive::<BaseCfg>::from_workspace_schedule_artifact()
             .expect("embedded recursive schedule catalog");
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
-        let pre_frozen =
-            BaseCfg::profile_without_precommitted_groups(pre_key).expect("independent profile");
+        let pre_frozen = base_scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(pre_key))
+            .expect("independent profile")
+            .profiles()
+            .final_group;
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],
@@ -63,7 +66,8 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_commitments = Vec::new();
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
-            let poly = make_onehot_poly(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
+            let poly =
+                make_onehot_poly::<BaseCfg>(PRE_NV, 0x0bee_fcaf_2026_0000 + group_idx as u64);
             let akita_prover::CommitOutput {
                 committed_group: commitment,
                 hint,
@@ -81,7 +85,9 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
         }
 
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
-            .map(|poly_idx| make_onehot_poly(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
+            .map(|poly_idx| {
+                make_onehot_poly::<BaseCfg>(FINAL_NV, 0x0bee_fcaf_2026_1000 + poly_idx as u64)
+            })
             .collect();
         let precommitteds = PrecommittedGroupProfiles::from_ordered_groups(pre_commitments.iter())
             .expect("nonempty precommitted groups");
@@ -151,6 +157,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
+            recursive_scheme.schedules(),
         );
         let selection = prover_claims.selection();
 
