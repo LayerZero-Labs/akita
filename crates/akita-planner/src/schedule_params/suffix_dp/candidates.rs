@@ -4,7 +4,10 @@ use akita_types::{
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
-use crate::{planner::root_level_candidates_for_basis, PlannerPolicy};
+use crate::{
+    planner::{precommitted_group_equivalence_classes, root_level_candidates_for_basis},
+    PlannerPolicy,
+};
 
 use super::{
     derive_fold_candidates, derive_recursive_candidate_views, derive_terminal_candidates,
@@ -102,25 +105,14 @@ pub(crate) fn packing_precommit_opening_products(
     ) {
         return Ok(Vec::new());
     }
-    let mut equivalence_classes: Vec<(usize, Vec<usize>)> = Vec::new();
-    for (index, (profile, fold_policy)) in key
-        .precommitteds
-        .iter()
-        .zip(precommitted_honest_fold_policies)
-        .enumerate()
-    {
-        if let Some((_, indices)) = equivalence_classes.iter_mut().find(|(representative, _)| {
-            key.precommitteds[*representative] == *profile
-                && precommitted_honest_fold_policies[*representative] == *fold_policy
-        }) {
-            indices.push(index);
-        } else {
-            equivalence_classes.push((index, vec![index]));
-        }
-    }
+    let equivalence_classes = precommitted_group_equivalence_classes(
+        &key.precommitteds,
+        precommitted_honest_fold_policies,
+    )?;
 
     let mut products = vec![vec![None; key.precommitteds.len()]];
-    for (representative, indices) in equivalence_classes {
+    for indices in equivalence_classes {
+        let representative = indices[0];
         let profile = &key.precommitteds[representative];
         let domain = crate::schedule_params::PlannerOpeningCandidate::coefficient_packing_domain(
             0,
@@ -176,9 +168,9 @@ pub(crate) fn packing_precommit_opening_products(
 /// Canonical assignments for interchangeable precommitted groups.
 ///
 /// Every multiset of opening candidates is retained, while permutations among
-/// groups with the same profile and honest-fold policy are removed. Root cost
-/// and feasibility depend only on that multiset, so the omitted permutations
-/// cannot change the selected schedule.
+/// groups with the same profile and honest-fold policy are removed. The chosen
+/// representative is canonicalized from fully materialized group descriptors
+/// before root candidate construction.
 fn nondecreasing_opening_assignments(
     domain: &[crate::schedule_params::PlannerOpeningCandidate],
     width: usize,
