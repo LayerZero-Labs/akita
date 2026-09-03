@@ -97,10 +97,6 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
         E::zero()
     }
 
-    fn current_linear_factor_evals(&self) -> (E, E) {
-        self.split_eq.linear_factor_evals()
-    }
-
     fn current_tau(&self) -> E {
         self.split_eq.current_tau()
     }

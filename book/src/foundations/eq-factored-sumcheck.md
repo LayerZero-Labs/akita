@@ -88,9 +88,10 @@ For the common case where $p$ contributes degree two, ordinary sum-check would
 send three coefficients for the degree-three product $s_j$. The factored
 message sends two coefficients for the degree-two inner polynomial $q_j$.
 
-`EqFactoredUniPoly` in `akita-sumcheck/src/types.rs` is this exact wire type.
-Changing which coefficient is omitted does not change the message width: a
-degree-$d$ inner polynomial still contributes exactly $d$ field elements.
+`EqFactoredUniPoly` in `akita-sumcheck/src/types.rs` is this exact wire type. A
+degree-$d$ inner polynomial contributes exactly $d$ field elements. Thus every
+deployed Akita Stage 1 round, whose inner degree is positive, keeps the same
+message width; the valid degree-zero case needs no transmitted coefficient.
 
 ## The verifier avoids division
 
@@ -158,8 +159,10 @@ compressed sum-check messages instead. The prover may still use split equality
 tables internally to save memory.
 
 This distinction matters in review. The equality-table representation is a
-prover implementation choice. Omitting the constant coefficient of $q_j$ changes
-the proof message and requires the matching verifier equation.
+prover implementation choice. Constant-coefficient omission is specific to the
+normalized equality-factored identity above; ordinary sum-check still omits the
+linear coefficient. Changing between the two proof messages requires the
+matching verifier equation.
 
 ## Where to inspect the implementation
 

@@ -15,6 +15,8 @@ use std::io::{Read, Write};
 /// The wire encoding is headerless, just like [`CompressedUniPoly`]. We store
 /// `[q_1, q_2, ..., q_d]` for an inner polynomial
 /// `q(X) = q_0 + q_1 X + ... + q_d X^d`.
+/// This convention is specific to the normalized equality-factored identity;
+/// ordinary compressed sum-check polynomials omit their linear coefficient.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EqFactoredUniPoly<E: Field> {
     /// Coefficients excluding the constant term: `[q_1, q_2, ..., q_d]`.
@@ -27,11 +29,6 @@ impl<E: Field> EqFactoredUniPoly<E> {
         Self {
             coeffs_except_constant_term: q_coeffs.into_iter().skip(1).collect(),
         }
-    }
-
-    /// Number of stored coefficients for a degree-`degree` inner polynomial.
-    pub fn stored_coeff_count_for_degree(degree: usize) -> usize {
-        degree
     }
 
     /// Degree of the underlying inner polynomial, conservatively estimated.
@@ -94,7 +91,10 @@ impl<E: Field + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize for EqF
         validate: Validate,
         degree: &usize,
     ) -> Result<Self, SerializationError> {
-        let stored_coeffs = Self::stored_coeff_count_for_degree(*degree);
+        // Every nonconstant coefficient is transmitted, so a degree-`d`
+        // polynomial has exactly `d` encoded field elements. In particular, a
+        // degree-zero round has an empty message.
+        let stored_coeffs = *degree;
         let mut coeffs_except_constant_term = Vec::new();
         coeffs_except_constant_term
             .try_reserve_exact(stored_coeffs)

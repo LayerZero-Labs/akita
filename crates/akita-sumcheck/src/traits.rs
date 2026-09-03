@@ -67,12 +67,14 @@ pub trait SumcheckInstanceVerifier<E: Field>: Send + Sync {
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError>;
 }
 
-/// Prover-side interface for eq-factored sumchecks of the form `s(X) = l(X) * q(X)`.
+/// Prover-side interface for normalized equality-factored sumchecks.
 ///
-/// Here `l(X)` is the current linear eq factor for the active round. The
-/// prover sends the inner polynomial `q(X)` with its constant term omitted.
-/// The verifier recovers that term from the normalized round identity using
-/// the current equality coordinate `tau`, without division.
+/// In round `j`, the normalized round polynomial is
+/// `eq(tau_j, X) * q_j(X)`. The prover sends `q_j` with its constant term
+/// omitted. Because `eq(tau_j, 0) + eq(tau_j, 1) = 1`, the verifier recovers
+/// that term from the running claim using `tau_j`, without division. Any
+/// equality factors from earlier rounds are deliberately absent from this
+/// interface and from the normalized claim.
 pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
@@ -82,9 +84,6 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
 
     /// The initial unscaled sum claim proved by the instance.
     fn input_claim(&self) -> E;
-
-    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
-    fn current_linear_factor_evals(&self) -> (E, E);
 
     /// Equality point coordinate `tau` for the current round.
     fn current_tau(&self) -> E;

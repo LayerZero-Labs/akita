@@ -64,10 +64,6 @@ impl EqFactoredSumcheckInstanceProver<F> for ToyEqFactoredInstance {
         self.input_claim_from_tau()
     }
 
-    fn current_linear_factor_evals(&self) -> (F, F) {
-        self.split_eq.linear_factor_evals()
-    }
-
     fn current_tau(&self) -> F {
         self.split_eq.current_tau()
     }
@@ -147,12 +143,15 @@ fn eq_factored_sumcheck_prove_verify_roundtrip() {
 }
 
 #[test]
-fn eq_factored_sumcheck_rejects_tampering_when_tau_is_zero() {
+fn eq_factored_sumcheck_rejects_old_wire_forgery_when_tau_is_zero() {
     let q_coeffs = vec![F::from_u64(3), F::from_u64(5), F::from_u64(7)];
     let verifier = ToyEqFactoredInstance::new(F::zero(), q_coeffs);
+    let old_wire_forged_q_0 = verifier.input_claim_from_tau();
     let proof = akita_sumcheck::EqFactoredSumcheckProof {
         round_polys: vec![EqFactoredUniPoly {
-            coeffs_except_constant_term: vec![F::from_u64(99), F::from_u64(101)],
+            // Under the old `[q_0, q_2]` wire convention, choosing `q_0 = T`
+            // collapsed the scaled claim to zero and made `q_2` unconstrained.
+            coeffs_except_constant_term: vec![old_wire_forged_q_0, F::from_u64(101)],
         }],
     };
     let mut transcript = new_transcript();
@@ -180,10 +179,34 @@ fn eq_factored_round_wire_contains_every_nonconstant_coefficient() {
         coefficient.serialize_uncompressed(&mut expected).unwrap();
     }
     assert_eq!(encoded, expected);
-    assert_eq!(EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(3), 3);
     assert_eq!(
         EqFactoredUniPoly::<F>::deserialize_uncompressed(&encoded[..], &3).unwrap(),
         poly
+    );
+}
+
+#[test]
+fn eq_factored_degree_zero_round_has_an_empty_message() {
+    let q_coeffs = vec![F::from_u64(23)];
+    let mut prover = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs.clone());
+    let mut prover_transcript = new_transcript();
+    let (proof, _, final_claim) = prover
+        .prove::<F, _, _>(&mut prover_transcript, |_| Ok(F::from_u64(11)))
+        .unwrap();
+
+    assert!(proof.round_polys[0].coeffs_except_constant_term.is_empty());
+    let mut encoded = Vec::new();
+    proof.round_polys[0]
+        .serialize_uncompressed(&mut encoded)
+        .unwrap();
+    assert!(encoded.is_empty());
+    assert_eq!(final_claim, q_coeffs[0]);
+
+    let verifier = ToyEqFactoredInstance::new(F::from_u64(7), q_coeffs);
+    let mut verifier_transcript = new_transcript();
+    assert_eq!(
+        verifier.verify::<F, _, _>(&proof, &mut verifier_transcript, |_| Ok(F::from_u64(11))),
+        Ok(vec![F::from_u64(11)])
     );
 }
 
@@ -221,10 +244,6 @@ impl EqFactoredSumcheckInstanceProver<F> for ToyTwoRoundEqFactoredInstance {
 
     fn input_claim(&self) -> F {
         self.evaluate(self.tau[0], self.tau[1])
-    }
-
-    fn current_linear_factor_evals(&self) -> (F, F) {
-        self.split_eq.linear_factor_evals()
     }
 
     fn current_tau(&self) -> F {

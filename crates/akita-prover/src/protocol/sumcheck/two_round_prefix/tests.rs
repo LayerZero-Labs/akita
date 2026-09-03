@@ -896,14 +896,11 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
     ] {
         assert_eq!(
             poly.coeffs_except_constant_term.len(),
-            EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)
+            STAGE1_B8_Q_POLY_DEGREE
         );
         assert_eq!(
             poly.coeffs_except_constant_term,
-            vec![
-                F::zero();
-                EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)
-            ]
+            vec![F::zero(); STAGE1_B8_Q_POLY_DEGREE]
         );
 
         let mut bytes = Vec::new();
