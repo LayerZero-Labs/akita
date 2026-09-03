@@ -263,29 +263,80 @@ where
     }
 }
 
+pub(in crate::backend) trait PackingWeightAccessor<E: Field>: Sync {
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E>;
+
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError>;
+}
+
+struct DirectPackingWeights<'a, E: Field> {
+    point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+}
+
+impl<E: Field> PackingWeightAccessor<E> for DirectPackingWeights<'_, E> {
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
+        self.point
+    }
+
+    #[inline(always)]
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
+        let position_weight = *self
+            .point
+            .position_weights()
+            .get(position)
+            .ok_or(AkitaError::InvalidProof)?;
+        let packing_weight = *self
+            .point
+            .packing_weights()
+            .get(low_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(position_weight * packing_weight)
+    }
+}
+
+impl<E: Field> PackingWeightAccessor<E>
+    for crate::backend::coefficient_packing::FusedPackingWeights<'_, E>
+{
+    fn point(&self) -> &akita_types::PreparedSubringCoefficientPackingPoint<E> {
+        self.point()
+    }
+
+    #[inline(always)]
+    fn weight(&self, position: usize, low_index: usize) -> Result<E, AkitaError> {
+        let index = akita_error::checked::mul_add(
+            position,
+            self.point().geometry().subring_embedding_stride(),
+            low_index,
+        )
+        .ok_or(AkitaError::InvalidProof)?;
+        self.values()
+            .get(index)
+            .copied()
+            .ok_or(AkitaError::InvalidProof)
+    }
+}
+
 #[tracing::instrument(skip_all, name = "coefficient_packing_onehot_partials")]
-pub(crate) fn onehot_coefficient_packing_partials<F, E, const D: usize, I>(
+pub(in crate::backend) fn onehot_coefficient_packing_partials<F, E, const D: usize, I, W>(
     source: OneHotBatchView<'_, F, D, I>,
-    plan: SubringCoefficientPackingPlan<'_, E>,
-    fused_weights: Option<&[E]>,
+    weights: &W,
 ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>
 where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + akita_types::FpExtEncoding<F> + jolt_field::MulBaseUnreduced<F>,
     I: OneHotIndex,
+    W: PackingWeightAccessor<E>,
 {
+    let point = weights.point();
+    let plan = SubringCoefficientPackingPlan { point };
     for poly in source.polys {
         plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
     }
-    let point = plan.point;
     let geometry = point.geometry();
     if E::DEGREE != geometry.extension_degree() || D != geometry.a_ring_dimension() {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing field or ring dimension mismatch".into(),
         ));
-    }
-    if let Some(weights) = fused_weights {
-        crate::backend::coefficient_packing::validate_packing_position_weights(point, weights)?;
     }
     let expected_field_len = point.num_live_positions().checked_mul(D).ok_or_else(|| {
         AkitaError::InvalidInput("coefficient-packing one-hot length overflow".into())
@@ -381,22 +432,7 @@ where
                         let coefficient_index = field_index & ring_mask;
                         let low_index = coefficient_index & stride_mask;
                         let subring_index = coefficient_index >> stride_shift;
-                        let value = if let Some(weights) = fused_weights {
-                            let weight_index =
-                                akita_error::checked::mul_add(position_in_block, stride, low_index)
-                                    .ok_or(AkitaError::InvalidProof)?;
-                            *weights.get(weight_index).ok_or(AkitaError::InvalidProof)?
-                        } else {
-                            let position_weight = *point
-                                .position_weights()
-                                .get(position_in_block)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            let packing_weight = *point
-                                .packing_weights()
-                                .get(low_index)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            position_weight * packing_weight
-                        };
+                        let value = weights.weight(position_in_block, low_index)?;
                         let extension_coordinates = value.ext_coords();
                         if extension_coordinates.len() != geometry.extension_degree() {
                             return Err(AkitaError::InvalidSetup(
@@ -443,7 +479,9 @@ where
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
         let fused_len =
-            crate::backend::coefficient_packing::packing_position_weight_len(plan.point)?;
+            crate::backend::coefficient_packing::FusedPackingWeights::<E>::required_len(
+                plan.point,
+            )?;
         let should_prepare = source
             .polys
             .iter()
@@ -452,12 +490,14 @@ where
             .take(fused_len)
             .count()
             == fused_len;
-        let fused_weights = should_prepare
-            .then(|| {
-                crate::backend::coefficient_packing::prepare_packing_position_weights(plan.point)
-            })
-            .transpose()?;
-        onehot_coefficient_packing_partials(source, plan, fused_weights.as_deref())
+        if should_prepare {
+            let weights =
+                crate::backend::coefficient_packing::FusedPackingWeights::new(plan.point)?;
+            onehot_coefficient_packing_partials(source, &weights)
+        } else {
+            let weights = DirectPackingWeights { point: plan.point };
+            onehot_coefficient_packing_partials(source, &weights)
+        }
     }
 }
 

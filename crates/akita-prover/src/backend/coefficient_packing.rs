@@ -17,49 +17,53 @@ fn zero_vec<T: AdditiveGroup>(len: usize) -> Result<Vec<T>, AkitaError> {
     Ok(values)
 }
 
-/// Precompute the tensor product reused by every claim in one opening batch.
-#[tracing::instrument(skip_all, name = "coefficient_packing_prepare_weights")]
-pub(crate) fn prepare_packing_position_weights<E: Field>(
-    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
-) -> Result<Vec<E>, AkitaError> {
-    let len = packing_position_weight_len(point)?;
-    let mut weights = Vec::new();
-    weights.try_reserve_exact(len).map_err(|_| {
-        AkitaError::InvalidInput("coefficient-packing fused weight allocation failed".into())
-    })?;
-    for &position_weight in point.position_weights() {
-        weights.extend(
-            point
-                .packing_weights()
-                .iter()
-                .map(|&packing_weight| position_weight * packing_weight),
-        );
-    }
-    Ok(weights)
+/// Position × packing weights tied to the prepared point that produced them.
+pub(crate) struct FusedPackingWeights<'a, E: Field> {
+    point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    values: Vec<E>,
 }
 
-pub(crate) fn validate_packing_position_weights<E: Field>(
-    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
-    weights: &[E],
-) -> Result<(), AkitaError> {
-    if weights.len() != packing_position_weight_len(point)? {
-        return Err(AkitaError::InvalidSetup(
-            "coefficient-packing fused weight dimensions mismatch".into(),
-        ));
+impl<'a, E: Field> FusedPackingWeights<'a, E> {
+    /// Precompute the tensor product reused by every claim in one opening batch.
+    #[tracing::instrument(skip_all, name = "coefficient_packing_prepare_weights")]
+    pub(crate) fn new(
+        point: &'a akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    ) -> Result<Self, AkitaError> {
+        let len = Self::required_len(point)?;
+        let mut values = Vec::new();
+        values.try_reserve_exact(len).map_err(|_| {
+            AkitaError::InvalidInput("coefficient-packing fused weight allocation failed".into())
+        })?;
+        for &position_weight in point.position_weights() {
+            values.extend(
+                point
+                    .packing_weights()
+                    .iter()
+                    .map(|&packing_weight| position_weight * packing_weight),
+            );
+        }
+        Ok(Self { point, values })
     }
-    Ok(())
-}
 
-pub(crate) fn packing_position_weight_len<E: Field>(
-    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
-) -> Result<usize, AkitaError> {
-    checked::product([
-        point.num_positions_per_block(),
-        point.geometry().subring_embedding_stride(),
-    ])
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup("coefficient-packing fused weight length overflow".into())
-    })
+    pub(crate) fn required_len(
+        point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    ) -> Result<usize, AkitaError> {
+        checked::product([
+            point.num_positions_per_block(),
+            point.geometry().subring_embedding_stride(),
+        ])
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("coefficient-packing fused weight length overflow".into())
+        })
+    }
+
+    pub(crate) fn point(&self) -> &'a akita_types::PreparedSubringCoefficientPackingPoint<E> {
+        self.point
+    }
+
+    pub(crate) fn values(&self) -> &[E] {
+        &self.values
+    }
 }
 
 /// Construct canonical partials from an A-ring position source.
@@ -70,8 +74,7 @@ pub(crate) fn packing_position_weight_len<E: Field>(
 /// through `coefficient` without repeating source validation or decoding.
 #[tracing::instrument(skip_all, name = "coefficient_packing_partials")]
 pub(crate) fn coefficient_packing_partials_from_position_source<F, E, P, const D: usize>(
-    plan: SubringCoefficientPackingPlan<'_, E>,
-    fused_weights: &[E],
+    fused_weights: &FusedPackingWeights<'_, E>,
     source_num_vars: usize,
     position_at: impl Fn(usize) -> Result<P, AkitaError> + Sync,
     coefficient: impl Fn(usize, usize, &P) -> F + Sync,
@@ -81,6 +84,9 @@ where
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
     P: Sync,
 {
+    let plan = SubringCoefficientPackingPlan {
+        point: fused_weights.point(),
+    };
     plan.validate::<D>(source_num_vars)?;
     let point = plan.point;
     let geometry = point.geometry();
@@ -96,7 +102,7 @@ where
     })?;
     let s = geometry.challenge_subring_dimension();
     let stride = geometry.subring_embedding_stride();
-    validate_packing_position_weights(point, fused_weights)?;
+    let fused_weights = fused_weights.values();
 
     let block_coordinates = cfg_into_iter!(0..num_blocks)
         .map(|block_index| {

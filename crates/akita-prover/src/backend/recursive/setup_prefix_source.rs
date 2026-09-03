@@ -10,12 +10,11 @@ use akita_types::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
+use crate::backend::coefficient_packing::FusedPackingWeights;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
 };
-use crate::backend::{
-    suffix_witness_coefficient_packing_partials, RecursiveWitnessFlat, SuffixWitnessView,
-};
+use crate::backend::{RecursiveWitnessFlat, SuffixWitnessView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
@@ -23,6 +22,8 @@ use crate::compute::{
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+
+use super::witness::suffix_witness_coefficient_packing_partials;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -511,8 +512,7 @@ where
         source: RecursiveFoldBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
-        let fused_weights =
-            crate::backend::coefficient_packing::prepare_packing_position_weights(plan.point)?;
+        let fused_weights = FusedPackingWeights::new(plan.point)?;
         let mut outputs = Vec::with_capacity(source.polys.len());
         for poly in source.polys {
             match poly {
@@ -539,7 +539,6 @@ where
                             _,
                             D,
                         >(
-                            plan,
                             &fused_weights,
                             RootPolyMeta::<F>::num_vars(*poly),
                             |position| {
@@ -559,7 +558,6 @@ where
                 RecursiveFoldSource::Witness(witness) => {
                     outputs.push(suffix_witness_coefficient_packing_partials::<F, E, D>(
                         witness.as_ref(),
-                        plan,
                         &fused_weights,
                     )?);
                 }
