@@ -345,7 +345,7 @@ fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
             degree_too_low.stages[stage_index]
                 .sumcheck_proof
                 .round_polys[0]
-                .coeffs_except_linear_term
+                .coeffs_except_constant_term
                 .pop();
             assert_stage1_rejected(&degree_too_low, equality_point.clone(), plan);
 
@@ -353,7 +353,7 @@ fn stage1_verifier_rejects_every_malformed_plan_shape_without_panicking() {
             degree_too_high.stages[stage_index]
                 .sumcheck_proof
                 .round_polys[0]
-                .coeffs_except_linear_term
+                .coeffs_except_constant_term
                 .push(F::from_u64(0));
             assert_stage1_rejected(&degree_too_high, equality_point.clone(), plan);
 

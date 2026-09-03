@@ -651,7 +651,7 @@ mod tests {
                 1,
                 1,
                 4,
-                4,
+                11,
                 1,
                 SisModulusProfileId::Q128OffsetA7F7,
             )
@@ -672,7 +672,7 @@ mod tests {
                 1,
                 1,
                 4,
-                4,
+                11,
                 8,
                 SisModulusProfileId::Q128OffsetA7F7,
             )
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "schedules-default")]
-    fn fp128_dense_prewarms_centered_quotient_tail() {
+    fn fp128_dense_prewarms_the_selected_centered_quotient_profile() {
         let schedule = fp128::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(26),
         ))
@@ -832,12 +832,31 @@ mod tests {
         .into_schedule();
         let requirements =
             NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
-        assert!(requirements.entries().iter().any(|entry| {
+        let root = &schedule.root.params;
+        let (negative, positive) = akita_types::sis::balanced_digit_representable_bounds(
+            root.open().digits.log_basis,
+            root.num_digits_fold(),
+        );
+        let rhs_abs_bound = u64::try_from(
+            negative
+                .max(positive)
+                .checked_mul(root.witness_chunk.num_chunks as u128)
+                .expect("generated root bound"),
+        )
+        .expect("generated root bound fits u64");
+        let expects_tail = centered_quotient_requires_i16_tail(
+            root.inner().matrix.sis_modulus_profile(),
+            root.role_dims().d_a(),
+            rhs_abs_bound,
+        )
+        .expect("generated root tail decision");
+        let has_tail = requirements.entries().iter().any(|entry| {
             entry.fold_level == 0
                 && entry.cluster == NttOperationCluster::RingSwitch
-                && entry.key.ring_d == schedule.root.params.role_dims().d_a()
+                && entry.key.ring_d == root.role_dims().d_a()
                 && entry.key.domain == NttTransformDomain::I16TailBothTransforms
-        }));
+        });
+        assert_eq!(has_tail, expects_tail);
     }
 
     #[test]

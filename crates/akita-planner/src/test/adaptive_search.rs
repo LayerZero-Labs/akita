@@ -486,6 +486,49 @@ fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn bounded_recursive_setup_search_matches_exhaustive_on_small_fixture() {
+    use akita_config::{
+        honest_fold_policy_of, policy_of, proof_optimized::fp128::OneHot, CommitmentConfig,
+        RecursiveCommitmentConfig,
+    };
+
+    type Recursive = RecursiveCommitmentConfig<OneHot>;
+
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let bounded = policy_for_domain(policy_of::<Recursive>(), &domain);
+    assert_eq!(
+        bounded.recursive_setup_search_policy,
+        crate::RecursiveSetupSearchPolicy::RootAndFirstChildV1
+    );
+    let mut exhaustive = bounded;
+    exhaustive.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;
+    let key = onehot_group(16, 1);
+    let bounded_schedule = find_schedule(
+        key,
+        &bounded,
+        honest_fold_policy_of::<Recursive>(),
+        &domain,
+        Recursive::ring_challenge_config,
+    )
+    .expect("bounded recursive setup search");
+    let exhaustive_schedule = find_schedule(
+        key,
+        &exhaustive,
+        honest_fold_policy_of::<Recursive>(),
+        &domain,
+        Recursive::ring_challenge_config,
+    )
+    .expect("exhaustive recursive setup search");
+
+    assert_eq!(
+        bounded_schedule.schedule.canonical_descriptor_bytes(),
+        exhaustive_schedule.schedule.canonical_descriptor_bytes()
+    );
+    assert_eq!(bounded_schedule.estimate, exhaustive_schedule.estimate);
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn adaptive_frontier_matches_unpruned_traversal_and_hand_priced_role_optima() {
     use akita_config::{policy_of, proof_optimized::fp128::OneHot, CommitmentConfig};
 

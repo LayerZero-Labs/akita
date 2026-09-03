@@ -51,8 +51,7 @@ mod proof_shapes;
 #[path = "schedule_tests/sis_occurrences.rs"]
 mod sis_occurrences;
 type F = Prime128OffsetA7F7;
-// `pm1_only(3)` prices the fixtures' response cap 127 below A bucket 4095.
-const TEST_TERMINAL_A_BUCKET: u128 = 4_095;
+const TEST_TERMINAL_A_BOUND: u128 = 104_244;
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
     committed_params_with_geometry(ring_dimension, 4, 4)
 }
@@ -69,7 +68,8 @@ fn committed_params_with_geometry(
         2,
         2,
         2,
-        SparseChallengeConfig::pm1_only(3),
+        SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            .expect("production test challenge"),
     )
     .with_decomp(
         num_positions_per_block,
@@ -79,6 +79,7 @@ fn committed_params_with_geometry(
         2,
     )
     .expect("schedule validation params");
+    let a_bound = execution_admission::exact_test_a_bound(&params);
     let inner = params.inner().matrix;
     params.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::try_new(
         inner.security_policy(),
@@ -89,7 +90,7 @@ fn committed_params_with_geometry(
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        TEST_TERMINAL_A_BUCKET,
+        a_bound,
         inner.ring_dimension(),
     )
     .expect("audited schedule A matrix");
@@ -530,6 +531,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     group_params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group uses a production ring dimension");
+    let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = &group_params.inner().matrix;
     group_params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::new_unchecked(
@@ -541,7 +543,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            a_bound,
             inner.ring_dimension(),
         );
     let outer = &group_params.outer().matrix;
@@ -637,7 +639,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            TEST_TERMINAL_A_BUCKET,
+            TEST_TERMINAL_A_BOUND,
             inner.ring_dimension(),
         );
     let expected_inner = committed.inner().matrix;
@@ -702,10 +704,7 @@ fn dummy_eq_factored_sumcheck<F: Field>(
     EqFactoredSumcheckProof {
         round_polys: (0..rounds)
             .map(|_| EqFactoredUniPoly {
-                coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
+                coeffs_except_constant_term: vec![F::zero(); degree],
             })
             .collect(),
     }
@@ -854,7 +853,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 inner.sis_modulus_profile(),
                 inner.output_rank(),
                 inner.input_width(),
-                TEST_TERMINAL_A_BUCKET,
+                TEST_TERMINAL_A_BOUND,
                 inner.ring_dimension(),
             );
 
@@ -1041,7 +1040,7 @@ fn precommitted_descriptor(num_vars: usize) -> GroupCommitPhaseParams {
             modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
             role: crate::sis::SisMatrixRole::Inner,
             ring_dimension: 64,
-            coeff_linf_bound: 32_767,
+            coeff_linf_bound: TEST_TERMINAL_A_BOUND,
         },
         16,
     )

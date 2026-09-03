@@ -24,8 +24,9 @@ pub use resolve::{
 };
 pub use runtime::{
     default_sis_security_policy, expanded_schedule_proof_payload_bytes, validate_policy,
-    PlannerCostModelId, PlannerPolicy, RecursiveSplitSearchPolicy, RingDimensionScheduleMode,
-    RuntimeSchedulePolicy, SelectionPolicyId, SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
+    PlannerCostModelId, PlannerPolicy, RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy,
+    RingDimensionScheduleMode, RuntimeSchedulePolicy, SelectionPolicyId,
+    SelectiveL2ResponseModelId, ADAPTIVE_SEARCH_LEVELS,
 };
 
 /// Shared schedule-construction primitives used by offline search and generated-row replay.

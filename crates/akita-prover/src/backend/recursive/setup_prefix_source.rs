@@ -10,10 +10,11 @@ use akita_types::{
 use jolt_field::solinas::parallel::*;
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 
+use crate::backend::coefficient_packing::FusedPackingWeights;
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
 };
-use crate::backend::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
+use crate::backend::{RecursiveWitnessFlat, SuffixWitnessView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
@@ -21,6 +22,8 @@ use crate::compute::{
     SubringCoefficientPackingPartials, SubringCoefficientPackingPlan, TensorProjectionBatchKernel,
     TensorProjectionKernel,
 };
+
+use super::witness::suffix_witness_coefficient_packing_partials;
 
 #[doc(hidden)]
 #[derive(Clone)]
@@ -154,7 +157,8 @@ fn checked_setup_prefix_ring_count<const D: usize>(
     natural_len: usize,
     n_prefix: usize,
 ) -> Result<usize, AkitaError> {
-    if D == 0 || natural_len > n_prefix || !n_prefix.is_multiple_of(D) {
+    akita_types::validate_setup_prefix_domain(natural_len, n_prefix)?;
+    if D == 0 || !n_prefix.is_multiple_of(D) {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix length is incompatible with its ring layout".to_string(),
         ));
@@ -176,21 +180,9 @@ fn setup_prefix_fold_geometry<const D: usize>(
     source_ring_len: usize,
 ) -> Result<(usize, usize), AkitaError> {
     let geometry = &slot.id.commitment_profile;
-    geometry.validate(
-        slot.id
-            .commitment_profile
-            .inner
-            .matrix
-            .sis_modulus_profile()
-            .field_bits(),
-    )?;
-    if slot.id.d_setup() != D
-        || geometry.group.num_polynomials() != 1
-        || geometry.blocks.live_ring_elements_per_claim != source_ring_len
-        || geometry.blocks.positions_per_block == 0
-        || geometry.blocks.live_blocks
-            != source_ring_len.div_ceil(geometry.blocks.positions_per_block)
-    {
+    geometry.validate(geometry.inner.matrix.sis_modulus_profile().field_bits())?;
+    geometry.validate_setup_prefix_geometry(slot.id.natural_len)?;
+    if slot.id.d_setup() != D || geometry.blocks.live_ring_elements_per_claim != source_ring_len {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix source disagrees with frozen block geometry".into(),
         ));
@@ -512,17 +504,17 @@ impl<F, E, const D: usize>
     SubringCoefficientPackingBatchKernel<RecursiveFoldBatchView<'_, F, D>, F, E, D> for CpuBackend
 where
     F: Field + CanonicalEncoding + Ring,
-    E: ExtField<F> + akita_types::FpExtEncoding<F>,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
 {
     fn coefficient_packing_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
+        let fused_weights = FusedPackingWeights::new(plan.point)?;
         let mut outputs = Vec::with_capacity(source.polys.len());
         for poly in source.polys {
-            plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
             match poly {
                 RecursiveFoldSource::SetupPrefix { expanded, slot } => {
                     let rings = setup_prefix_rings::<F, D>(
@@ -547,7 +539,7 @@ where
                             _,
                             D,
                         >(
-                            plan,
+                            &fused_weights,
                             RootPolyMeta::<F>::num_vars(*poly),
                             |position| {
                                 rings
@@ -564,18 +556,10 @@ where
                     )?);
                 }
                 RecursiveFoldSource::Witness(witness) => {
-                    let witnesses = [witness.as_ref()];
-                    let batch =
-                        <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
-                    let mut partials = <CpuBackend as SubringCoefficientPackingBatchKernel<
-                        SuffixWitnessBatchView<'_, F, D>,
-                        F,
-                        E,
-                        D,
-                    >>::coefficient_packing_partials_batch(
-                        self, prepared, batch, plan
-                    )?;
-                    outputs.push(partials.pop().ok_or(AkitaError::InvalidProof)?);
+                    outputs.push(suffix_witness_coefficient_packing_partials::<F, E, D>(
+                        witness.as_ref(),
+                        &fused_weights,
+                    )?);
                 }
             }
         }
@@ -707,13 +691,17 @@ mod tests {
         .with_decomp(4, 4, 2, 2, 2)
         .unwrap();
         let inner = &params.inner().matrix;
+        let inner_bound =
+            *akita_types::sis::inner_coeff_linf_bounds(inner.sis_modulus_profile(), D as u32)
+                .first()
+                .expect("audited setup-prefix A bound");
         params.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
             inner.security_policy(),
             inner.sis_table_key().unwrap().table_digest,
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            inner_bound,
             D,
         );
         let outer = &params.outer().matrix;

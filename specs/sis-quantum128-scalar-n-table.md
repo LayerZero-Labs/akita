@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-13 |
 | Status        | implemented |
-| PR            | |
+| PR            | #444 |
 | Supersedes    | the SIS policy and table specs deleted in this cutover |
 | Superseded-by | |
 | Book-chapter  | book/src/how/security.md |
@@ -43,8 +43,9 @@ Policy identifier:
 Quantum128BitADPS16
 ```
 
-The old policy identity and scalar `min_security_bits` identity are removed in
-the same cutover. Unsupported policy and table identities fail closed.
+The scalar `min_security_bits` identity is removed in the cutover. The
+development policy retains the unversioned `Quantum128BitADPS16` name and wire
+tag `1`; unsupported policy tags and table identities fail closed.
 
 ### Delivered implementation parameters
 
@@ -52,16 +53,73 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 `0.2650`, LGSA shape, coefficient `L-infinity` norm, target `128.0`, maximum
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
+Production arithmetic otherwise uses the documented `f64` backend. Integer
+small-box branch boundaries are compared exactly, with a fast log-space
+precheck away from equality. The unimplemented high-precision backend fails
+closed rather than silently executing in `f64`.
 
-The canonical role coverage has Inner/A dimensions `64, 128, 256` for every
-modulus profile, plus q128 Inner/A dimension `512`. Outer/B and Open/D have
-dimensions `64, 128, 256`. The separate fixed compression cells use their
-protocol-specific dimensions. Every commitment-matrix cell has maximum module
-rank `20`. Inner/A uses the explicit planner bucket set
-`2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
-32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
-16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823,
-2147483647, 4294967295, 8589934591, 17179869183, 34359738367`.
+The canonical role coverage has Inner/A dimensions `64, 128, 256, 512, 1024,
+2048` for q32 and q64, and `64, 128, 256, 512, 1024` for q128. Outer/B and
+Open/D have dimensions `64, 128, 256`. The separate fixed
+compression cells use their protocol-specific dimensions. Every
+commitment-matrix cell has maximum module rank `20`. Inner/A uses exact
+protocol collision targets
+
+```text
+B_A = 4 * ||c||_1 * C * (2^t - 1),
+t in {3,4,5,6,8,9,10,12,15,16,18,20,21,24,25,27,28,30,32,33}.
+```
+
+Here `C` is the number of response chunks retained by the consuming fold. The
+one-chunk interval diameter is `2^t - 1`; the shared A rows act on the sum of
+all `C` independently range-checked responses. This expression is the raw
+collision target. Runtime lookup selects the smallest audited A cell for the
+same modulus profile and ring dimension whose coefficient bound is at least
+`B_A`, and rejects the schedule if no such cell exists. The coverage set itself
+remains the one-response target set; response-chunk count is not an independent
+table axis. Selective L2 rows remain one-chunk cells.
+
+#### Deferred part-indexed relation alternative
+
+The factor `C` is required by the implemented relation, but it is not inherent
+to reusing one public A matrix across chunks. A future protocol change could
+retain separate carrier-consistency and A equations for every response chunk,
+while continuing to aggregate the additive public-image, opening, and
+compression equations. The chunk-indexed logical rows could still be
+random-batched into one sumcheck and could all reuse the same physical A
+matrix.
+
+With those local equations, extraction can select one differing chunk. Its
+accepted response-difference diameter is `2^t - 1`, so the corresponding raw A
+collision target would be
+
+```text
+B_A_local = 4 * ||c||_1 * (2^t - 1).
+```
+
+This improvement cannot be obtained by changing only the security proof or
+the table lookup. Under the current shared equation, adding a vector `u` to one
+accepted chunk and subtracting it from another leaves the aggregate response
+unchanged whenever both modified chunks remain in range. Local consistency and
+A rows would instead expose the two residuals separately.
+
+This PR does not implement that alternative. It would require part-indexed
+ring-relation and quotient rows, proof and schedule identity changes, planner
+and generated-table regeneration, and negative tests for cross-chunk
+cancellation. In particular, the quotient witnesses are bound before the row
+batching challenges in the current transcript, so a single quotient formed
+after random batching is not a drop-in replacement. Until the prover and
+verifier enforce the local relation, every multi-chunk coefficient route must
+retain the factor `C` above.
+
+The production challenge masses are `14, 16, 19, 23, 31, 51`; the D64
+selective-L2 shell additionally contributes `53`. A ring dimension retains
+only the masses reachable through its evaluation-trace or coefficient-packing
+geometry. The q32 profile guard is `268435455`, q64 is
+`2199023255551 = 2^41 - 1`, and q128 is
+`17592186044415 = 2^44 - 1`. An A lookup can round an intermediate raw target
+only to the next audited A cell for the same profile and dimension; it never
+rounds directly to a profile guard or a synthetic power-of-two bucket.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
@@ -73,9 +131,93 @@ each ring origin, including its accepted and rejected boundary witnesses. The
 runtime projection takes the minimum scalar cutoff when different ring origins
 map to the same scalar key.
 
-The q128 Inner/512 cell adds 700 direct estimator requests: 35 coefficient
-buckets times 20 module ranks. The distinct extension digest gates these
-slices; the original digest cannot authorize D512.
+The checked-in production audit contains 21,100 ring-origin rows: 4,780 for
+q32, 9,280 for q64, and 7,040 for q128. The q128 Inner/1024 cell has 2,000
+direct estimator requests: 100 exact coefficient targets times 20 module
+ranks.
+
+### Quantum cost-model disposition
+
+The `0.2650` exponent is a deliberate conventional Core-SVP policy, not an
+oversight about newer asymptotic quantum sieves. BCSS23 reports
+`2^(0.2563 * beta + o(beta))` time by reusing quantum walks across collision
+searches. Akita does not promote that exponent to the production gate because
+the transfer assumes heuristic asymptotics, exponential reusable-sieve
+storage, writable QRAQM with coherent reads and writes, unit-cost or
+polylogarithmic-cost coherent access, and then a transfer from the idealized
+SVP oracle to BKZ and repeated infinity-norm short-vector generation. It is not
+a concrete fault-tolerant resource estimate.
+
+This disposition was evaluated rather than inferred by exponent rescaling. At
+commit `00bc2210877c8a8f6bbc46bdbef300f9fa437457`, the generator independently
+optimized the ADPS16 classical, ADPS16 quantum, and idealized BCSS23 models for
+6,240 table rows. It used 124 bits as the BCSS review line because
+`128 * 0.2563 / 0.2650 = 123.80...`; zero accepted ADPS16-quantum rows fell
+below that review line. Commit `6384b57756b9116127c70ea397388096b2a420da`
+then removed the non-gating BCSS implementation and audit columns as unused
+production scaffolding. Regeneration under an additional BCSS gate is therefore
+not required by this policy.
+
+Promoting BCSS23 or another idealized quantum sieve to a hard constraint
+requires a new evaluator revision, table digest, and artifact regeneration. A
+new policy identifier is additionally required if the old and new rules must
+coexist. The review must address finite-dimensional costs, quantum memory size
+and access, fault-tolerant implementation, the BKZ oracle transfer, and measured
+rank or proof-size impact; a smaller asymptotic exponent alone is insufficient.
+The ADPS16 paranoid `0.2075 * beta` list-size line is likewise not an end-to-end
+attack-time estimate.
+
+### Shape-model disposition
+
+LGSA models an attacker rerandomizing the q-ary basis so BKZ forgets the
+canonical q-vectors. It is the production shape because the attacker may choose
+that basis and, in the small-box branch used by the widened q64 and q128 rows,
+LGSA's clipped profile has a first Gram-Schmidt vector no longer than ordinary
+GSA at the same `(beta, zeta)`. A shorter first vector only increases the
+modeled coefficient-wise success probability. When the LGSA unit tail
+disappears, LGSA and GSA coincide exactly.
+
+The pinned Sage estimator at
+`c667a48546f140c3a5454c7503c3ca44a264cce2` was also used for an offline
+profile comparison on conservative profile-guard rows. These rows audit shape
+selection at the reach envelope; after the exact-target cutover they need not
+be runtime table keys. Independent local beta and zeta optimization produced:
+
+| Scalar SIS row | LGSA | GSA | CN11 | CN11 after forgetting q-structure |
+|---|---:|---:|---:|---:|
+| q64, `n=1024`, `m=1810`, `B=2^41-1` | 130.910 (`beta=494`, `zeta=0`) | 130.910 | 132.235 (`beta=499`, `zeta=0`) | 132.235 |
+| q128, `n=1024`, `m=4096`, `B=2^44-1` | 172.515 (`beta=651`, `zeta=1`) | 172.515 | 173.045 (`beta=653`, `zeta=0`) | 173.045 |
+
+Thus LGSA is the cheapest modeled attack among those determinant-preserving
+profiles on both representative rows. CN11 remains an offline audit oracle: a
+single full local q128 optimization took about 85 seconds while its
+forget-q-structure variant took about 107 seconds on the audit machine, making
+either inappropriate for the production table sweep.
+
+The pinned ZGSA implementation is not a valid counterexample on arbitrary
+unbalanced shapes. Its symmetric transition iterates once per q-vector even
+after the identity-vector zone is exhausted. On the q64 row above, that loses
+5,485.85 bits of log2 lattice volume at `beta=494` and creates a spurious
+90.895-bit result. The Rust compatibility path repairs the transition by
+performing only paired smoothing steps, stopping at the smaller zone. Generated
+ZGSA profiles must preserve `log2(det Lambda) = n * log2(q)` for both balanced
+and q-vector-majority inputs.
+
+The probability regime is also defined on the reduced instance. After the
+attacker projects away `zeta` coordinates, the active dimension is
+`d_eff = d - zeta`; therefore the small-box test is
+`sqrt(d_eff) * B <= q`, not `sqrt(d) * B <= q`. The pinned Sage implementation
+uses the original dimension at this branch. That is not a conservative choice
+in general: an audit of 2,562 representative q32 cells found 35 cells where
+the original-dimension branch reported a lower trial probability and hence a
+higher attack cost. For example, `n=1024`, `d=65537`, `B=2^24-1`,
+`beta=343`, and `zeta=57345` has `d_eff=8192` and a corrected quantum attack
+cost of 118.916 bits. A separate audit of the 40 current exact q32 table
+boundaries exposed to this branch change found no accepted/rejected boundary
+reversal. The tables must nevertheless be regenerated after the search and
+reach changes because that boundary sample is not a replacement for full
+generation and certification. For integer production bounds, the corrected
+branch comparison falls back to exact integer arithmetic at the boundary.
 
 ## Intent
 
@@ -99,13 +241,30 @@ norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
 
 Base-table generation uses `local-minimum` discovery, then certifies its
 accepted boundary and immediate rejected successor with proven-pruned beta and
-full-domain zeta search. The beta search visits values from 40 through the
-capped Euclidean baseline and stops once the monotone ADPS16 reduction-cost
-lower bound exceeds the best complete candidate. For fixed beta under ADPS16/LGSA,
-the modeled attack minimum occurs at the complete-profile transition or its
-immediate predecessor, with the zero-coordinate boundary represented by
-`zeta = 0` and `zeta = 1`. Checking those candidates covers the wide D512
-domain without changing its width policy.
+full-valid-domain zeta search. The valid tall q-ary domain is
+`0 <= zeta < d - n`; an effective dimension `d - zeta <= n` is not an SIS
+lattice instance priced by this attack model. The decision threshold is an
+explicit estimator configuration value supplied by the policy profile. The
+beta search visits values from 40 through the capped Euclidean baseline and
+stops once the monotone ADPS16 reduction-cost lower bound exceeds the best
+complete candidate. When the best visited attack and the lower bound for every
+unvisited beta both exceed 128 bits, the estimator returns a classified
+above-target result instead of representing the much larger exact cost. For
+`B > 1`, the global infinity estimate explicitly takes the minimum with that
+ordinary Euclidean SIS attack: any vector with `L2 <= B` also has
+`L-infinity <= B`. Thus the Euclidean beta is both included as a real attack
+and provides the monotone upper endpoint for the beta sweep; it is not merely
+used as a heuristic search cutoff. For `B <= 1`, Euclidean dimension optimization is
+undefined. The separate diagnostic compression table contains the production
+`B = 1` instances of this edge case; those cells omit the Euclidean candidate
+without substituting `B = 2` and sweep the full supported beta range instead.
+For fixed beta under ADPS16/LGSA,
+the search scans every effective dimension before the profile stabilizes; the
+modeled stable tail adds only unit vectors and is minimized at one of its two
+endpoints within either probability regime. If the active-dimension small-box
+condition changes inside that tail, the search also checks the two dimensions
+straddling the transition. This covers the wide D512 domain without changing
+its width policy.
 
 A candidate passes only when the certified estimate returns a finite score or
 an explicit above-target lower bound. A finite score or represented lower bound
@@ -122,6 +281,11 @@ above the target without representing the full value, it returns the distinct
 `CostValue::ProvenAboveTarget` result with a supporting lower bound. That result
 may pass only when its bound is at least 128 bits.
 
+The scalar cutoff search starts at the first tall Module-SIS geometry
+`width = rank + 1`. If that instance fails, the row records cutoff zero rather
+than assigning an attack cost to a square or wide matrix. If it passes, smaller
+widths inherit security from the certified tall instance by column restriction.
+
 For each scalar key `(modulus_profile, B, n)`, store the largest certified `m`
 within the search range. Security cannot increase as `m` grows because an
 attacker can pad a shorter witness with zeros. The generator must check that
@@ -131,7 +295,10 @@ shape.
 
 ### Policy identity
 
-The policy ID names the complete acceptance rule. It includes:
+The policy ID names the stable production gate family. The complete runtime
+security identity is the pair of policy ID and generated table digest, while
+offline work IDs additionally include the evaluator revision. Together these
+commit to:
 
 - the hard target;
 - the reduction cost model and exponent;
@@ -140,9 +307,18 @@ The policy ID names the complete acceptance rule. It includes:
 - the boundary certificate domain;
 - the meaning of finite, classified, and failed estimates.
 
-Any change to the hard model that can change whether the same scalar SIS cell
-passes requires a new policy ID and regenerated artifacts. A change to the
-search profile for a table extension requires a new table digest.
+Any development change to the hard model that can change whether the same
+scalar SIS cell passes requires a new evaluator revision, table digest, and
+regenerated artifacts. A distinct policy ID is required only when multiple
+acceptance rules must coexist. A change to the search profile for a table
+extension requires a new table digest.
+
+The active-dimension correction, complete pre-stable search, explicit
+Euclidean candidate, and scale-aware q-vector classification in this hardening
+patch can change that decision. This regeneration retains the unversioned
+`Quantum128BitADPS16` runtime policy ID and tag `1`, advances the evaluator
+revision, and emits a new table digest. Every dependent schedule is regenerated
+in the same atomic cutover.
 
 The table digest is separate. It commits to the exact modulus profiles, role
 coverage, coefficient bound cells, rank limits, search caps, certificates, and
@@ -335,16 +511,36 @@ B and D use exact gadget anchors when their formulas produce
 3, 7, 15, 31, 63, 127, 255
 ```
 
-A uses the explicit planner bucket set listed in the delivered implementation
-parameters. The set is a deliberate collision-bucket contract, not an implicit
-geometric ladder and not a runtime interpolation rule. If planner workloads
-ever require a bound outside the set, the coverage and generated table must be
-updated together.
+A coverage uses the exact one-response targets derived from the
+response-difference exponent sweep, compatible production challenge masses,
+and the profile reach guard. A consuming relation first derives its exact raw
+target, including the response-chunk count, and then selects the smallest
+audited cell that covers it. This keeps the checked-in table independent of the
+chunk-count catalog. A sparse refinement cell may be added when measurement
+shows that the existing ceiling materially worsens a supported schedule; such
+a cell must be added to the canonical coverage derivation and generated table
+together.
+
+The current q128 table contains eight such multi-chunk refinements:
+
+```text
+D=64:  417384, 1670760, 3341520
+D=256: 416976, 753480, 3341520
+D=512: 15624, 416976
+```
+
+These eight cells contribute 160 ring-origin/rank rows. They cover measured
+two- and four-response operating points without forming the Cartesian product
+of challenge masses, digit exponents, ring dimensions, and chunk counts.
+Eight-response schedules use the ordinary ceiling rule; no dedicated
+eight-response refinement is present.
 
 F uses the bounds required by its own formula and planner domain.
 
-Each role helper rounds a raw bound up within that role's allowed cells. The
-generator stores the union of the resulting `(B, n)` requests. It does not
+The B and D helpers round a raw gadget bound up within their allowed anchors;
+the A helper rounds its already-derived exact target up within the audited A
+cells for the selected profile and dimension. The generator stores the union
+of the resulting `(B, n)` requests. It does not
 generate the full product of every role's bounds and every role's row
 dimensions unless those cells are actually reachable.
 
@@ -403,6 +599,15 @@ Generation provenance includes:
 - coefficient cell rules and role coverage;
 - search caps and review margins.
 
+Long generation may be split into deterministic, content-addressed work items.
+Each completed result is immutable and commits to the evaluator identity and
+canonical evaluator input. Partial runs may checkpoint or exchange any subset
+of these results, but they are not tables. Runtime artifacts may be assembled
+only after every work item required by the requested coverage is present and
+the complete row set passes certificate, monotonicity, and coverage validation.
+Changing security-relevant evaluator behavior changes the evaluator identity,
+so results from the prior computation cannot silently satisfy the new plan.
+
 The checked in table and audit artifact must have a shared digest. The audit
 records accepted and rejected beta and zeta witnesses for every generated ring
 origin. Role admission remains canonical runtime data and is committed
@@ -415,16 +620,8 @@ Each file is encoded as an unsigned little endian 64-bit byte length, its
 UTF-8 filename, a NUL byte, and its exact bytes. This encoding is independent
 of host word size, map iteration order, and parallel generation order.
 
-The additive q128 Inner/512 coverage uses a separate digest without replacing
-the base artifact identity. SHA3-256 commits to the domain tag
-`akita-sis-table-q128-inner-d512-direct-v1\0`, the 32-byte base digest, the
-exact q128 modulus as a little-endian `u128`, then `(d, search_cap, max_rank)`
-as little-endian `(u32, u64, u32)`, followed by the coefficient-bucket count as
-an unsigned little-endian `u64`,
-the buckets as little-endian `u128`s, and all widths in bucket/rank order as
-little-endian `u64`s. The resulting digest is
-`267f1d1fd2cd64fac57fb61d2a2ece92eb0e7b7dc22af4dd0229c0f28a9e1d8b`.
-Existing schedules retain the base digest.
+The q128 Inner/1024 cells are part of the unified artifact and its shared table
+digest. Dependent schedule catalogs embed that same digest.
 
 ## Invariants
 
@@ -438,7 +635,8 @@ Existing schedules retain the base digest.
 - Identical scalar cells are generated once.
 - Unreachable scalar cells are not required.
 - Exact modulus profiles are checked against the configured field.
-- Policy identity changes whenever acceptance semantics change.
+- Policy identity changes whenever estimator acceptance semantics change;
+  coverage-only changes retain the policy and change the table identity.
 - Table identity changes whenever coverage or generated data changes.
 - Missing required cells and arithmetic overflow fail closed with `AkitaError`.
 - Estimator work is offline. Verifier reachable code uses static tables and does
@@ -453,7 +651,7 @@ Existing schedules retain the base digest.
 - Cell interpolation.
 - Reusing a modulus profile for another modulus of the same size.
 - Treating the scalar estimate as a proof against every structured attack.
-- Compatibility with the replaced SIS policy identity.
+- Compatibility with artifacts tied to the replaced SIS table digest.
 
 ## Evaluation
 
@@ -463,7 +661,8 @@ Existing schedules retain the base digest.
 - [x] The estimator accepts only certified ADPS16 quantum scores at or above
       128.
 - [x] Generic infinite and failed estimates stop generation.
-- [x] The policy ID commits to all acceptance semantics.
+- [x] The policy ID, evaluator revision, and table digest jointly commit to all
+      acceptance semantics.
 - [x] Exact modulus profiles replace size only family selection.
 - [x] Role coverage comes from the planner domain.
 - [x] B and D cover every supported commitment dimension, starting at 64.
@@ -475,6 +674,9 @@ Existing schedules retain the base digest.
       estimation and does not emit them.
 - [x] Coefficient cells are selected per role from the explicit A and gadget
       anchor sets.
+- [x] Planner replay and verifier admission derive the raw A-role infinity
+      target from the consuming response-chunk count, select an audited cell no
+      smaller than that target, and reject an undersized or unsupported cell.
 - [x] Cap hits use `ScalarCutoff::AtLeast`.
 - [x] Runtime lookup uses checked arithmetic and fails closed.
 - [x] Generated tables, audit data, schedules, book text, and operational docs
@@ -502,6 +704,9 @@ Test these cases:
 - rejection of B and D commitment requests below dimension 64;
 - A requests at dimension 64 and above;
 - role specific coefficient rounding;
+- exact raw A-role scaling for response chunk counts 1, 2, 4, and 8, followed
+  by conservative selection of the smallest covering audited cell;
+- rejection of a multi-chunk schedule carrying only the one-chunk A bound;
 - a missing required role cell;
 - an omitted unreachable scalar cell;
 - exact and cap hit cutoffs;
@@ -569,7 +774,9 @@ runtime role lookup: n = rank*d, m_need = width*d
 ### Change control
 
 Changing the hard target, ADPS16 mode, norm, shape model, estimator revision,
-or estimate result semantics requires a new policy ID.
+or estimate result semantics requires a new evaluator revision, table digest,
+and regenerated artifacts. A new policy ID is required when the old and new
+acceptance rules must coexist.
 
 Changing role dimensions, role bounds, rank limits, exact modulus profiles,
 search or certificate profiles, search caps, or generated cells requires a
@@ -589,6 +796,16 @@ Durable narrative belongs in `book/src/how/security.md`.
 
 - ADPS16 reduction and quantum cost implementation in the pinned
   `third_party/lattice-estimator` checkout used by the estimator goldens.
+- Bonnetain, Chailloux, Schrottenloher, Shen, *Finding Many Collisions via
+  Reusable Quantum Walks*, [IACR ePrint 2022/676](https://eprint.iacr.org/2022/676).
+- Cho, Hhan, Kim, Lee, Shen, *Does Quantum Lattice Sieving Require Quantum
+  RAM?*, [IACR ePrint 2024/1700](https://eprint.iacr.org/2024/1700).
+- Ducas et al., *CRYSTALS-Dilithium*,
+  [round-3 specification](https://pq-crystals.org/dilithium/data/dilithium-specification-round3-20210208.pdf),
+  Appendix C.3.
+- Chen, Nguyen, *BKZ 2.0: Better Lattice Security Estimates*, ASIACRYPT 2011.
+- Ducas, van Woerden, *NTRU Fatigue*,
+  [IACR ePrint 2021/999](https://eprint.iacr.org/2021/999).
 - Langlois, Stehle, *Worst Case to Average Case Reductions for Module Lattices*,
   [IACR ePrint 2012/090](https://eprint.iacr.org/2012/090).
 - `crates/akita-sis-estimator/` — Rust infinity estimator profiles and

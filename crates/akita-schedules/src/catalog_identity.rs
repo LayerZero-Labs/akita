@@ -64,6 +64,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
     h.write_u64(u64::from(policy.recursive_split_search_policy.tag()));
+    h.write_u64(u64::from(policy.recursive_setup_search_policy.tag()));
     write_optional_usize(&mut h, policy.setup_field_budget);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
@@ -95,6 +96,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
     h.write_u64(u64::from(identity.recursive_split_search_policy.tag()));
+    h.write_u64(u64::from(identity.recursive_setup_search_policy.tag()));
     write_optional_usize(&mut h, identity.setup_field_budget);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
@@ -133,6 +135,7 @@ struct CatalogIdentityExpectation {
     selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     selection_policy: crate::SelectionPolicyId,
     recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
+    recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy,
     setup_field_budget: Option<usize>,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
@@ -164,6 +167,7 @@ impl CatalogIdentityExpectation {
             selective_l2_response_model: identity.selective_l2_response_model,
             selection_policy: identity.selection_policy,
             recursive_split_search_policy: identity.recursive_split_search_policy,
+            recursive_setup_search_policy: identity.recursive_setup_search_policy,
             setup_field_budget: identity.setup_field_budget,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
@@ -209,6 +213,7 @@ fn catalog_identity_expectation(
         selective_l2_response_model: policy.selective_l2_response_model,
         selection_policy: policy.selection_policy,
         recursive_split_search_policy: policy.recursive_split_search_policy,
+        recursive_setup_search_policy: policy.recursive_setup_search_policy,
         setup_field_budget: policy.setup_field_budget,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
@@ -248,6 +253,7 @@ pub fn expected_catalog_identity(
         selective_l2_response_model: expected.selective_l2_response_model,
         selection_policy: expected.selection_policy,
         recursive_split_search_policy: expected.recursive_split_search_policy,
+        recursive_setup_search_policy: expected.recursive_setup_search_policy,
         setup_field_budget: expected.setup_field_budget,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
@@ -833,6 +839,7 @@ mod tests {
             selective_l2_response_model: stale.identity.selective_l2_response_model,
             selection_policy: stale.identity.selection_policy,
             recursive_split_search_policy: stale.identity.recursive_split_search_policy,
+            recursive_setup_search_policy: stale.identity.recursive_setup_search_policy,
             setup_field_budget: stale.identity.setup_field_budget,
             min_offloaded_witness_contraction: stale.identity.min_offloaded_witness_contraction,
             sis_modulus_profile: stale.identity.sis_modulus_profile,
@@ -857,5 +864,52 @@ mod tests {
         assert!(err
             .to_string()
             .contains("schedule catalog identity mismatch"));
+    }
+
+    #[test]
+    fn recursive_setup_search_policy_is_catalog_bound() {
+        let table = crate::generated::fp128_onehot_recursive_table();
+        let mut policy = PlannerPolicy {
+            cost_model: table.identity.cost_model,
+            selective_l2_response_model: table.identity.selective_l2_response_model,
+            selection_policy: table.identity.selection_policy,
+            recursive_split_search_policy: table.identity.recursive_split_search_policy,
+            recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
+            setup_field_budget: table.identity.setup_field_budget,
+            min_offloaded_witness_contraction: table.identity.min_offloaded_witness_contraction,
+            sis_modulus_profile: table.identity.sis_modulus_profile,
+            sis_security_policy: table.identity.sis_security_policy,
+            sis_table_digest: table.identity.sis_table_digest,
+            sis_l2_table_digest: table.identity.sis_l2_table_digest,
+            decomposition: table.identity.decomposition,
+            claim_ext_degree: table.identity.claim_ext_degree,
+            chal_ext_degree: table.identity.chal_ext_degree,
+            inner_basis_range: table.identity.inner_basis_range,
+            opening_basis_range: table.identity.opening_basis_range,
+            witness_chunk: table.identity.witness_chunk,
+            recursive_setup_planning: table.identity.recursive_setup_planning,
+            ring_dimension_schedule_mode: table.identity.ring_dimension_schedule_mode,
+        };
+        assert_ne!(
+            policy.recursive_setup_search_policy,
+            table.identity.recursive_setup_search_policy
+        );
+        let err = validate_catalog_identity(&table, &policy, |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        })
+        .expect_err("recursive setup search policy mismatch must reject");
+        assert!(err
+            .to_string()
+            .contains("schedule catalog identity mismatch"));
+
+        policy.recursive_setup_search_policy = table.identity.recursive_setup_search_policy;
+        validate_catalog_identity(&table, &policy, |d| {
+            SparseChallengeConfig::production_for_ring_dim(d).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("unsupported test ring dimension {d}"))
+            })
+        })
+        .expect("matching recursive setup search policy");
     }
 }

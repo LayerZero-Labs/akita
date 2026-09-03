@@ -254,14 +254,18 @@ pub fn accumulate_terminal_matrix_field_elements(
 }
 
 /// Largest physical base-field footprint of an actual setup source prefix or
-/// either matrix used to commit its padded protocol object.
+/// either matrix used to commit its complete power-of-two prefix.
 pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usize, AkitaError> {
+    slot.commitment_profile.validate(
+        slot.commitment_profile
+            .inner
+            .matrix
+            .sis_modulus_profile()
+            .field_bits(),
+    )?;
+    slot.commitment_profile
+        .validate_setup_prefix_geometry(slot.natural_len)?;
     let n_prefix = slot.n_prefix()?;
-    if slot.d_setup() == 0 || !n_prefix.is_multiple_of(slot.d_setup()) {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix slot has invalid setup dimension".to_string(),
-        ));
-    }
     let mut max_field_elements = n_prefix;
     let params = &slot.commitment_profile;
     include_matrix_field_elements(

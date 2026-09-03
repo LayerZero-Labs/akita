@@ -58,6 +58,7 @@ impl InnerBasisSource {
 
 pub(crate) fn direct_only_policy(mut policy: PlannerPolicy) -> PlannerPolicy {
     policy.recursive_setup_planning = false;
+    policy.recursive_setup_search_policy = crate::RecursiveSetupSearchPolicy::Exhaustive;
     policy.selection_policy =
         SelectionPolicyId::for_policy(false, policy.ring_dimension_schedule_mode);
     policy

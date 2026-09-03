@@ -5,7 +5,7 @@ use akita_error::AkitaError;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod x86;
 
-/// NTT primes below `2^50` with at least `2^14`-th roots of unity.
+/// The three largest primes below `2^50` with `2^14 | (p - 1)`.
 pub const IFMA52_PRIMES: [u64; 3] = [
     1_125_899_906_826_241,
     1_125_899_906_629_633,
@@ -339,6 +339,8 @@ mod tests {
         round_trip::<128>();
         round_trip::<256>();
         round_trip::<512>();
+        round_trip::<1024>();
+        round_trip::<2048>();
     }
 
     #[test]
@@ -347,5 +349,7 @@ mod tests {
         assert!(ifma52_available(), "AVX-512F/DQ/IFMA is unavailable");
         assert!(ifma52_enabled(), "IFMA52 dispatch was not selected");
         round_trip::<64>();
+        round_trip::<1024>();
+        round_trip::<2048>();
     }
 }

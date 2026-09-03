@@ -186,7 +186,7 @@ where
 {
     // A private scoped pool gives this memory-heavy phase an explicit bound;
     // the workspace Rayon pool follows host-wide parallelism instead.
-    if workers <= 1 || items.len() < 2 * workers {
+    if workers <= 1 {
         return items
             .iter()
             .filter_map(|item| map(item).transpose())
@@ -746,6 +746,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    selective_l2_response_model: SelectiveL2ResponseModelId::{selective_l2_response_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
             "    recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::{recursive_split_search_policy},\n",
+            "    recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::{recursive_setup_search_policy},\n",
             "    setup_field_budget: {setup_field_budget},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
@@ -775,6 +776,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         selective_l2_response_model = identity.selective_l2_response_model.name(),
         selection_policy = identity.selection_policy.name(),
         recursive_split_search_policy = identity.recursive_split_search_policy.name(),
+        recursive_setup_search_policy = identity.recursive_setup_search_policy.name(),
         setup_field_budget = match identity.setup_field_budget {
             Some(value) => format!("Some({value})"),
             None => "None".to_string(),
@@ -891,6 +893,23 @@ mod preplanned_scalar_tests {
         std::thread::sleep(Duration::from_millis(20));
         ACTIVE_REGEN.fetch_sub(1, Ordering::Relaxed);
         Ok(REGEN_SCHEDULE.get().expect("test schedule").clone())
+    }
+
+    #[test]
+    fn bounded_parallel_map_uses_workers_for_small_expensive_batches() {
+        ACTIVE_REGEN.store(0, Ordering::Relaxed);
+        MAX_ACTIVE_REGEN.store(0, Ordering::Relaxed);
+        let items = [(), ()];
+        let output = bounded_parallel_filter_map(&items, 2, |_| {
+            let active = ACTIVE_REGEN.fetch_add(1, Ordering::Relaxed) + 1;
+            MAX_ACTIVE_REGEN.fetch_max(active, Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(20));
+            ACTIVE_REGEN.fetch_sub(1, Ordering::Relaxed);
+            Ok(Some(()))
+        })
+        .expect("bounded parallel map");
+        assert_eq!(output.len(), items.len());
+        assert_eq!(MAX_ACTIVE_REGEN.load(Ordering::Relaxed), 2);
     }
 
     #[test]

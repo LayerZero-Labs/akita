@@ -2,7 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINEAR: bool>(
-    prover: &RelationRangeImageProver<E>,
+    linear_lane: &PreparedLinearLane<'_, E>,
     source: &[E],
     target: &mut [E],
     next_alpha_factor: &[E],
@@ -53,10 +53,7 @@ fn fold_lane_and_compute_next_round<E: Field + Ring + Unreduced, const SKIP_LINE
 
             let p0 = next_alpha_factor[left] * lane_weight;
             let p1 = next_alpha_factor[left + 1] * lane_weight;
-            let linear_index = lane * next_coeff_count + left;
-            let (t0, t1) = prover
-                .linear_terms
-                .pair_from_flat_index(linear_index, next_coeff_count);
+            let (t0, t1) = linear_lane.pair(left);
             accumulate_relation_coeffs(&mut rel, w0, dw, p0 + t0, p1 + t1);
         }
 
@@ -114,9 +111,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
                 let lane_weight = self.relation_lane_weights[lane];
+                let linear_lane = self.linear_terms.resolve_lane(lane);
                 if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(
-                        self,
+                        &linear_lane,
                         source,
                         target,
                         next_alpha_factor,
@@ -130,7 +128,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     )
                 } else {
                     fold_lane_and_compute_next_round::<E, false>(
-                        self,
+                        &linear_lane,
                         source,
                         target,
                         next_alpha_factor,
@@ -159,9 +157,10 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                 let source_start = lane * old_coeff_count;
                 let source = &folded_witness[source_start..source_start + old_coeff_count];
                 let lane_weight = self.relation_lane_weights[lane];
+                let linear_lane = self.linear_terms.resolve_lane(lane);
                 let round_terms = if skip_linear {
                     fold_lane_and_compute_next_round::<E, true>(
-                        self,
+                        &linear_lane,
                         source,
                         target,
                         next_alpha_factor,
@@ -175,7 +174,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                     )
                 } else {
                     fold_lane_and_compute_next_round::<E, false>(
-                        self,
+                        &linear_lane,
                         source,
                         target,
                         next_alpha_factor,
