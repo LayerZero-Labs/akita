@@ -261,13 +261,23 @@ where
                 (relation_weight?, coefficient_packing_weight?)
             }
         };
-        let compression_oracle = evaluate_compression_oracle(
-            &self.compression,
-            self.setup,
-            &self.stage1_point,
-            challenges,
-            w_eval,
-        )?;
+        let compression_oracle = {
+            let _span = tracing::info_span!(
+                "stage2_compression_oracle",
+                reduced = matches!(
+                    self.compression,
+                    Stage2CompressionOracle::ReducedEvaluation { .. }
+                )
+            )
+            .entered();
+            evaluate_compression_oracle(
+                &self.compression,
+                self.setup,
+                &self.stage1_point,
+                challenges,
+                w_eval,
+            )?
+        };
         let relation_oracle =
             w_eval * (relation_weight + coefficient_packing_weight) + compression_oracle;
         let trace_oracle = match &self.opening_semantics.0 {
