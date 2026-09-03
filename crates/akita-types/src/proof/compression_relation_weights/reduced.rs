@@ -1,5 +1,5 @@
 use super::*;
-use akita_algebra::ring::residue_kernel;
+use akita_algebra::ring::ResidueKernelPoint;
 use jolt_field::ExtField;
 
 #[derive(Clone, Debug)]
@@ -158,14 +158,13 @@ impl<E: Field> ReducedCompressionRelationWeights<E> {
                 actual: destination.len(),
             });
         }
-        for (weight, addition) in destination.iter_mut().zip(self.linear.materialize_dense()?) {
-            *weight += addition;
-        }
+        self.linear.accumulate_dense(destination)?;
         for event in &self.maps {
             let columns = CompressionMapColumns::new(setup, &event.span, destination.len())?;
+            let point = ResidueKernelPoint::new(self.alpha, columns.ring_dimension)?;
             for column in 0..columns.input_width {
                 let (physical, coefficients) = columns.column(column)?;
-                let kernel = residue_kernel::<F, E>(coefficients, self.alpha)?;
+                let kernel = point.kernel(coefficients)?;
                 for (weight, kernel) in destination
                     .get_mut(physical)
                     .ok_or(AkitaError::InvalidProof)?

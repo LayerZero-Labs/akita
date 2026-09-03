@@ -3,6 +3,172 @@
 use akita_error::AkitaError;
 use jolt_field::{ExtField, Field};
 
+/// Reusable evaluation data for reduced negacyclic residue kernels at one
+/// point and dimension.
+///
+/// Preparing the powers once matters when a compiler evaluates many public
+/// multipliers at the same point, as the quotient-free prover does for every
+/// setup column in one role.
+#[derive(Clone, Debug)]
+pub struct ResidueKernelPoint<E: Field> {
+    alpha: E,
+    powers: Vec<E>,
+    modulus_evaluation: E,
+}
+
+impl<E: Field> ResidueKernelPoint<E> {
+    /// Prepare `1, alpha, ..., alpha^(d-1)` and `alpha^d + 1`.
+    pub fn new(alpha: E, dimension: usize) -> Result<Self, AkitaError> {
+        if dimension == 0 || !dimension.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(
+                "residue-kernel dimension must be a nonzero power of two".into(),
+            ));
+        }
+        let mut powers = Vec::new();
+        powers
+            .try_reserve_exact(dimension)
+            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+        let mut power = E::one();
+        for _ in 0..dimension {
+            powers.push(power);
+            power *= alpha;
+        }
+        Ok(Self {
+            alpha,
+            powers,
+            modulus_evaluation: power + E::one(),
+        })
+    }
+
+    /// Ring dimension owned by this prepared point.
+    #[must_use]
+    pub fn dimension(&self) -> usize {
+        self.powers.len()
+    }
+
+    /// Prepared powers `1, alpha, ..., alpha^(d-1)`.
+    #[must_use]
+    pub fn powers(&self) -> &[E] {
+        &self.powers
+    }
+
+    /// Evaluate every reduced shift of one base-field multiplier.
+    pub fn kernel<F>(&self, coefficients: &[F]) -> Result<Vec<E>, AkitaError>
+    where
+        F: Field,
+        E: ExtField<F>,
+    {
+        self.kernel_with(coefficients, E::mul_base)
+    }
+
+    /// Evaluate every reduced shift of extension-field coefficient weights.
+    pub fn field_kernel(&self, weights: &[E]) -> Result<Vec<E>, AkitaError> {
+        self.kernel_with(weights, |value, weight| value * weight)
+    }
+
+    /// Write the extension-field residue kernel into an existing exact-size
+    /// destination.
+    pub fn field_kernel_into(&self, weights: &[E], output: &mut [E]) -> Result<(), AkitaError> {
+        self.kernel_with_into(weights, output, |value, weight| value * weight)
+    }
+
+    #[inline]
+    fn kernel_with<W: Copy>(
+        &self,
+        weights: &[W],
+        multiply: impl Fn(E, W) -> E,
+    ) -> Result<Vec<E>, AkitaError> {
+        let mut kernel = Vec::new();
+        kernel
+            .try_reserve_exact(self.dimension())
+            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+        kernel.resize(self.dimension(), E::zero());
+        self.kernel_with_into(weights, &mut kernel, multiply)?;
+        Ok(kernel)
+    }
+
+    #[inline]
+    fn kernel_with_into<W: Copy>(
+        &self,
+        weights: &[W],
+        output: &mut [E],
+        multiply: impl Fn(E, W) -> E,
+    ) -> Result<(), AkitaError> {
+        if weights.len() != self.dimension() || output.len() != self.dimension() {
+            return Err(AkitaError::InvalidInput(
+                "residue-kernel buffers do not match the prepared dimension".into(),
+            ));
+        }
+        let mut current = weights
+            .iter()
+            .copied()
+            .zip(&self.powers)
+            .fold(E::zero(), |sum, (weight, &power)| {
+                sum + multiply(power, weight)
+            });
+        let (first, tail) = output
+            .split_first_mut()
+            .ok_or_else(|| AkitaError::InvalidInput("residue-kernel output is empty".into()))?;
+        *first = current;
+        for (slot, wrap_weight) in tail
+            .iter_mut()
+            .zip(weights.iter().copied().rev().take(self.dimension() - 1))
+        {
+            current = self.alpha * current - multiply(self.modulus_evaluation, wrap_weight);
+            *slot = current;
+        }
+        Ok(())
+    }
+
+    /// Evaluate every reduced shift of one sparse extension-field multiplier.
+    pub fn sparse_kernel(
+        &self,
+        terms: impl IntoIterator<Item = (usize, E)>,
+    ) -> Result<Vec<E>, AkitaError> {
+        let mut terms = terms.into_iter().collect::<Vec<_>>();
+        terms.sort_unstable_by_key(|(position, _)| *position);
+        for (index, &(position, weight)) in terms.iter().enumerate() {
+            if position >= self.dimension() {
+                return Err(AkitaError::InvalidInput(
+                    "sparse residue-kernel position is out of range".into(),
+                ));
+            }
+            if weight.is_zero() {
+                return Err(AkitaError::InvalidInput(
+                    "sparse residue-kernel weights must be nonzero".into(),
+                ));
+            }
+            if index != 0 && terms[index - 1].0 == position {
+                return Err(AkitaError::InvalidInput(
+                    "sparse residue-kernel positions must be unique".into(),
+                ));
+            }
+        }
+
+        let mut current = terms.iter().fold(E::zero(), |sum, &(position, weight)| {
+            sum + weight * self.powers[position]
+        });
+        let mut kernel = Vec::new();
+        kernel
+            .try_reserve_exact(self.dimension())
+            .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
+        kernel.push(current);
+        let mut reverse_term_index = terms.len();
+        for wrap_position in (1..self.dimension()).rev() {
+            let wrap_weight =
+                if reverse_term_index != 0 && terms[reverse_term_index - 1].0 == wrap_position {
+                    reverse_term_index -= 1;
+                    terms[reverse_term_index].1
+                } else {
+                    E::zero()
+                };
+            current = self.alpha * current - self.modulus_evaluation * wrap_weight;
+            kernel.push(current);
+        }
+        Ok(kernel)
+    }
+}
+
 /// Evaluate every reduced shift of one public multiplier at `alpha`.
 ///
 /// For `A(X) = sum_k coefficients[k] X^k` in a ring of dimension `d`, the
@@ -23,7 +189,7 @@ where
     F: Field,
     E: Field + ExtField<F>,
 {
-    residue_recurrence(coefficients.iter().copied().map(E::lift_base), alpha)
+    ResidueKernelPoint::new(alpha, coefficients.len())?.kernel(coefficients)
 }
 
 /// Evaluate every reduced shift of a sparse public multiplier at `alpha`.
@@ -46,64 +212,7 @@ pub fn sparse_residue_kernel<E>(
 where
     E: Field,
 {
-    if dimension == 0 || !dimension.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "residue-kernel dimension must be a nonzero power of two".into(),
-        ));
-    }
-    let mut terms = terms.into_iter().collect::<Vec<_>>();
-    terms.sort_unstable_by_key(|(position, _)| *position);
-    for (index, &(position, weight)) in terms.iter().enumerate() {
-        if position >= dimension {
-            return Err(AkitaError::InvalidInput(
-                "sparse residue-kernel position is out of range".into(),
-            ));
-        }
-        if weight.is_zero() {
-            return Err(AkitaError::InvalidInput(
-                "sparse residue-kernel weights must be nonzero".into(),
-            ));
-        }
-        if index != 0 && terms[index - 1].0 == position {
-            return Err(AkitaError::InvalidInput(
-                "sparse residue-kernel positions must be unique".into(),
-            ));
-        }
-    }
-
-    let mut alpha_power = E::one();
-    let mut current = E::zero();
-    let mut term_index = 0usize;
-    for position in 0..dimension {
-        if terms
-            .get(term_index)
-            .is_some_and(|(term_position, _)| *term_position == position)
-        {
-            current += terms[term_index].1 * alpha_power;
-            term_index += 1;
-        }
-        alpha_power *= alpha;
-    }
-    let modulus_evaluation = alpha_power + E::one();
-
-    let mut kernel = Vec::new();
-    kernel
-        .try_reserve_exact(dimension)
-        .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
-    kernel.push(current);
-    let mut reverse_term_index = terms.len();
-    for wrap_position in (1..dimension).rev() {
-        let wrap_weight =
-            if reverse_term_index != 0 && terms[reverse_term_index - 1].0 == wrap_position {
-                reverse_term_index -= 1;
-                terms[reverse_term_index].1
-            } else {
-                E::zero()
-            };
-        current = alpha * current - modulus_evaluation * wrap_weight;
-        kernel.push(current);
-    }
-    Ok(kernel)
+    ResidueKernelPoint::new(alpha, dimension)?.sparse_kernel(terms)
 }
 
 /// Prepare terminal weights for one exact physical equality window.
@@ -125,39 +234,7 @@ pub fn terminal_residue_kernel<E>(equality_weights: &[E], alpha: E) -> Result<Ve
 where
     E: Field,
 {
-    residue_recurrence(equality_weights.iter().copied(), alpha)
-}
-
-fn residue_recurrence<E, I>(weights: I, alpha: E) -> Result<Vec<E>, AkitaError>
-where
-    E: Field,
-    I: Clone + DoubleEndedIterator<Item = E> + ExactSizeIterator,
-{
-    let dimension = weights.len();
-    if dimension == 0 || !dimension.is_power_of_two() {
-        return Err(AkitaError::InvalidInput(
-            "residue-kernel dimension must be a nonzero power of two".into(),
-        ));
-    }
-
-    let mut alpha_power = E::one();
-    let mut current = E::zero();
-    for weight in weights.clone() {
-        current += weight * alpha_power;
-        alpha_power *= alpha;
-    }
-    let modulus_evaluation = alpha_power + E::one();
-
-    let mut kernel = Vec::new();
-    kernel
-        .try_reserve_exact(dimension)
-        .map_err(|_| AkitaError::InvalidInput("residue-kernel allocation failed".into()))?;
-    kernel.push(current);
-    for wrap_weight in weights.rev().take(dimension - 1) {
-        current = alpha * current - modulus_evaluation * wrap_weight;
-        kernel.push(current);
-    }
-    Ok(kernel)
+    ResidueKernelPoint::new(alpha, equality_weights.len())?.field_kernel(equality_weights)
 }
 
 #[cfg(test)]
@@ -343,6 +420,27 @@ mod tests {
             sparse_residue_kernel(64, terms, alpha).unwrap(),
             residue_kernel::<F, F>(&dense, alpha).unwrap()
         );
+    }
+
+    #[test]
+    fn prepared_point_matches_one_shot_base_and_field_kernels() {
+        type F = Prime32Offset99;
+        type E = FpExt4<F>;
+        let mut rng = StdRng::seed_from_u64(509);
+        let coefficients = (0..64).map(|_| F::random(&mut rng)).collect::<Vec<_>>();
+        let weights = (0..64).map(|_| E::random(&mut rng)).collect::<Vec<_>>();
+        let alpha = E::random(&mut rng);
+        let point = ResidueKernelPoint::new(alpha, 64).unwrap();
+
+        assert_eq!(
+            point.kernel(&coefficients).unwrap(),
+            residue_kernel(&coefficients, alpha).unwrap()
+        );
+        let expected = terminal_residue_kernel(&weights, alpha).unwrap();
+        let mut output = vec![E::zero(); 64];
+        point.field_kernel_into(&weights, &mut output).unwrap();
+        assert_eq!(point.field_kernel(&weights).unwrap(), expected);
+        assert_eq!(output, expected);
     }
 
     #[test]

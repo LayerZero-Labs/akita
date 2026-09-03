@@ -180,6 +180,17 @@ impl<E: Field> CompressionRelationWeights<E> {
     /// Materialize the complete padded linear-weight table.
     pub fn materialize_dense(&self) -> Result<Vec<E>, AkitaError> {
         let mut weights = vec![E::zero(); self.physical_field_len];
+        self.accumulate_dense(&mut weights)?;
+        Ok(weights)
+    }
+
+    fn accumulate_dense(&self, weights: &mut [E]) -> Result<(), AkitaError> {
+        if weights.len() != self.physical_field_len {
+            return Err(AkitaError::InvalidSize {
+                expected: self.physical_field_len,
+                actual: weights.len(),
+            });
+        }
         for event in &self.events {
             let alpha = self
                 .alpha_powers
@@ -195,7 +206,7 @@ impl<E: Field> CompressionRelationWeights<E> {
                 *weight += event.scalar * power;
             }
         }
-        Ok(weights)
+        Ok(())
     }
 
     /// Consume the relation table into sorted nonzero physical entries.

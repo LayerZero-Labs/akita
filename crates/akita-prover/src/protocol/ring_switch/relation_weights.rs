@@ -25,7 +25,9 @@ use compiler::{
     RelationWeightCompilation, TAddress, ZAddress, ZWeightSink,
 };
 use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
-use setup_columns::{contract_setup_columns, SetupColumnValues, SetupRows};
+use setup_columns::{
+    contract_setup_columns, contract_setup_residue_columns, SetupColumnValues, SetupRows,
+};
 
 /// Source of setup-matrix relation weights for this evaluation.
 #[derive(Clone, Copy)]
