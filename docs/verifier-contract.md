@@ -20,8 +20,9 @@ The verifier never invokes planner search. It accepts only an explicit
 Before setup access or transcript replay, it validates catalog identity and
 runtime hooks, resolves the public row digest, compares every ordered public
 `GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix,
-checks challenge and full terminal L infinity or L2 cap geometry, and confirms the schedule fits
-the setup field capacity. Private polynomial representations and honest-prover
+prices each shared A row for the schedule's response-chunk count, checks
+challenge and full terminal L infinity or L2 cap geometry, and confirms the
+schedule fits the setup field capacity. Private polynomial representations and honest-prover
 witness models are not verifier inputs.
 
 The accepted proof topology is structural: a root fold, zero or more recursive

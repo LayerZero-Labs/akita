@@ -273,19 +273,16 @@ fn bounded_dense_precommit_with_onehot_final_group() {
         )
         .expect("bounded dense precommit");
 
-        // The bounded group's A matrix must be narrower than the full-width dense
-        // config would produce for the same group — otherwise this test would
-        // pass without the bound doing anything.
-        let full_width_profile = DenseCfg::profile_without_precommitted_groups(
-            akita_types::PolynomialGroupLayout::new(BOUNDED_PRE_NV, 1),
-        )
-        .expect("full-width dense profile");
+        // The bounded group's source decomposition must be shallower than a
+        // full-width decomposition at the same basis. The independently planned
+        // full-width family may choose another basis, so comparing its raw digit
+        // count would not compare like with like.
+        let bounded_digits = bounded_commitment.profile.inner.digits;
+        let full_width_digits_at_bounded_basis =
+            akita_types::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
         assert!(
-            bounded_commitment.profile.inner.digits.num_digits
-                < full_width_profile.inner.digits.num_digits,
-            "bounded precommit digit depth {} must be below full-width {}",
-            bounded_commitment.profile.inner.digits.num_digits,
-            full_width_profile.inner.digits.num_digits,
+            bounded_digits.num_digits < full_width_digits_at_bounded_basis,
+            "bounded precommit digit depth must be below same-basis full-width depth",
         );
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)

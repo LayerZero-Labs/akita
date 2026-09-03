@@ -272,8 +272,27 @@ fn field_digit_moments(
             "field digit moment requires positive geometry".into(),
         ));
     }
+    let (per_scalar, peak) = field_digit_shape(field_bits, log_basis, digit_count)?;
+    Ok((
+        checked_ceil_f64(
+            per_scalar * scalar_count as f64,
+            "finite-field digit energy",
+        )?,
+        peak,
+    ))
+}
+
+fn field_digit_shape(
+    field_bits: u32,
+    log_basis: u32,
+    digit_count: usize,
+) -> Result<(f64, u128), AkitaError> {
+    let key = (field_bits, log_basis, digit_count);
+    if let Some(shape) = FIELD_DIGIT_SHAPES.with(|cache| cache.borrow().get(&key).copied()) {
+        return Ok(shape);
+    }
     let mut per_scalar = 0.0;
-    let mut peak = 0.0f64;
+    let mut peak_moment = 0.0f64;
     for plane in 0..digit_count {
         let consumed = (plane as u32)
             .checked_mul(log_basis)
@@ -288,15 +307,16 @@ fn field_digit_moments(
         let moment = centered_uniform_digit_second_moment(basis)
             .ok_or_else(|| AkitaError::InvalidSetup("digit-plane basis is not supported".into()))?;
         per_scalar += moment;
-        peak = peak.max(moment);
+        peak_moment = peak_moment.max(moment);
     }
-    Ok((
-        checked_ceil_f64(
-            per_scalar * scalar_count as f64,
-            "finite-field digit energy",
-        )?,
-        moment_to_ppm(peak, "finite-field digit peak moment")?,
-    ))
+    let shape = (
+        per_scalar,
+        moment_to_ppm(peak_moment, "finite-field digit peak moment")?,
+    );
+    FIELD_DIGIT_SHAPES.with(|cache| {
+        cache.borrow_mut().insert(key, shape);
+    });
+    Ok(shape)
 }
 
 /// Modeled energy of a full-width finite-field balanced decomposition.
@@ -407,6 +427,8 @@ fn normal_cdf(value: f64) -> f64 {
 
 type GaussianDigitMomentKey = (u128, usize, u128, u32, usize);
 type GaussianDigitMoment = (u128, u128);
+type FieldDigitShapeKey = (u32, u32, usize);
+type FieldDigitShape = (f64, u128);
 
 thread_local! {
     // The quantile depends only on the response coefficient count, while one
@@ -415,6 +437,12 @@ thread_local! {
     // offline search does not repeat 64 software `erfc` evaluations per
     // candidate or contend on a process-global cache.
     static WHOLE_RESPONSE_NORMAL_QUANTILES: RefCell<HashMap<usize, f64>> =
+        RefCell::new(HashMap::new());
+    // A finite-field decomposition shape depends only on its field width,
+    // basis, and plane count. Candidate states change the scalar count but
+    // otherwise repeat this exact shape, so cache the per-scalar and peak
+    // moments rather than rerunning the digit-plane sweep.
+    static FIELD_DIGIT_SHAPES: RefCell<HashMap<FieldDigitShapeKey, FieldDigitShape>> =
         RefCell::new(HashMap::new());
     // Recursive DP states often reproduce the same typed response moment and
     // decomposition geometry. The Gaussian digit calculation is deterministic

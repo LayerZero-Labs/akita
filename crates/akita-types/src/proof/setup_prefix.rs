@@ -141,25 +141,6 @@ impl Hash for SetupPrefixSlotId {
 
 impl Valid for SetupPrefixSlotId {
     fn check(&self) -> Result<(), SerializationError> {
-        let d_setup = self.d_setup();
-        if d_setup == 0 {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot d_setup must be non-zero".to_string(),
-            ));
-        }
-        let n_prefix = n_prefix_from_commitment_profile(&self.commitment_profile)?;
-        validate_setup_prefix_domain(self.natural_len, n_prefix)
-            .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-        if n_prefix == 0 || !n_prefix.is_power_of_two() {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot n_prefix must be a non-zero power of two".to_string(),
-            ));
-        }
-        if !n_prefix.is_multiple_of(d_setup) {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot n_prefix must be a multiple of d_setup".to_string(),
-            ));
-        }
         self.commitment_profile
             .validate(
                 self.commitment_profile
@@ -168,12 +149,11 @@ impl Valid for SetupPrefixSlotId {
                     .sis_modulus_profile()
                     .field_bits(),
             )
+            .and_then(|()| {
+                self.commitment_profile
+                    .validate_setup_prefix_geometry(self.natural_len)
+            })
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        if self.commitment_profile.group.num_polynomials() != 1 {
-            return Err(SerializationError::InvalidData(
-                "setup prefix slot commitment params must be singleton".to_string(),
-            ));
-        }
         Ok(())
     }
 }
@@ -214,12 +194,9 @@ fn deserialize_sis_security_policy<R: Read>(
 ) -> Result<SisSecurityPolicyId, SerializationError> {
     let mut tag = [0u8; 1];
     reader.read_exact(&mut tag)?;
-    match tag[0] {
-        1 => Ok(SisSecurityPolicyId::Quantum128BitADPS16),
-        _ => Err(SerializationError::InvalidData(
-            "invalid SIS security policy tag".to_string(),
-        )),
-    }
+    SisSecurityPolicyId::from_tag(tag[0]).ok_or_else(|| {
+        SerializationError::InvalidData("invalid SIS security policy tag".to_string())
+    })
 }
 
 fn serialize_sis_matrix_role<W: Write>(
@@ -1255,6 +1232,10 @@ pub fn setup_prefix_coverage_eval_len(
             "Stage 3 requires a selected setup-prefix slot".to_string(),
         ));
     };
+    template.validate()?;
+    selected_slot_id
+        .commitment_profile
+        .validate_setup_prefix_geometry(selected_slot_id.natural_len)?;
     let template_slot_id = template.slot_id().ok_or_else(|| {
         AkitaError::InvalidSetup(format!(
             "{coverage_error}: planned setup-prefix template is not a prefix group"

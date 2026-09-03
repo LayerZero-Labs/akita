@@ -260,8 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn inner_dispatch_fp128_accepts_through_d512() {
-        for d in [64usize, 128, 256, 512] {
+    fn inner_dispatch_fp128_accepts_through_d1024() {
+        for d in [64usize, 128, 256, 512, 1024] {
             assert_eq!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -273,7 +273,7 @@ mod tests {
                 d
             );
         }
-        for d in [32usize, 1024] {
+        for d in [32usize, 2048] {
             assert!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -366,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_caps_at_d512() {
+    fn shared_ntt_dispatch_fp128_includes_first_compression_stage_and_reaches_d1024() {
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Ntt,
             Prime128OffsetA7F7,
@@ -394,7 +394,17 @@ mod tests {
             1024usize,
             |D| Ok(D)
         )
-        .is_err());
+        .is_ok());
+    }
+
+    #[test]
+    fn ntt_dispatch_fp64_reaches_d2048() {
+        assert!(
+            dispatch_for_field!(ProtocolDispatchSlot::Ntt, Prime64Offset59, 2048usize, |D| {
+                Ok(D)
+            })
+            .is_ok()
+        );
     }
 
     #[test]
@@ -422,8 +432,8 @@ mod tests {
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp64), 32);
         assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp32), 64);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp128), 512);
-        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp64), 1024);
+        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp128), 1024);
+        assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp64), 2048);
         assert_eq!(ntt_max_ring_d(ProtocolRingDispatchTierId::Fp32), 2048);
     }
 
@@ -472,7 +482,7 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime32Offset99>(fp32_high_b).is_err());
 
         let fp64_high_a = CommitmentRingDims {
-            inner: 1024,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };
@@ -486,14 +496,14 @@ mod tests {
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_b).is_err());
 
         let fp128_high_a = CommitmentRingDims {
-            inner: 512,
+            inner: 1024,
             outer: 256,
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
 
         let fp128_too_high_a = CommitmentRingDims {
-            inner: 1024,
+            inner: 2048,
             outer: 64,
             opening: 64,
         };

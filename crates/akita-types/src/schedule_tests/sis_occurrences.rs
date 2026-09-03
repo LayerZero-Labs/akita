@@ -87,6 +87,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
     group_params.own_group_mut().opening.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
             .expect("precommitted test group production challenge");
+    let a_bound = execution_admission::exact_test_a_bound(&group_params);
     let inner = group_params.inner().matrix;
     group_params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::new_unchecked(
@@ -98,7 +99,7 @@ fn covers_precommitted_groups_and_preserves_their_identity_binding() {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            2,
+            a_bound,
             inner.ring_dimension(),
         );
     let outer = group_params.outer().matrix;

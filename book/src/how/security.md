@@ -21,18 +21,47 @@ where `width[r - 1] = cutoff_m(B, n = r * d) / d`.
 
 The shipped policy is `Quantum128BitADPS16`. It accepts a row only when the
 complete ADPS16 quantum certificate reports a finite score or a classified
-above-target lower bound of at least 128 bits. The beta search checks values
-from 40 through the capped Euclidean baseline and stops once the monotone
-ADPS16 lower bound exceeds the best complete candidate. For each visited beta,
-the LGSA profile transition proves that the checked zeta endpoints cover the
-full zeta domain. A lookup for an unsupported policy, exact modulus profile,
-role, or scalar cell fails closed.
+above-target lower bound of at least 128 bits. The decision threshold is an
+explicit estimator configuration value supplied by the policy profile. The
+beta search checks values from 40 through the capped Euclidean baseline and
+stops once the monotone ADPS16 lower bound exceeds the best complete candidate.
+It also returns a classified above-target result once both the best visited
+attack and the lower bound for all unvisited beta values exceed 128 bits. For
+`B > 1`, the global infinity estimate includes the Euclidean baseline
+explicitly because `L2 <= B` implies `L-infinity <= B`; the baseline is
+therefore an attack, not only a search cap. The diagnostic compression cells
+with `B = 1` are the production instance of the `B <= 1` edge case, where this
+model has no defined Euclidean-dimension optimization. They do not substitute
+another bound: they omit that attack and sweep through the estimator's full
+supported beta range. For each visited beta,
+the optimizer exhausts every valid effective dimension before the LGSA profile
+stabilizes, checks both endpoints of the stable unit-vector tail, and checks
+both sides of any probability-regime transition inside that tail. The full
+valid tall-lattice domain is `0 <= zeta < d - n`. Fixed and exhaustive estimates
+reject an effective dimension `d - zeta <= n` instead of pricing a non-tall
+q-ary embedding. Width generation starts at the first tall ring width
+`width = rank + 1`. Narrower widths inherit a cutoff only when that tall
+instance is certified; if it already fails, the row emits cutoff zero and
+runtime must choose a higher rank. A lookup for an unsupported policy, exact
+modulus profile, role, or scalar cell fails closed.
 
 The checked-in policy table may use `local-minimum` only to discover a candidate
 boundary. Every emitted boundary and its immediate rejected successor are
 certified under the proven-pruned beta and zeta domain. Parallel generation
 parallelizes independent rows and does not change the certificate domain or
 output ordering.
+
+The estimator hardening described above changes the acceptance model. The
+checked-in SIS table retains the unversioned `Quantum128BitADPS16` policy ID
+and wire tag `1`; evaluator revision `akita-infinity-width-v3`, the regenerated
+table digest, and dependent catalog identities bind the corrected semantics.
+The q32 Inner/A profile guard stops at `2^28 - 1`; q64 uses `2^41 - 1`; q128
+uses `2^44 - 1`. Within those guards, the audited A cells are the exact
+one-response protocol collisions `4 * ||c||_1 * (2^t - 1)` for reachable
+opening-basis/digit-depth products `t <= 33` and dimension-compatible challenge
+families. A raw collision target selects the smallest covering audited cell for
+the same profile and dimension; it does not jump to a generic power-of-two
+bucket. B and D retain their exact gadget-anchor rounding.
 
 CSV table-generation artifacts include the certified accepted and rejected
 successor witnesses, cutoff kind, cap provenance, and role provenance. These
@@ -93,6 +122,29 @@ The production rule is the ADPS16 quantum LGSA model with a 128-bit target. It
 is an attack-cost model, not a physical resource estimate or an unqualified
 post-quantum security proof.
 
+The conventional `0.2650 * beta` quantum Core-SVP cost is deliberate. Akita
+previously evaluated the newer idealized BCSS23 `0.2563 * beta` sieve as an
+independently optimized diagnostic over 6,240 generated rows. Its reusable
+quantum walks assume exponential sieve storage and writable coherent QRAQM;
+zero accepted ADPS16 rows fell below the corresponding 124-bit review line.
+The idealized model therefore remains documented sensitivity evidence rather
+than a production constraint.
+
+LGSA is likewise an explicit attacker strategy: rerandomize the q-ary basis so
+BKZ forgets its canonical q-vectors. On representative widened q64 and q128
+rows, LGSA is no more expensive than ordinary GSA and is cheaper than the
+determinant-preserving Chen-Nguyen profile simulations. The optional symmetric
+ZGSA compatibility path caps its paired smoothing steps at the smaller of the
+q-vector and identity-vector zones, preserving the lattice determinant even
+when q-vectors are the majority.
+
+Infinity-norm probabilities are priced on the coordinates that remain after
+the attacker's `zeta` projection. In particular, the small-box condition uses
+`sqrt(d - zeta) * B <= q`. Using the original dimension can select the wrong
+probability formula and overstate security; this active-dimension rule is
+regression tested, and integer production bounds use an exact boundary
+comparison. Requests for the unimplemented high-precision backend fail closed.
+
 The complete decision, assumptions, claim language, certificates, and
 implementation acceptance criteria live in
 [`specs/sis-quantum128-scalar-n-table.md`](../../../specs/sis-quantum128-scalar-n-table.md).
@@ -129,6 +181,45 @@ These formulas use the physical ring coefficients that enter the A role
 Module SIS kernel. The small field extension embedding has already produced
 those coefficients. Applying the Hachi logical to physical conversion at this
 point would count that conversion twice.
+
+For a chunked response, the A rows do not bind each chunk independently. They
+bind the effective response
+
+```text
+z_sum = z^(0) + ... + z^(C-1).
+```
+
+Stage 1 nevertheless range-checks every chunk in the same balanced
+base-`2^ell` digit interval. If each chunk uses `delta` digits, the exact
+difference between two accepted values in one chunk has diameter
+`2^(ell * delta) - 1`. Differences add across the `C` chunks, so the exact
+coefficient collision target used by the A role is
+
+```text
+C_inf_chunked = 4 * kappa_1 * C * (2^(ell * delta) - 1).
+```
+
+This is the chunk-aware form of the same weak-binding calculation. Pricing a
+chunked row as though `C = 1` would certify only one accepted response even
+though the shared relation admits their sum. Akita therefore treats the
+response-chunk count as a schedule parameter, re-derives this target during
+planner replay and verifier admission, and rejects a row whose stored A bound
+is smaller. All chunks use the same digit basis, digit depth, and full ambient
+Z width. Their honest norms and their assigned E/T block counts may differ.
+The selective `L2` route remains restricted to one response chunk.
+
+The checked-in infinity table does not multiply its coverage by every supported
+response-chunk count. Instead, a chunked raw target reuses the smallest audited
+A cell that covers it. This is usually tight, but two- and four-chunk schedules
+can inherit a conservative collision bound when their target lies in a gap
+between existing cells. That choice can make the resulting SIS rank larger
+than a table search specialized to that exact chunk geometry. We accept this
+possible loss to keep the certified table small. Maintainers add a sparse
+refinement cell only when catalog measurements show a material schedule
+improvement; lookup fails closed when no existing cell covers the target. The
+current table adds eight fp128 refinement cells for measured two- and
+four-chunk operating points, contributing 160 certified rank rows. It adds no
+eight-chunk coverage axis or dedicated eight-chunk cell.
 
 An `L∞` schedule carries no norm proof. An `L2` schedule binds its cap and
 integer proof shape into the schedule descriptor. The verifier proves the norm

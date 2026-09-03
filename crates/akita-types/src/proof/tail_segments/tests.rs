@@ -30,9 +30,16 @@ fn test_lp() -> CommittedGroupParams {
         modulus_profile: params.inner().matrix.sis_modulus_profile(),
         role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
-        coeff_linf_bound: *crate::sis::COEFF_LINF_BUCKETS
-            .last()
-            .expect("nonempty SIS buckets"),
+        coeff_linf_bound: crate::sis::sis_role_cells()
+            .into_iter()
+            .filter(|cell| {
+                cell.role == crate::sis::SisMatrixRole::Inner
+                    && cell.modulus_profile == params.inner().matrix.sis_modulus_profile()
+                    && cell.ring_dimension == 64
+            })
+            .map(|cell| cell.coeff_linf_bound)
+            .max()
+            .expect("nonempty SIS A bounds"),
     };
     params.own_group_mut().profile.inner.matrix =
         crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
@@ -463,7 +470,7 @@ fn certified_terminal_cap_applies_the_wire_representation_limit() {
 
 #[test]
 fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
-    let matrix = terminal_matrix_with_bucket(2047);
+    let matrix = terminal_matrix_with_bucket(1_428);
     let light = crate::sis::certified_terminal_response_linf_cap(
         &matrix,
         &SparseChallengeConfig::pm1_only(3),
@@ -488,7 +495,7 @@ fn certified_terminal_cap_is_priced_by_the_supplied_challenge_family() {
 fn terminal_cap_has_exactly_one_implementation() {
     // The schedule-side method must not re-derive the cap. If these ever
     // disagree the split-brain this consolidation removed has returned.
-    for bucket in [2047u128, 8191, 67_108_863] {
+    for bucket in [1_428u128, 1_484, 104_244] {
         let matrix = terminal_matrix_with_bucket(bucket);
         for weight in [3usize, 6, 11] {
             let sparse = SparseChallengeConfig::pm1_only(weight);

@@ -129,6 +129,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub selective_l2_response_model: crate::SelectiveL2ResponseModelId,
     pub selection_policy: crate::SelectionPolicyId,
     pub recursive_split_search_policy: crate::RecursiveSplitSearchPolicy,
+    pub recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy,
     pub setup_field_budget: Option<usize>,
     pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
@@ -165,8 +166,8 @@ pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
     ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
-    RecursiveSplitSearchPolicy, RingDimensionScheduleMode, SelectionPolicyId,
-    SelectiveL2ResponseModelId, SisSecurityPolicyId,
+    RecursiveSetupSearchPolicy, RecursiveSplitSearchPolicy, RingDimensionScheduleMode,
+    SelectionPolicyId, SelectiveL2ResponseModelId, SisSecurityPolicyId,
 };
 pub use akita_types::{
     BlockGeometry, CommitmentPayloadMode, GroupCommitPhaseParams, InnerCommitMatrixParams,

@@ -123,6 +123,7 @@ impl GeneratedFrozenGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let d_a = self.profile.inner.matrix.ring_dimension();
         // The consuming fold supplies the shared opening basis and the challenge
@@ -142,6 +143,7 @@ impl GeneratedFrozenGroup {
             sis_security_policy: policy.sis_security_policy,
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
+            num_response_chunks,
         };
         let num_digits_fold = generated_count(
             u64::from(self.num_digits_fold),
@@ -178,24 +180,15 @@ impl GeneratedSetupPrefix {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
-        let d_a = self.group.profile.inner.matrix.ring_dimension();
-        let committed_len = self
-            .group
-            .profile
-            .blocks
-            .live_ring_elements_per_claim
-            .checked_mul(d_a)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("generated setup-prefix length overflow".into())
-            })?;
-        akita_types::validate_setup_prefix_domain(natural_len, committed_len)?;
         self.group.expand_to_group(
             Some(natural_len),
             policy,
             ring_challenge_config,
             log_basis_open,
+            num_response_chunks,
         )
     }
 }
@@ -241,13 +234,18 @@ impl GeneratedGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<Option<GroupOpenPhaseParams>, AkitaError> {
         let Some(group) = prefix else {
             return Ok(None);
         };
 
-        let commitment_params =
-            group.expand_to_group(policy, &ring_challenge_config, log_basis_open)?;
+        let commitment_params = group.expand_to_group(
+            policy,
+            &ring_challenge_config,
+            log_basis_open,
+            num_response_chunks,
+        )?;
         let n_prefix = 1usize
             .checked_shl(commitment_params.profile.group.num_vars() as u32)
             .ok_or_else(|| {
@@ -297,6 +295,7 @@ impl GeneratedGroup {
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
         let log_basis_open = open_commit_matrix.log_basis;
+        let num_response_chunks = policy.chunks_at_level(fold_level);
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
@@ -423,6 +422,7 @@ impl GeneratedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
+            num_response_chunks,
         )
         .ok_or_else(|| no_layout("A"))?;
         let linf_n_a = secure_rank(
@@ -550,6 +550,7 @@ impl GeneratedGroup {
                     policy,
                     ring_challenge_config,
                     log_basis_open,
+                    num_response_chunks,
                 )?;
                 let width = setup_prefix
                     .as_ref()
@@ -862,6 +863,7 @@ mod tests {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selective_l2_response_model: crate::SelectiveL2ResponseModelId::Disabled,
             selection_policy: SelectionPolicyId::MinFirstDirectSetupThenPayload,
+            recursive_setup_search_policy: crate::RecursiveSetupSearchPolicy::Exhaustive,
             recursive_split_search_policy: crate::RecursiveSplitSearchPolicy::Exhaustive,
             setup_field_budget: None,
             min_offloaded_witness_contraction: 3,
@@ -908,12 +910,21 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
+        let expected_challenge_dimension = match input.group.opening_method {
+            akita_types::OpeningMethod::EvaluationTrace => {
+                input.group.profile.inner.matrix.ring_dimension()
+            }
+            akita_types::OpeningMethod::SubringCoefficientPacking {
+                challenge_subring_dimension,
+            } => challenge_subring_dimension,
+        };
         assert_eq!(
             &*requested_dimensions.borrow(),
-            &[input.group.profile.inner.matrix.ring_dimension()]
+            &[expected_challenge_dimension]
         );
         assert_eq!(expanded.profile, input.group.profile);
         // The plan is derived, so assert it carries the two inputs the row still
@@ -949,6 +960,7 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect_err("frozen setup-prefix profile mutation must reject");
     }
@@ -973,6 +985,7 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect_err("zero setup-prefix natural length must reject");
     }

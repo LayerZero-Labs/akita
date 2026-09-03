@@ -76,6 +76,7 @@ fn materialize_precommitted_group_for_open_basis(
         log_basis_open,
         &opening.challenge_config(),
         num_digits_fold,
+        num_chunks,
     ) else {
         return Ok(None);
     };
@@ -105,6 +106,7 @@ fn materialize_precommitted_group_for_open_basis(
             sis_security_policy: policy.sis_security_policy,
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
+            num_response_chunks: num_chunks,
         },
         opening.method(),
         opening.challenge_config(),

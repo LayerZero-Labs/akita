@@ -469,9 +469,7 @@ fn recursive_onehot_profile_keys<BaseCfg: CommitmentConfig + 'static>(
 fn recursive_onehot_chunked_profile_keys<BaseCfg: CommitmentConfig + 'static>(
     preplans: &GenerationPreplans,
 ) -> Result<GroupedGenerationRequests, AkitaError> {
-    // W8R2 (34, 2) currently emits a setup-prefix whose natural length disagrees
-    // with the frozen commitment, so catalog validation rejects the row.
-    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32])
+    recursive_onehot_profile_keys_for_finals::<BaseCfg>(preplans, &[32, 34])
 }
 
 fn recursive_onehot_profile_keys_for_finals<BaseCfg: CommitmentConfig + 'static>(

@@ -113,6 +113,52 @@ fn parent_observable_key_tracks_grinding_successor_geometry() {
         "successors in one parent-observable bucket must price identically"
     );
 
+    let mut descriptor_distinct = evaluation_trace.clone();
+    let inner = descriptor_distinct.inner().matrix;
+    descriptor_distinct.own_group_mut().profile.inner.matrix =
+        akita_types::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner
+                .sis_table_key()
+                .expect("test inner matrix has a SIS table key")
+                .table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank() * 2,
+            inner.input_width(),
+            inner
+                .coeff_linf_bound()
+                .expect("test inner matrix has a coefficient bound"),
+            inner.ring_dimension(),
+        );
+    assert_ne!(
+        evaluation_trace.canonical_descriptor_bytes(),
+        descriptor_distinct.canonical_descriptor_bytes(),
+        "the test requires descriptor-distinct successors"
+    );
+    assert_eq!(
+        super::ParentObservableKey::new(&policy, Some(&evaluation_trace), None).unwrap(),
+        super::ParentObservableKey::new(&policy, Some(&descriptor_distinct), None).unwrap(),
+        "successor details invisible to the parent must share one class"
+    );
+    let layout = akita_types::OpeningClaimsLayout::new(10, 1).unwrap();
+    let grind_bits = |successor| {
+        akita_types::transcript_grinding_nonce_bits_for_planner_edge(
+            &evaluation_trace,
+            512,
+            &layout,
+            akita_types::FoldSuccessor::Recursive(successor),
+            policy.decomposition.field_bits(),
+            policy.claim_ext_degree,
+            1,
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        grind_bits(&evaluation_trace),
+        grind_bits(&descriptor_distinct),
+        "one parent-observable successor class must have one grinding price"
+    );
+
     let outer = wider_opening.outer().matrix;
     wider_opening.own_group_mut().profile.outer.matrix =
         akita_types::OuterCommitMatrixParams::new_unchecked(

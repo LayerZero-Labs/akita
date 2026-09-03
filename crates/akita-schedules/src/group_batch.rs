@@ -29,6 +29,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
         sis_modulus_profile: policy.sis_modulus_profile,
+        num_response_chunks: policy.chunks_at_level(0),
     };
     let groups = key
         .precommitteds

@@ -804,6 +804,42 @@ fn setup_prefix_cache_separates_equal_width_opening_methods() {
                 challenge_subring_dimension: 64,
             }
     }));
+
+    let natural_len = (1 << 14) - 513;
+    let n_prefix = akita_types::padded_setup_prefix_len(natural_len);
+    let full_prefix_groups = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix,
+            ..request(trace)
+        },
+    )
+    .unwrap();
+    assert!(!full_prefix_groups.is_empty());
+    for group in full_prefix_groups {
+        assert_eq!(
+            group.profile.blocks.live_ring_elements_per_claim
+                * group.profile.inner.matrix.ring_dimension(),
+            n_prefix
+        );
+        assert_eq!(
+            group.profile.blocks.live_blocks * group.profile.blocks.positions_per_block,
+            group.profile.blocks.live_ring_elements_per_claim
+        );
+        akita_types::scheduled_setup_prefix(natural_len, group)
+            .validate()
+            .expect("full setup prefix covers its complete power-of-two domain");
+    }
+
+    let error = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            n_prefix: natural_len,
+            ..request(trace)
+        },
+    )
+    .expect_err("a natural length is not a setup-prefix commitment domain");
+    assert!(error.to_string().contains("nonzero power of two"));
 }
 
 #[cfg(feature = "catalog-gen")]
@@ -814,10 +850,23 @@ fn runtime_eor_pricing_uses_larger_incoming_prefix_arity() {
     let mut policy = policy_of::<OneHot>();
     policy.claim_ext_degree = 2;
     let mut params = audited_grouped_level_params();
-    let prefix_params = *params
-        .precommitted_groups()
-        .last()
-        .expect("synthetic prefix params");
+    let mut cache = SetupPrefixSearchCache::default();
+    let prefix_params = derive_setup_prefix_groups(
+        &mut cache,
+        SetupPrefixSearchRequest {
+            policy: &policy,
+            opening: PlannerOpeningCandidate::evaluation_trace(params.fold_challenge_config()),
+            log_basis_open: params.open().digits.log_basis,
+            n_prefix: 1 << 6,
+            num_chunks: 1,
+            inner_ring_dimension: params.d_a(),
+            outer_ring_dimension: params.outer().matrix.ring_dimension(),
+        },
+    )
+    .expect("setup-prefix candidates")
+    .into_iter()
+    .next()
+    .expect("synthetic prefix params");
     params
         .set_setup_prefix(Some(akita_types::scheduled_setup_prefix(
             1 << 6,
@@ -917,8 +966,9 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     }
 
     let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
     let candidate = |dimensions: CommitmentRingDims, outer_slice_count, width_s| {
+        let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
+            .expect("production challenge for candidate A dimension");
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
@@ -964,11 +1014,13 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
     )
     .is_none());
 
+    let d64_challenge =
+        SparseChallengeConfig::production_for_ring_dim(64).expect("production D64 challenge");
     assert!(
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &FixedFoldPolicy,
-            ring_challenge_cfg: &challenge,
+            ring_challenge_cfg: &d64_challenge,
             challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
@@ -1001,7 +1053,7 @@ fn shared_ab_derivation_centralizes_rank_and_compression_rejection() {
         derive_ab_commitment_candidate(AbCommitmentCandidateRequest {
             policy: &policy,
             fold_policy: &OversizedFoldPolicy,
-            ring_challenge_cfg: &challenge,
+            ring_challenge_cfg: &d64_challenge,
             challenge_dimension: 64,
             dimensions: CommitmentRingDims::uniform(64),
             payload_mode: akita_types::CommitmentPayloadMode::Compressed,
@@ -1038,8 +1090,9 @@ fn raw_candidate_is_not_subject_to_the_compression_source_cap() {
     }
 
     let policy = policy_of::<OneHot>();
-    let challenge = SparseChallengeConfig::pm1_only(3);
     let dimensions = CommitmentRingDims::uniform(256);
+    let challenge = SparseChallengeConfig::production_for_ring_dim(dimensions.d_a())
+        .expect("production challenge for candidate A dimension");
     let num_claims = 1;
     let width_s = 8;
     let mut raw_candidate = derive_ab_commitment_candidate(AbCommitmentCandidateRequest {

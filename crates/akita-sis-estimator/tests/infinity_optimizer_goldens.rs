@@ -22,7 +22,7 @@ struct OptimizerGoldenRow {
 }
 
 #[test]
-fn infinity_optimizer_goldens_match_pr217_trusted_rows() {
+fn infinity_optimizer_matches_or_improves_pr217_trusted_rows() {
     let mut mismatches = Vec::new();
     for row in parse_rows() {
         let params =
@@ -30,43 +30,88 @@ fn infinity_optimizer_goldens_match_pr217_trusted_rows() {
                 .unwrap();
         let cost = estimate(&params, &EstimateConfig::lattice_estimator_parity()).unwrap();
 
-        record_log2_mismatch(row.rop_log2, cost.rop, "rop", &row, &mut mismatches);
-        record_log2_mismatch(
-            row.red_log2,
-            cost.red.unwrap(),
-            "red",
-            &row,
-            &mut mismatches,
-        );
-        record_log2_mismatch(
-            row.sieve_log2,
-            cost.sieve.unwrap(),
-            "sieve",
-            &row,
-            &mut mismatches,
-        );
-        if row.repetitions_log2 != ExpectedLog2::Infinity {
-            record_log2_mismatch(
-                row.repetitions_log2,
-                cost.repetitions.unwrap(),
-                "repetitions",
-                &row,
-                &mut mismatches,
-            );
+        if cost.beta == Some(row.beta) {
+            record_exact_match(&row, &cost, &mut mismatches);
+            continue;
         }
-        record_eq_mismatch("beta", row.beta, cost.beta, &row, &mut mismatches);
-        record_eq_mismatch("eta", row.eta, cost.eta, &row, &mut mismatches);
-        record_eq_mismatch_u64("zeta", row.zeta, cost.zeta, &row, &mut mismatches);
-        if cost.d != row.lattice_dimension {
+
+        // PR217 inherited lattice-estimator's exclusive-stop scaling bug and
+        // can omit the final strided beta. The corrected search may therefore
+        // choose exactly the next beta, but it must never report a more
+        // expensive attack than the pinned historical row.
+        if cost.beta != row.beta.checked_add(1) {
             mismatches.push(format!(
-                "d: expected {}, got {} for {row:?}",
-                row.lattice_dimension, cost.d
+                "beta: expected historical {} or corrected {}, got {:?} for {row:?}",
+                row.beta,
+                row.beta.saturating_add(1),
+                cost.beta
             ));
+            continue;
         }
+        record_not_more_expensive(row.rop_log2, cost.rop, "rop", &row, &mut mismatches);
     }
 
     if !mismatches.is_empty() {
         panic!("{}", mismatches.join("\n"));
+    }
+}
+
+fn record_exact_match(
+    row: &OptimizerGoldenRow,
+    cost: &akita_sis_estimator::LatticeCost,
+    mismatches: &mut Vec<String>,
+) {
+    record_log2_mismatch(row.rop_log2, cost.rop, "rop", row, mismatches);
+    record_log2_mismatch(row.red_log2, cost.red.unwrap(), "red", row, mismatches);
+    record_log2_mismatch(
+        row.sieve_log2,
+        cost.sieve.unwrap(),
+        "sieve",
+        row,
+        mismatches,
+    );
+    if row.repetitions_log2 != ExpectedLog2::Infinity {
+        record_log2_mismatch(
+            row.repetitions_log2,
+            cost.repetitions.unwrap(),
+            "repetitions",
+            row,
+            mismatches,
+        );
+    }
+    record_eq_mismatch("beta", row.beta, cost.beta, row, mismatches);
+    record_eq_mismatch("eta", row.eta, cost.eta, row, mismatches);
+    record_eq_mismatch_u64("zeta", row.zeta, cost.zeta, row, mismatches);
+    if cost.d != row.lattice_dimension {
+        mismatches.push(format!(
+            "d: expected {}, got {} for {row:?}",
+            row.lattice_dimension, cost.d
+        ));
+    }
+}
+
+fn record_not_more_expensive(
+    historical: ExpectedLog2,
+    corrected: CostValue,
+    field: &str,
+    row: &OptimizerGoldenRow,
+    mismatches: &mut Vec<String>,
+) {
+    let tolerance = NumericConfig::default().sage_abs_tolerance;
+    let is_not_more_expensive = match (historical, corrected) {
+        (ExpectedLog2::Infinity, _) => true,
+        (ExpectedLog2::Finite(expected), CostValue::Finite(actual)) => {
+            actual.log2 <= expected + tolerance
+        }
+        (ExpectedLog2::Finite(expected), CostValue::ProvenAboveTarget(actual)) => {
+            actual.log2 <= expected + tolerance
+        }
+        (ExpectedLog2::Finite(_), CostValue::Infinity) => false,
+    };
+    if !is_not_more_expensive {
+        mismatches.push(format!(
+            "{field}: corrected endpoint is more expensive than historical {historical:?}: {corrected:?} for {row:?}"
+        ));
     }
 }
 

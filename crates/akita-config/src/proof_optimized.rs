@@ -28,9 +28,10 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// Maximum A/source log basis searched by proof-optimized presets.
 ///
-/// The signed-i16 commitment path supports larger values, but exhaustive
-/// sweeps select 10 or 11 throughout the current dense/full-field domain.
-pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 11;
+/// The signed-i16 commitment path supports values through 16. Large-field
+/// presets search that complete implementation domain; q32 keeps its tighter
+/// field-specific cap below.
+pub(crate) const PROOF_OPTIMIZED_INNER_LOG_BASIS_MAX: u32 = 16;
 
 const fn proof_optimized_inner_basis_range(
     profile: akita_types::SisModulusProfileId,
@@ -326,7 +327,7 @@ where
 /// Reject a concrete schedule whose direct verifier matrix uses exceed setup.
 ///
 /// Offloaded producer edges are covered by verifier-visible setup-prefix
-/// commitments and do not require their natural source prefixes here.
+/// commitments and do not require their full committed source prefixes here.
 pub fn ensure_verifier_schedule_fits_setup(
     setup: &AkitaExpandedSetup<impl jolt_field::Field>,
     schedule: &FoldSchedule,

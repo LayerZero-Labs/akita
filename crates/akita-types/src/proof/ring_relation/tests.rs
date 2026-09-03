@@ -30,6 +30,12 @@ fn relation_layout(
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
+    let inner_bound = *crate::sis::inner_coeff_linf_bounds(
+        lp.inner().matrix.sis_modulus_profile(),
+        u32::try_from(lp.d_a()).expect("test ring dimension"),
+    )
+    .first()
+    .expect("exact test A bounds");
     lp.own_group_mut().profile.inner.matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner().matrix.security_policy(),
         lp.inner()
@@ -40,7 +46,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.inner().matrix.sis_modulus_profile(),
         lp.inner().matrix.output_rank(),
         lp.inner().matrix.input_width(),
-        2,
+        inner_bound,
         lp.d_a(),
     );
     lp.own_group_mut().profile.outer.matrix = OuterCommitMatrixParams::new_unchecked(
