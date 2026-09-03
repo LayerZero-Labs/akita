@@ -210,6 +210,10 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
         self.split_eq.linear_factor_evals()
     }
 
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
+    }
+
     fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
         let coefficients = self.round_q_coefficients(round);
         EqFactoredUniPoly::from_q_coeffs(coefficients[..=self.degree_bound()].to_vec())

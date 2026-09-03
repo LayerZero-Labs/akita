@@ -284,7 +284,7 @@ mod tests {
         EqFactoredSumcheckProof {
             round_polys: (0..rounds)
                 .map(|_| EqFactoredUniPoly {
-                    coeffs_except_linear_term: vec![
+                    coeffs_except_constant_term: vec![
                         F::zero();
                         EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
                     ],

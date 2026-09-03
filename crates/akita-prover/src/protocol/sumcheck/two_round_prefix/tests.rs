@@ -875,15 +875,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
     let r0 = F::from_u64(9);
-    let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-    let _ = akita_sumcheck::advance_eq_factored_claim(
-        F::zero(),
-        F::one(),
-        linear_at_zero,
-        linear_at_one,
-        &round0,
-        r0,
-    );
+    let _ = akita_sumcheck::advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
     prover.ingest_challenge(0, r0);
 
     let round1 = prover.compute_round_eq_factored(1);
@@ -903,11 +895,11 @@ fn stage1_b8_reconstructed_eq_polys_keep_degree4_storage_width() {
         state.reconstruct_round1_eq_poly(F::from_u64(7)),
     ] {
         assert_eq!(
-            poly.coeffs_except_linear_term.len(),
+            poly.coeffs_except_constant_term.len(),
             EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)
         );
         assert_eq!(
-            poly.coeffs_except_linear_term,
+            poly.coeffs_except_constant_term,
             vec![
                 F::zero();
                 EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(STAGE1_B8_Q_POLY_DEGREE)

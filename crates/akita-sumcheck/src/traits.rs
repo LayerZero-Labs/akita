@@ -3,7 +3,7 @@
 //! The standard `SumcheckInstance{Prover,Verifier}` pair drives the generic
 //! sumcheck loop. The `EqFactored*` variants are for sumchecks whose round
 //! polynomial factors as `s(X) = l(X) * q(X)`, where `l` is a linear eq
-//! factor; the prover sends `q` with its linear term omitted.
+//! factor; the prover sends `q` with its constant term omitted.
 
 use crate::types::EqFactoredUniPoly;
 use akita_algebra::split_eq::GruenSplitEq;
@@ -70,9 +70,9 @@ pub trait SumcheckInstanceVerifier<E: Field>: Send + Sync {
 /// Prover-side interface for eq-factored sumchecks of the form `s(X) = l(X) * q(X)`.
 ///
 /// Here `l(X)` is the current linear eq factor for the active round. The
-/// prover sends the inner polynomial `q(X)` with its linear term omitted, and
-/// the verifier advances a scaled claim directly from `l(0)`, `l(1)`, `q(0)`,
-/// the higher-degree contribution of `q(1)`, and the sampled challenge.
+/// prover sends the inner polynomial `q(X)` with its constant term omitted.
+/// The verifier recovers that term from the normalized round identity using
+/// the current equality coordinate `tau`, without division.
 pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     /// Number of rounds (i.e. number of variables bound by sumcheck).
     fn num_rounds(&self) -> usize;
@@ -86,6 +86,9 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
     /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
     fn current_linear_factor_evals(&self) -> (E, E);
 
+    /// Equality point coordinate `tau` for the current round.
+    fn current_tau(&self) -> E;
+
     /// Compute the eq-factored round message.
     fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E>;
 
@@ -98,16 +101,16 @@ pub trait EqFactoredSumcheckInstanceProver<E: Field>: Send + Sync {
 
 /// Mutable verifier round state for an eq-factored sumcheck proof.
 pub trait EqFactoredSumcheckRoundState<E: Field>: Send {
-    /// Linear eq-factor evaluations `(l(0), l(1))` for the current round.
-    fn current_linear_factor_evals(&self) -> (E, E);
+    /// Equality point coordinate `tau` for the current round.
+    fn current_tau(&self) -> E;
 
     /// Ingest the verifier challenge `r_round` to bind the current variable.
     fn ingest_challenge(&mut self, round: usize, r_round: E);
 }
 
 impl<E: Field> EqFactoredSumcheckRoundState<E> for GruenSplitEq<E> {
-    fn current_linear_factor_evals(&self) -> (E, E) {
-        self.linear_factor_evals()
+    fn current_tau(&self) -> E {
+        self.current_tau()
     }
 
     fn ingest_challenge(&mut self, _round: usize, r_round: E) {

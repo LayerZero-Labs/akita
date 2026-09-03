@@ -29,8 +29,6 @@ impl<E: Field + Ring + Unreduced> LowBasisRangeCheckProver<E> {
                     .expect("round 1 prefix polynomial requested before ingesting round 0");
                 prefix.skip_state.reconstruct_round1_eq_poly(r0)
             }
-        } else if self.split_eq.current_scalar().is_zero() {
-            EqFactoredUniPoly::from_q_coeffs(vec![E::zero()])
         } else {
             match &self.range_image {
                 LowBasisRangeImageStorage::Compact(compact_range_image) => {
@@ -101,6 +99,10 @@ impl<E: Field + Ring + Unreduced + Fold> EqFactoredSumcheckInstanceProver<E>
 
     fn current_linear_factor_evals(&self) -> (E, E) {
         self.split_eq.linear_factor_evals()
+    }
+
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
     }
 
     fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
