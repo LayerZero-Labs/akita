@@ -135,8 +135,17 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let uniform = RingDimensionSearchDomain::uniform(dimensions[0].d_a()).unwrap();
     let mut uniform_policy = policy_of::<OneHot>();
     uniform_policy.ring_dimension_schedule_mode =
-        crate::RingDimensionScheduleMode::UniformDimension { ring_dimension: 64 };
-    uniform_policy.selection_policy = crate::SelectionPolicyId::MinEstimatedProofPayloadV2;
+        crate::RingDimensionScheduleMode::AdaptiveDimension {
+            num_search_levels: 2,
+            suffix_dimensions: &[64],
+            potential_a_dimensions: &[64],
+            potential_b_dimensions: &[64],
+            potential_d_dimensions: &[64],
+        };
+    uniform_policy.selection_policy = crate::SelectionPolicyId::for_policy(
+        uniform_policy.recursive_setup_planning,
+        uniform_policy.ring_dimension_schedule_mode,
+    );
     let candidate = find_schedule(
         key,
         &uniform_policy,

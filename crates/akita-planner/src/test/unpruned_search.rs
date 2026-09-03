@@ -12,7 +12,7 @@ mod score;
 mod suffix;
 
 use candidate::{prepend_fold, prepend_root, terminal};
-use frontier::retain as retain_frontier_candidate;
+use frontier::{retain as retain_frontier_candidate, OracleFrontier};
 use relation::OracleRelationState;
 use score::{schedule_descriptor_bytes, score, OracleScore};
 use suffix::visit_suffixes;

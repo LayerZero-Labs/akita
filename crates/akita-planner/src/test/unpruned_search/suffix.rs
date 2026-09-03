@@ -34,7 +34,7 @@ fn retain_terminal_candidates(
     dimensions: CommitmentRingDims,
     trace_work: Option<OpeningWork>,
     work: &mut OracleWork,
-    frontier: &mut Vec<ScheduleCandidate>,
+    frontier: &mut OracleFrontier,
 ) -> Result<(), AkitaError> {
     let Some((opening, opening_reduction_bytes)) = trace_work else {
         return Ok(());
@@ -98,7 +98,7 @@ fn visit_fold_opening(
     fold_opening: FoldOpening,
     memo: &mut OracleMemo,
     work: &mut OracleWork,
-    frontier: &mut Vec<ScheduleCandidate>,
+    frontier: &mut OracleFrontier,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     for &payload_mode in state.payload_phase.candidate_modes(state.level, false) {
@@ -180,7 +180,7 @@ pub(super) fn visit_suffixes(
     if state.level > MAX_ORACLE_RECURSION_DEPTH {
         return Ok(());
     }
-    let mut frontier = Vec::new();
+    let mut frontier = OracleFrontier::default();
     let (min_log_basis, max_log_basis) =
         crate::policy::log_basis_search_range_at_level(ctx.policy, state.level);
     for log_basis in min_log_basis.max(state.current_log_basis)..=max_log_basis {
@@ -224,7 +224,7 @@ pub(super) fn visit_suffixes(
             }
         }
     }
-    let frontier = Arc::new(frontier);
+    let frontier = Arc::new(frontier.into_candidates());
     memo.insert(state, Arc::clone(&frontier));
     for candidate in frontier.iter().cloned() {
         visitor(candidate)?;
