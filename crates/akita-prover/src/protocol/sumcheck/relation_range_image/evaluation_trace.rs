@@ -1,7 +1,7 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
 use super::fold_two_round_quad;
-use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 #[cfg(test)]
 use std::ops::Range;
 use std::sync::Arc;
@@ -135,25 +135,24 @@ struct PreparedOpeningSupport<E: Field> {
 }
 
 #[derive(Clone)]
-struct PreparedLaneTerm<E: Field> {
-    factor: E,
-    source_index: usize,
-    lane: usize,
+pub(super) struct PreparedLaneTerm<E: Field> {
+    pub(super) factor: E,
+    pub(super) source_index: usize,
+    pub(super) lane: usize,
 }
 
 #[derive(Clone)]
-struct PreparedPackingSegment<E: Field> {
-    factor: E,
-    source_index: usize,
-    target_lane_start: usize,
-    source_lane_start: usize,
-    lane_count: usize,
+pub(super) struct PreparedPackingSegment<E: Field> {
+    pub(super) factor: E,
+    pub(super) source_index: usize,
+    pub(super) target_lane_start: usize,
+    pub(super) source_lane_start: usize,
+    pub(super) lane_count: usize,
 }
 
-struct PreparedPackingLaneMap<E: Field> {
-    segments: Vec<PreparedPackingSegment<E>>,
-    lane_to_segment: Vec<Option<usize>>,
-    overlapping_segments: BTreeMap<usize, Vec<usize>>,
+pub(super) struct PreparedPackingLaneMap<E: Field> {
+    pub(super) segments: Vec<PreparedPackingSegment<E>>,
+    pub(super) lane_to_segment: Vec<Option<NonZeroUsize>>,
 }
 
 impl<E: Field> PreparedPackingLaneMap<E> {
@@ -162,37 +161,29 @@ impl<E: Field> PreparedPackingLaneMap<E> {
             .lane_to_segment
             .get_mut(lane)
             .ok_or(AkitaError::InvalidProof)?;
-        if let Some(existing) = *slot {
-            self.overlapping_segments
-                .entry(lane)
-                .or_insert_with(|| vec![existing])
-                .push(segment);
-        } else {
-            *slot = Some(segment);
+        if slot.is_some() {
+            return Err(AkitaError::InvalidSetup(
+                "coefficient-packing segments overlap".into(),
+            ));
         }
+        let encoded = segment
+            .checked_add(1)
+            .and_then(NonZeroUsize::new)
+            .ok_or_else(|| AkitaError::InvalidSetup("packing segment index overflow".into()))?;
+        *slot = Some(encoded);
         Ok(())
-    }
-
-    fn for_each_segment(&self, lane: usize, mut visit: impl FnMut(usize)) {
-        if let Some(segments) = self.overlapping_segments.get(&lane) {
-            for &segment in segments {
-                visit(segment);
-            }
-        } else if let Some(Some(segment)) = self.lane_to_segment.get(lane) {
-            visit(*segment);
-        }
     }
 }
 
-enum PreparedLaneWeights<E: Field> {
+pub(super) enum PreparedLaneWeights<E: Field> {
     Sparse(Vec<Vec<PreparedLaneTerm<E>>>),
     Packing(PreparedPackingLaneMap<E>),
     Dense(Vec<E>),
 }
 
-struct PreparedTraceSource<E: Field> {
-    values: Vec<E>,
-    lane_count: usize,
+pub(super) struct PreparedTraceSource<E: Field> {
+    pub(super) values: Vec<E>,
+    pub(super) lane_count: usize,
 }
 
 /// One contiguous source-to-witness contribution to a structured linear term.
@@ -229,10 +220,10 @@ pub(crate) struct StructuredLinearWeights<E: Field> {
 /// coefficient coordinates are folded; lane challenges then merge the prepared support
 /// directly. No full coefficient-domain weight table is materialized.
 pub(crate) struct PreparedProverLinearTerms<E: Field> {
-    lane_weights: PreparedLaneWeights<E>,
-    sources: Vec<PreparedTraceSource<E>>,
-    live_lane_count: usize,
-    coeff_count: usize,
+    pub(super) lane_weights: PreparedLaneWeights<E>,
+    pub(super) sources: Vec<PreparedTraceSource<E>>,
+    pub(super) live_lane_count: usize,
+    pub(super) coeff_count: usize,
 }
 
 impl<E: Field> PreparedProverLinearTerms<E> {
@@ -524,7 +515,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
         let mut packing = PreparedPackingLaneMap {
             segments: Vec::new(),
             lane_to_segment: vec![None; live_lane_count],
-            overlapping_segments: BTreeMap::new(),
         };
         for term in terms {
             let source_index = match term.source() {
@@ -715,9 +705,46 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 actual: other.live_lane_count * other.coeff_count,
             });
         }
+        let Self {
+            lane_weights: source_weights,
+            sources,
+            ..
+        } = other;
+        self.sources
+            .len()
+            .checked_add(sources.len())
+            .ok_or_else(|| AkitaError::InvalidSetup("packing source index overflow".into()))?;
+        match (&self.lane_weights, &source_weights) {
+            (PreparedLaneWeights::Sparse(_), PreparedLaneWeights::Sparse(_)) => {}
+            (PreparedLaneWeights::Packing(target), PreparedLaneWeights::Packing(source)) => {
+                target
+                    .segments
+                    .len()
+                    .checked_add(source.segments.len())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("packing segment index overflow".into())
+                    })?;
+                if target
+                    .lane_to_segment
+                    .iter()
+                    .zip(&source.lane_to_segment)
+                    .any(|(target, source)| target.is_some() && source.is_some())
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "coefficient-packing segments overlap".into(),
+                    ));
+                }
+            }
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "cannot merge different Stage 2 weight representations".into(),
+                ));
+            }
+        }
+
         let source_offset = self.sources.len();
-        self.sources.extend(other.sources);
-        match (&mut self.lane_weights, other.lane_weights) {
+        self.sources.extend(sources);
+        match (&mut self.lane_weights, source_weights) {
             (PreparedLaneWeights::Sparse(target), PreparedLaneWeights::Sparse(source)) => {
                 for (target, terms) in target.iter_mut().zip(source) {
                     target.extend(terms.into_iter().map(|mut term| {
@@ -732,84 +759,24 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                     segment.source_index += source_offset;
                 }
                 target.segments.extend(source.segments);
-                for lane in 0..source.lane_to_segment.len() {
-                    if let Some(source_segments) = source.overlapping_segments.get(&lane) {
-                        for &source_segment in source_segments {
-                            target.add_segment(lane, source_segment + segment_offset)?;
-                        }
-                    } else if let Some(Some(source_segment)) = source.lane_to_segment.get(lane) {
-                        target.add_segment(lane, *source_segment + segment_offset)?;
+                for (target, source) in target
+                    .lane_to_segment
+                    .iter_mut()
+                    .zip(source.lane_to_segment)
+                {
+                    if let Some(source) = source {
+                        *target = NonZeroUsize::new(source.get() + segment_offset);
                     }
                 }
             }
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "cannot merge different Stage 2 weight representations".into(),
-                ));
-            }
+            _ => unreachable!("weight representations were preflighted above"),
         }
         Ok(())
     }
 
     #[inline]
     fn values_in_lane<const N: usize>(&self, lane: usize, coefficients: [usize; N]) -> [E; N] {
-        let mut values = [E::zero(); N];
-        match &self.lane_weights {
-            PreparedLaneWeights::Dense(dense) => {
-                if self.coeff_count == 1 && coefficients.iter().all(|&coefficient| coefficient == 0)
-                {
-                    if let Some(&value) = dense.get(lane) {
-                        values.fill(value);
-                    }
-                }
-                values
-            }
-            PreparedLaneWeights::Packing(packing) => {
-                packing.for_each_segment(lane, |segment_index| {
-                    let Some(segment) = packing.segments.get(segment_index) else {
-                        return;
-                    };
-                    let Some(lane_offset) = lane.checked_sub(segment.target_lane_start) else {
-                        return;
-                    };
-                    if lane_offset >= segment.lane_count {
-                        return;
-                    }
-                    let Some(source) = self.sources.get(segment.source_index) else {
-                        return;
-                    };
-                    let source_lane = segment.source_lane_start + lane_offset;
-                    let source_lane_start = source_lane * self.coeff_count;
-                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                        if let Some(source_value) =
-                            source.values.get(source_lane_start + coefficient)
-                        {
-                            *value += segment.factor * *source_value;
-                        }
-                    }
-                });
-                values
-            }
-            PreparedLaneWeights::Sparse(lane_terms) => {
-                let Some(terms) = lane_terms.get(lane) else {
-                    return values;
-                };
-                for term in terms {
-                    let Some(source) = self.sources.get(term.source_index) else {
-                        continue;
-                    };
-                    let source_lane_start = term.lane * self.coeff_count;
-                    for (value, coefficient) in values.iter_mut().zip(coefficients) {
-                        if let Some(source_value) =
-                            source.values.get(source_lane_start + coefficient)
-                        {
-                            *value += term.factor * *source_value;
-                        }
-                    }
-                }
-                values
-            }
-        }
+        self.resolve_lane(lane).evaluated_values(coefficients)
     }
 
     #[inline]
@@ -848,11 +815,6 @@ impl<E: Field> PreparedProverLinearTerms<E> {
                 self.get(lane0 + 1, 0, coeff_count),
             )
         }
-    }
-
-    pub(crate) fn quad_at(&self, lane: usize, base: usize, coeff_count: usize) -> [E; 4] {
-        debug_assert_eq!(self.coeff_count, coeff_count);
-        self.values_in_lane(lane, [base, base + 1, base + 2, base + 3])
     }
 
     pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {

@@ -281,6 +281,7 @@ mod dense_terms;
 mod evaluation_trace;
 mod lane_prefix;
 mod lifecycle;
+mod prepared_linear_lane;
 mod round_flow;
 mod weight_oracle;
 
@@ -291,6 +292,7 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 pub(crate) use evaluation_trace::{
     StructuredLinearSegment, StructuredLinearTerm, StructuredLinearWeights,
 };
+pub(crate) use prepared_linear_lane::PreparedLinearLane;
 pub(crate) use weight_oracle::{DenseRelationWeights, RelationWeightOracle};
 
 impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {

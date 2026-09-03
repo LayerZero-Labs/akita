@@ -120,19 +120,6 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
         out
     }
 
-    #[inline]
-    fn add_linear_pair_to_relation_factor(
-        linear_terms: &PreparedProverLinearTerms<E>,
-        lane: usize,
-        left: usize,
-        coeff_count: usize,
-        p0: &mut E,
-        p1: &mut E,
-    ) {
-        *p0 += linear_terms.get(lane, left, coeff_count);
-        *p1 += linear_terms.get(lane, left + 1, coeff_count);
-    }
-
     #[tracing::instrument(
         skip_all,
         name = "RelationRangeImageProver::materialize_two_round_compact_prefix_and_compute_next_round"
@@ -187,6 +174,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         .expect("compact lane is in bounds")
                         .iter();
                     let lane_weight = relation_lane_weights[lane];
+                    let linear_lane = linear_terms_round2.resolve_lane(lane);
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
@@ -225,16 +213,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_linear_pair_to_relation_factor(
-                                linear_terms_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
+                            let (t0, t1) = linear_lane.pair(left);
+                            let p0 = alpha_round2[left] * lane_weight + t0;
+                            let p1 = alpha_round2[left + 1] * lane_weight + t1;
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -270,6 +251,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         .expect("compact lane is in bounds")
                         .iter();
                     let lane_weight = relation_lane_weights[lane];
+                    let linear_lane = linear_terms_round2.resolve_lane(lane);
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
 
@@ -306,16 +288,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_linear_pair_to_relation_factor(
-                                linear_terms_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
+                            let (t0, t1) = linear_lane.pair(left);
+                            let p0 = alpha_round2[left] * lane_weight + t0;
+                            let p1 = alpha_round2[left + 1] * lane_weight + t1;
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -341,6 +316,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         .expect("compact lane is in bounds")
                         .iter();
                     let lane_weight = relation_lane_weights[lane];
+                    let linear_lane = linear_terms_round2.resolve_lane(lane);
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
@@ -381,16 +357,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_linear_pair_to_relation_factor(
-                                linear_terms_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
+                            let (t0, t1) = linear_lane.pair(left);
+                            let p0 = alpha_round2[left] * lane_weight + t0;
+                            let p1 = alpha_round2[left + 1] * lane_weight + t1;
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
@@ -427,6 +396,7 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                         .expect("compact lane is in bounds")
                         .iter();
                     let lane_weight = relation_lane_weights[lane];
+                    let linear_lane = linear_terms_round2.resolve_lane(lane);
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
 
@@ -465,16 +435,9 @@ impl<E: Field + Ring + Unreduced> RelationRangeImageProver<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * lane_weight;
-                            let mut p1 = alpha_round2[left + 1] * lane_weight;
-                            Self::add_linear_pair_to_relation_factor(
-                                linear_terms_round2,
-                                lane,
-                                left,
-                                next_coeff_count,
-                                &mut p0,
-                                &mut p1,
-                            );
+                            let (t0, t1) = linear_lane.pair(left);
+                            let p0 = alpha_round2[left] * lane_weight + t0;
+                            let p1 = alpha_round2[left + 1] * lane_weight + t1;
                             accumulate_relation_coeffs(&mut rel, w0, dw, p0, p1);
                         }
 
