@@ -24,22 +24,24 @@ report_matches \
 
 report_matches \
     "legacy schedule-table Cargo features are forbidden" \
-    rg -n '(^|[^[:alnum:]_-])(all-schedules|schedules-default|schedules-fp[[:alnum:]_-]*)([^[:alnum:]_-]|$)' \
-        --glob 'Cargo.toml' --glob '*.yml' --glob '*.yaml' . profile crates
+    git grep -n -E \
+        '(^|[^[:alnum:]_-])(all-schedules|schedules-default|schedules-fp[[:alnum:]_-]*)([^[:alnum:]_-]|$)' \
+        -- ':(glob)**/Cargo.toml' ':(glob)**/*.yml' ':(glob)**/*.yaml'
 
 report_matches \
     "schedule artifacts must not be embedded in Rust binaries" \
-    rg -n 'include_bytes!\([^\n]*(artifacts/schedules|\.aks)' crates profile --glob '*.rs'
+    git grep -n -E 'include_bytes!\(.*(artifacts/schedules|\.aks)' \
+        -- ':(glob)crates/**/*.rs' ':(glob)profile/**/*.rs'
 
 report_matches \
     "production library sources must not discover the workspace artifact directory" \
-    rg -n 'artifacts/schedules|from_workspace_schedule_artifact' \
+    git grep -n -E 'artifacts/schedules|from_workspace_schedule_artifact' -- \
         crates/akita-config/src crates/akita-pcs/src crates/akita-prover/src \
         crates/akita-schedules/src crates/akita-setup/src crates/akita-verifier/src \
-        --glob '*.rs' --glob '!**/tests/**' --glob '!**/test_support.rs'
+        ':(exclude,glob)**/tests/**' ':(exclude,glob)**/test_support.rs'
 
-if ! rg -Uq '#\[cfg\(feature = "planner-support"\)\][[:space:]]+pub mod generated;' \
-    crates/akita-schedules/src/lib.rs; then
+if ! grep -A1 -F '#[cfg(feature = "planner-support")]' crates/akita-schedules/src/lib.rs \
+    | grep -qF 'pub mod generated;'; then
     echo "error: compact generated-row machinery must remain gated behind planner-support" >&2
     failures=1
 fi
