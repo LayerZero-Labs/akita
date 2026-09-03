@@ -189,6 +189,12 @@ impl<E: Field + Ring + Fold + Unreduced> ClassIndexedRangeLeafProver<E> {
             });
         self.split_eq.current_scalar() * leaf
     }
+
+    /// Scalar-bearing equality-factor evaluations for the fused ordinary
+    /// range-plus-L2 sum-check, which reconstructs the full `l(X)q(X)` term.
+    pub(in crate::protocol::sumcheck) fn current_full_eq_factor_evals(&self) -> (E, E) {
+        self.split_eq.linear_factor_evals()
+    }
 }
 
 impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
@@ -206,8 +212,8 @@ impl<E: Field + Ring + Fold + Unreduced> EqFactoredSumcheckInstanceProver<E>
         self.input_claim
     }
 
-    fn current_linear_factor_evals(&self) -> (E, E) {
-        self.split_eq.linear_factor_evals()
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
     }
 
     fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {

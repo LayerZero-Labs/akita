@@ -358,7 +358,7 @@ fn eq_factored_sumcheck_shape<F: Field>(
     let degree = sc
         .round_polys
         .first()
-        .map_or(0, |p| p.coeffs_except_linear_term.len());
+        .map_or(0, |p| p.coeffs_except_constant_term.len());
     (sc.round_polys.len(), degree)
 }
 

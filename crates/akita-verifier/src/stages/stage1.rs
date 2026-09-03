@@ -109,7 +109,7 @@ impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier
 
     fn expected_output_claim(
         &self,
-        round_state: &Self::RoundState,
+        _round_state: &Self::RoundState,
         _challenges: &[E],
     ) -> Result<E, AkitaError> {
         let batched_output = self
@@ -123,7 +123,7 @@ impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for ProductSubcheckVerifier
                     .fold(E::one(), |prod, claim| prod * claim);
                 acc + weight * product
             });
-        Ok(round_state.current_scalar() * batched_output)
+        Ok(batched_output)
     }
 }
 
@@ -156,13 +156,12 @@ impl<E: Field> EqFactoredSumcheckInstanceVerifier<E> for RangePolynomialLeafVeri
 
     fn expected_output_claim(
         &self,
-        round_state: &Self::RoundState,
+        _round_state: &Self::RoundState,
         _challenges: &[E],
     ) -> Result<E, AkitaError> {
-        Ok(round_state.current_scalar()
-            * self
-                .plan
-                .evaluate_leaf_polynomial(&self.poly_coeffs, self.range_image_evaluation))
+        Ok(self
+            .plan
+            .evaluate_leaf_polynomial(&self.poly_coeffs, self.range_image_evaluation))
     }
 }
 
@@ -209,11 +208,9 @@ impl<E: Field + Ring + AkitaSerialize> AkitaStage1Verifier<E> {
                 .ok_or(AkitaError::InvalidProof)?;
             if stage.sumcheck_proof.round_polys.len() != expected.sumcheck_proof.0
                 || stage.child_claims.len() != expected.child_claims
-                || stage
-                    .sumcheck_proof
-                    .round_polys
-                    .iter()
-                    .any(|round| round.coeffs_except_linear_term.len() != expected.sumcheck_proof.1)
+                || stage.sumcheck_proof.round_polys.iter().any(|round| {
+                    round.coeffs_except_constant_term.len() != expected.sumcheck_proof.1
+                })
             {
                 return Err(AkitaError::InvalidProof);
             }
