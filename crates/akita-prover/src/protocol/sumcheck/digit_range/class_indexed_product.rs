@@ -151,8 +151,8 @@ impl<E: Field + Ring + Fold + Unreduced, const LANES: usize> EqFactoredSumcheckI
         self.input_claim
     }
 
-    fn current_linear_factor_evals(&self) -> (E, E) {
-        self.split_eq.linear_factor_evals()
+    fn current_tau(&self) -> E {
+        self.split_eq.current_tau()
     }
 
     fn compute_round_eq_factored(&mut self, round: usize) -> EqFactoredUniPoly<E> {
