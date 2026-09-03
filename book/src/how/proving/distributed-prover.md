@@ -20,8 +20,10 @@ We hold the design to three concrete criteria:
    speed-up the hardware promises.
 
 Throughout, assume $\mathcal M = 2^N$ machines $P_0,\dots,P_{\mathcal M-1}$ (take
-$N=3$, so $\mathcal M = 8$ machines). Each machine owns $1/\mathcal M$ of the
-witness — one eighth when $N=3$.
+$N=3$, so $\mathcal M = 8$ machines). We divide the witness into $\mathcal M$
+contiguous block ranges. When the number of live blocks is not divisible by
+$\mathcal M$, a machine owns either the floor or the ceiling of the average;
+when there are fewer blocks than machines, some ranges are empty.
 
 ## Setup: partitioning the witness
 
@@ -132,6 +134,42 @@ machine $P_j$ carries forward its own $\mathbf z_j$ and never exchanges it. In
 effect, the next recursive witness now contains $\mathcal M$ folded responses
 instead of one, and the machines need no $\mathbf z$-interaction at all.
 
+### Security accounting for the shared response
+
+The aggregate commitment-consistency rows act on
+$\mathbf z_\Sigma := \sum_j \mathbf z_j$. This preserves the algebraic identity
+of the ordinary fold, but it changes the weak-binding envelope. The digit range
+check is applied separately to every $\mathbf z_j$ using one common basis and
+one common digit depth $\delta$. Thus a large positive coefficient in one chunk
+cannot be hidden by a negative coefficient in another. If the digit basis is
+$b=2^\ell$, the exact difference interval for one chunk has diameter
+$b^\delta-1$, while the difference interval for $\mathbf z_\Sigma$ has diameter
+
+$$
+  C(b^\delta-1),
+$$
+
+where $C=\mathcal M$ is the response-chunk count. With $\kappa_1$ denoting the
+physical $L_1$ mass of the folding challenge, the A-role collision target is
+
+$$
+  4\kappa_1 C(b^\delta-1).
+$$
+
+The planner, generated schedule, and verifier admission all derive this exact
+raw target and select an audited A-role cell no smaller than it. A matrix sized
+for one response cannot be reused for several response chunks. The current SIS
+table does not add a separate coverage axis for the chunk count, so a two- or
+four-chunk schedule may use a conservative next-higher cell rather than the
+tightest possible collision-bound search. Every chunk retains the same
+full-width $\mathbf z_j$ buffer—even an
+empty block range contributes a full-width zero response—whereas the local
+$\widehat{\mathbf e}^{(j)}$ and $\widehat{\mathbf t}^{(j)}$ ranges follow the
+actual number of blocks. The number of response chunks is therefore a protocol
+parameter, not merely a deployment choice. Production schedules expose only a
+small fixed set of counts, and verifier validation caps the count so that a
+malicious schedule cannot force arbitrarily fragmented setup evaluation.
+
 ## Why only the first few rounds keep per-machine $\mathbf z$
 
 Keeping a separate $\mathbf z_j$ per machine is *not* free, so we do it only for a
@@ -145,10 +183,9 @@ constant number of leading rounds. Two reasons:
    worth distributing. After they shrink the witness, the remaining rounds are cheap
    and run fine on a single machine.
 
-So the prover fixes a **constant cutover round**: the first rounds run the
-distributed, per-machine-$\mathbf z$ protocol across the machines; after the cutover
-the prover collapses to a single machine, which keeps the current single-response
-Akita protocol unchanged.
+So the schedule fixes a constant number of distributed rounds. Those leading
+rounds retain one $\mathbf z_j$ per machine; the later rounds return to the
+single-response Akita protocol on one machine.
 
 ## The next-round witness and the relation change
 
@@ -310,8 +347,8 @@ single-machine protocol.
 
 ## Recap against the three criteria
 
-- **Distributable witness.** The block partition gives each machine a disjoint
-  $1/\mathcal M$ share, and every step — inner/outer/opening commit, the partial
+- **Distributable witness.** The balanced block partition gives each machine a
+  disjoint contiguous share, and every step — inner/outer/opening commit, the partial
   fold, the quotient lift, the next-level commit, and the sum-check — is computed
   per machine over its own blocks.
 - **Low communication.** Only short objects ever cross machines: the $n_B/n_D$-sized
@@ -322,6 +359,6 @@ single-machine protocol.
   exactly the change that removes the one all-reduce that would otherwise dominate
   communication.
 - **Net speed-up.** Per-machine $\mathbf z_j$ is kept only for the constant block of
-  leading (large) rounds; after the cutover the prover reverts to the single-machine
+  leading (large) rounds; afterward the prover reverts to the single-machine
   protocol, so the witness-growth and extra fold levels are bounded and the
   distributed parallelism translates into an end-to-end win.

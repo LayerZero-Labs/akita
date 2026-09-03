@@ -231,7 +231,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             );
             assert!(
                 alternate_result.is_err(),
-                "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs, got {alternate_result:?}"
+                "successor grouped opening must reject a full-prefix commitment whose active prefix agrees but tail differs"
             );
         }
 
@@ -246,7 +246,7 @@ pub(crate) fn recursive_multi_group_round_trip<BaseCfg>(
             );
             assert!(
                 result.is_err(),
-                "{label} must be rejected without panicking, got {result:?}"
+                "{label} must be rejected without panicking"
             );
         };
 

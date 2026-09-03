@@ -206,11 +206,11 @@ where
     };
 
     let num_vars = point.len();
-    if num_vars > setup.seed().max_num_vars {
+    if num_vars > setup.descriptor().max_num_vars {
         return Err(AkitaError::InvalidInput(format!(
             "{label} received opening points with {} variables but setup supports at most {}",
             num_vars,
-            setup.seed().max_num_vars
+            setup.descriptor().max_num_vars
         )));
     }
     if group_sizes.is_empty() {
@@ -229,11 +229,11 @@ where
             "{label} requires at least one claimed opening",
         )));
     }
-    if num_claims > setup.seed().max_num_batched_polys {
+    if num_claims > setup.descriptor().max_num_batched_polys {
         if for_prover {
             return Err(AkitaError::InvalidInput(format!(
                 "batched_prove received {num_claims} polynomials but setup supports at most {}",
-                setup.seed().max_num_batched_polys
+                setup.descriptor().max_num_batched_polys
             )));
         }
         return Err(AkitaError::InvalidProof);

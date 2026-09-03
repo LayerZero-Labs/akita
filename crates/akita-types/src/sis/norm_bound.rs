@@ -186,17 +186,21 @@ pub fn certified_terminal_response_linf_cap(
 /// A-role committed-level coefficient-`L∞` collision bucket for one exact
 /// verifier-accepted fold digit depth.
 ///
-/// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
-/// bounds the extracted kernel by challenge mass; stage-1 digit membership
-/// accepts every balanced `δ_fold`-digit string. Binding compares two accepted
-/// responses, so their exact coefficient difference envelope is
-/// [`balanced_digit_interval_diameter`], not twice the asymmetric single-response
-/// envelope `balanced_digit_abs_max`. MSIS accounting prices the weak-binding
-/// collision `2 · c_bar · delta_z`, where
-/// `c_bar = 2 · challenge.l1_norm`, then selects that exact audited target.
+/// Prices the effective folded witness
+/// `z_sum = Σ_j z^(j) = Σ_i c_i·s_i` in the L∞ MSIS table. Lemma 7 bounds the
+/// extracted kernel by challenge mass; stage-1 digit membership accepts every
+/// balanced `δ_fold`-digit string independently in each response chunk. Binding
+/// compares two accepted responses, so one chunk's exact coefficient difference
+/// envelope is [`balanced_digit_interval_diameter`], not twice the asymmetric
+/// single-response envelope [`crate::sis::balanced_digit_abs_max`]. The shared A rows act on
+/// the sum of all `num_response_chunks` responses, so their difference envelope
+/// is the per-chunk diameter times `num_response_chunks`. MSIS accounting prices
+/// the weak-binding collision `2 · c_bar · delta_z_sum`, where
+/// `c_bar = 2 · challenge.l1_norm`, then selects the smallest audited A cell
+/// that covers that exact target.
 ///
-/// Returns `None` on overflow or when the exact collision target is not audited
-/// for `(sis_modulus_profile, ring_dimension)`.
+/// Returns `None` on overflow or when no audited collision cell covers the
+/// target for `(sis_modulus_profile, ring_dimension)`.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn rounded_up_role_a_inf_norm(
@@ -207,13 +211,15 @@ pub fn rounded_up_role_a_inf_norm(
     log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
     fold_decomposed_digits: usize,
+    num_response_chunks: usize,
 ) -> Option<u128> {
     let challenge = FoldChallengeNorms::new(fold_challenge_config);
-    if log_basis_response == 0 || fold_decomposed_digits == 0 {
+    if log_basis_response == 0 || fold_decomposed_digits == 0 || num_response_chunks == 0 {
         return None;
     }
     let response_difference_bound =
-        balanced_digit_interval_diameter(log_basis_response, fold_decomposed_digits);
+        balanced_digit_interval_diameter(log_basis_response, fold_decomposed_digits)
+            .checked_mul(num_response_chunks as u128)?;
     let collision_linf = role_a_collision_inf_norm_for_response_difference(
         challenge.l1_norm,
         response_difference_bound,
@@ -574,6 +580,7 @@ mod tests {
                 decomposition.log_basis,
                 &fold_challenge_config,
                 delta_fold,
+                1,
             )
             .unwrap(),
             envelope,
@@ -597,6 +604,7 @@ mod tests {
                 3,
                 &challenge,
                 delta_fold,
+                1,
             )
             .unwrap();
             assert_eq!(exact_bucket, expected_collision);
@@ -659,6 +667,7 @@ mod tests {
             decomposition.log_basis,
             &fold_challenge_config,
             delta_fold,
+            1,
         )
         .unwrap();
         let cap_priced =
@@ -763,6 +772,7 @@ mod tests {
             decomposition.log_basis,
             &fold_challenge_config,
             delta_fold,
+            1,
         )
         .unwrap();
         assert_eq!(
@@ -777,5 +787,54 @@ mod tests {
             )
             .unwrap(),
         );
+    }
+
+    #[test]
+    fn role_a_collision_scales_with_the_number_of_response_chunks() {
+        let d = 64;
+        let log_basis = 3;
+        let fold_digits = 2;
+        let challenge = SparseChallengeConfig::production_for_ring_dim(d).unwrap();
+        let challenge_l1 = FoldChallengeNorms::new(&challenge).l1_norm;
+        let per_chunk_difference = balanced_digit_interval_diameter(log_basis, fold_digits);
+
+        for num_response_chunks in [1usize, 2, 4, 8] {
+            let exact_collision = role_a_collision_inf_norm_for_response_difference(
+                challenge_l1,
+                per_chunk_difference * num_response_chunks as u128,
+            )
+            .unwrap();
+            assert_eq!(
+                rounded_up_role_a_inf_norm(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    d,
+                    log_basis,
+                    &challenge,
+                    fold_digits,
+                    num_response_chunks,
+                ),
+                ceil_supported_linf_bound(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    SisMatrixRole::Inner,
+                    d as u32,
+                    exact_collision,
+                ),
+            );
+        }
+        assert!(rounded_up_role_a_inf_norm(
+            DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            d,
+            log_basis,
+            &challenge,
+            fold_digits,
+            0,
+        )
+        .is_none());
     }
 }

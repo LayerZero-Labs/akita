@@ -33,7 +33,7 @@ fn prefix_commitment_params() -> GroupOpenPhaseParams {
         SisModulusProfileId::Q128OffsetA7F7,
         SisMatrixRole::Inner,
         u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
-        13_356,
+        32_767,
     )
     .expect("audited prefix A bound");
     let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(inner_key, 1)

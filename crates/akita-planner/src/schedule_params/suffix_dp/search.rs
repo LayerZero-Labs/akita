@@ -292,13 +292,7 @@ pub(crate) fn derive_selected_suffix_schedule(
         }
         let guide_scope =
             GuideScope::for_state(policy, root_level_key.is_some(), incoming_setup_prefix);
-        let traversal = candidate_traversal(
-            policy,
-            guide_scope,
-            opening_layout,
-            state.current_witness_len,
-            candidates,
-        )?;
+        let traversal = candidate_traversal(policy, guide_scope, opening_layout, candidates)?;
         let search = OpeningSearch {
             state,
             depth,

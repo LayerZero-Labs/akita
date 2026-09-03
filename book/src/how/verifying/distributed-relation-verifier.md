@@ -3,7 +3,8 @@
 > **Status: verifier design and implementation guide.** This chapter explains
 > the relation produced by the [distributed prover](../proving/distributed-prover.md),
 > the work required from one verifier, and the implementation that evaluates
-> exact witness chunks without padding them to equal length.
+> exact E/T block ranges without padding. Every Z response retains the same
+> full ambient width.
 
 > **A note on the name.** "Distributed verifier" would be a misnomer: nothing
 > about the verification is distributed. There is a *single* verifier, running on
@@ -56,10 +57,17 @@ One distinction recurs throughout and is worth fixing up front:
   The $\mathcal M$ repetitions are $\mathcal M$ full-size copies — the deliberate
   price the protocol pays to avoid an all-reduce of the fold.
 
-The headline, derived component by component below, is that the verifier's
-**dominant cost is unchanged**: the expensive $O(D)$ SIS-matrix
-$\alpha$-evaluations are still performed exactly once, and all $\mathcal M$-fold
-structure lands on the cheap bookkeeping. Relation replay lives in
+The shared A rows act on the sum of these replicated responses. Accordingly,
+schedule admission multiplies the exact one-chunk digit-difference envelope by
+$\mathcal M$ before selecting the A-role SIS row. This check is performed before
+transcript replay; an undersized A row is rejected.
+
+The verifier does not evaluate $\mathcal M$ independently sampled A/B/D
+matrices: the chunks use column views of the same setup. Chunking does,
+however, create more column intervals and repeated full-width Z contributions,
+so its concrete setup scan and bookkeeping cost grows with the response-chunk
+count. This is why the count is both a schedule parameter and a verifier-capped
+resource. Relation replay lives in
 `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
 Prepared setup geometry and the shared setup scan live in
 `crates/akita-types/src/setup_contribution/`.

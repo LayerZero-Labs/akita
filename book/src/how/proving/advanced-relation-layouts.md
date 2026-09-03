@@ -504,6 +504,15 @@ materializing the global $\mathbf z$ and decomposing it again; the multi-chunk
 relation avoids that full-width reduction by acting on the local digit vectors
 directly.
 
+This aggregation must also be reflected in weak binding. Stage 1 checks every
+$\hat{\mathbf z}^{(j)}$ against the same balanced digit interval, but the shared
+A rows bind $\mathbf z_\Sigma=\sum_j\mathbf z^{(j)}$. For basis $b$ and fold
+depth $\delta$, one accepted chunk has exact difference diameter
+$b^\delta-1$; $C$ accepted chunks therefore have aggregate diameter
+$C(b^\delta-1)$. The A-role SIS row is sized for this aggregate envelope, not
+for a single chunk. Honest chunk norms may differ because the block ranges are
+ragged, but every chunk keeps the same basis, depth, and full ambient Z width.
+
 Because the ranges $\mathcal I_j$ partition the live blocks, this derived
 $\mathbf z$ still satisfies the two recomposed identities from the basic
 setting:

@@ -75,6 +75,7 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
         params.open().digits.log_basis,
         &params.fold_challenge_config(),
         params.num_digits_fold(),
+        params.witness_chunk.num_chunks,
     )
     .expect("retargeted exact A bound");
     let inner = &params.inner().matrix;
@@ -136,6 +137,7 @@ fn retarget_precommitted_test_role_dims(
         group.opening.log_basis_open,
         &group.opening.fold_challenge_config,
         group.opening.num_digits_fold,
+        1,
     )
     .expect("retargeted precommitted exact A bound");
     let mut layout = group.profile;
@@ -259,6 +261,7 @@ fn test_inputs_for_group_sizes(
             lp.open().digits.log_basis,
             &lp.fold_challenge_config(),
             lp.num_digits_fold(),
+            lp.witness_chunk.num_chunks,
         )
         .expect("exact test A bound");
         lp.own_group_mut().profile.inner.matrix = crate::InnerCommitMatrixParams::new_unchecked(

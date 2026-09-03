@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-13 |
 | Status        | implemented |
-| PR            | |
+| PR            | #444 |
 | Supersedes    | the SIS policy and table specs deleted in this cutover |
 | Superseded-by | |
 | Book-chapter  | book/src/how/security.md |
@@ -66,17 +66,60 @@ commitment-matrix cell has maximum module rank `20`. Inner/A uses exact
 protocol collision targets
 
 ```text
-B_A = 4 * ||c||_1 * (2^t - 1),
+B_A = 4 * ||c||_1 * C * (2^t - 1),
 t in {3,4,5,6,8,9,10,12,15,16,18,20,21,24,25,27,28,30,32,33}.
 ```
+
+Here `C` is the number of response chunks retained by the consuming fold. The
+one-chunk interval diameter is `2^t - 1`; the shared A rows act on the sum of
+all `C` independently range-checked responses. This expression is the raw
+collision target. Runtime lookup selects the smallest audited A cell for the
+same modulus profile and ring dimension whose coefficient bound is at least
+`B_A`, and rejects the schedule if no such cell exists. The coverage set itself
+remains the one-response target set; response-chunk count is not an independent
+table axis. Selective L2 rows remain one-chunk cells.
+
+#### Deferred part-indexed relation alternative
+
+The factor `C` is required by the implemented relation, but it is not inherent
+to reusing one public A matrix across chunks. A future protocol change could
+retain separate carrier-consistency and A equations for every response chunk,
+while continuing to aggregate the additive public-image, opening, and
+compression equations. The chunk-indexed logical rows could still be
+random-batched into one sumcheck and could all reuse the same physical A
+matrix.
+
+With those local equations, extraction can select one differing chunk. Its
+accepted response-difference diameter is `2^t - 1`, so the corresponding raw A
+collision target would be
+
+```text
+B_A_local = 4 * ||c||_1 * (2^t - 1).
+```
+
+This improvement cannot be obtained by changing only the security proof or
+the table lookup. Under the current shared equation, adding a vector `u` to one
+accepted chunk and subtracting it from another leaves the aggregate response
+unchanged whenever both modified chunks remain in range. Local consistency and
+A rows would instead expose the two residuals separately.
+
+This PR does not implement that alternative. It would require part-indexed
+ring-relation and quotient rows, proof and schedule identity changes, planner
+and generated-table regeneration, and negative tests for cross-chunk
+cancellation. In particular, the quotient witnesses are bound before the row
+batching challenges in the current transcript, so a single quotient formed
+after random batching is not a drop-in replacement. Until the prover and
+verifier enforce the local relation, every multi-chunk coefficient route must
+retain the factor `C` above.
 
 The production challenge masses are `14, 16, 19, 23, 31, 51`; the D64
 selective-L2 shell additionally contributes `53`. A ring dimension retains
 only the masses reachable through its evaluation-trace or coefficient-packing
 geometry. The q32 profile guard is `268435455`, q64 is
 `2199023255551 = 2^41 - 1`, and q128 is
-`17592186044415 = 2^44 - 1`; A does not round unsupported intermediate values
-up to those guards.
+`17592186044415 = 2^44 - 1`. An A lookup can round an intermediate raw target
+only to the next audited A cell for the same profile and dimension; it never
+rounds directly to a profile guard or a synthetic power-of-two bucket.
 Outer/B and Open/D use the exact gadget anchors
 `3, 7, 15, 31, 63, 127, 255`.
 
@@ -88,8 +131,8 @@ each ring origin, including its accepted and rejected boundary witnesses. The
 runtime projection takes the minimum scalar cutoff when different ring origins
 map to the same scalar key.
 
-The checked-in production audit contains 20,940 ring-origin rows: 4,780 for
-q32, 9,280 for q64, and 6,880 for q128. The q128 Inner/1024 cell has 2,000
+The checked-in production audit contains 21,100 ring-origin rows: 4,780 for
+q32, 9,280 for q64, and 7,040 for q128. The q128 Inner/1024 cell has 2,000
 direct estimator requests: 100 exact coefficient targets times 20 module
 ranks.
 
@@ -468,17 +511,36 @@ B and D use exact gadget anchors when their formulas produce
 3, 7, 15, 31, 63, 127, 255
 ```
 
-A uses the exact targets derived from the response-difference exponent sweep,
-the compatible production challenge masses, and the profile reach guard. It
-does not round between targets. If planner workloads require a new exponent or
-challenge family, the canonical derivation and generated table must be updated
+A coverage uses the exact one-response targets derived from the
+response-difference exponent sweep, compatible production challenge masses,
+and the profile reach guard. A consuming relation first derives its exact raw
+target, including the response-chunk count, and then selects the smallest
+audited cell that covers it. This keeps the checked-in table independent of the
+chunk-count catalog. A sparse refinement cell may be added when measurement
+shows that the existing ceiling materially worsens a supported schedule; such
+a cell must be added to the canonical coverage derivation and generated table
 together.
+
+The current q128 table contains eight such multi-chunk refinements:
+
+```text
+D=64:  417384, 1670760, 3341520
+D=256: 416976, 753480, 3341520
+D=512: 15624, 416976
+```
+
+These eight cells contribute 160 ring-origin/rank rows. They cover measured
+two- and four-response operating points without forming the Cartesian product
+of challenge masses, digit exponents, ring dimensions, and chunk counts.
+Eight-response schedules use the ordinary ceiling rule; no dedicated
+eight-response refinement is present.
 
 F uses the bounds required by its own formula and planner domain.
 
 The B and D helpers round a raw gadget bound up within their allowed anchors;
-the A helper requires its already-derived exact target. The generator stores
-the union of the resulting `(B, n)` requests. It does not
+the A helper rounds its already-derived exact target up within the audited A
+cells for the selected profile and dimension. The generator stores the union
+of the resulting `(B, n)` requests. It does not
 generate the full product of every role's bounds and every role's row
 dimensions unless those cells are actually reachable.
 
@@ -612,6 +674,9 @@ digest. Dependent schedule catalogs embed that same digest.
       estimation and does not emit them.
 - [x] Coefficient cells are selected per role from the explicit A and gadget
       anchor sets.
+- [x] Planner replay and verifier admission derive the raw A-role infinity
+      target from the consuming response-chunk count, select an audited cell no
+      smaller than that target, and reject an undersized or unsupported cell.
 - [x] Cap hits use `ScalarCutoff::AtLeast`.
 - [x] Runtime lookup uses checked arithmetic and fails closed.
 - [x] Generated tables, audit data, schedules, book text, and operational docs
@@ -639,6 +704,9 @@ Test these cases:
 - rejection of B and D commitment requests below dimension 64;
 - A requests at dimension 64 and above;
 - role specific coefficient rounding;
+- exact raw A-role scaling for response chunk counts 1, 2, 4, and 8, followed
+  by conservative selection of the smallest covering audited cell;
+- rejection of a multi-chunk schedule carrying only the one-chunk A bound;
 - a missing required role cell;
 - an omitted unreachable scalar cell;
 - exact and cap hit cutoffs;

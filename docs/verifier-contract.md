@@ -20,8 +20,9 @@ The verifier never invokes planner search. It accepts only an explicit
 Before setup access or transcript replay, it validates catalog identity and
 runtime hooks, resolves the public row digest, compares every ordered public
 `GroupCommitPhaseParams`, re-audits every A/B/D/recursive/terminal SIS matrix,
-checks challenge and full terminal L infinity or L2 cap geometry, and confirms the schedule fits
-the setup field capacity. Private polynomial representations and honest-prover
+prices each shared A row for the schedule's response-chunk count, checks
+challenge and full terminal L infinity or L2 cap geometry, and confirms the
+schedule fits the setup field capacity. Private polynomial representations and honest-prover
 witness models are not verifier inputs.
 
 The accepted proof topology is structural: a root fold, zero or more recursive
@@ -30,6 +31,20 @@ mismatches before transcript replay. Every terminal uses predecessor-bound
 inner `t` and the `consistency | A` relation. The root may be that predecessor;
 there is no separate fallback proof form, final outer `u`, or terminal B/D
 block to validate.
+
+Transcript replay is also shape-bounded. Before decoding the headerless proof,
+the verifier derives the canonical `GrindingPlan` and successor-aware fold
+geometry from the validated public schedule and opening layout. That one
+geometry determines each sumcheck round count, recursive opening layout, proof
+shape, and packed nonce-stream width. The decoder validates the stream byte
+bound and final padding before allocation; replay rejects a wrong site or query
+kind, truncation, incomplete consumption, and an out-of-range nonce.
+
+Sparse fold coordinates are verifier-reachable indexed SHAKE256 queries. Their
+group root has a fixed 32-byte boundary, coordinate indices are checked before
+conversion, and buffered fixed-width reads use bounded copies rather than
+panicking slice conversions. A refill boundary changes neither the byte stream
+nor the challenge law.
 
 ## Rules
 

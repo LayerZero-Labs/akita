@@ -39,7 +39,7 @@ pub(super) fn consider_child_suffixes<'a>(
     // `SuffixResult` partitions candidates by every successor coordinate a
     // parent can observe. Price the edge and grinding plan once for that class;
     // rebuilding them for descriptor-distinct members is redundant.
-    let edge_price = child_edge_price(edge, first.first_fold_params())?;
+    let edge_price = child_edge_price(edge, first)?;
     let edge_nonce_bits = edge.grinding_nonce_bits(first)?;
     let parent_cost = ParentObservableKey::new(edge.policy, Some(&edge.candidate_params), None)?;
     for suffix in std::iter::once(first).chain(child_candidates) {

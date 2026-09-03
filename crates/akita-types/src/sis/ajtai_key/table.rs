@@ -1,4 +1,4 @@
-use super::super::coverage::{sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
+use super::super::coverage::{inner_coeff_linf_bounds, sis_role_cell, GADGET_COEFF_LINF_ANCHORS};
 use super::super::generated_sis_table::{
     sis_max_widths as generated_sis_max_widths, SIS_TABLE_DIGEST,
 };
@@ -199,9 +199,12 @@ pub struct SisTableKey {
 
 /// Resolve a raw coefficient-`L∞` bound to a generated role cell.
 ///
-/// A-role collisions are already exact protocol-derived targets and therefore
-/// require an exact table key. B and D remain gadget commitments, so their raw
-/// digit-difference bounds round up to the smallest exact gadget anchor.
+/// A-role collisions first use the exact protocol-derived target, then round
+/// upward to the smallest audited A cell for the selected profile and ring
+/// dimension. One-response targets are themselves audited cells. Chunked
+/// responses can land between those cells, so this conservative rounding lets
+/// them reuse the existing table without adding a chunk-count coverage axis.
+/// B and D round up to the smallest exact gadget anchor.
 #[must_use]
 pub fn ceil_supported_linf_bound(
     policy: SisSecurityPolicyId,
@@ -215,7 +218,9 @@ pub fn ceil_supported_linf_bound(
         return None;
     }
     let bound = match role {
-        SisMatrixRole::Inner => linf,
+        SisMatrixRole::Inner => inner_coeff_linf_bounds(sis_modulus_profile, d)
+            .into_iter()
+            .find(|&candidate| linf <= candidate)?,
         SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()

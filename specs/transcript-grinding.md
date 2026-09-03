@@ -54,7 +54,7 @@ a fixed `u16` or `u32` slot.
 
 ## Current state
 
-Slices 1 through 6 are implemented on PR #417. Akita now derives sparse fold
+Slices 1 through 6 are implemented on PR #448. Akita now derives sparse fold
 challenge coordinates from independent indexed SHAKE256 queries, derives one
 public `GrindingPlan`, binds its digest in `TranscriptGrindingBinding`, and
 stores fold-response values in one packed
@@ -1075,7 +1075,7 @@ generated output.
 - [ ] Proof-size and planner output report the exact packed stream contribution
       and expected prover work. Generated schedules and catalog identities are
       regenerated and drift checks pass.
-- [ ] The Book transcript and security chapters, the fold-l∞ spec, the crate
+- [x] The Book transcript and security chapters, the fold-l∞ spec, the crate
       graph if dependencies change, and verifier-contract documentation are
       updated before the implementation is marked complete.
 - [ ] All verifier-reachable failures obey the no-panic contract under malformed

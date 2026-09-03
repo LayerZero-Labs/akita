@@ -96,6 +96,7 @@ fn audit_bound(label: &str, declared: u128, required: Option<u128>) -> Result<()
 fn audit_precommitted_group(
     label: &str,
     params: &GroupOpenPhaseParams,
+    num_response_chunks: usize,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
     params.validate()?;
@@ -135,6 +136,7 @@ fn audit_precommitted_group(
             params.opening.log_basis_open,
             &params.opening.fold_challenge_config,
             params.opening.num_digits_fold,
+            num_response_chunks,
         ),
     )?;
     audit_bound(
@@ -271,6 +273,7 @@ fn audit_committed_params(
                 params.open().digits.log_basis,
                 &params.fold_challenge_config(),
                 params.num_digits_fold(),
+                params.witness_chunk.num_chunks,
             ),
         )?,
         InnerCommitSecurityRoute::L2 {
@@ -521,7 +524,12 @@ pub(crate) fn audit_resolved_schedule(
                 "profile and consuming parameters disagree",
             ));
         }
-        audit_precommitted_group(&format!("root precommitted group {index}"), group, policy)?;
+        audit_precommitted_group(
+            &format!("root precommitted group {index}"),
+            group,
+            final_params.witness_chunk.num_chunks,
+            policy,
+        )?;
     }
 
     audit_committed_params(

@@ -49,19 +49,19 @@ where
     Cfg::ExtField: FpExtEncoding<F>,
 {
     let grinding_plan = derive_transcript_grinding_plan::<Cfg>(schedule, opening_batch)?;
-    let descriptor = AkitaInstanceDescriptor::new(
+    let instance_descriptor = AkitaInstanceDescriptor::new(
         AlgebraSection::for_fields::<F, Cfg::ExtField>()?,
         SetupSection::from_parts(
             Cfg::decomposition(),
             Cfg::sis_modulus_profile(),
-            &setup.seed().setup_seed,
+            &setup.descriptor().setup_seed,
         )
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor setup identity: {err}")))?,
         PlanSection::from_schedule(selection, schedule),
         TranscriptGrindingBinding::for_plan(&grinding_plan)?,
         CallSection::from_layout(opening_batch, basis)?,
     );
-    let descriptor_bytes = descriptor
+    let descriptor_bytes = instance_descriptor
         .canonical_bytes()
         .map_err(|err| AkitaError::InvalidSetup(format!("descriptor serialization: {err}")))?;
     transcript.bind_instance_bytes(&descriptor_bytes);

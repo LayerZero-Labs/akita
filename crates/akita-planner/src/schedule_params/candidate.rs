@@ -183,6 +183,7 @@ pub(super) fn derive_inner_commitment_candidate(
         log_basis_open,
         ring_challenge_cfg,
         num_digits_fold,
+        num_chunks,
     ) else {
         return Ok(None);
     };

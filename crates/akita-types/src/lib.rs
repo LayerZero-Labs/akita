@@ -166,10 +166,11 @@ pub use ring_relation_mode::RingRelationMode;
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,
-    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, GroupCommitPhaseParams,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, PrecommittedGroupProfiles, ScheduleSisBound,
-    ScheduleSisOccurrence, ScheduleSisRole, TerminalFoldParams,
-    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+    FoldSchedule, FoldScheduleDescriptorStep, FoldScheduleEstimate, FoldSuccessor,
+    GroupCommitPhaseParams, NextWitnessBindingPolicy, PlannedFoldSchedule,
+    PrecommittedGroupProfiles, ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole,
+    TerminalFoldParams, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
@@ -221,7 +222,7 @@ pub use transcript_grinding::{
 pub use transcript_grinding_plan::{
     derive_transcript_grinding_plan_from_public_shape,
     transcript_grinding_nonce_bits_for_planner_candidate,
-    transcript_grinding_nonce_bits_for_planner_edge, GrindingPlanSuccessor,
+    transcript_grinding_nonce_bits_for_planner_edge,
 };
 pub use witness::{
     dyadic_block_ranges, grouped_witness_body_coefficients, ChunkedWitnessCfg,

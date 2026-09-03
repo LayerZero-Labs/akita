@@ -35,6 +35,21 @@ pub const INNER_RESPONSE_DIFFERENCE_EXPONENTS: &[u32] = &[
     3, 4, 5, 6, 8, 9, 10, 12, 15, 16, 18, 20, 21, 24, 25, 27, 28, 30, 32, 33,
 ];
 
+/// Sparse q128 A-role refinements for measured two- and four-response catalog
+/// geometries. These are explicit operating points, not a chunk-count coverage
+/// axis. The ordinary ceiling rule remains the fallback for every other raw
+/// chunk-aware target.
+pub const Q128_MULTI_CHUNK_INNER_REFINEMENTS: &[(u32, u128)] = &[
+    (64, 417_384),
+    (64, 1_670_760),
+    (64, 3_341_520),
+    (256, 416_976),
+    (256, 753_480),
+    (256, 3_341_520),
+    (512, 15_624),
+    (512, 416_976),
+];
+
 /// Largest exact accepted-response interval diameter covered by A-role rows.
 pub const MAX_INNER_RESPONSE_DIFFERENCE: u128 = (1u128 << 33) - 1;
 
@@ -80,10 +95,11 @@ const fn challenge_extension_degree(modulus_profile: SisModulusProfileId) -> usi
 }
 
 fn exact_inner_collision_bound(challenge_l1: u128, exponent: u32) -> Option<u128> {
-    role_a_collision_inf_norm_for_response_difference(
-        challenge_l1,
-        1u128.checked_shl(exponent)?.checked_sub(1)?,
-    )
+    let response_difference = 1u128.checked_shl(exponent)?.checked_sub(1)?;
+    if response_difference > MAX_INNER_RESPONSE_DIFFERENCE {
+        return None;
+    }
+    role_a_collision_inf_norm_for_response_difference(challenge_l1, response_difference)
 }
 
 fn inner_challenge_mass_supported(
@@ -187,6 +203,13 @@ fn derive_inner_coeff_linf_bounds(
                 }),
         );
     }
+    if modulus_profile == SisModulusProfileId::Q128OffsetA7F7 {
+        bounds.extend(
+            Q128_MULTI_CHUNK_INNER_REFINEMENTS
+                .iter()
+                .filter_map(|&(dimension, bound)| (dimension == ring_dimension).then_some(bound)),
+        );
+    }
     let max_bound = max_inner_coeff_linf_bound(modulus_profile);
     bounds.retain(|&bound| bound <= max_bound);
     bounds.sort_unstable();
@@ -287,12 +310,48 @@ pub fn sis_role_cells() -> Vec<SisRoleCell> {
 mod tests {
     use super::*;
 
+    /// Every production challenge L1 norm reachable by an A-role cell.
+    fn production_challenge_l1_norms() -> Vec<u128> {
+        let mut norms = akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS
+            .iter()
+            .filter_map(|&dim| {
+                akita_challenges::SparseChallengeConfig::production_for_ring_dim(dim)
+            })
+            .chain(core::iter::once(
+                akita_challenges::D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+            ))
+            .map(|config| config.l1_norm() as u128)
+            .collect::<Vec<_>>();
+        norms.sort_unstable();
+        norms.dedup();
+        norms
+    }
+
+    #[test]
+    fn response_difference_exponents_are_exactly_the_capped_production_products() {
+        let mut expected = (3..=6u32)
+            .flat_map(|ell| (ell..=33).step_by(ell as usize))
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(INNER_RESPONSE_DIFFERENCE_EXPONENTS, expected);
+
+        let max_exponent = *INNER_RESPONSE_DIFFERENCE_EXPONENTS
+            .last()
+            .expect("non-empty exponents");
+        assert_eq!(
+            MAX_INNER_RESPONSE_DIFFERENCE,
+            (1u128 << max_exponent) - 1,
+            "cap must admit exactly the largest covered exponent"
+        );
+        assert!(exact_inner_collision_bound(14, max_exponent).is_some());
+        assert!(exact_inner_collision_bound(14, max_exponent + 1).is_none());
+    }
+
     #[test]
     fn exact_inner_bound_union_is_sorted_complete_and_capped() {
-        assert_eq!(MAX_INNER_RESPONSE_DIFFERENCE, (1u128 << 33) - 1);
-
         let mut expected = Vec::new();
-        for challenge_l1 in [14, 16, 19, 23, 31, 51, 53] {
+        for challenge_l1 in production_challenge_l1_norms() {
             for &exponent in INNER_RESPONSE_DIFFERENCE_EXPONENTS {
                 expected.push(
                     exact_inner_collision_bound(challenge_l1, exponent)
@@ -313,6 +372,8 @@ mod tests {
         actual.sort_unstable();
         actual.dedup();
         assert!(actual.is_sorted());
+        // Pinned so that losing a production challenge config shrinks both
+        // sides together without the equality above noticing.
         assert_eq!(actual.len(), 140);
         assert_eq!(expected, actual);
     }
@@ -328,7 +389,27 @@ mod tests {
         };
         assert_eq!(count(SisModulusProfileId::Q32Offset99), 215);
         assert_eq!(count(SisModulusProfileId::Q64Offset59), 440);
-        assert_eq!(count(SisModulusProfileId::Q128OffsetA7F7), 320);
+        assert_eq!(count(SisModulusProfileId::Q128OffsetA7F7), 328);
+    }
+
+    #[test]
+    fn q128_multi_chunk_refinements_are_dimension_specific() {
+        for &(dimension, bound) in Q128_MULTI_CHUNK_INNER_REFINEMENTS {
+            assert!(sis_role_cell(
+                SisMatrixRole::Inner,
+                SisModulusProfileId::Q128OffsetA7F7,
+                dimension,
+                bound,
+            )
+            .is_some());
+            assert!(sis_role_cell(
+                SisMatrixRole::Inner,
+                SisModulusProfileId::Q64Offset59,
+                dimension,
+                bound,
+            )
+            .is_none());
+        }
     }
 
     #[test]

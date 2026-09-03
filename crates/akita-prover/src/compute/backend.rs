@@ -119,7 +119,7 @@ where
         expanded: &AkitaExpandedSetup<F>,
     ) -> Result<(), AkitaError> {
         let prepared_expanded = self.prepared_expanded_setup(prepared);
-        if prepared_expanded.seed() != expanded.seed() {
+        if prepared_expanded.descriptor() != expanded.descriptor() {
             return Err(AkitaError::InvalidSetup(
                 "prepared compute context was built for a different setup".to_string(),
             ));

@@ -124,6 +124,7 @@ impl GeneratedFrozenGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let d_a = self.profile.inner.matrix.ring_dimension();
         // The consuming fold supplies the shared opening basis and the challenge
@@ -143,6 +144,7 @@ impl GeneratedFrozenGroup {
             sis_security_policy: policy.sis_security_policy,
             sis_table_digest: policy.sis_table_digest,
             sis_modulus_profile: policy.sis_modulus_profile,
+            num_response_chunks,
         };
         let num_digits_fold = generated_count(
             u64::from(self.num_digits_fold),
@@ -179,6 +181,7 @@ impl GeneratedSetupPrefix {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<GroupOpenPhaseParams, AkitaError> {
         let natural_len = generated_count(self.natural_len, "setup-prefix natural length")?;
         self.group.expand_to_group(
@@ -186,6 +189,7 @@ impl GeneratedSetupPrefix {
             policy,
             ring_challenge_config,
             log_basis_open,
+            num_response_chunks,
         )
     }
 }
@@ -231,13 +235,18 @@ impl GeneratedGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         log_basis_open: u32,
+        num_response_chunks: usize,
     ) -> Result<Option<GroupOpenPhaseParams>, AkitaError> {
         let Some(group) = prefix else {
             return Ok(None);
         };
 
-        let commitment_params =
-            group.expand_to_group(policy, &ring_challenge_config, log_basis_open)?;
+        let commitment_params = group.expand_to_group(
+            policy,
+            &ring_challenge_config,
+            log_basis_open,
+            num_response_chunks,
+        )?;
         let n_prefix = 1usize
             .checked_shl(commitment_params.profile.group.num_vars() as u32)
             .ok_or_else(|| {
@@ -288,6 +297,7 @@ impl GeneratedGroup {
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
         let log_basis_open = open_commit_matrix.log_basis;
+        let num_response_chunks = policy.chunks_at_level(fold_level);
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
 
@@ -414,6 +424,7 @@ impl GeneratedGroup {
             log_basis_open,
             &ring_challenge_cfg,
             num_digits_fold,
+            num_response_chunks,
         )
         .ok_or_else(|| no_layout("A"))?;
         let linf_n_a = secure_rank(
@@ -541,6 +552,7 @@ impl GeneratedGroup {
                     policy,
                     ring_challenge_config,
                     log_basis_open,
+                    num_response_chunks,
                 )?;
                 let width = setup_prefix
                     .as_ref()
@@ -901,6 +913,7 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect("audited mixed-dimension setup-prefix layout");
 
@@ -950,6 +963,7 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect_err("frozen setup-prefix profile mutation must reject");
     }
@@ -974,6 +988,7 @@ mod tests {
                 &recursive_fp128_policy(),
                 &ring_challenge_config,
                 fold.core.open_commit_matrix.log_basis,
+                1,
             )
             .expect_err("zero setup-prefix natural length must reject");
     }

@@ -66,13 +66,13 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
                 .and_then(|slot| slot.setup_natural_len)
         })
         .collect::<Vec<_>>();
-    assert_eq!(setup_for_two.num_field_elements, 32_768);
+    assert_eq!(setup_for_two.num_field_elements, 88_064);
     assert_eq!(setup_for_four.num_field_elements, 8_388_608);
     assert_eq!(prover.num_field_elements, 8_388_608);
     assert_eq!(verifier.num_field_elements, 4_194_304);
     assert_eq!(
         incoming_prefixes,
-        [Some(5_652_608), None, None, None, None, None]
+        [Some(8_388_608), None, None, None, None, None]
     );
     // Exactly one fold carries a setup prefix, and it carries the length the
     // committed catalog states. These values deliberately pin the shipped row:
@@ -123,7 +123,7 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
             witness_a.output_rank(),
             witness_a.input_width(),
         ),
-        (256, 2, 1_024),
+        (128, 3, 2_048),
     );
     assert_eq!(
         (
@@ -131,14 +131,14 @@ fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
             prefix_a.output_rank(),
             prefix_a.input_width(),
         ),
-        (256, 2, 704),
+        (128, 4, 2_048),
     );
 
     let witness_tail =
-        NttCacheKey::from_matrix_shape(256, 2, 1_024, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(128, 3, 2_048, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 witness tail key");
     let prefix_tail =
-        NttCacheKey::from_matrix_shape(256, 2, 704, NttTransformDomain::I16TailBothTransforms)
+        NttCacheKey::from_matrix_shape(128, 4, 2_048, NttTransformDomain::I16TailBothTransforms)
             .expect("valid W8R2 prefix tail key");
     let requirements =
         NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
@@ -200,9 +200,12 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         "W8R2 profile must have at least three fold levels, got {}",
         1 + schedule.recursive_folds.len()
     );
-    for (level, params) in [&schedule.root.params, &schedule.recursive_folds[0].params]
-        .into_iter()
-        .enumerate()
+    for (level, (params, expected_d_a, expected_packing_factor)) in [
+        (&schedule.root.params, 256, 4),
+        (&schedule.recursive_folds[0].params, 128, 2),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let OpeningMethod::SubringCoefficientPacking {
             challenge_subring_dimension,
@@ -218,14 +221,14 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         .expect("valid coefficient-packing geometry");
         assert_eq!(
             params.d_a(),
-            256,
+            expected_d_a,
             "level {level} must preserve its exact A-ring dimension"
         );
         assert_eq!(
             challenge_subring_dimension, 64,
             "level {level} must use the 64-coefficient challenge subring"
         );
-        assert_eq!(geometry.packing_factor(), 4);
+        assert_eq!(geometry.packing_factor(), expected_packing_factor);
         assert!(
             geometry.packing_factor() > 1,
             "level {level} must use reduced-width coefficient packing"
@@ -244,7 +247,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         .enumerate()
     {
         assert_eq!(group.profile.inner.matrix.ring_dimension(), 512);
-        let expected_subring_dimension = if group_index == 0 { 64 } else { 128 };
+        let expected_subring_dimension = 256;
         assert_eq!(
             group.opening.opening_method,
             OpeningMethod::SubringCoefficientPacking {
@@ -258,10 +261,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             expected_subring_dimension,
         )
         .expect("valid precommitted packing geometry");
-        assert_eq!(
-            geometry.packing_factor(),
-            if group_index == 0 { 8 } else { 4 }
-        );
+        assert_eq!(geometry.packing_factor(), 2);
     }
     assert_eq!(
         schedule.recursive_folds[1].params.opening_method(),

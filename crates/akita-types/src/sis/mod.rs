@@ -12,7 +12,7 @@
 //!     num_positions_per_block, decomposition_digits::num_digits_inner(decomp, is_root))?;
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
 //!     policy, table_digest, family, d, log_basis_response, &stage1, shape,
-//!     exact_fold_digit_depth)?;
+//!     exact_fold_digit_depth, num_response_chunks)?;
 //! let n_a = ajtai_key::min_secure_rank(
 //!     SisTableKey { policy, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
 //!     width_s as u64)?;
@@ -46,7 +46,8 @@ pub use committed_source::{CommittedSourceClass, CommittedSourceContract};
 pub use coverage::{
     inner_coeff_linf_bounds, sis_role_cell, sis_role_cells, sis_role_dimension_supported,
     SisRoleCell, GADGET_COEFF_LINF_ANCHORS, INNER_RESPONSE_DIFFERENCE_EXPONENTS,
-    MAX_INNER_RESPONSE_DIFFERENCE, SIS_MATRIX_ROLES, SIS_MAX_MODULE_RANK, SIS_REQUIRED_MAX_WIDTH,
+    MAX_INNER_RESPONSE_DIFFERENCE, Q128_MULTI_CHUNK_INNER_REFINEMENTS, SIS_MATRIX_ROLES,
+    SIS_MAX_MODULE_RANK, SIS_REQUIRED_MAX_WIDTH,
 };
 pub use decomposition_digits::{
     balanced_digit_abs_max, balanced_digit_interval_diameter, balanced_digit_representable_bounds,

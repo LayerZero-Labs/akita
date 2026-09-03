@@ -45,6 +45,9 @@ impl CenteredFoldChunk {
 ///
 /// A single fold reuses the global centered buffer in [`DecomposeFoldWitness`].
 /// A distributed fold owns at least two independently bounded chunk buffers.
+/// Every chunk keeps the same full ambient `z` width, including chunks assigned
+/// no live witness blocks; only the corresponding `e` and `t` material may be
+/// shorter.
 pub(crate) struct FoldChunkCoefficients {
     storage: FoldChunkStorage,
 }
@@ -66,6 +69,16 @@ impl FoldChunkCoefficients {
             return Err(AkitaError::InvalidInput(
                 "distributed fold must retain at least two coefficient chunks".into(),
             ));
+        }
+        let expected_len = chunks[0].coefficients.len();
+        if let Some(chunk) = chunks
+            .iter()
+            .find(|chunk| chunk.coefficients.len() != expected_len)
+        {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_len,
+                actual: chunk.coefficients.len(),
+            });
         }
         Ok(Self {
             storage: FoldChunkStorage::Chunked(chunks),

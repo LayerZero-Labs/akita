@@ -195,6 +195,10 @@ pub struct PrecommittedGroupAdmissionPolicy {
     pub sis_table_digest: SisTableDigest,
     /// Modulus family required for both frozen matrices.
     pub sis_modulus_profile: SisModulusProfileId,
+    /// Number of equal-envelope folded responses retained by the consuming fold.
+    /// This value prices the shared A rows and is owned by the consuming level;
+    /// it is not copied into the frozen group's descriptor.
+    pub num_response_chunks: usize,
 }
 
 impl GroupOpenPhaseParams {
@@ -340,6 +344,7 @@ impl GroupOpenPhaseParams {
             log_basis_open,
             &fold_challenge_config,
             num_digits_fold,
+            policy.num_response_chunks,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".into()))?;
         let declared_a_bound = layout.inner.matrix.coeff_linf_bound().ok_or_else(|| {
