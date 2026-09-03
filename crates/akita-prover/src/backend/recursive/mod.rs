@@ -7,4 +7,5 @@ mod setup_prefix_source;
 mod witness;
 
 pub use setup_prefix_source::RecursiveFoldSource;
+pub(crate) use witness::suffix_witness_coefficient_packing_partials;
 pub use witness::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};

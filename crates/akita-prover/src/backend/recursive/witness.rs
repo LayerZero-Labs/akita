@@ -715,6 +715,49 @@ where
     }
 }
 
+pub(crate) fn suffix_witness_coefficient_packing_partials<F, E, const D: usize>(
+    witness: &RecursiveWitnessFlat,
+    plan: SubringCoefficientPackingPlan<'_, E>,
+    fused_weights: &[E],
+) -> Result<SubringCoefficientPackingPartials<F>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
+{
+    let view = witness.view::<F, D>()?;
+    if view.live_ring_elems != plan.point.num_live_positions() {
+        return Err(AkitaError::InvalidSize {
+            expected: plan.point.num_live_positions(),
+            actual: view.live_ring_elems,
+        });
+    }
+    let coordinates =
+        crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source::<
+            F,
+            E,
+            _,
+            D,
+        >(
+            plan,
+            fused_weights,
+            view.num_vars(),
+            |position| view.ring_elem(position).ok_or(AkitaError::InvalidProof),
+            |position, coefficient_index, source| {
+                let flat_index = position * D + coefficient_index;
+                if flat_index < view.live_coeff_len {
+                    F::from_i8(source[coefficient_index])
+                } else {
+                    F::zero()
+                }
+            },
+        )?;
+    SubringCoefficientPackingPartials::new(
+        plan.point.geometry(),
+        plan.point.num_live_blocks(),
+        coordinates,
+    )
+}
+
 impl<F, E, const D: usize>
     SubringCoefficientPackingBatchKernel<SuffixWitnessBatchView<'_, F, D>, F, E, D> for CpuBackend
 where
@@ -733,37 +776,10 @@ where
             .polys
             .iter()
             .map(|witness| {
-                let view = witness.view::<F, D>()?;
-                plan.validate::<D>(view.num_vars())?;
-                if view.live_ring_elems != plan.point.num_live_positions() {
-                    return Err(AkitaError::InvalidSize {
-                        expected: plan.point.num_live_positions(),
-                        actual: view.live_ring_elems,
-                    });
-                }
-                let coordinates = crate::backend::coefficient_packing::coefficient_packing_partials_from_position_source::<
-                    F,
-                    E,
-                    _,
-                    D,
-                >(
+                suffix_witness_coefficient_packing_partials::<F, E, D>(
+                    witness,
                     plan,
                     &fused_weights,
-                    view.num_vars(),
-                    |position| view.ring_elem(position).ok_or(AkitaError::InvalidProof),
-                    |position, coefficient_index, source| {
-                        let flat_index = position * D + coefficient_index;
-                        if flat_index < view.live_coeff_len {
-                            F::from_i8(source[coefficient_index])
-                        } else {
-                            F::zero()
-                        }
-                    },
-                )?;
-                SubringCoefficientPackingPartials::new(
-                    plan.point.geometry(),
-                    plan.point.num_live_blocks(),
-                    coordinates,
                 )
             })
             .collect()

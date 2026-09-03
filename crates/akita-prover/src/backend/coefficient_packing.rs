@@ -1,7 +1,7 @@
 //! Shared checked construction for coefficient-packing backend kernels.
 
 use crate::compute::SubringCoefficientPackingPlan;
-use akita_error::AkitaError;
+use akita_error::{checked, AkitaError};
 use akita_types::FpExtEncoding;
 use jolt_field::solinas::parallel::*;
 use jolt_field::{AdditiveGroup, ExtField, Field, MulBaseUnreduced, Unreduced};
@@ -18,15 +18,11 @@ fn zero_vec<T: AdditiveGroup>(len: usize) -> Result<Vec<T>, AkitaError> {
 }
 
 /// Precompute the tensor product reused by every claim in one opening batch.
+#[tracing::instrument(skip_all, name = "coefficient_packing_prepare_weights")]
 pub(crate) fn prepare_packing_position_weights<E: Field>(
     point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
 ) -> Result<Vec<E>, AkitaError> {
-    let len = point
-        .num_positions_per_block()
-        .checked_mul(point.geometry().subring_embedding_stride())
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("coefficient-packing fused weight length overflow".into())
-        })?;
+    let len = packing_position_weight_len(point)?;
     let mut weights = Vec::new();
     weights.try_reserve_exact(len).map_err(|_| {
         AkitaError::InvalidInput("coefficient-packing fused weight allocation failed".into())
@@ -40,6 +36,30 @@ pub(crate) fn prepare_packing_position_weights<E: Field>(
         );
     }
     Ok(weights)
+}
+
+pub(crate) fn validate_packing_position_weights<E: Field>(
+    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+    weights: &[E],
+) -> Result<(), AkitaError> {
+    if weights.len() != packing_position_weight_len(point)? {
+        return Err(AkitaError::InvalidSetup(
+            "coefficient-packing fused weight dimensions mismatch".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn packing_position_weight_len<E: Field>(
+    point: &akita_types::PreparedSubringCoefficientPackingPoint<E>,
+) -> Result<usize, AkitaError> {
+    checked::product([
+        point.num_positions_per_block(),
+        point.geometry().subring_embedding_stride(),
+    ])
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup("coefficient-packing fused weight length overflow".into())
+    })
 }
 
 /// Construct canonical partials from an A-ring position source.
@@ -76,6 +96,7 @@ where
     })?;
     let s = geometry.challenge_subring_dimension();
     let stride = geometry.subring_embedding_stride();
+    validate_packing_position_weights(point, fused_weights)?;
 
     let block_coordinates = cfg_into_iter!(0..num_blocks)
         .map(|block_index| {
@@ -91,33 +112,80 @@ where
                 .min(point.num_positions_per_block());
             let packed = if E::SUM_IS_EXACT {
                 let mut products = zero_vec::<<E as Unreduced>::Product>(s)?;
-                for position_in_block in 0..live_in_block {
-                    let position = first_position
-                        .checked_add(position_in_block)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let source_position = position_at(position)?;
-                    let weights =
-                        packing_position_weights(fused_weights, position_in_block, stride)?;
-                    let mut coefficient_index = 0;
-                    for accumulator in &mut products {
-                        for &weight in weights {
-                            let source = coefficient(position, coefficient_index, &source_position);
-                            *accumulator += weight.mul_base_unreduced(source);
-                            coefficient_index += 1;
+                // Small strides expose more independent subring accumulators
+                // than products per accumulator. At larger strides, preserve
+                // contiguous source traversal and break the dependency chain
+                // with a four-product reduction tree.
+                if stride <= 8 {
+                    for (position_in_block, weights) in fused_weights
+                        .chunks_exact(stride)
+                        .take(live_in_block)
+                        .enumerate()
+                    {
+                        let position = first_position
+                            .checked_add(position_in_block)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let source_position = position_at(position)?;
+                        for (packing_index, &weight) in weights.iter().enumerate() {
+                            for (subring_index, accumulator) in products.iter_mut().enumerate() {
+                                let coefficient_index = subring_index * stride + packing_index;
+                                let source =
+                                    coefficient(position, coefficient_index, &source_position);
+                                *accumulator += weight.mul_base_unreduced(source);
+                            }
                         }
                     }
-                    debug_assert_eq!(coefficient_index, D);
+                } else {
+                    for (position_in_block, weights) in fused_weights
+                        .chunks_exact(stride)
+                        .take(live_in_block)
+                        .enumerate()
+                    {
+                        let position = first_position
+                            .checked_add(position_in_block)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let source_position = position_at(position)?;
+                        let mut coefficient_index = 0;
+                        for accumulator in &mut products {
+                            let mut chunks = weights.chunks_exact(4);
+                            for chunk in &mut chunks {
+                                let source0 =
+                                    coefficient(position, coefficient_index, &source_position);
+                                let source1 =
+                                    coefficient(position, coefficient_index + 1, &source_position);
+                                let source2 =
+                                    coefficient(position, coefficient_index + 2, &source_position);
+                                let source3 =
+                                    coefficient(position, coefficient_index + 3, &source_position);
+                                let product0 = chunk[0].mul_base_unreduced(source0);
+                                let product1 = chunk[1].mul_base_unreduced(source1);
+                                let product2 = chunk[2].mul_base_unreduced(source2);
+                                let product3 = chunk[3].mul_base_unreduced(source3);
+                                *accumulator += (product0 + product1) + (product2 + product3);
+                                coefficient_index += 4;
+                            }
+                            for &weight in chunks.remainder() {
+                                let source =
+                                    coefficient(position, coefficient_index, &source_position);
+                                *accumulator += weight.mul_base_unreduced(source);
+                                coefficient_index += 1;
+                            }
+                        }
+                        debug_assert_eq!(coefficient_index, D);
+                    }
                 }
                 products.into_iter().map(E::reduce_product).collect()
             } else {
                 let mut reduced = zero_vec::<E>(s)?;
-                for position_in_block in 0..live_in_block {
+                for (position_in_block, weights) in fused_weights
+                    .chunks_exact(stride)
+                    .take(live_in_block)
+                    .enumerate()
+                {
                     let position = first_position
                         .checked_add(position_in_block)
                         .ok_or(AkitaError::InvalidProof)?;
                     let source_position = position_at(position)?;
-                    let weights =
-                        packing_position_weights(fused_weights, position_in_block, stride)?;
                     let mut coefficient_index = 0;
                     for accumulator in &mut reduced {
                         for &weight in weights {
@@ -160,23 +228,6 @@ where
         output.extend(coordinates);
     }
     Ok(output)
-}
-
-#[inline]
-fn packing_position_weights<'a, E: Field>(
-    fused_weights: &'a [E],
-    position: usize,
-    stride: usize,
-) -> Result<&'a [E], AkitaError> {
-    let start = position.checked_mul(stride).ok_or_else(|| {
-        AkitaError::InvalidInput("coefficient-packing fused weight offset overflow".into())
-    })?;
-    let end = start.checked_add(stride).ok_or_else(|| {
-        AkitaError::InvalidInput("coefficient-packing fused weight extent overflow".into())
-    })?;
-    fused_weights
-        .get(start..end)
-        .ok_or(AkitaError::InvalidProof)
 }
 
 #[cfg(test)]
@@ -300,8 +351,69 @@ mod tests {
     }
 
     #[test]
+    fn deferred_reduction_matches_reference_near_the_modulus() {
+        const POSITIONS: usize = 8;
+        const POSITIONS_PER_BLOCK: usize = 4;
+        const SOURCE_NUM_VARS: usize = 11;
+        const MAX_CANONICAL: u32 = 0xffff_ff9c;
+
+        let geometry = SubringCoefficientPackingGeometry::try_new(4, D, 64).unwrap();
+        let public_point = (0..SOURCE_NUM_VARS)
+            .map(|index| {
+                E::from_base_slice(&std::array::from_fn::<_, 4, _>(|coordinate| {
+                    let offset = ((29 * index + 17 * coordinate + 1) % 97) as u32;
+                    F::from_canonical_u32(MAX_CANONICAL - offset)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let point = PreparedSubringCoefficientPackingPoint::new(
+            geometry,
+            BasisMode::Lagrange,
+            POSITIONS,
+            POSITIONS_PER_BLOCK,
+            SOURCE_NUM_VARS,
+            &public_point,
+        )
+        .unwrap();
+        let rings = (0..POSITIONS)
+            .map(|position| {
+                CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|coefficient| {
+                    let offset = ((31 * position + 43 * coefficient + 3) % 101) as u32;
+                    F::from_canonical_u32(MAX_CANONICAL - offset)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let source = rings
+            .iter()
+            .flat_map(|ring| ring.coefficients().iter().copied())
+            .collect::<Vec<_>>();
+        let expected = coefficient_packing_partials::<F, E>(
+            geometry,
+            POSITIONS,
+            POSITIONS_PER_BLOCK,
+            &source,
+            point.position_weights(),
+            point.packing_weights(),
+        )
+        .unwrap();
+        let poly = DensePoly::from_ring_coeffs(rings);
+        let polys = [&poly];
+        let batch = <DensePoly<F> as RootOpeningSource<F, D>>::opening_batch(&polys).unwrap();
+        let got = CpuBackend::DEFAULT
+            .coefficient_packing_partials_batch(
+                None,
+                batch,
+                SubringCoefficientPackingPlan { point: &point },
+            )
+            .unwrap();
+
+        assert_eq!(got[0].coordinates(), expected);
+    }
+
+    #[test]
     fn dense_kernel_covers_every_production_extension_degree() {
         assert_dense_matches_reference::<Prime32Offset99, FpExt4<Prime32Offset99>, 256>(64);
+        assert_dense_matches_reference::<Prime32Offset99, FpExt4<Prime32Offset99>, 512>(64);
         assert_dense_matches_reference::<Prime32Offset99, FpExt4<Prime32Offset99>, 1024>(64);
         assert_dense_matches_reference::<Prime64Offset59, Ext2<Prime64Offset59>, 128>(64);
         assert_dense_matches_reference::<Prime128OffsetA7F7, Prime128OffsetA7F7, 128>(64);
@@ -398,6 +510,16 @@ mod tests {
             .coefficient_packing_partials_batch(None, onehot_batch, plan)
             .unwrap();
         assert_eq!(dense_partials, onehot_partials);
+
+        let repeated_refs = vec![&onehot; 8];
+        let repeated_batch =
+            <OneHotPoly<F> as RootOpeningSource<F, D>>::opening_batch(&repeated_refs).unwrap();
+        let repeated_partials = CpuBackend::DEFAULT
+            .coefficient_packing_partials_batch(None, repeated_batch, plan)
+            .unwrap();
+        assert!(repeated_partials
+            .iter()
+            .all(|partials| partials == &dense_partials[0]));
     }
 
     #[test]

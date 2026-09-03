@@ -14,12 +14,15 @@ mod recursive;
 mod ring_switch;
 pub(crate) mod sparse_ring;
 
+pub(crate) use dense::dense_coefficient_packing_partials;
 pub use dense::{DenseBatchView, DensePoly, DenseView};
 pub use field_reduction::tensor_pack_recursive_witness;
 pub use multilinear_polynomial::{
     MultilinearPolynomial, MultilinearPolynomialBatchView, MultilinearPolynomialView,
 };
+pub(crate) use onehot::onehot_coefficient_packing_partials;
 pub use onehot::{OneHotBatchView, OneHotIndex, OneHotPoly, OneHotView};
+pub(crate) use recursive::suffix_witness_coefficient_packing_partials;
 pub use recursive::{
     RecursiveFoldSource, RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView,
 };

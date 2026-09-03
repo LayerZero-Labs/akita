@@ -11,5 +11,6 @@ mod poly;
 mod tests;
 mod views;
 
+pub(crate) use kernels::dense_coefficient_packing_partials;
 pub use poly::DensePoly;
 pub use views::{DenseBatchView, DenseView};

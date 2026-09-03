@@ -114,6 +114,50 @@ where
     }
 }
 
+pub(crate) fn dense_coefficient_packing_partials<F, E, const D: usize>(
+    source: DenseBatchView<'_, F, D>,
+    plan: SubringCoefficientPackingPlan<'_, E>,
+    fused_weights: &[E],
+) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError>
+where
+    F: Field + CanonicalEncoding,
+    E: ExtField<F> + akita_types::FpExtEncoding<F> + MulBaseUnreduced<F>,
+{
+    source
+        .polys
+        .iter()
+        .map(|poly| {
+            let rings = poly.ring_coeffs::<D>()?;
+            // Dense roots authenticate the complete Boolean hypercube, so
+            // every stored ring is live. Exact-prefix storage is reserved
+            // for recursive witness views.
+            if rings.len() != plan.point.num_live_positions() {
+                return Err(AkitaError::InvalidSize {
+                    expected: plan.point.num_live_positions(),
+                    actual: rings.len(),
+                });
+            }
+            let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
+                plan,
+                fused_weights,
+                RootPolyMeta::<F>::num_vars(*poly),
+                |position| {
+                    rings
+                        .get(position)
+                        .map(|ring| ring.coefficients())
+                        .ok_or(AkitaError::InvalidProof)
+                },
+                |_, coefficient, source| source[coefficient],
+            )?;
+            SubringCoefficientPackingPartials::new(
+                plan.point.geometry(),
+                plan.point.num_live_blocks(),
+                coordinates,
+            )
+        })
+        .collect()
+}
+
 impl<F, E, const D: usize> SubringCoefficientPackingBatchKernel<DenseBatchView<'_, F, D>, F, E, D>
     for CpuBackend
 where
@@ -127,38 +171,6 @@ where
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
         let fused_weights = prepare_packing_position_weights(plan.point)?;
-        source
-            .polys
-            .iter()
-            .map(|poly| {
-                let rings = poly.ring_coeffs::<D>()?;
-                // Dense roots authenticate the complete Boolean hypercube, so
-                // every stored ring is live. Exact-prefix storage is reserved
-                // for recursive witness views.
-                if rings.len() != plan.point.num_live_positions() {
-                    return Err(AkitaError::InvalidSize {
-                        expected: plan.point.num_live_positions(),
-                        actual: rings.len(),
-                    });
-                }
-                let coordinates = coefficient_packing_partials_from_position_source::<F, E, _, D>(
-                    plan,
-                    &fused_weights,
-                    RootPolyMeta::<F>::num_vars(*poly),
-                    |position| {
-                        rings
-                            .get(position)
-                            .map(|ring| ring.coefficients())
-                            .ok_or(AkitaError::InvalidProof)
-                    },
-                    |_, coefficient, source| source[coefficient],
-                )?;
-                SubringCoefficientPackingPartials::new(
-                    plan.point.geometry(),
-                    plan.point.num_live_blocks(),
-                    coordinates,
-                )
-            })
-            .collect()
+        dense_coefficient_packing_partials(source, plan, &fused_weights)
     }
 }

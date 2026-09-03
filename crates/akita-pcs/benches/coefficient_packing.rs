@@ -118,6 +118,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     name: &str,
     num_positions: usize,
     positions_per_block: usize,
+    density_percent: usize,
 ) where
     F: Field + CanonicalEncoding,
     E: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F>,
@@ -129,7 +130,7 @@ fn bench_onehot_shape<F, E, const D: usize>(
     assert_eq!(source_len % ONEHOT_K, 0);
     let point = prepared_point::<F, E, D>(num_positions, positions_per_block, source_num_vars);
     let indices = (0..source_len / ONEHOT_K)
-        .map(|chunk| (chunk % 5 != 0).then_some((chunk % ONEHOT_K) as u8))
+        .map(|chunk| (chunk % 100 < density_percent).then_some((chunk % ONEHOT_K) as u8))
         .collect();
     let poly = OneHotPoly::<F, u8>::new(ONEHOT_K, indices).unwrap();
     let refs = [&poly];
@@ -157,6 +158,13 @@ fn bench_coefficient_packing(c: &mut Criterion) {
     // exact ring, packing, extension, and block geometry while bounding local
     // benchmark memory and iteration time.
     bench_dense_shape::<fp32::Field, fp32::ExtensionField, 2048>(c, "fp32_level0_d2048", 4096, 512);
+    bench_dense_shape::<fp32::Field, fp32::ExtensionField, 1024>(
+        c,
+        "fp32_stride16_d1024",
+        4096,
+        512,
+    );
+    bench_dense_shape::<fp32::Field, fp32::ExtensionField, 512>(c, "fp32_stride8_d512", 8192, 1024);
     bench_dense_shape::<fp32::Field, fp32::ExtensionField, 256>(c, "fp32_level1_d256", 16384, 2048);
     bench_recursive_shape::<256>(c, "fp32_level1_recursive_d256", 16384, 2048);
     bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
@@ -164,6 +172,49 @@ fn bench_coefficient_packing(c: &mut Criterion) {
         "fp32_level1_onehot_d256",
         16384,
         2048,
+        80,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_sparse_d256",
+        16384,
+        2048,
+        1,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_10pct_d256",
+        16384,
+        2048,
+        10,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_25pct_d256",
+        16384,
+        2048,
+        25,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_half_d256",
+        16384,
+        2048,
+        50,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_65pct_d256",
+        16384,
+        2048,
+        65,
+    );
+    bench_onehot_shape::<fp32::Field, fp32::ExtensionField, 256>(
+        c,
+        "fp32_level1_onehot_zero_d256",
+        16384,
+        2048,
+        0,
     );
     bench_dense_shape::<fp64::Field, fp64::ExtensionField, 256>(c, "fp64_d256", 4096, 1024);
     bench_dense_shape::<fp128::Field, fp128::Field, 64>(c, "fp128_d64", 4096, 1024);

@@ -13,7 +13,9 @@ use jolt_field::{CanonicalEncoding, ExtField, Field, MulBaseUnreduced, Ring};
 use crate::backend::poly_helpers::{
     balanced_ring_decompose_fold_partitioned, build_decompose_fold_witness, DecomposeParams,
 };
-use crate::backend::{RecursiveWitnessFlat, SuffixWitnessBatchView, SuffixWitnessView};
+use crate::backend::{
+    suffix_witness_coefficient_packing_partials, RecursiveWitnessFlat, SuffixWitnessView,
+};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
     OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
@@ -505,7 +507,7 @@ where
 {
     fn coefficient_packing_partials_batch(
         &self,
-        prepared: Option<&Self::PreparedSetup>,
+        _prepared: Option<&Self::PreparedSetup>,
         source: RecursiveFoldBatchView<'_, F, D>,
         plan: SubringCoefficientPackingPlan<'_, E>,
     ) -> Result<Vec<SubringCoefficientPackingPartials<F>>, AkitaError> {
@@ -513,7 +515,6 @@ where
             crate::backend::coefficient_packing::prepare_packing_position_weights(plan.point)?;
         let mut outputs = Vec::with_capacity(source.polys.len());
         for poly in source.polys {
-            plan.validate::<D>(RootPolyMeta::<F>::num_vars(*poly))?;
             match poly {
                 RecursiveFoldSource::SetupPrefix { expanded, slot } => {
                     let rings = setup_prefix_rings::<F, D>(
@@ -556,18 +557,11 @@ where
                     )?);
                 }
                 RecursiveFoldSource::Witness(witness) => {
-                    let witnesses = [witness.as_ref()];
-                    let batch =
-                        <RecursiveWitnessFlat as RootTensorSource<F, D>>::tensor_batch(&witnesses)?;
-                    let mut partials = <CpuBackend as SubringCoefficientPackingBatchKernel<
-                        SuffixWitnessBatchView<'_, F, D>,
-                        F,
-                        E,
-                        D,
-                    >>::coefficient_packing_partials_batch(
-                        self, prepared, batch, plan
-                    )?;
-                    outputs.push(partials.pop().ok_or(AkitaError::InvalidProof)?);
+                    outputs.push(suffix_witness_coefficient_packing_partials::<F, E, D>(
+                        witness.as_ref(),
+                        plan,
+                        &fused_weights,
+                    )?);
                 }
             }
         }
