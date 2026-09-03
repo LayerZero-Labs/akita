@@ -8,21 +8,11 @@ evaluations, applies an inverse NTT, and reconstructs the centered result with
 the Chinese remainder theorem. The same representation supports matrix
 matvecs over balanced signed digits.
 
-## Pseudo-Mersenne fields and Solinas reduction
-
-The protocol prime fields use moduli of the form
-\(p = 2^k - c\), where \(c\) is small. Elements use canonical integers in
-\([0,p)\) rather than Montgomery form. Addition and subtraction use a small
-number of conditional corrections. A two fold Solinas reduction brings a wide
-product back into the canonical range.
-
-The field code provides the protocol primes at 32, 64, and 128 bits, together
-with smaller field types used by tests and auxiliary paths. The CRT NTT primes
-are separate primes. They are chosen for the roots of unity required by the
-active ring degree.
-
-**Code:** Jolt's `jolt-field` Solinas backend and
-`crates/akita-algebra/src/ntt/tables.rs`.
+The protocol fields and the CRT fields have different jobs. Protocol values
+live in the pseudo-Mersenne fields described in [Field
+arithmetic](./field-arithmetic.md). The smaller CRT primes are auxiliary
+compute fields chosen to provide roots of unity for each active ring degree.
+They do not change the statement being proved.
 
 ## Deferred reduction and balanced digits
 
@@ -171,13 +161,71 @@ storage choices for the same centered CRT contract.
 `crates/akita-types/src/ntt_cache/`, and
 `docs/crt-ntt-capacity-profile.md`.
 
-## Smooth subgroup mixed radix FFT
+## Smooth-subgroup FFT for Reed--Solomon encoding
 
-The protocol field modulus does not provide a large power of two subgroup for
-all evaluation sizes. Reed Solomon evaluation and interpolation therefore use
-an iterative mixed radix Cooley Tukey FFT over a smooth subgroup. The
-implementation includes radix 2, 3, 5, and 7 kernels and evaluates on a coset
-when the requested domain requires it.
+The CRT transforms above accelerate multiplication in
+\(\mathbb F_q[X]/(X^D+1)\). Reed--Solomon encoding is a different operation:
+it evaluates a polynomial at many points in the protocol field itself.
+
+The production `fp128` modulus
+
+\[
+q=2^{128}-2^{32}+22537
+\]
+
+was chosen in part because \(q-1\) contains the smooth factor
+
+\[
+17496=2^3\cdot 3^7.
+\]
+
+`SmoothDomain` accepts any requested size that divides the configured smooth
+subgroup order. It factors that size into supported radices, constructs a root
+of the exact order, and precomputes the complete execution plan. Other
+protocol fields do not implement `SmoothFftField` merely because they are
+pseudo-Mersenne fields.
+
+### Iterative mixed-radix execution
+
+For
+
+\[
+n=f_0f_1\cdots f_{s-1},
+\qquad f_i\in\{2,3,5,7\},
+\]
+
+the forward transform first applies the mixed-radix analogue of bit reversal.
+It then sweeps the stages from small to large, running an in-place radix-
+\(f_i\) butterfly at each stage. The inverse uses inverse roots and multiplies
+the result by \(n^{-1}\).
+
+The domain precomputes both digit-reversal positions and stage twiddles.
+Repeated encoding therefore performs no factorization, root search, or
+per-stage allocation. A reusable workspace holds the two transform buffers.
+
+### Small-radix kernels
+
+Each butterfly has a specialized kernel. Radix 2 is the ordinary sum and
+difference. Radix 3 uses \(1+\omega+\omega^2=0\) to reduce the number of
+field multiplications. Radix 5 and radix 7 use precomputed Winograd constants
+and fixed addition chains instead of a dense quadratic-size DFT.
+
+The current production subgroup needs only radices 2 and 3, but the domain
+implementation supports 5 and 7 as part of the same checked mixed-radix
+contract. Tests compare every supported size with a direct DFT.
+
+### Coset extension
+
+Suppose evaluations are known on a subgroup of size \(k\), and the target
+Reed--Solomon domain has size \(kB\). The implementation first applies the
+inverse size-\(k\) transform to recover coefficients. For each of the remaining
+\(B-1\) cosets, it multiplies coefficient \(i\) by a coset shift raised to
+\(i\), then applies the forward size-\(k\) transform. The output is stored in
+coset-major order.
+
+This flow reuses one `SmoothDomain` and one workspace across all cosets. It is
+the production polynomial-extension path, not a fallback to a generic
+quadratic evaluator.
 
 **Code:** `crates/akita-algebra/src/fft.rs`.
 

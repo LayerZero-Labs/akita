@@ -21,6 +21,12 @@ The public matrix stream has one identity across ring dimensions. A generated
 schedule takes the exact rows, widths, and dimensions needed by each operation
 from a prefix of that stream.
 
+The current identity is `Shake256PagedV1`: independently derived 4096-element
+SHAKE256 pages followed by exact field rejection sampling. [Setup and
+commitment](../how/commitment.md#exact-public-stream-derivation) gives the byte
+encoding. A host that regenerates setup must use that versioned derivation,
+not an application-specific PRG expansion of the 32-byte seed.
+
 ## Build prover setup once
 
 The normal entry point takes the largest number of variables and largest group
@@ -58,6 +64,11 @@ let stack = UniformProverStack::uniform(
 The prepared state starts with empty transform caches. Commitment and proving
 kernels build exact entries as needed. A larger cached prefix can serve a
 smaller request with the same field, ring dimension, and transform domain.
+
+These caches are derived from a matrix view. They are not part of the public
+stream and are not covered by `AkitaSetupSeed`. Two machines may retain
+different transform domains and prefix lengths while producing identical
+commitments and proofs.
 
 Keep `backend`, `prepared`, and `stack` alive across repeated work. This makes
 later commitments and proofs reuse the matrix transforms already built by the

@@ -1,14 +1,13 @@
 # Extension-opening reduction
 
-Akita sometimes commits to a polynomial whose coefficients lie in a base field
-the base field $\mathbb{F}$, then opens that polynomial at a point whose
+Akita sometimes commits to a polynomial whose coefficients lie in the base
+field $\mathbb{F}$, then opens that polynomial at a point whose
 coordinates lie in a larger extension field $\mathbb{E}$. Extension-opening reduction bridges
 those two field roles. It converts the original opening into an opening of a
 smaller polynomial whose values already lie in $\mathbb{E}$.
 
-This chapter gives the protocol idea needed to follow the implementation. A
-worked numerical example and a complete soundness derivation are deferred to a
-later documentation slice. For Akita's scheduling and prover paths, see
+This chapter gives the protocol idea needed to follow the implementation. For
+Akita's scheduling and concrete prover storage, see
 [How it works → Extension-opening reduction](../how/proving/extension-opening-reduction.md).
 
 ## Packing several Boolean variables into one value
@@ -57,6 +56,49 @@ and the extension degree is greater than one. Configurations whose base and
 extension fields are the same do not need it. A fold that uses coefficient
 packing also opens its extension-valued claim directly and skips this
 reduction.
+
+## Structure of the transparent factor
+
+The transparent factor has more structure than an arbitrary dense table. Let
+`lambda_u : E -> F` select coordinate `u` in the fixed basis, and let the
+row-batching functional be
+
+$$
+\tau_\eta\!\left(\sum_u a_u\beta_u\right)=\sum_u\eta_u a_u.
+$$
+
+Split the remaining Boolean variables into a prefix and suffix. The equality
+product splits as
+
+$$
+\operatorname{eq}(r,x)
+=E_{\mathrm{pre}}(x_{\mathrm{pre}})
+ E_{\mathrm{suf}}(x_{\mathrm{suf}}).
+$$
+
+On Boolean inputs, the EOR factor can then be written as only `[E:F]`
+separable terms:
+
+$$
+A_\eta(x_{\mathrm{pre}},x_{\mathrm{suf}})
+=\sum_u
+\lambda_u\!\left(E_{\mathrm{pre}}(x_{\mathrm{pre}})\right)
+\tau_\eta\!\left(\beta_u E_{\mathrm{suf}}(x_{\mathrm{suf}})\right).
+\tag{1}
+$$
+
+A direct multiplication-table expansion would expose `[E:F]^2` terms. Expanding
+only the prefix factor in the fixed basis gives Equation (1).
+
+Equation (1) is first an identity between Boolean tables. During sumcheck, the
+coordinate tables on its right must be folded as multilinear polynomials. It
+would be incorrect to evaluate the extension-valued prefix at a non-Boolean
+challenge and then apply `lambda_u`: the coordinate map is base-field linear,
+not extension-field linear.
+
+The production prover currently materializes the dense factor. The separable
+form instead identifies a future small-space execution strategy; see the
+[roadmap](../roadmap/roadmap.md#small-space-extension-opening-prover).
 
 ## Implementation map
 

@@ -15,7 +15,8 @@ validation boundary.
 > gadget decomposition, Module-SIS, multilinear sum-check, and
 > equality-factored sum-check chapters are full implementation narratives. The
 > commitment and binding chapter gives a current security overview. The
-> extension-opening chapter is still a short guide and is marked as such below.
+> extension-opening chapter is a protocol guide; its concrete prover storage
+> and round kernels are documented in the How it works section.
 
 ## What these foundations connect
 
@@ -85,7 +86,7 @@ code.
 | [Lattices and Module-SIS](./lattices-sis.md) | What hard problem supports binding, and why do short vectors and norm bounds matter? | Full introduction from integer lattices through commitment collisions, generated security tables, and verifier enforcement. |
 | [Multilinear extensions and sum-check](./multilinear-sumcheck.md) | How does a table become a polynomial, and how can a verifier check a large sum with little work? | Full introduction with a complete two-round example, compressed messages, soundness, unequal-size batching, and an implementation review map. |
 | [Equality-factored sum-check](./eq-factored-sumcheck.md) | How does Akita exploit the structure of an equality polynomial while avoiding verifier inversions? | Full derivation of the smaller round message, scaled verifier update, split equality tables, scope, and review checks. |
-| [Extension-opening reduction](./extension-opening-reduction.md) | How does Akita open a base-field polynomial at an extension-field point? | Self-contained protocol guide with an implementation map. A complete numerical example and soundness derivation remain for a later slice. |
+| [Extension-opening reduction](./extension-opening-reduction.md) | How does Akita open a base-field polynomial at an extension-field point? | Protocol guide with the field split, packed claim, reduction check, and implementation map. The How it works section documents concrete prover storage and round kernels. |
 | [Polynomial commitments and binding](./pcs-and-binding.md) | What do setup, commitment, opening, and verification promise, and how is incompatible opening tied to Module-SIS? | Current security overview with implementation anchors. More introductory examples can still be added. |
 | [Glossary and notation](./glossary.md) | What do recurring Akita names and symbols mean? | Current lookup reference for protocol terms, catalog rows, and notation. |
 | [Spec index](./spec-index.md) | Which design records are live, implemented, or retained as history? | Current maintainer index. |
