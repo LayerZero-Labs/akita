@@ -183,7 +183,7 @@ impl<E: Field + Ring + Fold + Unreduced> SumcheckInstanceProver<E> for FusedRang
     fn compute_round_univariate(&mut self, round: usize, _previous_claim: E) -> UniPoly<E> {
         debug_assert_eq!(round, self.rounds_completed);
         let q_coefficients = self.range.round_q_coefficients(round);
-        let (factor_at_zero, factor_at_one) = self.range.current_linear_factor_evals();
+        let (factor_at_zero, factor_at_one) = self.range.current_full_eq_factor_evals();
         let factor_delta = factor_at_one - factor_at_zero;
         let mut coefficients = [E::zero(); FUSED_MAX_DEGREE + 1];
         for (degree, coefficient) in q_coefficients

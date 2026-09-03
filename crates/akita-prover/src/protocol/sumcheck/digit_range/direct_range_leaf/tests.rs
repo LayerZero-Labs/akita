@@ -1,7 +1,7 @@
 use super::*;
 use akita_sumcheck::{advance_eq_factored_claim, multilinear_eval};
 use akita_types::DigitRangeEqualityPoint;
-use jolt_field::{One, Prime128Offset275};
+use jolt_field::Prime128Offset275;
 
 type F = Prime128Offset275;
 
@@ -197,9 +197,7 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
             .unwrap();
             let mut challenges = Vec::new();
             let mut prefix_claim = F::zero();
-            let mut prefix_scale = F::one();
             let mut padded_claim = F::zero();
-            let mut padded_scale = F::one();
 
             for round in 0..(col_bits + ring_bits) {
                 let prefix_poly = prefix_prover.compute_round_eq_factored(round);
@@ -211,23 +209,15 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
 
                 let challenge = F::from_u64((round as u64) + 29);
                 challenges.push(challenge);
-                let (prefix_linear_at_zero, prefix_linear_at_one) =
-                    prefix_prover.current_linear_factor_evals();
-                (prefix_claim, prefix_scale) = advance_eq_factored_claim(
+                prefix_claim = advance_eq_factored_claim(
                     prefix_claim,
-                    prefix_scale,
-                    prefix_linear_at_zero,
-                    prefix_linear_at_one,
+                    prefix_prover.current_tau(),
                     &prefix_poly,
                     challenge,
                 );
-                let (padded_linear_at_zero, padded_linear_at_one) =
-                    padded_prover.current_linear_factor_evals();
-                (padded_claim, padded_scale) = advance_eq_factored_claim(
+                padded_claim = advance_eq_factored_claim(
                     padded_claim,
-                    padded_scale,
-                    padded_linear_at_zero,
-                    padded_linear_at_one,
+                    padded_prover.current_tau(),
                     &padded_poly,
                     challenge,
                 );
@@ -240,7 +230,6 @@ fn stage1_prefix_aware_rounds_match_explicit_zero_padding() {
                 padded_prover.final_range_image_eval()
             );
             assert_eq!(prefix_claim, padded_claim);
-            assert_eq!(prefix_scale, padded_scale);
             let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
                 .into_iter()
                 .map(|s| F::from_i64(i64::from(s)))
@@ -299,9 +288,7 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
         .unwrap();
         let mut challenges = Vec::new();
         let mut prefix_claim = F::zero();
-        let mut prefix_scale = F::one();
         let mut padded_claim = F::zero();
-        let mut padded_scale = F::one();
 
         for round in 0..(col_bits + ring_bits) {
             let prefix_poly = prefix_prover.compute_round_eq_factored(round);
@@ -313,23 +300,15 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
 
             let challenge = F::from_u64((round as u64) + 163);
             challenges.push(challenge);
-            let (prefix_linear_at_zero, prefix_linear_at_one) =
-                prefix_prover.current_linear_factor_evals();
-            (prefix_claim, prefix_scale) = advance_eq_factored_claim(
+            prefix_claim = advance_eq_factored_claim(
                 prefix_claim,
-                prefix_scale,
-                prefix_linear_at_zero,
-                prefix_linear_at_one,
+                prefix_prover.current_tau(),
                 &prefix_poly,
                 challenge,
             );
-            let (padded_linear_at_zero, padded_linear_at_one) =
-                padded_prover.current_linear_factor_evals();
-            (padded_claim, padded_scale) = advance_eq_factored_claim(
+            padded_claim = advance_eq_factored_claim(
                 padded_claim,
-                padded_scale,
-                padded_linear_at_zero,
-                padded_linear_at_one,
+                padded_prover.current_tau(),
                 &padded_poly,
                 challenge,
             );
@@ -342,7 +321,6 @@ fn stage1_prefix_x_rounds_allow_ring_bits_at_least_col_bits() {
             padded_prover.final_range_image_eval()
         );
         assert_eq!(prefix_claim, padded_claim);
-        assert_eq!(prefix_scale, padded_scale);
         let padded_range_image: Vec<F> = build_compact_range_image(&padded_digit_witness)
             .into_iter()
             .map(|s| F::from_i64(i64::from(s)))
@@ -383,21 +361,11 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(61);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim1, scale1) = advance_eq_factored_claim(
-            F::zero(),
-            F::one(),
-            linear_at_zero,
-            linear_at_one,
-            &round0,
-            r0,
-        );
+        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
         prover.ingest_challenge(0, r0);
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(67);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (_claim2, _scale2) =
-            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
+        let _claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
 
         let expected_range_image =
             LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_round2(
@@ -545,29 +513,17 @@ fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
         .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(107);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim1, scale1) = advance_eq_factored_claim(
-            F::zero(),
-            F::one(),
-            linear_at_zero,
-            linear_at_one,
-            &round0,
-            r0,
-        );
+        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
         prover.ingest_challenge(0, r0);
 
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(109);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim2, scale2) =
-            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
+        let claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
         prover.ingest_challenge(1, r1);
 
         let round2 = prover.compute_round_eq_factored(2);
         let r2 = F::from_u64(113);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim3, _scale3) =
-            advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
+        let claim3 = advance_eq_factored_claim(claim2, prover.current_tau(), &round2, r2);
 
         let mut expected = LowBasisRangeCheckProver::new(
             packed(&digit_witness_prefix),
@@ -649,29 +605,17 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         .unwrap();
         let round0 = prover.compute_round_eq_factored(0);
         let r0 = F::from_u64(137);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim1, scale1) = advance_eq_factored_claim(
-            F::zero(),
-            F::one(),
-            linear_at_zero,
-            linear_at_one,
-            &round0,
-            r0,
-        );
+        let claim1 = advance_eq_factored_claim(F::zero(), prover.current_tau(), &round0, r0);
         prover.ingest_challenge(0, r0);
 
         let round1 = prover.compute_round_eq_factored(1);
         let r1 = F::from_u64(139);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (claim2, scale2) =
-            advance_eq_factored_claim(claim1, scale1, linear_at_zero, linear_at_one, &round1, r1);
+        let claim2 = advance_eq_factored_claim(claim1, prover.current_tau(), &round1, r1);
         prover.ingest_challenge(1, r1);
 
         let round2 = prover.compute_round_eq_factored(2);
         let r2 = F::from_u64(149);
-        let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
-        let (_claim3, _scale3) =
-            advance_eq_factored_claim(claim2, scale2, linear_at_zero, linear_at_one, &round2, r2);
+        let _claim3 = advance_eq_factored_claim(claim2, prover.current_tau(), &round2, r2);
 
         let mut expected = LowBasisRangeCheckProver::new(
             packed(&digit_witness_prefix),

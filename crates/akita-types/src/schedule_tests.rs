@@ -704,10 +704,7 @@ fn dummy_eq_factored_sumcheck<F: Field>(
     EqFactoredSumcheckProof {
         round_polys: (0..rounds)
             .map(|_| EqFactoredUniPoly {
-                coeffs_except_linear_term: vec![
-                        F::zero();
-                        EqFactoredUniPoly::<F>::stored_coeff_count_for_degree(degree)
-                    ],
+                coeffs_except_constant_term: vec![F::zero(); degree],
             })
             .collect(),
     }
