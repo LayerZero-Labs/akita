@@ -282,9 +282,7 @@ fn bounded_dense_precommit_with_onehot_final_group() {
             akita_types::sis::compute_num_digits_field_width(128, bounded_digits.log_basis);
         assert!(
             bounded_digits.num_digits < full_width_digits_at_bounded_basis,
-            "bounded precommit digit depth {} must be below same-basis full-width {}",
-            bounded_digits.num_digits,
-            full_width_digits_at_bounded_basis,
+            "bounded precommit digit depth must be below same-basis full-width depth",
         );
 
         let setup = AkitaCommitmentScheme::<OneHotCfg>::setup_prover(FINAL_NV, 2)
