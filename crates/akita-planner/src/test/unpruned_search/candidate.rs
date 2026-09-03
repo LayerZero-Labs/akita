@@ -208,6 +208,7 @@ pub(super) fn terminal(
                 &suffix_opening_layout(state.input_witness_len, None)?,
             )?,
         ),
+        first_direct_output_witness_len: 0,
         cost: PackedProofCost::new(payload_bytes, 0)?,
         setup_field_elements: reference_terminal_setup_field_elements(&terminal_params)?,
         folds: CandidateFoldChain::default(),
@@ -267,6 +268,7 @@ pub(super) fn prepend_fold(
         first_direct_setup_field_len: std::num::NonZeroUsize::new(
             akita_types::active_setup_field_len(params, &opening_layout)?,
         ),
+        first_direct_output_witness_len: output_witness_len,
         cost: child.cost.checked_prepend(direct_bytes, edge_nonce_bits)?,
         setup_field_elements: reference_setup_field_elements(params)?
             .max(child.setup_field_elements),
@@ -323,6 +325,7 @@ pub(super) fn prepend_root(
     )?;
     let candidate = ScheduleCandidate {
         first_direct_setup_field_len: Some(first_direct_setup_field_len),
+        first_direct_output_witness_len: output_witness_len,
         cost: suffix.cost.checked_prepend(root_bytes, root_nonce_bits)?,
         setup_field_elements: reference_setup_field_elements(root_params)?
             .max(suffix.setup_field_elements),

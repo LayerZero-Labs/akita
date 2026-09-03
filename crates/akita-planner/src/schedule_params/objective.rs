@@ -3,18 +3,18 @@ use akita_error::AkitaError;
 use super::{candidate_schedule_descriptor_bytes, CandidateMetrics, ScheduleCandidate};
 use crate::{PlannerPolicy, SelectionPolicyId};
 
-/// Complete-schedule ordering: numeric policy coordinates, root output-witness
-/// length, then the canonical descriptor tie-break.
+/// Complete-schedule ordering: numeric policy coordinates, an optional legacy
+/// root output-witness tie-break, then the canonical descriptor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CompleteScheduleScore {
     objective: CompleteObjectiveBound,
-    output_witness_len: usize,
+    legacy_root_output_witness_len: Option<usize>,
     descriptor: Vec<u8>,
 }
 
 /// Numeric prefix of a complete-schedule objective. These coordinates omit
-/// the root output-witness length and canonical descriptor, so a bound may
-/// prune only when it is strictly worse than an already completed candidate.
+/// complete-schedule tie-breaks, so a bound may prune only when it is strictly
+/// worse than an already completed candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompleteObjectiveBound {
     Direct {
@@ -29,6 +29,7 @@ pub(crate) enum CompleteObjectiveBound {
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
+        first_direct_output_witness_len: usize,
         proof_bytes: usize,
     },
 }
@@ -37,6 +38,7 @@ impl CompleteObjectiveBound {
     pub(crate) fn for_direct_edge(
         policy: &PlannerPolicy,
         first_direct_setup_capacity: usize,
+        first_direct_output_witness_len: usize,
         proof_bytes: usize,
         setup_field_elements: usize,
     ) -> Self {
@@ -56,6 +58,7 @@ impl CompleteObjectiveBound {
                         setup_field_elements,
                     ),
                     first_direct_setup_capacity,
+                    first_direct_output_witness_len,
                     proof_bytes,
                 }
             }
@@ -66,6 +69,7 @@ impl CompleteObjectiveBound {
         Self::for_direct_edge(
             policy,
             metrics.first_direct_setup_capacity.field_elements(),
+            metrics.first_direct_output_witness_len,
             metrics.proof_bytes(),
             metrics.setup_field_elements,
         )
@@ -98,15 +102,18 @@ impl CompleteObjectiveBound {
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
+                first_direct_output_witness_len,
                 proof_bytes,
             } => {
                 (
                     setup_envelope_capacity,
                     first_direct_setup_capacity,
+                    first_direct_output_witness_len,
                     proof_bytes,
                 ) > (
                     akita_types::padded_setup_prefix_len(incumbent.setup_field_elements),
                     incumbent.first_direct_setup_capacity.field_elements(),
+                    incumbent.first_direct_output_witness_len,
                     incumbent.proof_bytes(),
                 )
             }
@@ -136,15 +143,20 @@ impl CompleteObjectiveBound {
             Self::PaddedSetupEnvelopeFirst {
                 setup_envelope_capacity,
                 first_direct_setup_capacity,
+                first_direct_output_witness_len,
                 proof_bytes,
             } => {
                 setup_envelope_capacity
                     >= akita_types::padded_setup_prefix_len(incumbent.setup_field_elements)
-                    && (first_direct_setup_capacity, proof_bytes)
-                        > (
-                            incumbent.first_direct_setup_capacity.field_elements(),
-                            incumbent.proof_bytes(),
-                        )
+                    && (
+                        first_direct_setup_capacity,
+                        first_direct_output_witness_len,
+                        proof_bytes,
+                    ) > (
+                        incumbent.first_direct_setup_capacity.field_elements(),
+                        incumbent.first_direct_output_witness_len,
+                        incumbent.proof_bytes(),
+                    )
             }
             Self::Direct { .. } => false,
         }
@@ -153,7 +165,8 @@ impl CompleteObjectiveBound {
     /// Compare a direct suffix against a retained payload projection. Under
     /// envelope-first search, setup must also be no better because the parent
     /// may not mask the child's envelope. Strict proof loss is required because
-    /// ties can still be separated by root-owned coordinates and the descriptor.
+    /// ties can still be separated by the remaining objective coordinates and
+    /// the descriptor.
     pub(crate) fn is_strictly_worse_for_recursive_payload(
         self,
         incumbent: CandidateMetrics,
@@ -192,7 +205,7 @@ pub(crate) fn complete_schedule_score(
     candidate: &ScheduleCandidate,
     diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
 ) -> Result<CompleteScheduleScore, AkitaError> {
-    let output_witness_len = candidate
+    let root_output_witness_len = candidate
         .folds
         .first()
         .ok_or_else(|| {
@@ -218,7 +231,9 @@ pub(crate) fn complete_schedule_score(
     }
     Ok(CompleteScheduleScore {
         objective: CompleteObjectiveBound::for_candidate(policy, metrics),
-        output_witness_len,
+        legacy_root_output_witness_len: (policy.selection_policy
+            != SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
+            .then_some(root_output_witness_len),
         descriptor,
     })
 }

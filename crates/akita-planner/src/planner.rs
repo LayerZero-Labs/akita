@@ -746,9 +746,7 @@ pub(crate) fn find_schedule_in_relation_order(
             .output_witness_len;
         diagnostics.record_selected(
             active_policy.selection_policy,
-            metrics.proof_bytes(),
-            metrics.setup_field_elements,
-            metrics.first_direct_setup_capacity.field_elements(),
+            metrics,
             root_output_witness_len,
             folds
                 .iter()

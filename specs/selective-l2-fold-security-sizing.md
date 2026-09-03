@@ -727,8 +727,8 @@ about every seed. The recursive source keeps its propagated `M` and `P`.
 Adaptive direct profiles price first-direct padded setup capacity first, with
 proof bytes and total setup field elements as later tie-breakers. Recursive
 setup profiles first compare the power-of-two capacity covering total setup,
-then first-direct capacity and proof bytes. Uniform direct profiles minimize
-estimated proof bytes first.
+then first-direct capacity, first-direct output-witness length, and proof bytes.
+Uniform direct profiles minimize estimated proof bytes first.
 
 ### Multi-group and multi-chunk states
 
@@ -973,9 +973,10 @@ the profile's declared objective, its comparison includes:
 Uniform direct profiles minimize proof bytes, then total setup. Adaptive direct
 profiles minimize first-direct padded setup capacity, then proof bytes and
 total setup. Recursive-setup profiles minimize padded total-setup capacity,
-then first-direct capacity and proof bytes. Numeric ties then minimize the root
-output-witness length before the canonical descriptor. These are product
-objectives, not security rules.
+then first-direct capacity, first-direct output-witness length, and proof bytes.
+Recursive numeric ties go directly to the canonical descriptor; direct policies
+retain their root output-witness tie-break. These are product objectives, not
+security rules.
 
 The memo key includes `M`, `P`, ring dimensions, setup-prefix state, witness
 length, basis, level, and payload phase. Pareto pruning keeps candidates that a

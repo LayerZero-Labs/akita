@@ -142,6 +142,7 @@ fn first_parent_visible_cost(
 #[derive(Clone, Copy)]
 struct SetupScore {
     first_direct_setup_capacity: crate::schedule_params::SetupPrefixCapacity,
+    first_direct_output_witness_len: usize,
     cost: crate::schedule_params::PackedProofCost,
     setup_field_elements: usize,
 }
@@ -171,6 +172,7 @@ fn setup_score(
 ) -> SetupScore {
     SetupScore {
         first_direct_setup_capacity: metrics.first_direct_setup_capacity,
+        first_direct_output_witness_len: metrics.first_direct_output_witness_len,
         cost: metrics.cost,
         setup_field_elements: setup_envelope_score(selection_policy, metrics.setup_field_elements),
     }
@@ -641,9 +643,13 @@ fn setup_primary_strictly_dominates(
             && (left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
                 || (left_score.first_direct_setup_capacity
                     == right_score.first_direct_setup_capacity
-                    && left_score
-                        .cost
-                        .strictly_better_for_every_parent(right_score.cost)));
+                    && (left_score.first_direct_output_witness_len
+                        < right_score.first_direct_output_witness_len
+                        || (left_score.first_direct_output_witness_len
+                            == right_score.first_direct_output_witness_len
+                            && left_score
+                                .cost
+                                .strictly_better_for_every_parent(right_score.cost)))));
     }
     left_score.first_direct_setup_capacity < right_score.first_direct_setup_capacity
         || (left_score.first_direct_setup_capacity == right_score.first_direct_setup_capacity
@@ -682,11 +688,15 @@ fn setup_projection_dominates(
             && (left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
                 || (left.score.first_direct_setup_capacity
                     == right.score.first_direct_setup_capacity
-                    && (left
-                        .score
-                        .cost
-                        .strictly_better_for_every_parent(right.score.cost)
-                        || equal_later_coordinates_are_canonical)));
+                    && (left.score.first_direct_output_witness_len
+                        < right.score.first_direct_output_witness_len
+                        || (left.score.first_direct_output_witness_len
+                            == right.score.first_direct_output_witness_len
+                            && (left
+                                .score
+                                .cost
+                                .strictly_better_for_every_parent(right.score.cost)
+                                || equal_later_coordinates_are_canonical)))));
     }
     left.score.first_direct_setup_capacity < right.score.first_direct_setup_capacity
         || (left.score.first_direct_setup_capacity == right.score.first_direct_setup_capacity
@@ -830,6 +840,7 @@ mod tests {
     ) -> SetupScore {
         SetupScore {
             first_direct_setup_capacity: capacity,
+            first_direct_output_witness_len: 0,
             cost: PackedProofCost::new(payload_bytes, nonce_bits).unwrap(),
             setup_field_elements,
         }
@@ -1101,6 +1112,7 @@ mod tests {
     fn metrics(natural_len: usize, proof_bytes: usize) -> CandidateMetrics {
         CandidateMetrics {
             first_direct_setup_capacity: SetupPrefixCapacity::for_natural_len(natural_len),
+            first_direct_output_witness_len: 0,
             cost: PackedProofCost::new(proof_bytes, 0).unwrap(),
             setup_field_elements: 0,
         }

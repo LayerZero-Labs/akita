@@ -4,9 +4,9 @@ The `akita-planner` crate computes the parameters of each fold level in the
 Akita PCS. Uniform direct schedules minimize modeled proof bytes. Adaptive
 direct schedules minimize first-direct padded setup capacity, then proof bytes
 and total setup. Recursive schedules first minimize the power-of-two capacity
-covering total setup, then first-direct capacity and proof bytes. Complete
-numeric ties prefer a smaller root output witness before the canonical
-descriptor tie-break.
+covering total setup, then first-direct capacity, first-direct output witness,
+and proof bytes. Recursive numeric ties go directly to the canonical
+descriptor; direct policies retain their root output-witness tie-break.
 
 This module is independent of the `Cfg` trait because `Cfg` uses the planner; if the planner named concrete configs directly, the workspace would face a circular dependency. All inputs that the planner needs from `Cfg` are therefore passed through the plain-value `PlannerPolicy`.
 
@@ -29,7 +29,7 @@ uniform direct:  (proof bytes, total setup, root output witness, descriptor)
 adaptive direct: (first-direct padded capacity, proof bytes, total setup,
                   root output witness, descriptor)
 recursive:       (padded total-setup capacity, first-direct padded capacity,
-                  proof bytes, root output witness, descriptor)
+                  first-direct output witness, proof bytes, descriptor)
 ```
 
 For a direct schedule, the first direct edge is the root. For an offloaded
@@ -108,12 +108,13 @@ Conceptually, a candidate level answers three questions:
 - How many bytes does it cost to prove the next witness?
 - How many field elements will the next witness contain?
 - What padded setup capacity is exposed at the first direct edge, and what is
-  the total setup envelope?
+  the first direct output-witness length and total setup envelope?
 
 The first question determines whether the current fold is worthwhile. The second question determines how expensive later recursive levels can be.
 Adaptive direct planning retains the first-direct-first V2 objective. Recursive
 setup planning compares total setup at next-power-of-two capacity, then
-minimizes the first direct capacity within the winning bucket.
+minimizes first-direct capacity and output-witness length within the winning
+bucket before comparing proof bytes.
 
 ## Root Level Search
 

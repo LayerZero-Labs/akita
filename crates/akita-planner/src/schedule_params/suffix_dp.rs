@@ -120,6 +120,7 @@ struct ChildEdgePrice {
 
 struct PendingScheduleCandidate {
     first_direct_setup_field_len: Option<NonZeroUsize>,
+    first_direct_output_witness_len: usize,
     cost: PackedProofCost,
     setup_field_elements: usize,
     first_fold: CandidateFoldStep,
@@ -231,6 +232,7 @@ impl PendingScheduleCandidate {
                 .map_or(super::SetupPrefixCapacity::MAX, |natural_len| {
                     super::SetupPrefixCapacity::for_natural_len(natural_len.get())
                 }),
+            first_direct_output_witness_len: self.first_direct_output_witness_len,
             cost: self.cost,
             setup_field_elements: self.setup_field_elements,
         }
@@ -239,6 +241,7 @@ impl PendingScheduleCandidate {
     fn into_candidate(self) -> ScheduleCandidate {
         ScheduleCandidate {
             first_direct_setup_field_len: self.first_direct_setup_field_len,
+            first_direct_output_witness_len: self.first_direct_output_witness_len,
             cost: self.cost,
             setup_field_elements: self.setup_field_elements,
             folds: self.suffix_folds.prepend(self.first_fold),
@@ -324,6 +327,11 @@ fn child_choice(
             })?,
         )
     };
+    let first_direct_output_witness_len = if edge.offloaded {
+        suffix.first_direct_output_witness_len
+    } else {
+        edge.next_witness_len
+    };
     let first_fold = CandidateFoldStep {
         params: Arc::clone(&edge.candidate_params),
         input_witness_len: edge.current_witness_len,
@@ -336,6 +344,7 @@ fn child_choice(
         .checked_prepend(edge_payload_bytes, edge_nonce_bits)?;
     Ok(Some(PendingScheduleCandidate {
         first_direct_setup_field_len,
+        first_direct_output_witness_len,
         cost,
         setup_field_elements,
         first_fold,
@@ -370,6 +379,7 @@ fn direct_edge_lower_bound(
     Ok(CompleteObjectiveBound::for_direct_edge(
         policy,
         SetupPrefixCapacity::for_natural_len(natural_setup_field_len).field_elements(),
+        output_witness_len,
         proof_bytes,
         level_setup_field_elements(params)?,
     ))
@@ -529,6 +539,7 @@ fn price_terminal_candidate(
         first_direct_setup_field_len: Some(NonZeroUsize::new(natural_len).ok_or_else(|| {
             AkitaError::InvalidSetup("direct setup field length must be nonzero".into())
         })?),
+        first_direct_output_witness_len: 0,
         cost: PackedProofCost::new(total, 0)?,
         setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
         folds: super::CandidateFoldChain::default(),

@@ -255,9 +255,9 @@ Among feasible complete schedules, adaptive direct planning compares:
 
 ```text
 (
-    total_setup_field_elements,
     first_direct_padded_setup_capacity,
     exact_estimated_proof_bytes,
+    total_setup_field_elements,
     root_output_witness_len,
     canonical_descriptor,
 )
@@ -270,18 +270,18 @@ instead of the exact first coordinate:
 (
     next_power_of_two(total_setup_field_elements),
     first_direct_padded_setup_capacity,
+    first_direct_output_witness_len,
     exact_estimated_proof_bytes,
-    root_output_witness_len,
     canonical_descriptor,
 )
 ```
 
 This bucket matches the allocation granularity of a recursively committed
 setup prefix. Exact setup footprints within one power-of-two bucket do not
-separate schedules; first-direct capacity does. `exact_estimated_proof_bytes`
-includes every Stage 3 payload. Root output-witness length and the descriptor
-are only complete-schedule tie-breaks. Generated catalogs bind the versioned
-selection policy that produced them.
+separate schedules; first-direct capacity and first-direct output-witness
+length do. `exact_estimated_proof_bytes` includes every Stage 3 payload. A
+recursive numeric tie goes directly to the canonical descriptor. Generated
+catalogs bind the versioned selection policy that produced them.
 
 The recursive search applies `PlannerPolicy::setup_field_budget` when a host
 sets it to `Some(limit)`. The shipped policy uses `None` because the
@@ -1071,8 +1071,8 @@ the candidate score that decides whether and how long to offload.
       full-field prefix inputs, and strictly reduces the padded capacity of the
       first remaining direct setup scan.
 - [x] The selected recursive schedule lexicographically minimizes padded total
-      total setup-envelope capacity, first-direct padded setup capacity, exact
-      estimated proof bytes, root output-witness length, and the canonical
+      setup-envelope capacity, first-direct padded setup capacity, first-direct
+      output-witness length, exact estimated proof bytes, and the canonical
       descriptor.
 - [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.

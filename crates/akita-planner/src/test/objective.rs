@@ -6,7 +6,7 @@ use crate::schedule_params::CandidateFoldChain;
 fn score(objective: CompleteObjectiveBound, descriptor: u8) -> CompleteScheduleScore {
     CompleteScheduleScore {
         objective,
-        output_witness_len: 1_000,
+        legacy_root_output_witness_len: Some(1_000),
         descriptor: vec![descriptor],
     }
 }
@@ -44,17 +44,20 @@ fn setup_first(
 fn padded_setup_envelope_first(
     setup_field_elements: usize,
     first_direct_setup_capacity: usize,
+    first_direct_output_witness_len: usize,
     proof_bytes: usize,
     descriptor: u8,
 ) -> CompleteScheduleScore {
-    score(
-        CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
+    CompleteScheduleScore {
+        objective: CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
+            first_direct_output_witness_len,
             proof_bytes,
         },
-        descriptor,
-    )
+        legacy_root_output_witness_len: None,
+        descriptor: vec![descriptor],
+    }
 }
 
 #[test]
@@ -82,13 +85,31 @@ fn setup_first_score_uses_total_setup_only_after_primary_coordinates() {
 
 #[test]
 fn padded_setup_envelope_tolerates_raw_setup_within_one_capacity() {
-    let smaller_direct_capacity = padded_setup_envelope_first(5_680_128, 2_097_152, 101, 2);
-    let smaller_raw_setup = padded_setup_envelope_first(8_388_608, 8_388_608, 99, 1);
+    let smaller_direct_capacity = padded_setup_envelope_first(5_680_128, 2_097_152, 1_000, 101, 2);
+    let smaller_raw_setup = padded_setup_envelope_first(8_388_608, 8_388_608, 1, 99, 1);
     assert_eq!(akita_types::padded_setup_prefix_len(5_680_128), 8_388_608);
     assert!(smaller_direct_capacity < smaller_raw_setup);
 
-    let next_capacity = padded_setup_envelope_first(8_388_609, 1, 1, 1);
+    let next_capacity = padded_setup_envelope_first(8_388_609, 1, 1, 1, 1);
     assert!(smaller_direct_capacity < next_capacity);
+}
+
+#[test]
+fn padded_setup_envelope_prefers_first_direct_output_before_proof() {
+    let smaller_output = padded_setup_envelope_first(30, 16, 999, 101, 2);
+    let smaller_proof = padded_setup_envelope_first(31, 16, 1_000, 100, 1);
+    assert!(smaller_output < smaller_proof);
+
+    let smaller_descriptor = padded_setup_envelope_first(31, 16, 999, 101, 1);
+    assert!(smaller_descriptor < smaller_output);
+}
+
+#[test]
+fn padded_setup_envelope_goes_directly_from_proof_to_descriptor() {
+    let smaller_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 1);
+    let larger_descriptor = padded_setup_envelope_first(30, 16, 1_000, 100, 2);
+    assert_eq!(smaller_descriptor.legacy_root_output_witness_len, None);
+    assert!(smaller_descriptor < larger_descriptor);
 }
 
 #[test]
@@ -99,12 +120,12 @@ fn output_witness_precedes_the_canonical_descriptor() {
     };
     let smaller_output = CompleteScheduleScore {
         objective,
-        output_witness_len: 999,
+        legacy_root_output_witness_len: Some(999),
         descriptor: vec![2],
     };
     let smaller_descriptor = CompleteScheduleScore {
         objective,
-        output_witness_len: 1_000,
+        legacy_root_output_witness_len: Some(1_000),
         descriptor: vec![1],
     };
     assert!(smaller_output < smaller_descriptor);
@@ -127,6 +148,7 @@ fn setup_first_score_compares_padded_capacity_not_natural_length() {
 fn objective_bounds_prune_only_strict_numeric_losses() {
     let incumbent = super::super::CandidateMetrics {
         first_direct_setup_capacity: super::super::SetupPrefixCapacity::for_natural_len(10),
+        first_direct_output_witness_len: 1_000,
         cost: super::super::PackedProofCost::new(20, 0).unwrap(),
         setup_field_elements: 30,
     };
@@ -171,6 +193,7 @@ fn objective_bounds_prune_only_strict_numeric_losses() {
         CompleteObjectiveBound::PaddedSetupEnvelopeFirst {
             setup_envelope_capacity: akita_types::padded_setup_prefix_len(setup_field_elements),
             first_direct_setup_capacity,
+            first_direct_output_witness_len: 1_000,
             proof_bytes,
         }
     };
@@ -228,6 +251,7 @@ fn complete_candidate(
     };
     super::ScheduleCandidate {
         first_direct_setup_field_len: NonZeroUsize::new(1),
+        first_direct_output_witness_len: output_witness_len,
         cost: super::super::PackedProofCost::new(proof_bytes, 0).unwrap(),
         setup_field_elements,
         folds: CandidateFoldChain::default().prepend(

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use akita_types::{CommitmentRingDims, RingRelationMode};
 
-use crate::SelectionPolicyId;
+use crate::{schedule_params::CandidateMetrics, SelectionPolicyId};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SelectedFoldDiagnostics {
@@ -19,6 +19,7 @@ pub(crate) struct SelectedScheduleDiagnostics {
     proof_bytes: usize,
     setup_field_elements: usize,
     first_direct_setup_capacity: usize,
+    first_direct_output_witness_len: usize,
     root_output_witness_len: usize,
     folds: Vec<SelectedFoldDiagnostics>,
 }
@@ -74,11 +75,12 @@ impl fmt::Display for PlannerDiagnosticsSnapshot {
         if let Some(selected) = &self.selected {
             write!(
                 formatter,
-                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} root_output={} cutover={} dims=[",
+                " selected={{objective={:?} proof={} setup={} first_direct_capacity={} first_direct_output={} root_output={} cutover={} dims=[",
                 selected.objective,
                 selected.proof_bytes,
                 selected.setup_field_elements,
                 selected.first_direct_setup_capacity,
+                selected.first_direct_output_witness_len,
                 selected.root_output_witness_len,
                 selected
                     .folds
@@ -204,17 +206,16 @@ impl PlannerDiagnostics {
     pub(crate) fn record_selected(
         &self,
         objective: SelectionPolicyId,
-        proof_bytes: usize,
-        setup_field_elements: usize,
-        first_direct_setup_capacity: usize,
+        metrics: CandidateMetrics,
         root_output_witness_len: usize,
         folds: Vec<SelectedFoldDiagnostics>,
     ) {
         self.selected.replace(Some(SelectedScheduleDiagnostics {
             objective,
-            proof_bytes,
-            setup_field_elements,
-            first_direct_setup_capacity,
+            proof_bytes: metrics.proof_bytes(),
+            setup_field_elements: metrics.setup_field_elements,
+            first_direct_setup_capacity: metrics.first_direct_setup_capacity.field_elements(),
+            first_direct_output_witness_len: metrics.first_direct_output_witness_len,
             root_output_witness_len,
             folds,
         }));

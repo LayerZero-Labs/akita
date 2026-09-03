@@ -14,6 +14,7 @@ enum OracleObjective {
     PaddedSetupEnvelopeFirst {
         setup_envelope_capacity: usize,
         first_direct_setup_capacity: usize,
+        first_direct_output_witness_len: usize,
         proof_bytes: usize,
     },
 }
@@ -21,7 +22,7 @@ enum OracleObjective {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct OracleScore {
     objective: OracleObjective,
-    output_witness_len: usize,
+    legacy_root_output_witness_len: Option<usize>,
     descriptor: Vec<u8>,
 }
 
@@ -85,19 +86,27 @@ pub(super) fn score(
                             .into(),
                     )
                 })?,
+                first_direct_output_witness_len: candidate.first_direct_output_witness_len,
                 proof_bytes: candidate.cost.proof_bytes(),
             }
         }
     };
     Ok(OracleScore {
         objective,
-        output_witness_len: candidate
-            .folds
-            .first()
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("complete schedule is missing its root fold".into())
-            })?
-            .output_witness_len,
+        legacy_root_output_witness_len: (policy.selection_policy
+            != crate::SelectionPolicyId::MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3)
+            .then(|| {
+                candidate
+                    .folds
+                    .first()
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "complete schedule is missing its root fold".into(),
+                        )
+                    })
+                    .map(|fold| fold.output_witness_len)
+            })
+            .transpose()?,
         descriptor: schedule_descriptor_bytes(candidate)?,
     })
 }

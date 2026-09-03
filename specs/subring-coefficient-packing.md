@@ -1265,8 +1265,10 @@ elements, root output-witness length, and the canonical descriptor. Recursive
 catalogs use `MinPaddedSetupEnvelopeThenFirstDirectThenPayloadV3`, which first
 compares the next-power-of-two capacity covering the total setup envelope.
 Exact setup differences within one recursive capacity bucket are tolerated
-before comparing first-direct capacity and proof payload. No objective
-component for `s`, `d_A`, rank, fold count, or prover time is added.
+before comparing first-direct capacity, first-direct output-witness length, and
+proof payload. A numeric tie then goes directly to the canonical descriptor.
+No objective component for `s`, `d_A`, rank, fold count, or prover time is
+added.
 
 For every subring packing candidate, the planner MUST recompute at least the
 following values.
@@ -1309,9 +1311,9 @@ for this breaking protocol and planner-policy cutover.
 
 Across the 67 retained logical keys, setup improves on 45 rows, is equal on
 six, and regresses on 16. Its sum falls from 7,022,341,504 to 3,483,331,328
-field elements, a 50.40% reduction. Proof payload improves on 66 rows and
-regresses on one. Its sum falls from 4,965,430 to 4,433,327 bytes, a 10.72%
-reduction. Fourteen rows use fewer fold levels, 41 retain their count, and 12
+field elements, a 50.40% reduction. Proof payload improves on 65 rows and
+regresses on two. Its sum falls from 4,965,430 to 4,451,696 bytes, a 10.35%
+reduction. Fourteen rows use fewer fold levels, 40 retain their count, and 13
 use more levels.
 
 The first-direct setup capacity improves on 64 retained rows, is equal on three,
@@ -1322,7 +1324,7 @@ the comparator treats a missing coordinate as drift rather than a wildcard.
 
 This closes the missing-row, objective, and comparison-report evidence gaps.
 The retained catalog improves in aggregate under both setup coordinates and
-proof payload. The one proof regression remains explicit in the per-row review
+proof payload. The two proof regressions remain explicit in the per-row review
 data; setup-primary selection does not imply per-row proof nonregression.
 
 At the checked head, the fp32 dense nv20 adaptive direct rows use
@@ -1502,11 +1504,12 @@ The planner MUST keep the search bounded in the following ways.
       fold to terminal without inserting another fold.
 - [x] The planner searches every admitted `(d_A, s)` pair only inside the two
       level adaptive prefix and keeps the current uniform suffix.
-- [x] Adaptive direct catalogs minimize exact total setup before first-direct
-      setup capacity. Recursive catalogs compare total setup at power-of-two
-      capacity before first-direct setup capacity. Both then compare proof
-      payload, root output-witness length, and the canonical descriptor. The
-      objective has no explicit `s`, `d_A`, or fold-count component.
+- [x] Adaptive direct catalogs minimize first-direct setup capacity, proof
+      payload, exact total setup, root output-witness length, and the canonical
+      descriptor. Recursive catalogs minimize padded total setup-envelope
+      capacity, first-direct setup capacity, first-direct output-witness length,
+      proof payload, and then the canonical descriptor. The objective has no
+      explicit `s`, `d_A`, or fold-count component.
 - [x] `d_D` not dividing the selected native or hidden-digit width rejects
       before matrix/rank construction.
 - [x] Exact D/H and A/B/F ranks are recomputed from subring coefficient packing geometry and norms.
