@@ -379,6 +379,9 @@ pub struct AkitaScheduleLookupKey {
     pub precommitteds: Vec<GroupCommitPhaseParams>,
 }
 
+/// Allocation-cached ordering key for deterministic schedule lookup and emission.
+pub type AkitaScheduleLookupOrderKey = (usize, usize, usize, Vec<Vec<u8>>);
+
 /// A non-empty ordered prefix of groups committed before a final group.
 ///
 /// The type is non-empty by construction, so a grouped commitment context
@@ -449,30 +452,17 @@ impl AkitaScheduleLookupKey {
         bytes
     }
 
-    /// Canonical ordering used by artifact lookup and deterministic emission.
-    pub fn canonical_cmp(&self, other: &Self) -> std::cmp::Ordering {
-        let own_group = (
+    /// Canonical ordering key, computed once before sorting or binary search.
+    pub fn canonical_order_key(&self) -> AkitaScheduleLookupOrderKey {
+        (
             self.final_group.num_vars(),
             self.final_group.num_polynomials(),
-        );
-        let other_group = (
-            other.final_group.num_vars(),
-            other.final_group.num_polynomials(),
-        );
-        own_group
-            .cmp(&other_group)
-            .then_with(|| self.precommitteds.len().cmp(&other.precommitteds.len()))
-            .then_with(|| {
-                self.precommitteds
-                    .iter()
-                    .map(GroupCommitPhaseParams::canonical_descriptor_bytes)
-                    .cmp(
-                        other
-                            .precommitteds
-                            .iter()
-                            .map(GroupCommitPhaseParams::canonical_descriptor_bytes),
-                    )
-            })
+            self.precommitteds.len(),
+            self.precommitteds
+                .iter()
+                .map(GroupCommitPhaseParams::canonical_descriptor_bytes)
+                .collect(),
+        )
     }
 
     /// Build a multi-group opening layout from this schedule lookup key.

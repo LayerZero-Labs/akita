@@ -464,3 +464,18 @@ fn recursive_prefix_slot_id_fixture() {
         )
     );
 }
+
+#[test]
+fn setup_prefix_planning_rejects_invalid_capacity_metadata() {
+    let dense = checked_in_catalog::<fp128::Dense>();
+    let zero_batch = setup_prefix_slot_ids_from_catalog::<fp128::Dense>(&dense, 14, 0)
+        .expect_err("zero-batch setup metadata must reject for nonrecursive configs");
+    assert!(format!("{zero_batch}").contains("at least 1"));
+
+    let recursive = checked_in_catalog::<RecursiveCommitmentConfig<fp128::OneHot>>();
+    let oversized_vars = setup_prefix_slot_ids_from_catalog::<
+        RecursiveCommitmentConfig<fp128::OneHot>,
+    >(&recursive, usize::BITS as usize, 1)
+    .expect_err("oversized setup metadata must reject for recursive configs");
+    assert!(format!("{oversized_vars}").contains("exceeds preprocessing limits"));
+}

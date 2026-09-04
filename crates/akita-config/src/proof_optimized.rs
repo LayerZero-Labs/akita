@@ -140,7 +140,8 @@ pub fn trusted_setup_matrix_capacity<Cfg: CommitmentConfig>(
     scan.finish(max_num_vars)
 }
 
-fn validate_setup_capacity_metadata(
+/// Validate setup-capacity metadata shared by sizing and setup-prefix planning.
+pub fn validate_setup_capacity_metadata(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError> {

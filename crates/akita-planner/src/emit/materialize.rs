@@ -207,7 +207,7 @@ pub(crate) fn materialized_entries_for_specs(
         entries_by_spec[spec_index].push(entry);
     }
     for entries in &mut entries_by_spec {
-        entries.sort_by(|left, right| left.key().canonical_cmp(&right.key()));
+        entries.sort_by_cached_key(|entry| entry.key().canonical_order_key());
     }
     Ok(entries_by_spec)
 }

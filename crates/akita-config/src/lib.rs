@@ -80,6 +80,7 @@ pub use akita_schedules::{TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule, trusted_setup_matrix_capacity,
+    validate_setup_capacity_metadata,
 };
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;

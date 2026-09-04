@@ -88,11 +88,7 @@ where
     Cfg: CommitmentConfig<Field = F>,
 {
     akita_config::validate_config_policy::<Cfg>()?;
-    if max_num_batched_polys == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "max_num_batched_polys must be at least 1".to_string(),
-        ));
-    }
+    akita_config::validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, Cfg>(schedules, max_num_vars, max_num_batched_polys) {

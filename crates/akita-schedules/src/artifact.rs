@@ -6,7 +6,8 @@ use akita_types::instance_descriptor::{
     digest_descriptor_bytes, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
+    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile, FoldSchedule,
+    OpeningScheduleSelection,
 };
 use serde::de::{self, DeserializeSeed, IgnoredAny, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
@@ -180,7 +181,7 @@ pub struct TrustedScheduleCatalog {
     policy_digest: [u8; 32],
     catalog_digest: [u8; 32],
     rows_by_digest: Vec<ResolvedScheduleRow>,
-    rows_by_key: Vec<(AkitaScheduleLookupKey, usize)>,
+    rows_by_key: Vec<(AkitaScheduleLookupOrderKey, usize)>,
 }
 
 impl TrustedScheduleCatalog {
@@ -214,19 +215,22 @@ impl TrustedScheduleCatalog {
         let mut rows_by_key = resolved
             .iter()
             .enumerate()
-            .map(|(index, row)| (key_for_profiles(row.profiles()), index))
+            .map(|(index, row)| {
+                (
+                    key_for_profiles(row.profiles()).canonical_order_key(),
+                    index,
+                )
+            })
             .collect::<Vec<_>>();
         rows_by_key.sort_by(|(left_key, left_index), (right_key, right_index)| {
-            left_key.canonical_cmp(right_key).then_with(|| {
+            left_key.cmp(right_key).then_with(|| {
                 resolved[*left_index]
                     .selection()
                     .row_digest
                     .cmp(&resolved[*right_index].selection().row_digest)
             })
         });
-        let has_duplicate_lookup_key = rows_by_key
-            .windows(2)
-            .any(|pair| pair[0].0.canonical_cmp(&pair[1].0).is_eq());
+        let has_duplicate_lookup_key = rows_by_key.windows(2).any(|pair| pair[0].0 == pair[1].0);
         if has_duplicate_lookup_key {
             return Err(AkitaError::InvalidSetup(
                 "trusted schedule catalog contains a duplicate prover lookup key".to_string(),
@@ -443,6 +447,7 @@ impl TrustedScheduleCatalog {
         key: &AkitaScheduleLookupKey,
         exact_profiles: Option<&CommittedGroupBatchProfile>,
     ) -> Result<ResolvedScheduleRow, AkitaError> {
+        let order_key = key.canonical_order_key();
         let row_for_index = |row_index: usize| {
             self.rows_by_digest.get(row_index).ok_or_else(|| {
                 AkitaError::InvalidSetup("trusted schedule key index is out of bounds".to_string())
@@ -450,13 +455,13 @@ impl TrustedScheduleCatalog {
         };
         let start = self
             .rows_by_key
-            .partition_point(|(row_key, _)| row_key.canonical_cmp(key).is_lt());
+            .partition_point(|(row_key, _)| row_key < &order_key);
         let (row_key, row_index) = self
             .rows_by_key
             .get(start)
             .ok_or_else(|| unsupported_schedule_lookup(key, exact_profiles.is_some()))?;
         let row = row_for_index(*row_index)?;
-        if !row_key.canonical_cmp(key).is_eq()
+        if row_key != &order_key
             || exact_profiles.is_some_and(|profiles| row.profiles() != profiles)
         {
             return Err(unsupported_schedule_lookup(key, exact_profiles.is_some()));

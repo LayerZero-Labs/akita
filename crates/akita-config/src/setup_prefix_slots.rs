@@ -79,7 +79,8 @@ pub fn setup_prefix_slot_ids_from_catalog<Cfg: CommitmentConfig>(
     max_num_batched_polys: usize,
 ) -> Result<Vec<SetupPrefixSlotId>, AkitaError> {
     crate::validate_trusted_schedule_catalog::<Cfg>(catalog)?;
-    if !Cfg::recursive_setup_planning() || max_num_batched_polys == 0 {
+    crate::validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
+    if !Cfg::recursive_setup_planning() {
         return Ok(Vec::new());
     }
 

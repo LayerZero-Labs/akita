@@ -251,9 +251,7 @@ impl GeneratedFamily {
 /// Returns an error if key enumeration fails.
 pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
     let mut keys = family.scalar_keys.to_vec();
-    keys.sort_by(|left, right| {
-        AkitaScheduleLookupKey::single(*left).canonical_cmp(&AkitaScheduleLookupKey::single(*right))
-    });
+    keys.sort_by_cached_key(|key| AkitaScheduleLookupKey::single(*key).canonical_order_key());
     keys.dedup();
     Ok(keys)
 }
@@ -316,7 +314,7 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
 }
 
 fn sorted_grouped_requests(mut requests: GroupedGenerationRequests) -> GroupedGenerationRequests {
-    requests.sort_by(|left, right| left.key().canonical_cmp(&right.key()));
+    requests.sort_by_cached_key(|request| request.key().canonical_order_key());
     requests
 }
 

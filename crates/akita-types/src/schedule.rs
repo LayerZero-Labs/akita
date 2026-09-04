@@ -12,8 +12,8 @@ mod sis_occurrences;
 mod sizing;
 
 pub use profiles::{
-    AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding,
-    GroupCommitPhaseParams, PrecommittedGroupProfiles,
+    AkitaScheduleLookupKey, AkitaScheduleLookupOrderKey, CommittedGroupBatchProfile,
+    CommittedSourceEncoding, GroupCommitPhaseParams, PrecommittedGroupProfiles,
 };
 pub use sis_occurrences::{ScheduleSisBound, ScheduleSisOccurrence, ScheduleSisRole};
 pub use sizing::{detect_field_modulus, r_decomp_levels};
