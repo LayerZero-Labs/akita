@@ -81,9 +81,10 @@ of complete Galois orbits. A shortest-vector certificate at one primitive
 | S88 | `{0, 2, 3}` | 88 | `(35, 2)` | 129.224682 | 43 | 172 |
 | S80 | `{0, 2}` | 80 | `(36, 3)` | 128.630976 | 48 | 192 |
 
-The structural claims and support counts are exact. The current operator-norm
-figures are Monte Carlo estimates and are not security certificates. With
-200,000 samples and seed `20260903`, the estimated accepted support is:
+The structural claims and support counts are exact. The S96 threshold-15 row
+now also has an exact accepted-support certificate; the other operator-norm
+figures remain Monte Carlo estimates. With 200,000 samples and seed
+`20260903`, the estimated accepted support is:
 
 | candidate | threshold 14 | threshold 15 | threshold 16 |
 |---|---:|---:|---:|
@@ -97,8 +98,21 @@ Reproduce the experiment in a Python environment that provides NumPy:
 python3 scripts/bn254_challenge_units/explore_d128_subspaces.py --samples 200000
 ```
 
-None of these three native candidates is ready for protocol use. Each still
-needs two exact artifacts:
+S96 now has the first artifact needed for protocol use:
+
+```text
+scripts/bn254_challenge_units/d128_s96_operator_norm/
+```
+
+Its degree-30 exact moment dual proves at least `2^128.497038674319` accepted
+challenges under the q=48 runtime predicate at threshold 15. The exact
+standalone checker binds the position mask, shell, fixed-point containment,
+eight modular moment computations, polynomial positivity, union bound, and
+support floor.
+
+The remaining obligation for S96 is an exact evaluation-kernel certificate
+excluding every nonzero vector through squared norm 156. S88 and S80 still
+need both artifacts. In general, a native candidate needs:
 
 1. an exhaustive evaluation-kernel certificate excluding every nonzero vector
    through the row's difference bound; and
@@ -214,12 +228,13 @@ This command is a candidate filter. It does not replace the exact checker.
 
 ## Expected cost of the remaining exact work
 
-The accepted-support certificate is the easier obligation. Akita already has
-the exact modular-moment, Chinese-remainder reconstruction, rational dual, and
-exact positivity pipeline. Extending its moment generator to the S96 position
-mask should be a minutes-scale computation at degree 30, followed by a fast
-standalone checker. A higher dual degree may be necessary if the first-order
-union bound is too loose.
+The accepted-support obligation for S96 is complete. Each of its eight
+degree-30 modular moment computations takes about five seconds when run in
+parallel on the development machine. CRT reconstruction is immediate; rational
+dual search and exact Bernstein construction take a few minutes. The final
+standalone Sturm checker takes seconds. Degree 30 and the first-order union
+bound already clear the 128-bit floor by 0.497 bits, so no higher dual degree is
+needed for this candidate.
 
 The rank-96 kernel exclusion is the expensive obligation. Basis construction
 and BKZ screening take minutes on a laptop. Exact unpruned enumeration is
