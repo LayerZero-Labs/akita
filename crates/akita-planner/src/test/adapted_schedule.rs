@@ -119,6 +119,21 @@ fn scalar_row(group: PolynomialGroupLayout) -> Result<ResolvedScheduleRow, Akita
 }
 
 #[test]
+fn precommitted_producer_rejects_a_mismatched_fold_policy() {
+    let profile = scalar_row(PolynomialGroupLayout::singleton(14))
+        .expect("scalar producer row")
+        .profiles()
+        .final_group;
+    let error = crate::emit::PrecommittedProducer::try_new(
+        profile,
+        Dense::committed_source_contract().expect("dense source contract"),
+        honest_fold_policy_of::<OneHot>(),
+    )
+    .expect_err("producer policy must agree with its source contract");
+    assert!(matches!(error, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
 fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
     let policy = policy_of::<Dense>();
     let main_group = PolynomialGroupLayout::singleton(24);
@@ -162,8 +177,16 @@ fn adapted_schedule_freezes_main_root_and_rebuilds_grouped_suffix() {
         final_group: main_row.profiles().final_group,
         precommitteds: vec![pre_profile],
     };
-    ResolvedScheduleRow::try_new(profiles, adapted.schedule, &policy)
-        .expect("adapted row must pass the canonical runtime audit");
+    let catalog = akita_schedules::TrustedScheduleCatalog::try_new(
+        "adapted-dense-test",
+        [(profiles, adapted.schedule)],
+        &policy,
+        Dense::ring_challenge_config,
+    )
+    .expect("adapted row must pass final trusted-catalog admission");
+    catalog
+        .resolve_key(&key)
+        .expect("adapted lookup key must resolve from the admitted catalog");
 }
 
 #[test]
@@ -337,8 +360,8 @@ fn adapted_schedule_preserves_recursive_setup_offload_topology() {
 }
 
 #[test]
-#[ignore = "manual cold guided-adaptation benchmark"]
-fn benchmark_adapted_schedule_against_checked_in_full_plans() {
+#[ignore = "manual cold guided-adaptation and full-DP benchmark"]
+fn benchmark_adapted_schedule_against_full_plans() {
     let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
         .expect("one-hot catalog");
     let dense_catalog =
@@ -364,10 +387,16 @@ fn benchmark_adapted_schedule_against_checked_in_full_plans() {
             (16, 1),
             &[(14, 1, false), (15, 2, true)][..],
         ),
+        ("28x1+14x1", (28, 1), &[(14, 1, false)][..]),
+        ("32x1+14x1", (32, 1), &[(14, 1, false)][..]),
+        ("36x1+14x1", (36, 1), &[(14, 1, false)][..]),
+        ("40x1+14x1", (40, 1), &[(14, 1, false)][..]),
+        ("44x1+14x1", (44, 1), &[(14, 1, false)][..]),
+        ("50x1+14x1", (50, 1), &[(14, 1, false)][..]),
     ];
 
     eprintln!(
-        "case\tstatus\tmicros\tadapted_bytes\tfull_bytes\tratio_ppm\tadapted_folds\tfull_folds"
+        "case\tstatus\tadapted_micros\tfull_millis\tadapted_bytes\tfull_bytes\tratio_ppm\tadapted_folds\tfull_folds"
     );
     for (name, (main_vars, main_polys), pre_layouts) in cases {
         let main_group = PolynomialGroupLayout::new(main_vars, main_polys);
@@ -391,9 +420,6 @@ fn benchmark_adapted_schedule_against_checked_in_full_plans() {
             final_group: main_group,
             precommitteds,
         };
-        let reference = catalog
-            .resolve_key(&key)
-            .expect("checked-in full-plan reference row");
         let producers = key
             .precommitteds
             .iter()
@@ -417,6 +443,22 @@ fn benchmark_adapted_schedule_against_checked_in_full_plans() {
             OneHot::ring_challenge_config,
         );
         let micros = started.elapsed().as_micros();
+        let full_started = std::time::Instant::now();
+        let reference = catalog
+            .resolve_key(&key)
+            .map(|row| row.schedule().clone())
+            .or_else(|_| {
+                find_schedule(
+                    &key,
+                    honest_fold_policy_of::<OneHot>(),
+                    &request.fold_policies(),
+                    &policy,
+                    OneHot::ring_challenge_config,
+                )
+                .map(|planned| planned.schedule)
+            })
+            .expect("full-plan reference row");
+        let full_millis = full_started.elapsed().as_millis();
         match result {
             Ok(adapted) => {
                 let adapted_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
@@ -426,19 +468,19 @@ fn benchmark_adapted_schedule_against_checked_in_full_plans() {
                 )
                 .expect("adapted payload bytes");
                 let full_bytes = akita_schedules::expanded_schedule_proof_payload_bytes(
-                    &key,
-                    reference.schedule(),
-                    &policy,
+                    &key, &reference, &policy,
                 )
                 .expect("full-plan payload bytes");
                 let ratio_ppm = adapted_bytes * 1_000_000 / full_bytes;
                 eprintln!(
-                    "{name}\tok\t{micros}\t{adapted_bytes}\t{full_bytes}\t{ratio_ppm}\t{}\t{}",
+                    "{name}\tok\t{micros}\t{full_millis}\t{adapted_bytes}\t{full_bytes}\t{ratio_ppm}\t{}\t{}",
                     adapted.schedule.num_fold_levels(),
-                    reference.schedule().num_fold_levels(),
+                    reference.num_fold_levels(),
                 );
             }
-            Err(error) => eprintln!("{name}\tfail:{error}\t{micros}\t-\t-\t-\t-\t-"),
+            Err(error) => {
+                eprintln!("{name}\tfail:{error}\t{micros}\t{full_millis}\t-\t-\t-\t-\t-")
+            }
         }
     }
 }

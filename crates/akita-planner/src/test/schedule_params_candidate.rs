@@ -695,6 +695,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
             honest_fold_policy_of::<Dense>(),
             honest_fold_policy_of::<Dense>(),
         ],
+        None,
     )
     .expect("root precommit opening products");
     assert_eq!(opening_products.len(), 3);
@@ -760,12 +761,22 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
         dimensions,
         &repeated_key,
         &vec![honest_fold_policy_of::<Dense>(); 16],
+        None,
     )
     .expect("symmetric root precommit opening products");
     assert_eq!(repeated_products.len(), 17);
     assert!(repeated_products
         .iter()
         .all(|assignment| assignment.len() == 16));
+    let capped_error = crate::schedule_params::suffix_dp::packing_precommit_opening_products(
+        &policy,
+        dimensions,
+        &repeated_key,
+        &vec![honest_fold_policy_of::<Dense>(); 16],
+        Some(16),
+    )
+    .expect_err("the cap must reject before materializing 17 assignments");
+    assert!(matches!(capped_error, AkitaError::UnsupportedSchedule(_)));
 
     let incompatible_products =
         crate::schedule_params::suffix_dp::packing_precommit_opening_products(
@@ -780,6 +791,7 @@ fn root_packing_candidates_use_adversarial_linf_and_exact_d_width() {
                 honest_fold_policy_of::<Dense>(),
                 honest_fold_policy_of::<Dense>(),
             ],
+            None,
         )
         .expect("incompatible shared opening dimension is an empty candidate domain");
     assert!(incompatible_products.is_empty());

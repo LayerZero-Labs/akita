@@ -100,6 +100,7 @@ pub(crate) fn packing_precommit_opening_products(
     dimensions: CommitmentRingDims,
     key: &AkitaScheduleLookupKey,
     precommitted_honest_fold_policies: &[akita_types::sis::HonestFoldPolicySpec],
+    max_products: Option<usize>,
 ) -> Result<Vec<Vec<crate::schedule_params::PlannerOpeningCandidate>>, AkitaError> {
     if key.precommitteds.len() != precommitted_honest_fold_policies.len() {
         return Err(AkitaError::InvalidSetup(
@@ -132,6 +133,14 @@ pub(crate) fn packing_precommit_opening_products(
         )?;
         if domain.is_empty() {
             return Ok(Vec::new());
+        }
+        if let Some(max_products) = max_products {
+            let remaining_products = max_products / products.len();
+            if !multiset_assignment_count_fits(domain.len(), indices.len(), remaining_products) {
+                return Err(AkitaError::UnsupportedSchedule(format!(
+                    "adapted precommit opening domain exceeds the maximum of {max_products} assignments"
+                )));
+            }
         }
         let assignments = nondecreasing_opening_assignments(&domain, indices.len());
         let next_len = products
@@ -170,6 +179,32 @@ pub(crate) fn packing_precommit_opening_products(
                 .collect()
         })
         .collect()
+}
+
+/// Return whether the number of multisets of `width` values drawn from a
+/// `domain_len`-element domain fits within `limit`.
+fn multiset_assignment_count_fits(domain_len: usize, width: usize, limit: usize) -> bool {
+    if domain_len == 0 {
+        return width == 0;
+    }
+    if domain_len == 1 {
+        return limit >= 1;
+    }
+    let mut count = 1_u128;
+    let limit = limit as u128;
+    for index in 1..=width {
+        let Some(numerator) = domain_len
+            .checked_add(index)
+            .and_then(|sum| sum.checked_sub(1))
+        else {
+            return false;
+        };
+        count = count.saturating_mul(numerator as u128) / index as u128;
+        if count > limit {
+            return false;
+        }
+    }
+    true
 }
 
 /// Canonical assignments for interchangeable precommitted groups.
@@ -283,15 +318,8 @@ fn opening_work_domain(
                         dimensions,
                         root_key,
                         ctx.precommitted_honest_fold_policies,
+                        root_main_constraint.map(|_| MAX_ADAPTED_PRECOMMIT_OPENING_PRODUCTS),
                     )?;
-                    if root_main_constraint.is_some()
-                        && products.len() > MAX_ADAPTED_PRECOMMIT_OPENING_PRODUCTS
-                    {
-                        return Err(AkitaError::UnsupportedSchedule(format!(
-                            "adapted precommit opening domain has {} assignments; maximum is {MAX_ADAPTED_PRECOMMIT_OPENING_PRODUCTS}",
-                            products.len()
-                        )));
-                    }
                     Ok(products)
                 })
                 .transpose()?
