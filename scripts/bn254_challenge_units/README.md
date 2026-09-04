@@ -63,7 +63,7 @@ unit-difference property. If `64` divides an ambient power-of-two ring degree
 `F_r[X] / (X^d + 1)`. The same challenge set is therefore strong in every such
 ambient ring.
 
-## Native D128 candidates under investigation
+## Native D128 challenge candidates and certificate
 
 The exact D64 result is already sufficient for an embedded challenge in every
 larger power-of-two ring. The following candidates explore a different tradeoff:
@@ -72,25 +72,27 @@ the position set stable under every cyclotomic Galois automorphism.
 
 For a nonzero exponent `i`, multiplication by an odd integer modulo 256
 preserves the 2-adic valuation of `i`. Each row below therefore selects a union
-of complete Galois orbits. A shortest-vector certificate at one primitive
-256th root would apply to every root by signed coefficient permutation.
+of complete Galois orbits. For any row, a shortest-vector certificate at one
+primitive 256th root applies to every root by signed coefficient permutation.
 
 | candidate | selected 2-adic valuations | positions | shell `(±1, ±2)` | raw bits | `max ||c||_2^2` | difference bound |
 |---|---:|---:|---:|---:|---:|---:|
 | S96 | `{0, 1}` | 96 | `(35, 1)` | 129.219824 | 39 | 156 |
 | S88 | `{0, 2, 3}` | 88 | `(35, 2)` | 129.224682 | 43 | 172 |
 | S80 | `{0, 2}` | 80 | `(36, 3)` | 128.630976 | 48 | 192 |
+| S72 | `{0, 3}` | 72 | `(38, 5)` | 129.512161 | 58 | 232 |
 
-The structural claims and support counts are exact. The S96 threshold-15 row
-now also has an exact accepted-support certificate; the other operator-norm
-figures remain Monte Carlo estimates. With 200,000 samples and seed
-`20260903`, the estimated accepted support is:
+The structural claims and support counts are exact. S96 at threshold 15 and
+S72 at threshold 18 also have exact accepted-support certificates. The table
+below remains useful as a reproducible empirical cross-check. With 200,000
+samples and seed `20260903`, the estimated accepted support is:
 
 | candidate | threshold 14 | threshold 15 | threshold 16 |
 |---|---:|---:|---:|
 | S96 | 128.683676 bits | 128.991760 bits | 129.129505 bits |
 | S88 | 128.320471 bits | 128.815892 bits | 129.047958 bits |
 | S80 | 127.079053 bits | 127.873634 bits | 128.274925 bits |
+| S72 | 126.085690 bits | 127.665291 bits | 128.538649 bits |
 
 Reproduce the experiment in a Python environment that provides NumPy:
 
@@ -98,7 +100,33 @@ Reproduce the experiment in a Python environment that provides NumPy:
 python3 scripts/bn254_challenge_units/explore_d128_subspaces.py --samples 200000
 ```
 
-S96 now has the first artifact needed for protocol use:
+S72 has both artifacts needed for protocol use. Its exact kernel checker is:
+
+```bash
+python3 scripts/bn254_challenge_units/check_s72_kernel.py --workers 4
+```
+
+The checker proves that the selected rank-72 evaluation kernel contains no
+nonzero vector of squared norm at most 232. It visits exactly 127,185,682 nodes
+using integer and rational arithmetic. Every S72 challenge has squared norm
+58, so every pairwise difference has squared norm at most `4 * 58 = 232`.
+A nonzero difference cannot vanish at the certified primitive 256th root.
+Galois invariance carries the result to every root of `X^128 + 1`, so every
+nonzero challenge difference is a unit even though the ring splits completely.
+
+The matching accepted-support certificate is:
+
+```text
+scripts/bn254_challenge_units/d128_s72_operator_norm/
+```
+
+Its degree-30 exact moment dual proves at least `2^128.632167631106` accepted
+challenges under the q=48 runtime predicate at threshold 18. The load-bearing
+checker binds the position mask, shell, fixed-point containment, eight modular
+moment computations, exact polynomial positivity, union bound, and support
+floor.
+
+S96 separately has an exact accepted-support artifact:
 
 ```text
 scripts/bn254_challenge_units/d128_s96_operator_norm/
@@ -108,21 +136,19 @@ Its degree-30 exact moment dual proves at least `2^128.497038674319` accepted
 challenges under the q=48 runtime predicate at threshold 15. The exact
 standalone checker binds the position mask, shell, fixed-point containment,
 eight modular moment computations, polynomial positivity, union bound, and
-support floor.
-
-The remaining obligation for S96 is an exact evaluation-kernel certificate
-excluding every nonzero vector through squared norm 156. S88 and S80 still
-need both artifacts. In general, a native candidate needs:
+support floor. Its remaining obligation is an exact evaluation-kernel
+certificate through squared norm 156. The calibrated workload below explains
+why S72 is the practical native choice. S88 and S80 still need both artifacts.
+In general, a native candidate needs:
 
 1. an exhaustive evaluation-kernel certificate excluding every nonzero vector
    through the row's difference bound; and
 2. an exact accepted-support certificate for the selected operator-norm
    threshold.
 
-Once either artifact pair is complete in D128, substitution
-`Y = X^(d / 128)` carries the same strong challenge set and inverse into every
-ambient power-of-two ring whose degree `d` is a multiple of 128. A successful
-D128 certificate therefore covers D256 and all larger production dimensions;
+Substitution `Y = X^(d / 128)` carries the same strong challenge set and inverse
+into every ambient power-of-two ring whose degree `d` is a multiple of 128. The
+completed S72 result therefore covers D256 and every larger such production dimension;
 it does not require a separate rank-256 shortest-vector proof.
 
 ## Portability to other moduli
@@ -226,38 +252,54 @@ python3 scripts/bn254_challenge_units/screen_d64_moduli.py \
 
 This command is a candidate filter. It does not replace the exact checker.
 
-## Expected cost of the remaining exact work
+## Exact-search cost and the S72 pivot
 
-The accepted-support obligation for S96 is complete. Each of its eight
-degree-30 modular moment computations takes about five seconds when run in
-parallel on the development machine. CRT reconstruction is immediate; rational
-dual search and exact Bernstein construction take a few minutes. The final
-standalone Sturm checker takes seconds. Degree 30 and the first-order union
-bound already clear the 128-bit floor by 0.497 bits, so no higher dual degree is
-needed for this candidate.
+The accepted-support obligations for S96 and S72 are complete. Each set of
+eight degree-30 modular moment computations takes seconds when run in parallel.
+CRT reconstruction is immediate; rational dual search and exact Bernstein
+construction take a few minutes. Degree 30 and a first-order union bound clear
+the 128-bit floor by 0.497 bits for S96 and 0.632 bits for S72.
 
-The rank-96 kernel exclusion is the expensive obligation. Basis construction
-and BKZ screening take minutes on a laptop. Exact unpruned enumeration is
-exponential in the worst case and did not finish during short interactive
-trials with the current basis. The target radius is nevertheless well below
-both the Gaussian scale and the shortest vectors found by BKZ. This makes a
-tuned, parallel subtree enumeration plausible as a workstation-hours or
-overnight computation, rather than a `2^128` exhaustive search. S88 and S80
-provide fallback points with wider lattice margins if S96 proves inconvenient.
+Kernel enumeration is much more sensitive to the selected rank. The projected
+ball-volume estimator is calibrated by two completed exact searches:
+
+| case | projected `log2(nodes)` | observed `log2(nodes)` |
+|---|---:|---:|
+| D64, radius 336 | 20.522932 | 20.523763 |
+| S72, radius 232 | 26.922394 | 26.922361 |
+| S96, radius 156 | 57.745113 | not attempted to completion |
+
+The D64 and S72 predictions agree with the exact node counts to roughly one
+thousandth of a bit. The current S96 basis projects to about
+`2^57.745` nodes, more than 30 bits of work above S72. S96 is therefore not a
+casual or overnight exact search with this enumeration method. The redesigned
+S72 shell raises the challenge energy from 39 to 58 and the runtime threshold
+from 15 to 18, but turns the kernel proof into a practical four-process job.
+
+Reproduce these workload figures with:
+
+```bash
+python3 scripts/bn254_challenge_units/estimate_enumeration_work.py
+```
+
+The S96 basis stored beside the estimator is explicitly a screening artifact,
+not a shortest-vector certificate. Workload estimates never replace the exact
+kernel check.
 
 ## What the checker verifies
 
-The constant coefficient maps to one, so the integer evaluation kernel has
-index and determinant `r`. The checker verifies that:
+At least one selected coordinate evaluates to a nonzero field element, so the
+integer evaluation map is surjective and its kernel has index and determinant
+`r`. The exact D64 and S72 checkers verify that:
 
-1. the recorded root has exact order 128 modulo `r`;
+1. the recorded root has the required exact cyclotomic order modulo `r`;
 2. every recorded basis row evaluates to zero at that root;
 3. the basis determinant has absolute value exactly `r`, making it a basis of
    the complete kernel;
 4. an exact LDL/Gram--Schmidt decomposition is positive; and
-5. exhaustive Fincke--Pohst enumeration contains no nonzero vector through
-   squared radius `336`.
+5. exhaustive Fincke--Pohst enumeration contains no nonzero vector through the
+   claimed squared radius: 336 for D64 and 232 for S72.
 
-The certificate deliberately establishes only the bounded lattice statement.
+The certificates deliberately establish only their bounded lattice statements.
 Primality of the standardized BN254 scalar modulus is treated as part of the
 field definition.
