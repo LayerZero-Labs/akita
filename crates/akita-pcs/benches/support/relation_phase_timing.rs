@@ -128,11 +128,6 @@ where
         if !ACTIVE.load(Ordering::Relaxed) {
             return;
         }
-        if TimedRelationPhase::from_span_name(attrs.metadata().name())
-            != Some(TimedRelationPhase::CompleteStage2)
-        {
-            return;
-        }
         let mut visitor = RelationModeVisitor(None);
         attrs.record(&mut visitor);
         if let (Some(span), Some(mode)) = (context.span(id), visitor.0) {
@@ -237,10 +232,46 @@ fn measurements() -> Vec<PhaseMeasurement> {
     measurements
 }
 
+fn validate_complete_phase_counts() {
+    let calls = |mode: TimedRelationMode, phase: TimedRelationPhase| {
+        CALLS[mode.index()][phase.index()].load(Ordering::Relaxed)
+    };
+    for mode in TimedRelationMode::ALL {
+        let complete = calls(mode, TimedRelationPhase::CompleteStage2);
+        if complete == 0 {
+            continue;
+        }
+        for phase in [
+            TimedRelationPhase::CoefficientFunctionalPreparation,
+            TimedRelationPhase::StructuredGroups,
+        ] {
+            assert_eq!(
+                calls(mode, phase),
+                complete,
+                "{} {} calls must match complete Stage-2 calls",
+                mode.report_name(),
+                phase.report_name(),
+            );
+        }
+        let quotient_tail = calls(mode, TimedRelationPhase::QuotientTail);
+        match mode {
+            TimedRelationMode::Quotient => assert_eq!(
+                quotient_tail, complete,
+                "quotient-tail calls must match quotient complete Stage-2 calls",
+            ),
+            TimedRelationMode::Reduced => assert_eq!(
+                quotient_tail, 0,
+                "reduced evaluation must not execute a quotient tail",
+            ),
+        }
+    }
+}
+
 pub(crate) fn capture<T>(operation: impl FnOnce() -> T) -> (T, Vec<PhaseMeasurement>) {
     let capture = ActiveCapture::start();
     let result = operation();
     drop(capture);
+    validate_complete_phase_counts();
     (result, measurements())
 }
 
