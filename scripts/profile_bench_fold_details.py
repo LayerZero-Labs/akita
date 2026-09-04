@@ -211,7 +211,12 @@ def opening_method_lines(params: dict[str, object]) -> list[str]:
 
 
 def fold_path_value(level: dict[str, object]) -> str:
-    rows = []
+    relation_mode = str(level.get("relation_mode", "quotient_lift"))
+    relation_label = {
+        "quotient_lift": "Quotient lift (shared R rows)",
+        "reduced_evaluation": "Reduced evaluation (no R rows)",
+    }.get(relation_mode, relation_mode)
+    rows = [f"Ring relation: {relation_label}"]
     chunk_count = level.get("witness_chunk_count")
     if chunk_count is not None:
         chunk_line = f"Witness chunks: {fmt_count(float(chunk_count))}"
@@ -231,8 +236,6 @@ def fold_path_value(level: dict[str, object]) -> str:
             )
         else:
             rows.append("Extension opening reduction: omitted (0 bytes)")
-    if not rows:
-        rows.append("Fold wide path details were not reported")
     return detail_block("Fold wide path", rows)
 
 
@@ -292,9 +295,14 @@ def planned_group_planner_value(group: dict[str, object]) -> str:
         f"{digit_count_phrase(group['num_digits_outer'])} "
         f"(basis bits {fmt_count(float(group['log_basis_outer']))})",
     ]
-    if str(group.get("group_role")) in ("final", "folded") and int(
+    if (
+        str(group.get("relation_mode", "quotient_lift")) == "quotient_lift"
+        and str(group.get("group_role")) in ("final", "folded")
+        and int(
         group.get("num_digits_quotient", 0)
-    ) > 0:
+        )
+        > 0
+    ):
         segments.append(
             "r shared quotient: "
             f"{digit_count_phrase(group['num_digits_quotient'])} "
@@ -983,7 +991,8 @@ def render_fold_details(
     print(
         "Each row shows the matrices and challenge used at that fold. Output to the "
         "next level becomes the input shown on the next row. Each group has z, e, and "
-        "t segments. The complete relation has one shared r segment. The terminal fold uses only A and "
+        "t segments. Quotient-lift rows also have one shared r segment; reduced-evaluation rows "
+        "have no r segment. The terminal fold uses only A and "
         "sends the clear z, e, and t response shown in the terminal response section. "
         "Proof groups with zero bytes are omitted. The terminal response bytes are not "
         "part of the terminal fold byte total."

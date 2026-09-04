@@ -427,7 +427,7 @@ impl<'a> CandidateDomain<'a> {
                     )?;
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?
+                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                         .filtered(ctx.relation_mode_filter)?;
                     let relation_transition = relation_domain.only_transition()?;
                     for (params, next_witness_len) in dimension_candidates {
@@ -471,7 +471,7 @@ impl<'a> CandidateDomain<'a> {
                     };
                     let relation_domain = state
                         .topology
-                        .relation_domain(state.level, work.opening.method())?
+                        .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                         .filtered(ctx.relation_mode_filter)?;
                     if work.purpose == OpeningPurpose::TerminalAndFold {
                         let views = derive_recursive_candidate_views(
@@ -567,7 +567,7 @@ impl<'a> CandidateDomain<'a> {
                 )?;
                 let relation_transition = state
                     .topology
-                    .relation_domain(state.level, work.opening.method())?
+                    .relation_domain(state.level, work.opening.method(), ctx.diagnostics)?
                     .filtered(ctx.relation_mode_filter)?
                     .only_transition()?;
                 let mut terminal = Vec::new();

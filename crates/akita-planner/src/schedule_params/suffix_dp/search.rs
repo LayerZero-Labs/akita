@@ -1,4 +1,5 @@
 use super::*;
+use crate::schedule_params::ReducedTransitionRejection;
 
 struct OpeningSearch<'a> {
     state: SuffixState,
@@ -52,21 +53,28 @@ fn plan_candidate_children(
             search.depth + 1,
         )?)
     };
+    let offload_search_enabled = ctx.policy.recursive_setup_planning
+        && ctx
+            .policy
+            .recursive_setup_search_policy
+            .admits_offloaded_edge_at(state.level)
+        // An offloaded edge accepts only a child suffix with at least two
+        // folds. That topology cannot fit at the last two depths.
+        && search.depth + 2 < MAX_RECURSION_DEPTH;
+    if offload_search_enabled
+        && plan.params.payload_mode.is_compressed()
+        && !plan.relation_transition.allows_setup_offload()
+    {
+        if let Some(diagnostics) = ctx.diagnostics {
+            diagnostics.record_reduced_rejection(ReducedTransitionRejection::OutgoingSetupOffload);
+        }
+    }
     let offloaded_child = SuffixTopology::offloaded_successor(
         plan.relation_transition,
         plan.params.payload_mode,
         plan.natural_setup_field_len,
     )
-    .filter(|_| {
-        ctx.policy.recursive_setup_planning
-            && ctx
-                .policy
-                .recursive_setup_search_policy
-                .admits_offloaded_edge_at(state.level)
-            // An offloaded edge accepts only a child suffix with at least two
-            // folds. That topology cannot fit at the last two depths.
-            && search.depth + 2 < MAX_RECURSION_DEPTH
-    })
+    .filter(|_| offload_search_enabled)
     .map(|topology| {
         derive_selected_suffix_schedule(
             ctx,
@@ -295,14 +303,15 @@ pub(crate) fn derive_selected_suffix_schedule(
     depth: usize,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
     let policy = ctx.policy;
+    let relation_phase = state.topology.relation_phase();
     if let Some(diagnostics) = ctx.diagnostics {
-        diagnostics.record_suffix_call();
+        diagnostics.record_suffix_call(relation_phase);
     }
     let memo_key = state.memo_key(policy);
     if depth <= MAX_RECURSION_DEPTH {
         let cached = memo.get(&memo_key);
         if let Some(diagnostics) = ctx.diagnostics {
-            diagnostics.record_memo_result(cached.is_some());
+            diagnostics.record_memo_result(relation_phase, cached.is_some());
         }
         if let Some(cached) = cached {
             return Ok(Arc::clone(cached));
@@ -367,6 +376,6 @@ pub(crate) fn derive_selected_suffix_schedule(
         diagnostics.record_completed_state(frontiers.candidate_count());
     }
     let result = Arc::new(finish_state(retains_setup_projection, frontiers));
-    memo.insert(memo_key, Arc::clone(&result));
+    memo.insert(memo_key, Arc::clone(&result), ctx.diagnostics);
     Ok(result)
 }

@@ -44,15 +44,15 @@ pub enum RingRelationMode {
 opening, or Fiat–Shamir challenge. It changes the public relation weights and
 deletes relation-quotient digits from the committed witness.
 
-Implementation audit (2026-08-30): the protocol, layout, prover, verifier, and
-planner paths described here are implemented in PR #445. Full cross-mode
-replay, relation-mode traversal invariance, small-field reduced/EOR coverage,
-reduced-mode phase benchmarks, and bounded malformed-input coverage are also
-present. The specification remains `active`, rather than `implemented`, while
-representative serialized-proof agreement and planner performance telemetry
-are completed before merge. Aggregate measurements belong in the PR; exact
-generated schedules are not compatibility fixtures or additional protocol
-modes.
+Implementation re-audit (2026-09-04): the protocol, layout, prover, verifier,
+and planner paths described here are implemented in PR #466, with code and
+evidence pinned at `04111dedf` and the main documentation sync at `5fd356d0c`.
+Full cross-mode replay, relation-mode traversal invariance, small-field
+reduced/EOR coverage, production-profile phase timing, bounded malformed-input
+coverage, serialized-proof agreement, and planner telemetry are present. The
+specification remains `active` until the PR merges; aggregate measurements
+belong in the PR, while exact generated schedules are neither compatibility
+fixtures nor additional protocol modes.
 
 The production feature is a one-way tail cutover, not a freely selectable bit
 at every level:

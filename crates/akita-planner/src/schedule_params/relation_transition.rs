@@ -43,6 +43,29 @@ impl RelationCandidateTopology {
     const fn is_direct_evaluation_trace(self) -> bool {
         matches!(self, Self::DirectEvaluationTrace)
     }
+
+    const fn consumes_setup_prefix(self) -> bool {
+        matches!(
+            self,
+            Self::SetupPrefixedEvaluationTrace | Self::SetupPrefixedCoefficientPacking
+        )
+    }
+
+    const fn uses_coefficient_packing(self) -> bool {
+        matches!(
+            self,
+            Self::DirectCoefficientPacking | Self::SetupPrefixedCoefficientPacking
+        )
+    }
+}
+
+/// Canonical reason an otherwise-considered reduced transition is ineligible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReducedTransitionRejection {
+    BeforeLevelTwo,
+    IncomingSetupPrefix,
+    CoefficientPacking,
+    OutgoingSetupOffload,
 }
 
 /// One legal per-fold mode selection and its complete recursive consequence.
@@ -226,23 +249,50 @@ impl RingRelationPhase {
         self,
         absolute_fold_level: usize,
         topology: RelationCandidateTopology,
+        diagnostics: Option<&crate::diagnostics::PlannerDiagnostics>,
     ) -> Result<RelationSearchDomain, AkitaError> {
-        match self {
+        if matches!(self, Self::QuotientPrefix) {
+            if absolute_fold_level < 2 {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::BeforeLevelTwo);
+                }
+            }
+            if topology.consumes_setup_prefix() {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::IncomingSetupPrefix);
+                }
+            }
+            if topology.uses_coefficient_packing() {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics
+                        .record_reduced_rejection(ReducedTransitionRejection::CoefficientPacking);
+                }
+            }
+        }
+        let domain = match self {
             Self::QuotientPrefix
                 if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
             {
-                Ok(RelationSearchDomain::QuotientAndReduced)
+                RelationSearchDomain::QuotientAndReduced
             }
-            Self::QuotientPrefix => Ok(RelationSearchDomain::QuotientOnly),
+            Self::QuotientPrefix => RelationSearchDomain::QuotientOnly,
             Self::ReducedEvaluationSuffix
                 if absolute_fold_level >= 2 && topology.is_direct_evaluation_trace() =>
             {
-                Ok(RelationSearchDomain::ReducedOnly)
+                RelationSearchDomain::ReducedOnly
             }
-            Self::ReducedEvaluationSuffix => Err(AkitaError::InvalidSetup(
-                "reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later"
-                    .into(),
-            )),
+            Self::ReducedEvaluationSuffix => {
+                return Err(AkitaError::InvalidSetup(
+                    "reduced-evaluation suffix requires a direct EvaluationTrace fold at level 2 or later"
+                        .into(),
+                ));
+            }
+        };
+        if let Some(diagnostics) = diagnostics {
+            diagnostics.record_relation_domain(domain);
         }
+        Ok(domain)
     }
 }

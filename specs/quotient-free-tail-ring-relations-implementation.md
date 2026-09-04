@@ -15,11 +15,12 @@ decision, algebra, feature matrix, eligibility state machine, and compatibility
 boundary; this companion owns the cross-crate architecture and executable
 acceptance contract.
 
-Acceptance status was audited against PR #466 on 2026-09-03. Checked boxes
-below have a concrete implementation and regression test or generated artifact.
-Unchecked boxes remain required before this record can move from `active` to
-`implemented`; an unchecked evidence item does not mean the underlying protocol
-path is absent.
+Acceptance status was re-audited against PR #466 on 2026-09-04. The exact
+code-and-evidence head is `04111dedf`; merge `5fd356d0c` then incorporates the
+documentation-only main commit `f9f7de87b` without changing protocol code or
+measurements. Checked boxes below have a concrete implementation and regression
+test, generated artifact, or pinned benchmark record. Remaining work, if any,
+must be stated explicitly rather than inherited from the closed #445 review.
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -496,6 +497,15 @@ The primary verifier acceptance condition is asymptotic and architectural: no
 witness-sized functional table and no extra setup scan. Concrete regressions
 must be reported before expanding eligibility earlier than this tail scope.
 
+For the initial tail rollout, the quantitative acceptance budget is a maximum
+25% increase in either single-threaded or multi-threaded median total verifier
+time for every production profile case. The comparison MUST use the matching
+merge-base and head feature graphs, one discarded warmup, three measured runs,
+and interleaved executions on the same runner. Any case above that budget
+blocks merge unless this specification records a reviewed exception. The phase
+table is diagnostic evidence for that decision: reduced levels MUST report zero
+quotient-tail time, and the setup-scan phase MUST remain the single fused scan.
+
 ### Prover
 
 For Stage-2 witness domain `W`, the reduced-evaluation implementation may use:
@@ -648,7 +658,7 @@ feature is accepted.
       memo state and compares exact proof bytes and canonical descriptors.
 - [x] Reduced-evaluation suffix states cannot invoke setup-prefix candidate search.
 - [x] Existing suffix-cache quotas remain unchanged.
-- [x] Generated row replay recomputes the exact reduced-evaluation witness lengths and
+- [x] Artifact row replay recomputes the exact reduced-evaluation witness lengths and
       proof estimate.
 - [x] Catalog identity and policy reports include relation mode and cutover.
 
@@ -660,9 +670,11 @@ feature is accepted.
       each active setup coefficient once.
 - [x] Benchmarks separately report coefficient-functional preparation,
       structured groups, direct setup scan, quotient-tail evaluation, complete
-      Stage 2, and total verifier time. The U/L/M microbench covers both modes;
-      selected valid quotient-only and reduced-suffix nv14 replays additionally
-      report the production phase spans by relation mode and the public total.
+      Stage 2, and total verifier time. The profile harness performs one extra
+      untimed honest replay after measured verification, captures the exact
+      production spans by relation mode, and renders them beside the unchanged
+      public total. The same tracing layer is shared with the focused phase
+      benchmark so the two paths cannot silently redefine phase ownership.
 - [x] A bounded deterministic property matrix rejects malformed mode,
       dimension, row, point, and setup combinations without panic or unbounded
       allocation. It covers both modes and every nonempty combination of the
@@ -676,10 +688,18 @@ feature is accepted.
 - [x] Record base/head proof-size deltas for dense fp32, fp64, and fp128 in the
       implementation PR, pinned to the compared commits. These measurements are
       review evidence, not compatibility baselines.
-- [ ] Before merge, serialize representative proofs and confirm that measured
-      sizes remain within the generated proof estimates.
-- [ ] Before merge, report representative planner wall time, peak resident
-      memory, and available search counters separately from compilation time.
+- [x] Serialize representative proofs and confirm that measured sizes remain
+      within the generated proof estimates. Profile benchmark run
+      [33823315475](https://github.com/LayerZero-Labs/akita/actions/runs/33823315475)
+      completed all 13 production cases at review head `1d2800432`; the runtime
+      harness serializes each proof and rejects any result above its planned
+      byte count.
+- [x] Report representative planner wall time, peak resident memory, and
+      available search counters separately from compilation time. The PR
+      evidence report compares release binaries for dense fp32/fp64/fp128 rows
+      and records wall time, maximum RSS, per-phase suffix and memo counts,
+      transition and rejection counts, peak memo occupancy, candidates, and
+      selected cutovers at code-and-evidence head `04111dedf`.
 
 For quotient-free-tail acceptance, exact generated rows, cutovers, witness
 lengths, and proof byte counts MUST NOT be checked in as golden evidence. They

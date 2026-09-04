@@ -10,15 +10,16 @@ semantics.
 
 ## Current audit status
 
-As of 2026-09-03, slices 0 through 8 are present in PR #466: the mode is bound,
-layouts omit both ordinary and compression quotients, shared residue algebra
-drives the prover and verifier, production proofs exercise eligible reduced
-suffixes, and the exact planner emits reduced external artifact rows. Cross-mode
-replay, small-field reduced EOR, reversed traversal, verifier phase timing, and
-the bounded malformed-input matrix are complete. The external catalogs and
-durable Book explanations are present. Aggregate base/head proof-size evidence
-belongs in the PR rather than a checked snapshot; representative serialized
-proof agreement and planner telemetry remain before merge.
+As of 2026-09-04, slices 0 through 9 are present and re-audited in PR #466 at
+code-and-evidence head `04111dedf`, followed by documentation-only main merge
+`5fd356d0c`. The mode is bound, layouts omit both ordinary and compression
+quotients, shared residue algebra drives the prover and verifier, production
+proofs exercise eligible reduced suffixes, and the exact planner emits reduced
+external artifact rows. Cross-mode replay, small-field reduced EOR, reversed traversal,
+production-profile verifier phase timing, the bounded malformed-input matrix,
+serialized-proof agreement, and planner telemetry are complete. The external
+catalogs and durable Book explanations are present. Aggregate base/head evidence
+belongs in the PR rather than a checked compatibility snapshot.
 
 This distinction is intentional: the protocol feature is implemented, while
 the record remains `active` until its stated validation and evidence gates are
@@ -37,12 +38,12 @@ closed.
 Exit condition: the specification branch has the intended first parent and no
 known code/spec mismatch remains before implementation.
 
-### Slice 1: protocol type, binding, and generated schema
+### Slice 1: protocol type, binding, and external artifact schema
 
 - Add `RingRelationMode` and the one-per-fold `CommittedGroupParams` field.
 - Bind its stable tag into level and schedule descriptors.
 - Bump the instance descriptor epoch.
-- Carry the field through generated rows, expansion, emission, and catalog
+- Carry the field through external rows, expansion, emission, and catalog
   identity without changing the existing schedule choices.
 
 Exit condition: descriptors and all shipped catalog identities distinguish the
@@ -122,7 +123,7 @@ relations and the declared feature matrix passes end to end.
 Exit condition: traversal order does not change selection, cache quotas remain
 unchanged, and generated replay matches planner estimates.
 
-### Slice 9: generated schedules, evidence, and documentation
+### Slice 9: external schedule artifacts, evidence, and documentation
 
 - Regenerate affected catalogs only after the planner and proof shapes settle.
 - Produce dense fp32/fp64/fp128 proof-size and verifier-phase evidence.
@@ -137,111 +138,64 @@ exact planner outputs into repository compatibility fixtures.
 Optional prover optimizations follow profiling and are not required for initial
 acceptance. They MUST preserve the shared algebra oracle and verifier equation.
 
-## Pull-request landscape and stacking plan
+## Pull-request lineage
 
-This section records the Akita branches refreshed through 2026-08-30. SHAs are
-included so the recommendation does not silently apply to later rewrites.
+### Active implementation PR
 
-### Transcript grinding PR 448
+PR [#466](https://github.com/LayerZero-Labs/akita/pull/466) replaces closed,
+unmerged PR #445. Review checkpoint `1d2800432` contained the 127-commit
+restack from merge base `26bdbac79`; the 2026-09-04 re-audit additionally
+covers evidence fix `04111dedf` and documentation-only main merge
+`5fd356d0c`.
 
-PR [#448](https://github.com/LayerZero-Labs/akita/pull/448), head
-`e8ad4e5031e47dcc04d65b68f191f8de3db62e2c`, is open. It
-changes transcript query sites around `alpha`, `tau0`, and `tau1`; proof-level
-nonce serialization; planner cost composition; suffix-DP state and frontiers;
-schedule estimates; external catalog artifacts; and both ring-switch implementations.
+PR #466 targets `main` directly. It is not an active stack on #448, #444, or
+#445, and those historical branch heads must not be used as its current
+acceptance authority.
 
-This feature has no mathematical dependency on grinding, but it has a strong
-code, transcript, and proof-cost dependency. The implementation branch is now
-explicitly stacked in the intended merge order:
+### Archived #445 stack
+
+The original #445 rollout was assembled over the then-open #448 transcript
+grinding and #444 q128 SIS widening branches. That ordering explained the
+implementation history, but it was superseded when #466 restacked the complete
+feature onto current main. The older exact heads remain recoverable from Git
+history and the closed PR; repeating them here would make a stale stack look
+normative.
+
+Concurrent work such as certified planner documentation and grouped planner
+changes remains an integration surface only.
+If any of it lands before #466, refresh from main and re-run the affected
+descriptor, planner, external-catalog, and verifier gates.
+
+### Current branch shape
 
 ```text
-#448 transcript grinding @ e8ad4e503
-  -> #444 q128 SIS widening @ e473df62b
-    -> #445 quotient-free relations @ 8d5f02144 (audited pre-doc head)
+main @ f9f7de87b
+  -> #466 protocol/type, algebra, prover, verifier, and exact planner
+  -> relation-aware schedule planning and Book harmonization
+  -> relation-aware profile and planner evidence @ 04111dedf
+  -> main documentation merge @ 5fd356d0c
+  `-> final #466 audit record @ eb544ff28
 ```
-
-The #445 branch contains the selected #444 and #448 heads in that first-parent
-stack order. Future restacks MUST preserve the order or update this record to
-the corresponding newer exact heads after refreshing all three PRs.
-
-### Suffix EOR and packed prover stack
-
-The accepted packed recursive-witness cutover from
-[#437](https://github.com/LayerZero-Labs/akita/pull/437) is already present in
-the current stack as `4eb6b0128`. The accepted commitment-stage refactor from
-[#441](https://github.com/LayerZero-Labs/akita/pull/441) is also present as
-`4a6897c9b`. PR [#439](https://github.com/LayerZero-Labs/akita/pull/439), head
-`fb4fa643b22953f90085d919e31c006105b5cf51`, adds packed dense prover storage.
-
-The merged changes do not alter the reduced-evaluation verifier equation, but
-they define the witness and commitment ownership model this implementation
-MUST use. The open dense-storage PR intersects the baseline dense prover slice;
-refresh it before that slice. The reduced-evaluation oracle may remain unpacked
-extension-field scratch, while the compact recursive witness follows the
-accepted packed ownership model.
 
 ### Trusted schedule artifacts PR 428
 
 PR [#428](https://github.com/LayerZero-Labs/akita/pull/428) removes compiled
-schedule rows in favor of explicitly supplied trusted artifacts. It is stacked
-on the exact PR #466 quotient-free head
-`1d2800432a81755e51af3edd30360a160a4b811b`. The combined branch serializes
-the full relation-aware `FoldSchedule` in each external row, validates it at
-admission, and uses one scheme-owned catalog for setup, proving, and
-verification. No generated Rust row schema or ambient resolver remains.
-
-### Certified planner spec PR 434
-
-PR [#434](https://github.com/LayerZero-Labs/akita/pull/434), head
-`d7261d9167667ce71a38152a2f5d7d3867cdb621`, is a draft documentation PR. It
-does not supply implementation code, but its audited-decision-domain rule is
-directly relevant. This spec follows that rule: the cutover is an exact
-decision, traversal order is guidance, and no candidate is removed without a
-complete dominance proof.
-
-There is no code-stack dependency. If #434 is approved, the implementation PR
-should cite its planner architecture and add relation phase to the documented
-state sufficiency and oracle tests.
-
-### Grouped planner PRs 409 and 412
-
-PR [#409](https://github.com/LayerZero-Labs/akita/pull/409), head
-`5bef0c1a54d7ac7c8718e4a7aca803f64f83f24b`, plans exact precommit profiles.
-PR [#412](https://github.com/LayerZero-Labs/akita/pull/412), head
-`733efbea094e02756b88aa8662f37323198e9f9f`, changes grouped-root planner
-scaling and several suffix candidate files.
-
-Reduced evaluation is forbidden at the root, and current recursive suffixes contain no
-frozen precommitted group, so these PRs are not semantic prerequisites. Their
-planner file overlap argues for rebasing the planner slice after any accepted
-planner stack, not for stacking the verifier or algebra work on them.
-
-### Commitment-stage PR 441
-
-PR [#441](https://github.com/LayerZero-Labs/akita/pull/441), head
-`4fb5264b3be6e076a925ce88ba837932a2940ed9`, stacks a prover commitment-stage
-refactor on the packed recursive witness branch. It may change where the
-smaller reduced-evaluation witness is committed, but not how its relation is verified.
-Treat it as a prover integration surface, not a protocol dependency.
-
-### Current stack shape
+schedule rows in favor of explicitly supplied trusted artifacts. This combined
+branch is stacked on the current PR #466 quotient-free head `eb544ff28`; it
+serializes the full relation-aware `FoldSchedule` in each external row,
+validates rows at admission, and uses one scheme-owned catalog for setup,
+proving, and verification. No generated Rust row schema or ambient resolver
+remains.
 
 ```text
-codex/quotient-free-tail-relations
-  |-- #448 transcript grinding @ e8ad4e503
-  |-- #444 q128 SIS widening @ e473df62b
-  |-- protocol/type, algebra, verifier, and prover slices
-  |-- exact planner cutover and generated catalogs
-  `-- Book harmonization and remaining Slice-9 evidence
-
-codex/trusted-schedule-artifacts
-  `-- merge of the exact quotient-free head above, followed by external
-      artifact ownership and regenerated `.aks` catalogs
+codex/quotient-free-tail-relations @ eb544ff28
+  `-> codex/trusted-schedule-artifacts (PR #428)
+      `-> external artifact ownership and regenerated `.aks` catalogs
 ```
 
-Keep the implementation as reviewable commits on this PR. Do not stack the
-branch on every open feature branch. Re-evaluate the exact #448 and #444 heads
-before later slices and restack only when either chosen lower dependency moves.
+Keep later implementation changes as reviewable commits on #466 and merge
+current main normally. Do not reconstruct the obsolete #448 -> #444 -> #445
+stack.
 
 ## Documentation plan
 
@@ -279,6 +233,6 @@ Archive it after the durable content is fully folded, following
 | Fused direct setup scan | `crates/akita-types/src/setup_contribution/plan/` |
 | Compression reduced transpose | `crates/akita-types/src/proof/compression_relation_weights.rs`, prover/verifier ring-switch compression paths |
 | Planner state and cutover | `crates/akita-planner/src/schedule_params/suffix_dp/`, recursive candidate materialization, response model |
-| Generated rows and identity | `crates/akita-schedules/src/generated/`, `catalog_identity.rs`, planner emitter and reports |
+| External rows and identity | `crates/akita-schedules/src/artifact.rs`, planner emitter and reports |
 | Transcript grinding interaction | PR #448 ring-switch query sites, packed proof cost, and grinding plan |
 | End-to-end protocol tests | `crates/akita-pcs/src/scheme/tests/`, `crates/akita-pcs/tests/protocol_soundness.rs` |

@@ -28,6 +28,15 @@ pub enum RingRelationMode {
 }
 
 impl RingRelationMode {
+    /// Stable machine-readable name used by diagnostics and profile artifacts.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::QuotientLift => "quotient_lift",
+            Self::ReducedEvaluation => "reduced_evaluation",
+        }
+    }
+
     /// Stable tag bound by level, schedule-row, and catalog identities.
     pub const fn tag(self) -> u8 {
         match self {
@@ -51,5 +60,10 @@ mod tests {
     fn descriptor_tags_are_stable_and_distinct() {
         assert_eq!(RingRelationMode::QuotientLift.tag(), 1);
         assert_eq!(RingRelationMode::ReducedEvaluation.tag(), 2);
+        assert_eq!(RingRelationMode::QuotientLift.as_str(), "quotient_lift");
+        assert_eq!(
+            RingRelationMode::ReducedEvaluation.as_str(),
+            "reduced_evaluation"
+        );
     }
 }
