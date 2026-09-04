@@ -2,6 +2,7 @@ use akita_config::{
     policy_of, proof_optimized::fp128, setup_prefix_slot_ids_from_catalog,
     trusted_schedule_catalog_from_bytes, CommitmentConfig, RecursiveCommitmentConfig,
     TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
 };
 use akita_serialization::AkitaSerialize;
 use akita_types::{OpeningScheduleSelection, ScheduleRowDigest};
@@ -125,6 +126,22 @@ fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
         }
     }
     ranges
+}
+
+fn pad_first_row(bytes: &[u8], padding_len: usize) -> Vec<u8> {
+    let first_row = json_row_ranges(bytes)
+        .into_iter()
+        .next()
+        .expect("first row");
+    let insert_at = first_row.end - 1;
+    let field_prefix = b",\"untrusted_padding\":\"";
+    let mut padded = Vec::with_capacity(bytes.len() + field_prefix.len() + padding_len + 1);
+    padded.extend_from_slice(&bytes[..insert_at]);
+    padded.extend_from_slice(field_prefix);
+    padded.extend(std::iter::repeat_n(b'x', padding_len));
+    padded.push(b'"');
+    padded.extend_from_slice(&bytes[insert_at..]);
+    padded
 }
 
 fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
@@ -295,7 +312,11 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
     noncanonical.push(b'\n');
     let noncanonical_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&noncanonical)
         .expect_err("trailing whitespace must reject");
-    assert!(format!("{noncanonical_error}").contains("canonical JSON"));
+    let noncanonical_error = noncanonical_error.to_string();
+    assert!(
+        noncanonical_error.contains("canonical JSON"),
+        "unexpected noncanonical error: {noncanonical_error}"
+    );
 }
 
 #[test]
@@ -305,12 +326,26 @@ fn decoder_rejects_family_and_row_limits_during_envelope_preflight() {
     let oversized_family = replace_family_name(&bytes, &"x".repeat(129));
     let family_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_family)
         .expect_err("oversized family must reject during envelope decoding");
-    assert!(format!("{family_error}").contains("family name length"));
+    let family_error = family_error.to_string();
+    assert!(
+        family_error.contains("family name length"),
+        "unexpected family error: {family_error}"
+    );
+
+    let escaped_family = replace_family_name(&bytes, r"\u0066p128_dense");
+    let family_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&escaped_family)
+        .expect_err("an escaped family spelling must reject before decoded allocation");
+    assert!(family_error.to_string().contains("family token"));
 
     let oversized_rows = replace_rows_with_empty_objects(&bytes, 16_385);
     let row_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_rows)
         .expect_err("the sentinel artifact row must reject before row decoding");
     assert!(format!("{row_error}").contains("row count exceeds 16384"));
+
+    let oversized_row = pad_first_row(&bytes, MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES);
+    let row_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_row)
+        .expect_err("an oversized raw row must reject before typed row decoding");
+    assert!(format!("{row_error}").contains("row 0 byte length"));
 }
 
 #[test]

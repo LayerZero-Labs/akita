@@ -178,10 +178,10 @@ later execution during preprocessing restoration or in a guest.
 - [x] `akita-schedules` accepts and emits canonical versioned JSON family
   artifacts containing expanded rows, protocol epoch, family identity, planner-
   policy identity, and produces a deterministic full-catalog digest.
-- [x] Artifact decoding rejects empty or larger-than-64-MiB inputs, more than
-  16,384 rows, invalid family names, noncanonical JSON, unsupported versions,
-  wrong epochs, wrong families, wrong policies, duplicate lookup keys, duplicate
-  row digests, and invalid expanded rows.
+- [x] Artifact decoding rejects empty or larger-than-64-MiB inputs, rows larger
+  than 1 MiB, more than 16,384 rows, invalid family names, noncanonical JSON,
+  unsupported versions, wrong epochs, wrong families, wrong policies, duplicate
+  lookup keys, duplicate row digests, and invalid expanded rows.
 - [x] `TrustedScheduleCatalog` is the sole production row index and provides
   canonical row iteration plus exact resolution by selection, lookup key, and
   committed profiles.
@@ -334,9 +334,10 @@ auditability, readable diffs, and operational tooling. Structural catalog and
 row boundaries use line breaks while nested row payloads stay compact. It
 contains fully expanded rows; loading never runs planner search.
 `TrustedScheduleCatalog::from_artifact_bytes` checks the configured bounds and
-metadata, reconstructs every `ResolvedScheduleRow`, sorts rows by digest, builds
-the separate prover-key index, rejects duplicates, and recomputes the catalog
-digest.
+metadata. It borrows raw row slices and enforces the 1-MiB per-row limit before
+typed nested collections are decoded. It then reconstructs every
+`ResolvedScheduleRow`, sorts rows by digest, builds the separate prover-key
+index, rejects duplicates, and recomputes the catalog digest.
 
 `TrustedScheduleCatalog::to_artifact_bytes` emits the same canonical
 representation. The repository tracks release and test artifacts under

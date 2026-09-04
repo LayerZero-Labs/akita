@@ -12,7 +12,10 @@ pub use akita_types::{
     suffix_opening_layout, ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams,
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
-pub use artifact::{TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES};
+pub use artifact::{
+    TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_ROW_BYTES,
+};
 pub use policy_digest::policy_digest;
 pub use resolve::ResolvedScheduleRow;
 pub use runtime::{
