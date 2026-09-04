@@ -36,6 +36,14 @@ sampling, and planner policy. If another live document describes an outgoing
 ring-element carrier, per-unit carrier padding, group-major witness units, or
 a different projected-digit order, this document takes precedence.
 
+> **Related proposed runtime:**
+> [`prover-runtime/README.md`](prover-runtime/README.md) proposes deleting
+> persistent commitment-hint layout as a live prover API and replacing
+> cross-process reuse with explicit checkpoints. The projected-digit and
+> canonical outgoing-witness rules in this document remain current protocol
+> contracts. Its commitment-hint storage authority remains current until the
+> runtime cutover lands and updates this header and authority list.
+
 ## Decision
 
 The outgoing witness is one compact vector of field coefficients. It is not a

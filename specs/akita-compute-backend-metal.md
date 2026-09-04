@@ -19,6 +19,14 @@ protocol, verifier behavior, transcript order, schedule selection, proof
 serialization, or security sizing. The host and protocol layers remain the
 owners of those decisions.
 
+> **Proposed boundary revision:**
+> [`prover-runtime/README.md`](prover-runtime/README.md) proposes replacing the
+> current fragment-level backend seam with protocol-message epochs and opaque
+> runtime state. This active Metal track remains the current contract until that
+> design is approved and implemented. New Metal work should avoid deepening
+> dependencies on public CPU-shaped hints or the four-cluster stack; the
+> implementation cutover must update both specifications together.
+
 ## Scope
 
 The track covers:
