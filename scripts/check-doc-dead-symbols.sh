@@ -30,6 +30,7 @@ dead_patterns=(
 pattern="$(IFS='|'; echo "${dead_patterns[*]}")"
 
 removed_api_patterns=(
+  'effective_batched_schedule'
   'OpeningBatch\b'
   'OpeningBatchShape'
   'OpeningGroupShape'
