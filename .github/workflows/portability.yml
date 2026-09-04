@@ -41,11 +41,13 @@ jobs:
         run: |
           test "$(uname -m)" = "aarch64"
           grep -Eq '(^|[[:space:]])(asimd|neon)([[:space:]]|$)' /proc/cpuinfo
-      - name: Run architecture-specific exact NTT tests
+      - name: Run architecture-specific exact NTT and JL tests
         env:
-          RUSTFLAGS: -D warnings -C target-cpu=native
+          RUSTFLAGS: -D warnings -C target-cpu=native --cfg aes_armv8
         run: |
           cargo test --release -p akita-algebra --lib ntt
+          cargo test --release -p akita-algebra --lib jl
+          cargo test --release -p akita-challenges --lib jl
           cargo test --release -p akita-types --lib ntt_cache
           cargo test --release -p akita-verifier --lib terminal_ntt
 

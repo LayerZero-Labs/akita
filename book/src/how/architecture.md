@@ -15,11 +15,11 @@ orchestration lives in `akita-pcs`.
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-witness` | Shared borrowed witness/polynomial view vocabulary (`PolynomialView`, `WitnessProvider`) for sumcheck and polyops paths |
 | `akita-serialization` | Serialization, validation, and compression traits |
-| `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials |
+| `akita-algebra` | Modules, vectors, NTTs, cyclotomic rings, sparse challenges, polynomials, and seed-independent JL algebra with exact scalar, NEON, and AVX2 projection kernels |
 | `akita-transcript` | Spongefish-backed Fiat-Shamir transcript, descriptor preamble, logging checks |
-| `akita-challenges` | Fiat-Shamir challenge sampling helpers |
+| `akita-challenges` | Fiat-Shamir challenge sampling helpers and domain-separated AES-128-CTR JL matrix expansion |
 | `akita-sumcheck` | Sumcheck proofs, drivers, compact folding, batching, accumulation |
-| `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS floors; layout and proof-size helpers |
+| `akita-types` | Proof, setup, schedule, layout, commitment, and transcript-append shapes; SIS and certified JL constants; layout and proof-size helpers |
 | `akita-planner` | `Cfg`-free offline schedule search and table emission |
 | `akita-schedules` | Feature-gated shipped schedule types and data, catalog validation, and runtime row expansion |
 | `akita-config` | Runtime presets, the `CommitmentConfig` trait, `policy_of::<Cfg>()`, schedule catalog wiring, transcript bind helper |
