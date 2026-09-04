@@ -1,6 +1,10 @@
 # Field-to-ring evaluation reduction
 
-This page considers one base-field evaluation claim:
+This page explains the first correctness obligation of an Akita opening:
+given the partial evaluations produced by the scheduled opening method, how do
+public weights recombine them into the scalar claim carried by the protocol?
+
+Start with the base-field specialization
 
 $$
 f:\{0,1\}^n\rightarrow F,
@@ -10,23 +14,31 @@ r\in F^n,
 \widetilde f(r)=v.
 $$
 
-Both the polynomial table and the opening point are defined over the base
+Here both the polynomial table and the opening point are defined over the base
 field $F$. Akita commits the table through the cyclotomic ring
 
 $$
 R=F[X]/(X^D+1).
 $$
 
-The goal is to turn the multilinear evaluation into a multiplication of two
-ring elements, define that multiplication as a `TraceOpen` operation, and then
-write the same evaluation claim directly as a linear relation on the committed
-fold witness.
+The schedule chooses one of two opening methods. `EvaluationTrace` keeps one
+full element $E_b(X)\in R$ per live block and finishes the inner contraction
+with `TraceOpen`. `SubringCoefficientPacking` contracts part of the inner axis
+earlier and keeps a shorter polynomial $e_b(U)$ over the opening field. In
+both cases the result is a field-valued linear relation on the committed
+opening digits:
 
-For base-field polynomials evaluated at extension-field points, the schedule
-uses evaluation trace with EOR or subring coefficient packing. See
-[Fold path and field geometry](./fold-path.md). The coefficient packing
-walkthrough is in
-[Root fold and ring switching](./root-fold-ring-switch.md#subring-coefficient-packing).
+| Opening method | Partial carried into the fold | Scalar target bound here |
+|---|---|---|
+| `EvaluationTrace` | full-ring $E_b(X)$ | the trace target; it equals $v$ in the base-field case |
+| `SubringCoefficientPacking` | shorter $e_b(U)$ | the original extension-valued $v$ |
+
+For a proper extension-field point, `EvaluationTrace` first uses
+[extension-opening reduction](./extension-opening-reduction.md), or EOR, and
+the derivation below applies to the reduced trace target. Coefficient packing
+instead binds the original extension-valued opening directly. The
+[fold-path overview](./fold-path.md) states where the schedule uses each
+method.
 
 ## The evaluation problem
 
@@ -442,14 +454,240 @@ witness. It therefore needs neither evaluation at $\alpha$ nor a ring-switch
 quotient.
 
 
+## Subring coefficient packing: shorter partials
+
+The evaluation-trace partial $E_b(X)$ retains all $D$ inner coefficients.
+Subring coefficient packing shortens this partial by contracting one part of
+the inner axis before the opening digits are formed.
+
+Return now to the general case in which the opening point lies in a field $E$
+containing $F$; the interpolation weights $I$, $Q$, and $B$ are then
+$E$-valued. The case $E=F$ is included. Let
+
+$$
+k=[E:F].
+$$
+
+Choose a retained-axis dimension $s$—later also the challenge-subring
+dimension—and write
+
+$$
+D=k\eta s.
+\tag{22}
+$$
+
+Here $\eta$ is the packing factor. The implementation and specification call
+this value $h$; this page uses $\eta$ so that it cannot be confused with the
+opening-digit index already used in the evaluation-trace derivation. Every
+inner coefficient index has a unique form
+
+$$
+\ell=u+k\eta j,
+\qquad
+u\in[k\eta],
+\qquad
+j\in[s].
+\tag{23}
+$$
+
+Split the inner opening point in the same order:
+
+$$
+r_{\mathrm{in}}
+=
+(r_{\mathrm{pack}},r_{\mathrm{tail}}).
+$$
+
+The tensor-product interpolation weight therefore factors as
+
+$$
+I_{u+k\eta j}
+=
+I_u^{\mathrm{pack}}I_j^{\mathrm{tail}}.
+\tag{24}
+$$
+
+The index $u$ is contracted now; $j$ remains explicit. It helps to see this
+as a two-dimensional coefficient table rather than one flat list. For a fixed
+block $b$, first apply the position weights and write
+
+$$
+\phi_{b,j,u}
+:=
+\sum_p Q_p f[u+k\eta j,p,b]
+\in E.
+$$
+
+The rows are indexed by the coefficient $j$ that will remain in the packed
+partial. The columns are indexed by $u$, which is consumed now:
+
+| retained row | $u=0$ | $u=1$ | $\cdots$ | $u=k\eta-1$ | after contracting the row |
+|---|---|---|---|---|---|
+| $j=0$ | $\phi_{b,0,0}$ | $\phi_{b,0,1}$ | $\cdots$ | $\phi_{b,0,k\eta-1}$ | $e_{b,0}$ |
+| $j=1$ | $\phi_{b,1,0}$ | $\phi_{b,1,1}$ | $\cdots$ | $\phi_{b,1,k\eta-1}$ | $e_{b,1}$ |
+| $\vdots$ | $\vdots$ | $\vdots$ | $\ddots$ | $\vdots$ | $\vdots$ |
+| $j=s-1$ | $\phi_{b,s-1,0}$ | $\phi_{b,s-1,1}$ | $\cdots$ | $\phi_{b,s-1,k\eta-1}$ | $e_{b,s-1}$ |
+
+The table is not a new witness. It is only a view of the position-folded
+source coefficients. Contracting one row gives
+
+$$
+e_{b,j}
+=
+\sum_u I_u^{\mathrm{pack}}\phi_{b,j,u}
+=
+\sum_{p,u}
+Q_p I_u^{\mathrm{pack}}
+f[u+k\eta j,p,b]
+\in E.
+\tag{25}
+$$
+
+For example, take $D=8$, $k=2$, $\eta=2$, and $s=2$. Then $k\eta=4$, so the
+flat inner coefficients become two rows:
+
+~~~text
+        j = 0:  ell = 0  1  2  3  -> e[b,0]
+        j = 1:  ell = 4  5  6  7  -> e[b,1]
+~~~
+
+Each row is contracted to one element of the degree-two field $E$. The packed
+partial therefore contains two elements of $E$, or four base-field
+coordinates, instead of all eight source coefficients.
+
+Substituting Equations (24) and (25) into the original multilinear evaluation
+gives
+
+$$
+\begin{aligned}
+v
+&=
+\sum_{u,j,p,b}
+I_u^{\mathrm{pack}}I_j^{\mathrm{tail}}
+Q_pB_bf[u+k\eta j,p,b]\\
+&=
+\sum_{b,j}B_bI_j^{\mathrm{tail}}e_{b,j}.
+\end{aligned}
+\tag{26}
+$$
+
+Thus the early contraction loses no part of the claimed evaluation. It only
+splits the old inner contraction into two stages: $u$ is consumed while the
+partial is formed, and $j$ is consumed in the final scalar relation.
+
+Package the retained coefficients as
+
+$$
+e_b(U)
+=
+\sum_{j=0}^{s-1}e_{b,j}U^j
+\in
+C:=E[U]/(U^s+1).
+\tag{27}
+$$
+
+The ring $C$ has $s$ coefficients in $E$. Fix the canonical $F$-basis
+$\beta_0,\ldots,\beta_{k-1}$ of $E$ and write
+
+$$
+e_{b,j}
+=
+\sum_{t=0}^{k-1}\beta_t e_{b,t,j},
+\qquad
+e_{b,t,j}\in F.
+\tag{28}
+$$
+
+Consequently one packed partial has $ks=D/\eta$ base-field coordinates,
+rather than the $D$ coordinates of $E_b(X)$. The basis elements $\beta_t$ are
+fixed by the canonical extension-field representation; they are not transcript
+challenges or schedule choices.
+
+The next witness stores balanced digits of these base-field coordinates. Use
+$d$ for the opening-digit index:
+
+$$
+e_{b,t,j}
+=
+\sum_dG_d^{\mathrm{open}}\hat e_{b,d,t,j}.
+\tag{29}
+$$
+
+Substituting Equations (28) and (29) into Equation (26) gives the direct packed
+opening relation
+
+$$
+\boxed{
+v
+=
+\sum_bB_b
+\sum_jI_j^{\mathrm{tail}}
+\sum_t\beta_t
+\sum_dG_d^{\mathrm{open}}\hat e_{b,d,t,j}.
+}
+\tag{30}
+$$
+
+Read Equation (30) from the inside out. The opening gadget weights rebuild
+each base-field coordinate $e_{b,t,j}$ from its digits. The basis elements
+$\beta_t$ rebuild the extension-field coefficient $e_{b,j}$. The tail weights
+consume the retained $j$ rows, and the block weights combine the live blocks.
+The result is the original scalar opening $v$.
+
+This is an $E$-valued virtual row on the committed digit witness. It is not a
+ring-matrix row and has no cyclotomic quotient. Claim batching and Stage-2 row
+batching multiply the displayed weights by additional public scalars, without
+changing the single-claim identity.
+
+At this scalar layer, the two methods have the same high-level output: a public
+linear map from the method-selected opening digits to the scalar target. They
+use different digit geometries and different public maps.
+
+## What scalar correctness does not prove
+
+Equations (21) and (30) answer the scalar question under one assumption: the
+partials $E_b$ or $e_b$ are the correct partial evaluations of the incoming
+committed polynomial. The equations do not establish that assumption. A prover
+could otherwise choose unrelated partials that satisfy the scalar equation.
+
+The next chapter supplies the missing source-consistency statement. Rather
+than check every block independently, Akita samples random fold challenges and
+batches the blockwise equations into one relation on the folded response
+$\mathbf z$. The two method-dependent shapes are
+
+$$
+\text{EvaluationTrace:}
+\qquad
+\sum_b c_bE_b
+=
+\operatorname{Eval}(\mathbf z),
+$$
+
+and
+
+$$
+\text{SubringCoefficientPacking:}
+\qquad
+\sum_b c_be_b
+=
+L(\mathbf z).
+$$
+
+[Semantic relations in an Akita fold](./akita-fold.md#the-folded-response-and-its-digitization)
+derives both relations. In particular, it explains why the packing challenges
+must act only on the retained $j$ axis. Quotients and evaluation at the
+ring-switch challenge come later, after this semantic relation is established.
 [Sumcheck stages](./sumcheck-stages.md#add-the-opening-claim-consistency)
-explains how this claim is row-batched and fused with the other Stage-2 terms.
+explains how the method-selected scalar relation is row-batched and fused with
+the other Stage-2 terms.
 
-## Evaluation trace code reference
+## Opening-method code reference
 
-This section applies when the schedule selects `EvaluationTrace`. A fold that
-selects `SubringCoefficientPacking` uses the direct coefficient-packing flow
-in [Root fold and ring switch](./root-fold-ring-switch.md) instead.
+### Evaluation trace
+
+This subsection applies when the schedule selects `EvaluationTrace`. A fold
+that selects `SubringCoefficientPacking` uses the coefficient-packing flow in
+the following subsection instead.
 
 The base-field path follows the reduction above:
 
@@ -471,8 +709,8 @@ The base-field path follows the reduction above:
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
-   adds the trace relation to the fused Stage-2 sumcheck.
+   [`accumulate_fused_relation_linear`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
+   adds the prepared linear relation to the fused Stage-2 sumcheck.
 
 The main data flow is:
 
@@ -505,7 +743,7 @@ build_evaluation_trace_weights
       `-- T(x) on the committed e_hat segment
                          |
                          v
-accumulate_fused_relation_trace
+accumulate_fused_relation_linear
       |
       `-- Stage 2 proves v_tr = sum_x w(x) T(x)
 ```
@@ -542,6 +780,33 @@ $$
 
 directly from the committed digit witness.
 
+### Subring coefficient packing
+
+The implementation follows the same derivation in three stages:
+
+1. **Prepare the point.**
+   [`PreparedSubringCoefficientPackingPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing.rs)
+   checks $D=k\eta s$ and prepares the packing, tail, position, and block
+   weights.
+2. **Pack and bind the partials.**
+   The prover contracts the $p$ and $u$ axes to obtain the coordinates
+   $e_{b,t,j}$ in `[block][extension coordinate][subring coefficient]` order.
+   It recombines those coordinates as in Equation (30), then binds their digit
+   decompositions before sampling the fold challenges.
+3. **Fold and verify.**
+   [`fold_coefficient_packing_group`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/coefficient_packing.rs)
+   folds the packed partials and produces $Q_{\mathrm{pack}}$. Stage 2 then
+   checks both the packing relation and the direct scalar opening, using
+   $\beta_t I_j^{\mathrm{tail}}$ to rebuild each extension-valued coefficient.
+
+The reference tests in
+[`subring_coefficient_packing_reference_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/subring_coefficient_packing_reference_tests.rs)
+compare the direct partial and scalar formulas with the flat factorization.
+The Stage-2 tests in
+[`coefficient_packing_relation_tests.rs`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/coefficient_packing_relation_tests.rs)
+compare the expanded prover terms with the verifier's compact evaluation and
+check that every extension-coordinate plane is bound.
+
 ## Base-field polynomial at an extension-field point
 
 The scheduled opening method determines this case.
@@ -559,6 +824,7 @@ with $[\mathbb E:\mathbb F]=1$ skip this reduction.
 
 With `SubringCoefficientPacking`, Akita keeps one coefficient axis in the
 challenge subring, contracts the other axes over the extension field, and
-binds the original scalar opening directly in Stage 2 without EOR. See [Fold
-path and field geometry](./fold-path.md) and [Root fold and ring
-switch](./root-fold-ring-switch.md).
+binds the original scalar opening directly in Stage 2 without EOR. The
+derivation is in [Subring coefficient packing: shorter
+partials](#subring-coefficient-packing-shorter-partials); [Fold path and field
+geometry](./fold-path.md) states the schedule boundary.

@@ -458,10 +458,12 @@ relation. It is not a Boolean sumcheck point.
 Suppose the ordinary relation has rows indexed by $i$. Its method-independent
 rows are $\mathbf A$, $\mathbf B$, and $\mathbf D$, with their quotient terms.
 For `EvaluationTrace`, it also includes the legacy fold-consistency row and its
-quotient. `SubringCoefficientPacking` omits that legacy row and carries its
-packed consistency constraints once in the method-dependent structured terms
-defined below. The protocol samples a Boolean MLE point $\tau_1$ of sufficient
-width for the complete physical row domain and defines
+quotient. `SubringCoefficientPacking` keeps the consistency-row slot and its
+batching weight, but replaces the legacy coefficients: its packed E/Q
+coordinate-plane events join the common relation events, and its
+folded-source contribution is added later as the packing-Z structured term.
+The protocol samples a Boolean MLE point $\tau_1$ of sufficient width for the
+complete physical row domain and defines
 
 $$
 \beta_i=\operatorname{eq}(\tau_1,i).
@@ -553,8 +555,10 @@ selects a coefficient inside that common block. Any remaining high power of
 $\alpha$, together with the matrix entry and its $\beta_i$ row weight, is
 absorbed into the lane weight $L_{\mathrm{ord}}$. Thus the exact factorization
 $R_{\mathrm{ord}}=A\cdot L_{\mathrm{ord}}$ continues to hold without adding
-another sumcheck dimension. Coefficient packing adds ordered structured linear
-terms that are not forced into this native factorization.
+another sumcheck dimension. The packed E/Q events also preserve this
+common-alpha factorization and are included in $R_{\mathrm{ord}}$. The
+packing-Z and direct-opening contributions are ordered structured linear terms
+that are not forced into it.
 
 Reduced evaluation starts from the same physical rows but replaces each
 unreduced product coefficient by the public signed-wrap kernel
@@ -725,8 +729,9 @@ the committed witness $w$. The schedule selects how the public opening weight
 $T_{\mathrm{open}}(x)$ is prepared. `EvaluationTrace` uses the trace weights
 derived in [Field-to-ring evaluation reduction](./field-ring-reduction.md).
 `SubringCoefficientPacking` uses the direct coefficient-packing weights
-derived in [Root fold and ring switch](./root-fold-ring-switch.md). Both methods
-establish the same linear evaluation-consistency shape
+derived in [Field-to-ring evaluation
+reduction](./field-ring-reduction.md#subring-coefficient-packing-shorter-partials).
+Both methods establish the same linear evaluation-consistency shape
 
 $$
 v_{\mathrm{open}}=\sum_x w(x)T_{\mathrm{open}}(x).
@@ -764,12 +769,17 @@ $T_{\mathrm{open}}$ table. Define the method-dependent weight
 $C_{\mathrm{method}}(x)$ as follows. For `EvaluationTrace`, it is the compact
 trace opening weight $\beta_{\mathrm{open}}T_{\mathrm{open}}(x)$; its legacy
 fold-consistency row is already in $R_{\mathrm{rel}}$. For
-`SubringCoefficientPacking`, $R_{\mathrm{rel}}$ omits that legacy row and
-$C_{\mathrm{method}}$ is the ordered sum of the zero-target packed E/Q relation
-events, the packing-Z term, and the direct-opening term. Each constraint is
-therefore included exactly once. Stage 2 folds each structured linear term
-under the same challenges and sums their final values. This preserves the
-native relation fast path without building one dense weight table.
+`SubringCoefficientPacking`, which production schedules pair only with
+quotient lifting, $R_{\mathrm{rel}}=R_{\mathrm{ord}}$ contains the packed E/Q
+relation events in place of the legacy consistency coefficients. Its
+$C_{\mathrm{method}}$ is the ordered sum of only the packing-Z and
+direct-opening terms. Each contribution is therefore included exactly once.
+Stage 2 folds each structured linear term under the same challenges and sums
+their final values. This preserves the native relation fast path without
+building one dense weight table. The
+[physical packing
+realization](./root-fold-ring-switch.md#the-packing-consistency-quotient)
+explains the $U^s+1$ quotient and the two evaluations of the shared challenge.
 
 ### The fused Stage-2 claim
 
