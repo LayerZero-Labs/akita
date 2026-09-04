@@ -246,7 +246,7 @@ impl PlannerDiagnostics {
 
     pub(crate) fn record_relation_domain(&self, domain: RelationSearchDomain) {
         for transition in domain.transitions() {
-            let counter = &self.relation_transitions[relation_mode_index(transition.mode())];
+            let counter = &self.relation_transitions[relation_mode_index(*transition)];
             counter.set(counter.get().saturating_add(1));
         }
     }

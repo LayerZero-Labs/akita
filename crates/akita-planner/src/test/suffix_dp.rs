@@ -46,41 +46,22 @@ fn relation_transition_authority_is_monotone_and_part_of_the_memo_identity() {
     let prefix = super::RingRelationPhase::QuotientPrefix;
     let reduced = super::RingRelationPhase::ReducedEvaluationSuffix;
     let direct_trace = super::RelationCandidateTopology::DirectEvaluationTrace;
+    assert_eq!(prefix.candidate_modes(1, direct_trace), &[QuotientLift]);
     assert_eq!(
-        prefix
-            .transitions(1, direct_trace, None)
-            .unwrap()
-            .transitions()
-            .iter()
-            .map(|transition| transition.mode())
-            .collect::<Vec<_>>(),
-        vec![QuotientLift]
+        prefix.candidate_modes(2, direct_trace),
+        &[QuotientLift, ReducedEvaluation]
     );
     assert_eq!(
-        prefix
-            .transitions(2, direct_trace, None)
-            .unwrap()
-            .transitions()
-            .iter()
-            .map(|transition| transition.mode())
-            .collect::<Vec<_>>(),
-        vec![QuotientLift, ReducedEvaluation]
+        reduced.candidate_modes(2, direct_trace),
+        &[ReducedEvaluation]
     );
-    let reduced_transition = reduced
-        .transitions(2, direct_trace, None)
-        .unwrap()
-        .transition_for(akita_types::RingRelationMode::ReducedEvaluation)
-        .unwrap();
-    assert_eq!(reduced_transition.mode(), ReducedEvaluation);
-    assert_eq!(reduced_transition.next_phase(), reduced);
-    assert!(!reduced_transition.allows_setup_offload());
+    assert_eq!(prefix.after(ReducedEvaluation), reduced);
     assert!(reduced
-        .transitions(
+        .candidate_modes(
             2,
-            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace,
-            None,
+            super::RelationCandidateTopology::SetupPrefixedEvaluationTrace
         )
-        .is_err());
+        .is_empty());
 
     let quotient_key = memo_key(2, None);
     let mut reduced_key = quotient_key;

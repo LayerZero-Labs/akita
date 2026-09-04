@@ -1,5 +1,4 @@
 #[cfg(feature = "catalog-gen")]
-use super::recursive::RecursiveRelationCandidate;
 use super::recursive::{
     recursive_candidate_order_key, recursive_split_lower_bound, recursive_split_search_domain,
     RecursiveSplitLowerBoundInput,
@@ -256,7 +255,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(candidate, _)| {
             matches!(
-                candidate.params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::Linf(_)
             )
         })
@@ -265,7 +264,7 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter(|(candidate, _)| {
             matches!(
-                candidate.params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
         })
@@ -276,10 +275,10 @@ fn response_model_deduplicates_linf_and_keeps_one_l2_split() {
         .iter()
         .filter_map(|(candidate, _)| {
             matches!(
-                candidate.params.inner().matrix.security_route(),
+                candidate.inner().matrix.security_route(),
                 InnerCommitSecurityRoute::L2 { .. }
             )
-            .then_some(candidate.params.block_index_bits())
+            .then_some(candidate.block_index_bits())
         })
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(l2_block_index_bits.len(), 1);
@@ -322,7 +321,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     .expect("packing candidates");
     assert!(!candidates.is_empty());
     for (candidate, next_witness_len) in &candidates {
-        let params = &candidate.params;
+        let params = &candidate;
         assert_eq!(
             params.opening_method(),
             OpeningMethod::SubringCoefficientPacking {
@@ -372,7 +371,7 @@ fn recursive_packing_candidate_uses_exact_geometry_and_linf_route() {
     .expect("packing candidates with setup prefix");
     assert!(!with_prefix.is_empty());
     for (candidate, next_witness_len) in with_prefix {
-        let params = candidate.params;
+        let params = candidate;
         let prefix = params.setup_prefix().expect("attached setup prefix");
         assert_eq!(
             prefix.opening.opening_method,
@@ -490,10 +489,10 @@ fn packing_split_bounds_preserve_the_exhaustive_candidate_frontier() {
                 FoldCandidatePolicy::Frontier(split_bounds),
             )
         };
-        let canonical = |candidates: Vec<(RecursiveRelationCandidate, usize)>| {
+        let canonical = |candidates: Vec<(CommittedGroupParams, usize)>| {
             candidates
                 .into_iter()
-                .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
+                .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
                 .collect::<std::collections::BTreeSet<_>>()
         };
         let exhaustive = canonical(derive(true).expect("bounds-disabled frontier"));

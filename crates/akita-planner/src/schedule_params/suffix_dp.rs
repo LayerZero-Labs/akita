@@ -19,8 +19,8 @@ use super::{
     terminal_setup_field_elements, CandidateFoldStep, CandidateTerminalResponse,
     CompleteObjectiveBound, FoldCandidatePolicy, PackedProofCost, RecursiveCandidateRequest,
     RecursiveFoldWork, RelationCandidateTopology, RelationModeFilter, RelationSearchDomain,
-    RelationTransition, RelationTraversalOrder, RingRelationPhase, ScheduleCandidate,
-    SetupPrefixCapacity, SetupPrefixSearchCache, SplitBoundPolicy,
+    RelationTraversalOrder, RingRelationPhase, ScheduleCandidate, SetupPrefixCapacity,
+    SetupPrefixSearchCache, SplitBoundPolicy,
 };
 use akita_schedules::planner_support::MAX_RECURSION_DEPTH;
 
@@ -161,7 +161,6 @@ struct PlannedFoldCandidate {
     next_witness_len: usize,
     opening_reduction_bytes: usize,
     next_source_moment: Option<crate::response_model::SourceMomentEstimate>,
-    relation_transition: RelationTransition,
 }
 
 struct GuidedLevelCandidate {

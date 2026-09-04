@@ -51,7 +51,7 @@ fn combined_terminal_and_fold_views_match_independent_searches() {
         assert_eq!(actual.terminal, expected_terminal);
         assert_eq!(actual.folds, expected_folds);
         assert!(actual.folds.iter().any(|(candidate, _)| matches!(
-            candidate.params.inner().matrix.security_route(),
+            candidate.inner().matrix.security_route(),
             InnerCommitSecurityRoute::L2 { .. }
         )));
     }
@@ -81,13 +81,13 @@ fn combined_relation_views_match_mode_specific_searches() {
         source_moment: crate::response_model::SourceMomentEstimate::new(1_000_000),
         relation_traversal_order: RelationTraversalOrder::Canonical,
     };
-    let relation_domain = RingRelationPhase::QuotientPrefix
-        .transitions(
-            request.fold_level,
-            RelationCandidateTopology::DirectEvaluationTrace,
-            None,
-        )
-        .expect("direct relation transitions");
+    let relation_domain = RelationSearchDomain::for_topology(
+        RingRelationPhase::QuotientPrefix,
+        request.fold_level,
+        RelationCandidateTopology::DirectEvaluationTrace,
+        None,
+    )
+    .expect("direct relation transitions");
     let expected = [QuotientLift, ReducedEvaluation]
         .into_iter()
         .flat_map(|mode| {
@@ -98,7 +98,7 @@ fn combined_relation_views_match_mode_specific_searches() {
             )
             .expect("mode-specific fold search")
         })
-        .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
+        .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
     let actual =
         derive_recursive_candidate_views(request, FoldCandidatePolicy::Best, relation_domain)
@@ -106,7 +106,7 @@ fn combined_relation_views_match_mode_specific_searches() {
     let actual_folds = actual
         .folds
         .into_iter()
-        .map(|(candidate, next)| (candidate.params.canonical_descriptor_bytes(), next))
+        .map(|(candidate, next)| (candidate.canonical_descriptor_bytes(), next))
         .collect::<std::collections::BTreeSet<_>>();
 
     assert_eq!(actual_folds, expected);
@@ -154,8 +154,8 @@ fn reduced_only_views_keep_quotient_terminal_and_exclusively_reduced_folds() {
             .all(|params| params.ring_relation_mode == QuotientLift));
         assert!(!views.folds.is_empty());
         assert!(views.folds.iter().all(|(candidate, _)| {
-            candidate.params.ring_relation_mode == ReducedEvaluation
-                && relation_domain.admits(candidate.relation_transition)
+            candidate.ring_relation_mode == ReducedEvaluation
+                && relation_domain.admits(candidate.ring_relation_mode)
         }));
     }
 }

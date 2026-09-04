@@ -126,13 +126,13 @@ fn visit_fold_opening(
                 work.record_reduced_fold_candidates(fold_candidates.len())?;
             }
             for (candidate, output_witness_len) in fold_candidates {
-                if candidate.relation_transition.mode() != relation_transition.mode {
+                if candidate.ring_relation_mode != relation_transition.mode {
                     return Err(AkitaError::InvalidSetup(
                         "oracle candidate relation token disagrees with its requested transition"
                             .into(),
                     ));
                 }
-                let params = candidate.params;
+                let params = candidate;
                 work.record_candidate_route(&params)?;
                 let next_state = UnprunedState {
                     level: state.level + 1,

@@ -26,28 +26,22 @@ fn retain_finalized_candidates(
     request: &RecursiveCandidateRequest<'_>,
     search: &RecursiveLevelSearch,
     successor_policy: SuccessorPolicy,
-    base_candidates: impl IntoIterator<Item = RecursiveRelationCandidate>,
-    candidates: &mut Vec<(RecursiveRelationCandidate, usize)>,
+    base_candidates: impl IntoIterator<Item = CommittedGroupParams>,
+    candidates: &mut Vec<(CommittedGroupParams, usize)>,
 ) -> Result<(), AkitaError> {
     for candidate in base_candidates {
-        if !candidate.params.compression_sources_supported()? {
+        if !candidate.compression_sources_supported()? {
             continue;
         }
         let Some((_, params, next_witness_len)) =
-            finalize_recursive_level_candidate(request.policy, search, candidate.params)?
+            finalize_recursive_level_candidate(request.policy, search, candidate)?
         else {
             continue;
         };
         if !successor_policy.admits(request.current_witness_len, next_witness_len) {
             continue;
         }
-        let candidate = (
-            RecursiveRelationCandidate {
-                params,
-                relation_transition: candidate.relation_transition,
-            },
-            next_witness_len,
-        );
+        let candidate = (params, next_witness_len);
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
         }
@@ -59,7 +53,7 @@ fn independently_enumerated_l2_candidates(
     context: &RecursiveCandidateContext<'_, '_>,
     split: usize,
     relation_domain: RelationSearchDomain,
-) -> Result<Vec<RecursiveRelationCandidate>, AkitaError> {
+) -> Result<Vec<CommittedGroupParams>, AkitaError> {
     let request = context.request;
     if request.opening.is_coefficient_packing()
         || !request.policy.selective_l2_response_model_enabled()
@@ -131,8 +125,8 @@ fn independently_enumerated_l2_candidates(
     let mut candidates = l2_context.candidates_from_core(&l2_core, relation_domain)?;
     candidates.retain(|candidate| {
         l2_challenge_linf_slices.iter().any(|linf| {
-            linf.relation_transition == candidate.relation_transition
-                && linf.params.outer_slice_count() == candidate.params.outer_slice_count()
+            linf.ring_relation_mode == candidate.ring_relation_mode
+                && linf.outer_slice_count() == candidate.outer_slice_count()
         })
     });
     Ok(candidates)
@@ -148,7 +142,7 @@ fn independently_enumerated_l2_candidates(
 fn enumerate_unpruned_candidates(
     request: RecursiveCandidateRequest<'_>,
     purpose: ReferenceCandidatePurpose,
-) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let Some(search) = prepare_recursive_level_search(&request, RecursiveSetupPrefix::None)? else {
         return Ok(Vec::new());
     };
@@ -209,7 +203,7 @@ fn enumerate_unpruned_candidates(
 pub(crate) fn derive_unpruned_fold_candidates_for_oracle(
     request: RecursiveCandidateRequest<'_>,
     relation_domain: RelationSearchDomain,
-) -> Result<Vec<(RecursiveRelationCandidate, usize)>, AkitaError> {
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     enumerate_unpruned_candidates(request, ReferenceCandidatePurpose::Fold(relation_domain))
 }
 
@@ -219,7 +213,7 @@ pub(crate) fn derive_unpruned_terminal_candidates_for_oracle(
     Ok(
         enumerate_unpruned_candidates(request, ReferenceCandidatePurpose::Terminal)?
             .into_iter()
-            .map(|(candidate, _)| candidate.params)
+            .map(|(candidate, _)| candidate)
             .collect(),
     )
 }

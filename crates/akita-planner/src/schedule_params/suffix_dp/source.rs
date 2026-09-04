@@ -15,7 +15,6 @@ pub(super) fn attach_source_moments(
             params,
             next_witness_len,
             opening_reduction_bytes,
-            relation_transition,
         } = candidate;
         let next_source_moment = if policy.selective_l2_response_model_enabled() {
             let source_groups = if is_root_level {
@@ -64,7 +63,6 @@ pub(super) fn attach_source_moments(
             next_witness_len,
             opening_reduction_bytes,
             next_source_moment,
-            relation_transition,
         });
     }
     Ok(candidates_with_source)

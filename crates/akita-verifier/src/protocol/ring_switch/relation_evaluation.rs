@@ -101,10 +101,7 @@ impl<'a, E: Field> PreparedDirectRelation<'a, E> {
         F: Field + CanonicalEncoding,
         E: FpExtEncoding<F> + Ring + ExtField<F> + MulBaseUnreduced<F>,
     {
-        let context = evaluator
-            .flat_context
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
+        let context = &evaluator.flat_context;
         match &evaluator.groups {
             PreparedRelationGroups::QuotientLift(groups) => {
                 if !matches!(
@@ -323,10 +320,7 @@ where
     F: Field + CanonicalEncoding,
     E: FpExtEncoding<F> + Ring + ExtField<F>,
 {
-    let context = evaluator
-        .flat_context
-        .as_ref()
-        .ok_or(AkitaError::InvalidProof)?;
+    let context = &evaluator.flat_context;
     let rows = row_families.len();
     if rows
         != context

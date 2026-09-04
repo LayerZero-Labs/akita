@@ -162,7 +162,7 @@ pub use proof::{
     DigitRangePlan, FlatBooleanDomain,
 };
 pub use proof_size::level_proof_bytes;
-pub use ring_relation_mode::RingRelationMode;
+pub use ring_relation_mode::{RelationCandidateTopology, RingRelationMode, RingRelationPhase};
 pub use schedule::{
     detect_field_modulus, r_decomp_levels, root_input_witness_len, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedSourceEncoding, FoldParams,

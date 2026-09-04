@@ -97,6 +97,19 @@ impl ResolvedScheduleRow {
         &self.schedule
     }
 
+    /// Check that opening claims have the exact layout authorized by this row.
+    pub fn validate_opening_layout(
+        &self,
+        opening_batch: &akita_types::OpeningClaimsLayout,
+    ) -> Result<(), AkitaError> {
+        if self.profiles.opening_layout()? != *opening_batch {
+            return Err(AkitaError::InvalidInput(
+                "committed-group descriptors do not match the opening layout".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Consume the resolved row into its expanded schedule.
     pub fn into_schedule(self) -> FoldSchedule {
         self.schedule

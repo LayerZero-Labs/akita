@@ -3,8 +3,7 @@ use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
-    bind_transcript_instance_descriptor, effective_batched_schedule,
-    ensure_verifier_schedule_fits_setup, CommitmentConfig,
+    bind_transcript_instance_descriptor, ensure_verifier_schedule_fits_setup, CommitmentConfig,
 };
 use akita_error::AkitaError;
 use akita_serialization::{AkitaSerialize, Valid};
@@ -284,14 +283,9 @@ where
     batch_profile
         .validate(Cfg::decomposition().field_bits())
         .map_err(|_| AkitaError::InvalidProof)?;
-    let final_group_index = opening_batch
-        .root_final_group_index()
-        .map_err(|_| AkitaError::InvalidProof)?;
-    let final_group_point = claims
-        .group_point(final_group_index)
-        .map_err(|_| AkitaError::InvalidProof)?;
     let resolved = Cfg::resolve_schedule_selection(selection)?;
-    let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)
+    resolved
+        .validate_opening_layout(&opening_batch)
         .map_err(|_| AkitaError::InvalidProof)?;
     if resolved.profiles() != &batch_profile {
         return Err(AkitaError::InvalidProof);

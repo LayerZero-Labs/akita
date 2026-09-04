@@ -54,17 +54,6 @@ pub(crate) struct RingSwitchVerifyOutput<E: Field> {
     pub alpha: E,
 }
 
-struct RingSwitchVerifyCoreOutput<E: Field> {
-    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    compression: PreparedStage2Compression<E>,
-    relation_address_geometry: RelationAddressGeometry,
-    digit_range_equality_low_variable_count: usize,
-    tau0: Option<Vec<E>>,
-    tau1: Vec<E>,
-    b: usize,
-    alpha: E,
-}
-
 pub(crate) enum PreparedStage2Compression<E: Field> {
     Raw,
     QuotientLift {
@@ -75,22 +64,6 @@ pub(crate) enum PreparedStage2Compression<E: Field> {
         weights: ReducedCompressionRelationWeights<E>,
         support: NegativeBinarySupport,
     },
-}
-
-impl<E: Field> RingSwitchVerifyCoreOutput<E> {
-    fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
-        Ok(RingSwitchVerifyOutput {
-            relation_matrix_evaluator: self.relation_matrix_evaluator,
-            compression: self.compression,
-            relation_address_geometry: self.relation_address_geometry,
-            digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
-            tau0,
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
 }
 
 /// Precomputed challenge-derived data for prepared relation-matrix MLE evaluation.
@@ -106,7 +79,7 @@ pub struct RelationMatrixEvaluator<F: Field> {
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
     pub(crate) eq_tau1: Arc<[F]>,
-    pub(crate) flat_context: Option<FlatRelationContext>,
+    pub(crate) flat_context: FlatRelationContext,
     pub(crate) setup_plan_cache: Arc<Mutex<Option<CachedSetupContributionPlan<F>>>>,
 }
 
@@ -249,11 +222,9 @@ where
         )
         .entered();
         transcript.grind_query(akita_types::GrindingSite::Tau0Point { level })?;
-        let tau0 = Some(
-            (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-        );
+        let tau0 = (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect();
         transcript.grind_query(akita_types::GrindingSite::Tau1Point { level })?;
         let tau1 = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
@@ -302,7 +273,7 @@ where
     } else {
         PreparedStage2Compression::Raw
     };
-    RingSwitchVerifyCoreOutput {
+    Ok(RingSwitchVerifyOutput {
         relation_matrix_evaluator,
         compression,
         relation_address_geometry,
@@ -313,8 +284,7 @@ where
             .checked_shl(lp.open().digits.log_basis)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
-    }
-    .into_intermediate()
+    })
 }
 
 /// Prepare relation-matrix evaluator state from a fixed
@@ -574,12 +544,12 @@ where
         groups,
         log_basis: lp.open().digits.log_basis,
         eq_tau1,
-        flat_context: Some(FlatRelationContext {
+        flat_context: FlatRelationContext {
             level_params: lp.clone(),
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
             extension_degree,
-        }),
+        },
         setup_plan_cache: Default::default(),
     })
 }
@@ -676,7 +646,7 @@ impl<E: Field> RelationMatrixEvaluator<E> {
     where
         F: Field + CanonicalEncoding,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let setup_groups = self.setup_contribution_inputs();
         Ok(shared_setup_fold_gadget(
             &context.level_params,
@@ -694,7 +664,7 @@ impl<E: Field> RelationMatrixEvaluator<E> {
         F: Field + CanonicalEncoding,
         E: ExtField<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let setup_groups = self.setup_contribution_inputs();
         SetupContributionPlan::prepare::<F>(
             &context.level_params,
@@ -741,7 +711,7 @@ impl<E: Field> RelationMatrixEvaluator<E> {
     }
 
     pub(crate) fn witness_layout(&self) -> Result<&WitnessLayout, AkitaError> {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         Ok(&context.witness_layout)
     }
 }

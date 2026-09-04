@@ -59,9 +59,9 @@ impl RelationQuotientPlan {
         }
     }
 
-    fn quotient_depth(self) -> Option<usize> {
+    fn quotient_depth(self) -> Option<NonZeroUsize> {
         match self {
-            Self::QuotientLift { quotient_depth } => Some(quotient_depth.get()),
+            Self::QuotientLift { quotient_depth } => Some(quotient_depth),
             Self::ReducedEvaluation => None,
         }
     }
@@ -89,7 +89,7 @@ trait TailSink: Sized {
         &mut self,
         row_index: usize,
         geometry: RelationRowGeometry,
-        plan: RelationQuotientPlan,
+        quotient_depth: NonZeroUsize,
         width_overflow: &'static str,
         range_overflow: &'static str,
     ) -> Result<(), AkitaError>;
@@ -97,7 +97,7 @@ trait TailSink: Sized {
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
-        h_quotient_row: usize,
+        h_quotient_row: Option<usize>,
         plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError>;
     fn finish(self, start: usize, plan: RelationQuotientPlan) -> Result<Self::Output, AkitaError>;
@@ -174,14 +174,12 @@ impl TailSink for MaterializingTailSink {
         &mut self,
         row_index: usize,
         geometry: RelationRowGeometry,
-        plan: RelationQuotientPlan,
+        quotient_depth: NonZeroUsize,
         width_overflow: &'static str,
         range_overflow: &'static str,
     ) -> Result<(), AkitaError> {
-        let Some(quotient_depth) = plan.quotient_depth() else {
-            return Ok(());
-        };
         let len = quotient_depth
+            .get()
             .checked_mul(geometry.physical_coefficient_width())
             .ok_or_else(|| AkitaError::InvalidSetup(width_overflow.into()))?;
         let range = witness_range(self.cursor, len, range_overflow)?;
@@ -200,7 +198,7 @@ impl TailSink for MaterializingTailSink {
     fn finish_compression_layer(
         &mut self,
         map_index: usize,
-        h_quotient_row: usize,
+        h_quotient_row: Option<usize>,
         plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError> {
         let h_span = self.current_h_span.take().ok_or_else(|| {
@@ -208,7 +206,7 @@ impl TailSink for MaterializingTailSink {
         })?;
         let f_spans = std::mem::take(&mut self.current_f_spans);
         let canonical_f_quotient_rows = std::mem::take(&mut self.current_f_quotient_rows);
-        if canonical_f_quotient_rows.len() != f_spans.len() {
+        if plan.quotient_depth().is_some() && canonical_f_quotient_rows.len() != f_spans.len() {
             return Err(AkitaError::InvalidSetup(
                 "compression F quotient ownership disagrees with witness spans".into(),
             ));
@@ -219,7 +217,7 @@ impl TailSink for MaterializingTailSink {
             f_spans,
             h_span,
             f_quotient_rows: lifted.then_some(canonical_f_quotient_rows),
-            h_quotient_row: lifted.then_some(h_quotient_row),
+            h_quotient_row,
         });
         Ok(())
     }
@@ -285,14 +283,12 @@ impl TailSink for MeasuringTailSink {
         &mut self,
         _row_index: usize,
         geometry: RelationRowGeometry,
-        plan: RelationQuotientPlan,
+        quotient_depth: NonZeroUsize,
         width_overflow: &'static str,
         range_overflow: &'static str,
     ) -> Result<(), AkitaError> {
-        let Some(quotient_depth) = plan.quotient_depth() else {
-            return Ok(());
-        };
         let len = quotient_depth
+            .get()
             .checked_mul(geometry.physical_coefficient_width())
             .ok_or_else(|| AkitaError::InvalidSetup(width_overflow.into()))?;
         self.cursor = witness_range(self.cursor, len, range_overflow)?.end;
@@ -304,7 +300,7 @@ impl TailSink for MeasuringTailSink {
     fn finish_compression_layer(
         &mut self,
         _map_index: usize,
-        _h_quotient_row: usize,
+        _h_quotient_row: Option<usize>,
         _plan: RelationQuotientPlan,
     ) -> Result<(), AkitaError> {
         Ok(())
@@ -369,8 +365,11 @@ fn resolve<S: TailSink>(
 ) -> Result<S::Output, AkitaError> {
     plan.validate_mode(params.ring_relation_mode)?;
     let relation_layout = relation_geometry.rhs_layout();
-    let row_families = relation_layout.row_families()?;
-    sink.prepare_quotient_rows(row_families.len());
+    let row_families = if plan.quotient_depth().is_some() {
+        relation_layout.row_families()?
+    } else {
+        Vec::new()
+    };
     let first_compression_row = row_families
         .iter()
         .position(|row| {
@@ -380,14 +379,17 @@ fn resolve<S: TailSink>(
             )
         })
         .unwrap_or(row_families.len());
-    for (row_index, row) in row_families[..first_compression_row].iter().enumerate() {
-        sink.place_quotient_row(
-            row_index,
-            row.geometry(),
-            plan,
-            "witness R width overflow",
-            "witness R range overflow",
-        )?;
+    if let Some(quotient_depth) = plan.quotient_depth() {
+        sink.prepare_quotient_rows(row_families.len());
+        for (row_index, row) in row_families[..first_compression_row].iter().enumerate() {
+            sink.place_quotient_row(
+                row_index,
+                row.geometry(),
+                quotient_depth,
+                "witness R width overflow",
+                "witness R range overflow",
+            )?;
+        }
     }
     if !params.payload_mode.is_compressed() {
         return sink.finish(start, plan);
@@ -415,69 +417,74 @@ fn resolve<S: TailSink>(
         let h_map = relation_layout.opening_compression_plan()?.maps()[map_index];
         sink.place_h_span(h_map)?;
 
-        for relation_group_index in 0..num_groups {
-            let row_index = first_compression_row
-                .checked_add(map_index * (num_groups + 1) + relation_group_index)
+        let h_quotient_row = if let Some(quotient_depth) = plan.quotient_depth() {
+            for relation_group_index in 0..num_groups {
+                let row_index = first_compression_row
+                    .checked_add(map_index * (num_groups + 1) + relation_group_index)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression quotient index overflow".into())
+                    })?;
+                let row = *row_families.get(row_index).ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression F quotient row is missing".into())
+                })?;
+                let (group_index, geometry) = match row {
+                    RelationRowFamily::CompressionF {
+                        group_index,
+                        map_index: row_map_index,
+                        geometry,
+                    } if row_map_index == map_index => (group_index, geometry),
+                    _ => {
+                        return Err(AkitaError::InvalidSetup(
+                            "compression F quotient order disagrees with relation rows".into(),
+                        ))
+                    }
+                };
+                let (planned_group_index, _) =
+                    relation_layout.group_compression_plan(relation_group_index)?;
+                if group_index != planned_group_index {
+                    return Err(AkitaError::InvalidSetup(
+                        "compression F quotient group disagrees with its compression plan".into(),
+                    ));
+                }
+                sink.place_quotient_row(
+                    row_index,
+                    geometry,
+                    quotient_depth,
+                    "compression quotient width overflow",
+                    "compression quotient range overflow",
+                )?;
+                sink.record_f_quotient_row(group_index, row_index);
+            }
+            let h_quotient_row = first_compression_row
+                .checked_add(map_index * (num_groups + 1) + num_groups)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("compression quotient index overflow".into())
                 })?;
-            let row = *row_families.get(row_index).ok_or_else(|| {
-                AkitaError::InvalidSetup("compression F quotient row is missing".into())
+            let h_row = *row_families.get(h_quotient_row).ok_or_else(|| {
+                AkitaError::InvalidSetup("compression H quotient row is missing".into())
             })?;
-            let (group_index, geometry) = match row {
-                RelationRowFamily::CompressionF {
-                    group_index,
+            let h_geometry = match h_row {
+                RelationRowFamily::CompressionH {
                     map_index: row_map_index,
                     geometry,
-                } if row_map_index == map_index => (group_index, geometry),
+                } if row_map_index == map_index => geometry,
                 _ => {
                     return Err(AkitaError::InvalidSetup(
-                        "compression F quotient order disagrees with relation rows".into(),
+                        "compression H quotient order disagrees with relation rows".into(),
                     ))
                 }
             };
-            let (planned_group_index, _) =
-                relation_layout.group_compression_plan(relation_group_index)?;
-            if group_index != planned_group_index {
-                return Err(AkitaError::InvalidSetup(
-                    "compression F quotient group disagrees with its compression plan".into(),
-                ));
-            }
             sink.place_quotient_row(
-                row_index,
-                geometry,
-                plan,
+                h_quotient_row,
+                h_geometry,
+                quotient_depth,
                 "compression quotient width overflow",
                 "compression quotient range overflow",
             )?;
-            sink.record_f_quotient_row(group_index, row_index);
-        }
-        let h_quotient_row = first_compression_row
-            .checked_add(map_index * (num_groups + 1) + num_groups)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("compression quotient index overflow".into())
-            })?;
-        let h_row = *row_families.get(h_quotient_row).ok_or_else(|| {
-            AkitaError::InvalidSetup("compression H quotient row is missing".into())
-        })?;
-        let h_geometry = match h_row {
-            RelationRowFamily::CompressionH {
-                map_index: row_map_index,
-                geometry,
-            } if row_map_index == map_index => geometry,
-            _ => {
-                return Err(AkitaError::InvalidSetup(
-                    "compression H quotient order disagrees with relation rows".into(),
-                ))
-            }
+            Some(h_quotient_row)
+        } else {
+            None
         };
-        sink.place_quotient_row(
-            h_quotient_row,
-            h_geometry,
-            plan,
-            "compression quotient width overflow",
-            "compression quotient range overflow",
-        )?;
         sink.finish_compression_layer(map_index, h_quotient_row, plan)?;
     }
     sink.align(

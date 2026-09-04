@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) struct RecursiveCandidateViews {
     pub(crate) terminal: Vec<CommittedGroupParams>,
-    pub(crate) folds: Vec<(RecursiveRelationCandidate, usize)>,
+    pub(crate) folds: Vec<(CommittedGroupParams, usize)>,
 }
 
 /// Derive the terminal and fold views of one EvaluationTrace search together.
@@ -70,12 +70,7 @@ pub(crate) fn derive_recursive_candidate_views(
         let mut terminal_best = None;
         let mut fold_best = std::collections::BTreeMap::<
             akita_types::RingRelationMode,
-            (
-                LayoutCandidateScore,
-                usize,
-                RecursiveRelationCandidate,
-                usize,
-            ),
+            (LayoutCandidateScore, usize, CommittedGroupParams, usize),
         >::new();
         context.walk_splits(
             search_domain,
@@ -105,7 +100,7 @@ pub(crate) fn derive_recursive_candidate_views(
                 terminal_admits || fold_admits
             },
             |score, split, candidate, next_witness_len| {
-                let mode = candidate.relation_transition.mode();
+                let mode = candidate.ring_relation_mode;
                 if mode == akita_types::RingRelationMode::QuotientLift
                     && terminal_best
                         .as_ref()
@@ -117,7 +112,7 @@ pub(crate) fn derive_recursive_candidate_views(
                     terminal_best_score.set(Some(score));
                     terminal_best = Some((score, split, candidate.clone(), next_witness_len));
                 }
-                if !relation_domain.admits(candidate.relation_transition)
+                if !relation_domain.admits(candidate.ring_relation_mode)
                     || next_witness_len >= request.current_witness_len
                 {
                     return;
@@ -181,7 +176,7 @@ pub(crate) fn derive_recursive_candidate_views(
     Ok(RecursiveCandidateViews {
         terminal: terminal_pairs
             .into_iter()
-            .map(|(candidate, _)| candidate.params)
+            .map(|(candidate, _)| candidate)
             .collect(),
         folds,
     })
