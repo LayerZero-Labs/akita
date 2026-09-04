@@ -18,11 +18,13 @@ pub struct ResolvedScheduleRow {
 }
 
 impl ResolvedScheduleRow {
-    /// Construct a row already authorized by a configuration-owned catalog.
+    /// Semantically audit one expanded row and derive its public identity.
     ///
     /// This validates the exact committed profiles and expanded schedule before
-    /// deriving the public row digest. The caller remains responsible for
-    /// admitting the row from its configured catalog.
+    /// deriving the public row digest. It does not establish artifact trust or
+    /// provenance. Admission happens when callers construct a
+    /// [`TrustedScheduleCatalog`](crate::TrustedScheduleCatalog) from an
+    /// application-chosen trusted source.
     pub fn try_new(
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,
