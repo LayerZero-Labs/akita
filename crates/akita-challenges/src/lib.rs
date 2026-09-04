@@ -20,6 +20,7 @@ mod challenge;
 mod challenges;
 mod config;
 mod fold_draw;
+mod jl;
 mod sampler;
 
 pub use akita_transcript::TranscriptChallengePreview;
@@ -37,4 +38,5 @@ pub use config::{
 pub use fold_draw::{
     fold_challenge_sample_label, FoldChallengeDrawDomain, FoldDraw, LiveFoldDraw, PreviewFoldDraw,
 };
+pub use jl::{expand_balanced_ternary_matrix, BALANCED_TERNARY_EXPANSION_VERSION};
 pub use sampler::sample_sparse_challenges;

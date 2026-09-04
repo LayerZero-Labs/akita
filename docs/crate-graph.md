@@ -17,11 +17,11 @@ orchestration lives in `akita-pcs`.
 | `jolt-field` (external) | Shared field traits, prime and extension fields, packed and unreduced kernels, parallel helpers |
 | `akita-witness` | Shared `PolynomialView` / `WitnessProvider` vocabulary |
 | `akita-serialization` | Serialization, validation, compression traits |
-| `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials |
+| `akita-algebra` | Modules, NTTs, cyclotomic rings, polynomials, seed-independent JL algebra |
 | `akita-transcript` | Fiat-Shamir transcript and descriptor preamble |
-| `akita-challenges` | Challenge sampling helpers |
+| `akita-challenges` | Challenge sampling helpers and domain-separated AES-128-CTR JL matrix expansion |
 | `akita-sumcheck` | Sumcheck proofs, drivers, folding, batching |
-| `akita-types` | Proof/setup/schedule/layout shapes, SIS floors, proof-size helpers |
+| `akita-types` | Proof/setup/schedule/layout shapes, SIS and certified JL constants, proof-size helpers |
 | `akita-sis-estimator` | Offline scalar SIS attack-cost estimation and generated-table certification |
 | `akita-planner` | `Cfg`-free schedule search and optional preset-driven table emission |
 | `akita-schedules` | Feature-gated generated schedule table wiring |
@@ -61,6 +61,7 @@ graph TD
   Transcript --> Field
   Transcript --> Ser
   Challenges --> Error
+  Challenges --> Algebra
   Challenges --> Field
   Challenges --> Transcript
   Sumcheck --> Error
@@ -142,6 +143,12 @@ graph TD
   it is a workspace member without downstream `Cargo.toml` edges; cite it from
   the architecture chapter and polyops/sumcheck specs until prover/sumcheck
   depend on it explicitly.
+- `akita-algebra::jl` owns the canonical packed balanced-ternary matrix, its
+  derived signed-byte compute plane, exact scalar/NEON/AVX2 projection
+  arithmetic, and public-matrix MLE evaluation. `akita-challenges` owns the
+  versioned SHAKE256-to-AES-128-CTR interpretation of a 32-byte JL seed.
+  Transcript ordering remains in `akita-transcript`, while inert certified
+  tail constants live in `akita-types::jl`.
 - `akita-planner` is the offline schedule search and table emission engine.
   Normal planner search is `Cfg`-free and depends on `akita-types`,
   `akita-challenges`, `akita-error`, and `akita-schedules`. The optional

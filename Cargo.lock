@@ -52,9 +52,12 @@ dependencies = [
 name = "akita-challenges"
 version = "0.1.0"
 dependencies = [
+ "aes",
+ "akita-algebra",
  "akita-error",
  "akita-transcript",
  "criterion",
+ "ctr",
  "jolt-field",
  "keccak 0.1.6",
  "sha3 0.10.9",

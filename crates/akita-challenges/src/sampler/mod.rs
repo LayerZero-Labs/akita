@@ -13,7 +13,7 @@ mod xof;
 
 pub(crate) use position_sample::MAX_STACK_RING_DIM;
 pub(crate) use signed_sparse::SignedSparseScratch;
-pub(crate) use xof::{IndexedXofPrefix, XofCursor};
+pub(crate) use xof::{shake256_root, IndexedXofPrefix, XofCursor};
 
 use akita_error::AkitaError;
 use akita_transcript::labels::{ABSORB_SPARSE_CHALLENGE, CHALLENGE_SPARSE_CHALLENGE};

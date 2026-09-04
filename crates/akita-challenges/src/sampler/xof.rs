@@ -1,7 +1,7 @@
-//! Streaming XOF cursor used by the signed-sparse fold-challenge sampler.
+//! Streaming XOF cursor shared by protocol challenge expanders.
 //!
-//! Every fold coordinate gets a fresh indexed SHAKE256 stream. A sampler may
-//! reset this cursor between coordinates and reuse its small squeeze buffer.
+//! Every indexed coordinate gets a fresh SHAKE256 stream. A sampler may reset
+//! this cursor between coordinates and reuse its small squeeze buffer.
 //!
 //! The cursor's `next_*` helpers use bitmask rejection sampling, so every
 //! returned value is uniform over the requested range with no modulo bias.
@@ -10,6 +10,36 @@ const SHAKE256_RATE: usize = 136;
 const SHAKE_DOMAIN_SUFFIX: u8 = 0x1f;
 const GROUP_ROOT_LEN: usize = 32;
 const COORDINATE_INPUT_LEN: usize = GROUP_ROOT_LEN + size_of::<u64>();
+
+/// Derive a fixed-size root from fixed-width protocol fields using SHAKE256.
+///
+/// This helper deliberately accepts only inputs that fit before the SHAKE256
+/// padding bytes in one rate block. Callers define an unambiguous encoding by
+/// using a fixed domain tag followed by fixed-width fields.
+pub(crate) fn shake256_root(parts: &[&[u8]]) -> Result<[u8; GROUP_ROOT_LEN], &'static str> {
+    let input_len = parts
+        .iter()
+        .try_fold(0usize, |len, part| len.checked_add(part.len()))
+        .ok_or("SHAKE256 root input length overflow")?;
+    if input_len >= SHAKE256_RATE {
+        return Err("SHAKE256 root input exceeds the single-block limit");
+    }
+    let mut state = [0u64; 25];
+    let mut offset = 0;
+    for part in parts {
+        absorb_bytes(&mut state, offset, part);
+        offset += part.len();
+    }
+    xor_state_byte(&mut state, input_len, SHAKE_DOMAIN_SUFFIX);
+    xor_state_byte(&mut state, SHAKE256_RATE - 1, 0x80);
+    keccak::f1600(&mut state);
+
+    let mut root = [0u8; GROUP_ROOT_LEN];
+    for (chunk, lane) in root.chunks_exact_mut(8).zip(state) {
+        chunk.copy_from_slice(&lane.to_le_bytes());
+    }
+    Ok(root)
+}
 
 /// SHAKE256 state after absorbing one dedicated group root. Cloning this state
 /// gives each coordinate a fresh XOF without repeating the root absorption.
@@ -21,7 +51,7 @@ pub(crate) struct IndexedXofPrefix {
 impl IndexedXofPrefix {
     pub(crate) fn new(seed: &[u8]) -> Result<Self, &'static str> {
         if seed.len() != GROUP_ROOT_LEN {
-            return Err("indexed sparse challenge group root must be exactly 32 bytes");
+            return Err("indexed XOF root must be exactly 32 bytes");
         }
         let mut state = [0u64; 25];
         absorb_bytes(&mut state, 0, seed);
@@ -104,7 +134,7 @@ impl XofCursor {
         }
     }
 
-    /// Build the canonical stream for one claim-major fold coordinate.
+    /// Build the canonical stream for one indexed protocol coordinate.
     #[cfg(test)]
     pub(crate) fn from_indexed_prefix(prefix: &IndexedXofPrefix, coordinate_index: u64) -> Self {
         let mut xof = prefix.reader(coordinate_index);
@@ -226,6 +256,27 @@ mod tests {
     use sha3::Shake256;
 
     #[test]
+    fn root_derivation_matches_sha3() {
+        let parts: &[&[u8]] = &[b"fixed-domain", &[1, 2, 3, 4], &[0x5a; 32]];
+        let mut expected_xof = Shake256::default();
+        for part in parts {
+            expected_xof.update(part);
+        }
+        let mut expected_reader = expected_xof.finalize_xof();
+        let mut expected = [0u8; GROUP_ROOT_LEN];
+        expected_reader.read(&mut expected);
+        assert_eq!(shake256_root(parts).unwrap(), expected);
+    }
+
+    #[test]
+    fn root_derivation_rejects_oversized_input() {
+        assert_eq!(
+            shake256_root(&[&[0u8; SHAKE256_RATE]]).unwrap_err(),
+            "SHAKE256 root input exceeds the single-block limit"
+        );
+    }
+
+    #[test]
     fn indexed_cursor_uses_the_canonical_coordinate_input() {
         let seed = [0x5au8; 32];
         let index = 0x0102_0304_0506_0708u64;
@@ -247,11 +298,11 @@ mod tests {
     fn indexed_prefix_requires_the_canonical_root_width() {
         assert_eq!(
             IndexedXofPrefix::new(&[0u8; GROUP_ROOT_LEN - 1]).err(),
-            Some("indexed sparse challenge group root must be exactly 32 bytes")
+            Some("indexed XOF root must be exactly 32 bytes")
         );
         assert_eq!(
             IndexedXofPrefix::new(&[0u8; GROUP_ROOT_LEN + 1]).err(),
-            Some("indexed sparse challenge group root must be exactly 32 bytes")
+            Some("indexed XOF root must be exactly 32 bytes")
         );
     }
 

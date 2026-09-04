@@ -21,6 +21,7 @@ pub mod extension_opening_reduction;
 pub mod field_reduction;
 pub mod golomb_rice;
 pub mod instance_descriptor;
+pub mod jl;
 pub mod layout;
 pub mod lhl_blinding;
 pub(crate) mod narrowing;
@@ -78,6 +79,10 @@ pub use instance_descriptor::{
     digest_descriptor_bytes, digest_effective_schedule, digest_level_params, digest_serializable,
     setup_seed_digest, AkitaInstanceDescriptor, AlgebraSection, CallSection, PlanSection,
     ProtocolFeatureSet, SetupSection, TranscriptGrindingBinding,
+};
+pub use jl::{
+    CertifiedJlBounds, CertifiedJlL2Bounds, CertifiedJlLinfBounds, JlRowLawId, RationalBound,
+    BALANCED_TERNARY_256_ROWS_128_BITS, CERTIFIED_JL_SOURCE_REVISION,
 };
 pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,

@@ -4,3 +4,16 @@
 # `init_debug_rayon_pool` for the precedent.
 [env]
 RUST_MIN_STACK = "16777216"
+
+# RustCrypto's AES crate keeps its constant-time software fallback on AArch64
+# unless this documented cfg is enabled. The resulting backend still performs
+# runtime AES-feature detection, so these target settings remain portable to
+# AArch64 CPUs without the cryptography extension.
+[target.aarch64-apple-darwin]
+rustflags = ["--cfg", "aes_armv8"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["--cfg", "aes_armv8"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["--cfg", "aes_armv8"]

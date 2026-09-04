@@ -14,6 +14,7 @@
 
 pub mod eq_poly;
 pub mod fft;
+pub mod jl;
 pub mod module;
 pub mod ntt;
 pub mod offset_eq;
