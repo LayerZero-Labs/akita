@@ -133,9 +133,7 @@ impl TrustedScheduleCatalog {
             serde_json::from_slice(bytes).map_err(|error| {
                 AkitaError::InvalidSetup(format!("invalid schedule artifact encoding: {error}"))
             })?;
-        let canonical = serde_json::to_vec(&artifact).map_err(|error| {
-            AkitaError::InvalidSetup(format!("failed to canonicalize schedule artifact: {error}"))
-        })?;
+        let canonical = encode_artifact(&artifact)?;
         if canonical != bytes {
             return Err(AkitaError::InvalidSetup(
                 "schedule artifact is not in canonical JSON form".to_string(),
@@ -197,9 +195,7 @@ impl TrustedScheduleCatalog {
                 })
                 .collect(),
         };
-        let bytes = serde_json::to_vec(&artifact).map_err(|error| {
-            AkitaError::InvalidSetup(format!("failed to encode schedule artifact: {error}"))
-        })?;
+        let bytes = encode_artifact(&artifact)?;
         if bytes.len() > MAX_ARTIFACT_BYTES {
             return Err(AkitaError::InvalidSetup(format!(
                 "encoded schedule artifact exceeds {MAX_ARTIFACT_BYTES} bytes"
@@ -316,6 +312,12 @@ impl TrustedScheduleCatalog {
         }
         Ok(row.clone())
     }
+}
+
+fn encode_artifact(artifact: &ScheduleCatalogArtifactV1) -> Result<Vec<u8>, AkitaError> {
+    serde_json::to_vec_pretty(artifact).map_err(|error| {
+        AkitaError::InvalidSetup(format!("failed to encode schedule artifact: {error}"))
+    })
 }
 
 fn unsupported_schedule_lookup(key: &AkitaScheduleLookupKey, exact_profiles: bool) -> AkitaError {

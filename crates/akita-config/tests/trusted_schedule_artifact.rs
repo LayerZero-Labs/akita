@@ -23,30 +23,50 @@ fn checked_in_artifact_bytes<Cfg: CommitmentConfig>() -> Vec<u8> {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
 
-fn replace_once(bytes: &mut [u8], needle: &[u8], replacement: &[u8]) {
-    assert_eq!(needle.len(), replacement.len());
-    let offset = bytes
-        .windows(needle.len())
-        .position(|window| window == needle)
-        .expect("artifact marker");
-    bytes[offset..offset + needle.len()].copy_from_slice(replacement);
+fn json_value_start(bytes: &[u8], key: &[u8], occurrence: usize) -> usize {
+    let key_start = bytes
+        .windows(key.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == key).then_some(offset))
+        .nth(occurrence)
+        .expect("artifact key");
+    let mut cursor = key_start + key.len();
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    assert_eq!(bytes.get(cursor), Some(&b':'));
+    cursor += 1;
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn mutate_first_json_digit(bytes: &mut [u8], key: &[u8]) {
+    let value_start = json_value_start(bytes, key, 0);
+    let digit = bytes[value_start..]
+        .iter()
+        .position(u8::is_ascii_digit)
+        .map(|relative| value_start + relative)
+        .expect("numeric artifact value");
+    bytes[digit] = if bytes[digit] == b'9' {
+        b'8'
+    } else {
+        bytes[digit] + 1
+    };
 }
 
 fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
-    let rows_marker = b"\"rows\":[";
-    let rows_start = bytes
-        .windows(rows_marker.len())
-        .position(|window| window == rows_marker)
-        .map(|offset| offset + rows_marker.len())
-        .expect("artifact rows marker");
-    assert_eq!(bytes.get(rows_start), Some(&b'{'));
+    let rows_start = json_value_start(bytes, b"\"rows\"", 0);
+    assert_eq!(bytes.get(rows_start), Some(&b'['));
 
     let mut ranges = Vec::new();
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
     let mut row_start = None;
-    for (relative, &byte) in bytes[rows_start..].iter().enumerate() {
+    for (relative, &byte) in bytes[rows_start + 1..].iter().enumerate() {
+        let offset = rows_start + 1 + relative;
         if in_string {
             if escaped {
                 escaped = false;
@@ -61,16 +81,14 @@ fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
             b'"' => in_string = true,
             b'{' => {
                 if depth == 0 {
-                    row_start = Some(rows_start + relative);
+                    row_start = Some(offset);
                 }
                 depth += 1;
             }
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    ranges.push(
-                        row_start.take().expect("artifact row start")..rows_start + relative + 1,
-                    );
+                    ranges.push(row_start.take().expect("artifact row start")..offset + 1);
                 }
             }
             b']' if depth == 0 => break,
@@ -81,16 +99,14 @@ fn json_row_ranges(bytes: &[u8]) -> Vec<std::ops::Range<usize>> {
 }
 
 fn duplicate_first_json_row(bytes: &[u8]) -> Vec<u8> {
-    let first = json_row_ranges(bytes)
-        .into_iter()
-        .next()
-        .expect("complete first artifact row");
-    let insert_at = bytes.len() - 2;
-    assert_eq!(&bytes[insert_at..], b"]}");
-    let mut duplicated = Vec::with_capacity(bytes.len() + first.len() + 1);
+    let ranges = json_row_ranges(bytes);
+    let first = ranges.first().expect("complete first artifact row");
+    let insert_at = ranges.last().expect("complete last artifact row").end;
+    let separator = &bytes[first.end..ranges.get(1).expect("second artifact row").start];
+    let mut duplicated = Vec::with_capacity(bytes.len() + first.len() + separator.len());
     duplicated.extend_from_slice(&bytes[..insert_at]);
-    duplicated.push(b',');
-    duplicated.extend_from_slice(&bytes[first]);
+    duplicated.extend_from_slice(separator);
+    duplicated.extend_from_slice(&bytes[first.clone()]);
     duplicated.extend_from_slice(&bytes[insert_at..]);
     duplicated
 }
@@ -99,24 +115,19 @@ fn swap_first_two_json_rows(bytes: &[u8]) -> Vec<u8> {
     let ranges = json_row_ranges(bytes);
     let first = ranges.first().expect("first artifact row");
     let second = ranges.get(1).expect("second artifact row");
-    assert_eq!(&bytes[first.end..second.start], b",");
+    let separator = &bytes[first.end..second.start];
     let mut swapped = Vec::with_capacity(bytes.len());
     swapped.extend_from_slice(&bytes[..first.start]);
     swapped.extend_from_slice(&bytes[second.clone()]);
-    swapped.push(b',');
+    swapped.extend_from_slice(separator);
     swapped.extend_from_slice(&bytes[first.clone()]);
     swapped.extend_from_slice(&bytes[second.end..]);
     swapped
 }
 
 fn empty_nth_fold_group_list(bytes: &[u8], occurrence: usize) -> Vec<u8> {
-    let marker = b"\"groups\":{\"entries\":[";
-    let array_start = bytes
-        .windows(marker.len())
-        .enumerate()
-        .filter_map(|(offset, window)| (window == marker).then_some(offset + marker.len() - 1))
-        .nth(occurrence)
-        .expect("fold group list marker");
+    let array_start = json_value_start(bytes, b"\"entries\"", occurrence);
+    assert_eq!(bytes.get(array_start), Some(&b'['));
 
     let mut depth = 0usize;
     let mut in_string = false;
@@ -244,51 +255,25 @@ fn decoder_rejects_format_policy_and_duplicate_row_tampering() {
     let bytes = checked_in_artifact_bytes::<fp128::Dense>();
 
     let mut wrong_magic = bytes.clone();
-    replace_once(&mut wrong_magic, b"\"magic\":[65,", b"\"magic\":[66,");
+    mutate_first_json_digit(&mut wrong_magic, b"\"magic\"");
     let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&wrong_magic)
         .expect_err("wrong magic must reject");
     assert!(format!("{error}").contains("format"));
 
     let mut wrong_version = bytes.clone();
-    replace_once(&mut wrong_version, b"\"version\":1", b"\"version\":2");
+    mutate_first_json_digit(&mut wrong_version, b"\"version\"");
     let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&wrong_version)
         .expect_err("unsupported version must reject");
     assert!(format!("{error}").contains("format"));
 
     let mut wrong_epoch = bytes.clone();
-    let marker = b"\"protocol_epoch\":";
-    let epoch_start = wrong_epoch
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .map(|offset| offset + marker.len())
-        .expect("protocol epoch marker");
-    let epoch_end = wrong_epoch[epoch_start..]
-        .iter()
-        .position(|byte| !byte.is_ascii_digit())
-        .map(|relative| epoch_start + relative)
-        .expect("protocol epoch terminator");
-    let last_digit = wrong_epoch
-        .get_mut(epoch_end - 1)
-        .expect("protocol epoch digit");
-    *last_digit = if *last_digit == b'9' {
-        b'8'
-    } else {
-        *last_digit + 1
-    };
+    mutate_first_json_digit(&mut wrong_epoch, b"\"protocol_epoch\"");
     let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&wrong_epoch)
         .expect_err("wrong protocol epoch must reject");
     assert!(format!("{error}").contains("protocol epoch"));
 
     let mut wrong_policy = bytes.clone();
-    let marker = b"\"policy_digest\":[";
-    let first_digest_byte = wrong_policy
-        .windows(marker.len())
-        .position(|window| window == marker)
-        .map(|offset| offset + marker.len())
-        .expect("policy digest marker");
-    let digit = wrong_policy[first_digest_byte];
-    assert!(digit.is_ascii_digit());
-    wrong_policy[first_digest_byte] = if digit == b'9' { b'8' } else { digit + 1 };
+    mutate_first_json_digit(&mut wrong_policy, b"\"policy_digest\"");
     let error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&wrong_policy)
         .expect_err("wrong policy digest must reject");
     assert!(format!("{error}").contains("policy"));

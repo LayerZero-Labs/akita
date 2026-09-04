@@ -261,8 +261,8 @@ alone.
 The planner materializes complete expanded `FoldSchedule` values. The artifact
 emitter pairs each schedule with its committed group profiles, constructs a
 validated `TrustedScheduleCatalog`, and serializes that catalog directly as a
-canonical `.aks` file. There is no intermediate Rust table representation or
-runtime expansion path.
+deterministically pretty-printed canonical `.aks` file. There is no intermediate
+Rust table representation or runtime expansion path.
 
 The reusable artifact emitter lives in this crate and accepts explicit
 `EmitSpec` values. The `gen_schedule_artifacts` binary is enabled by the
