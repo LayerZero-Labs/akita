@@ -130,6 +130,7 @@ live_specs=(
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
   specs/heterogeneous-group-source-contracts.md
+  specs/iterated-jl-shortness.md
   specs/large-digit-ntt-infrastructure.md
   specs/packed-sumcheck.md
   specs/role-native-projected-digit-layout.md
