@@ -62,9 +62,11 @@ The first implementation SHOULD make the following choices:
    sumcheck whose base case is a small digit MLE and a fixed setup MLE.
 7. Schedule, setup seed, transcript, sampler, proof shape, program class, and
    public-input layout are hard-coded into a small number of circuit classes.
-8. SHA-256 is the initial standard-hash baseline for both transcripts verified
-   inside the wrapper: Jolt's outer transcript and Akita's nested transcript.
-   They remain separate, domain-separated states connected by the existing
+8. BLAKE3 is the leading standard-hash circuit target for both transcripts
+   verified inside the wrapper: Jolt's outer transcript and Akita's nested
+   transcript. SHA-256 is the conservative library-backed fallback until the
+   BLAKE3 gadget and transcript composition pass audit. The two transcripts
+   remain separate, domain-separated states connected by the existing
    statement-challenge bridge. Poseidon is out of scope. Keccak remains
    appropriate for Solidity or an outer PLONK transcript, but is not the
    initial in-circuit proof transcript.
@@ -210,9 +212,9 @@ or relation list may alter the circuit after key generation.
   solver, Groth16 proof, and PLONK proof agree on an accepted corpus and reject
   every single-field mutation in the adversarial corpus.
 - [ ] The compiler reports operation counts by source label and protocol layer:
-  field multiplication, Boolean/range constraint, Jolt SHA-256 compression,
-  Akita SHA-256 compression, sampler swap, setup-MLE multiplication, and public
-  input.
+  field multiplication, Boolean/range constraint, Jolt standard-hash
+  compression, Akita standard-hash compression, sampler swap, setup-MLE
+  multiplication, and public input.
 - [ ] The bootstrap direct-BN254 Jolt proof is wrapped end to end and accepted
   by generated Solidity contracts for both Groth16 and PLONK.
 - [ ] The fp128 verifier guest produces `P1` under BN254 Jolt/Akita, and the
@@ -259,8 +261,8 @@ native host time. The planner SHOULD minimize a measured cost vector rather
 than one synthetic scalar until backend measurements justify weights:
 
 ```text
-(Jolt SHA-256 compressions,
- Akita SHA-256 compressions,
+(Jolt standard-hash compressions,
+ Akita standard-hash compressions,
  Boolean/range constraints,
  nonconstant field multiplications,
  Fisher-Yates/RAM constraints,
@@ -278,9 +280,11 @@ gas.
 The work MUST stop for design review at these gates:
 
 1. **Hash gate.** Count every Jolt and Akita transcript compression, including
-   their bridge, in one representative fixed schedule. If SHA-256 dominates
-   the circuit, evaluate batching, challenge coalescing with a proved joint
-   bound, or a standard-hash lookup table before tuning field multiplications.
+   their bridge, in one representative fixed schedule. Compare audited BLAKE3
+   and SHA-256 lowerings on the complete schedule. If standard hashing
+   dominates the circuit, evaluate batching, challenge coalescing with a proved
+   joint bound, or a standard-hash lookup table before tuning field
+   multiplications.
 2. **Terminal gate.** Compare the proposed terminal sumcheck plus fixed setup
    MLE with a direct constant-matrix MLE. Keep the smaller complete circuit,
    not the design with fewer native operations.
@@ -407,12 +411,29 @@ rank-comparison steps, and 37 sign bits; it needs no sampler rehash, random RAM,
 or rejection failure. The compiler MUST use one specified combinadic ordering
 and publish reference vectors at the first, last, and boundary ranks.
 
+This decoder is entropy-optimal at the transcript boundary: it consumes
+exactly 128 bits to choose exactly `2^128` challenges, with no failed draws or
+many-to-one shuffle order. It is also the expected circuit winner for D64. A
+straight lexicographic lowering performs at most 64 position-rank comparisons
+and 37 magnitude-rank comparisons, plus one constant quotient/remainder and
+37 sign bits. By contrast, faithful partial Fisher-Yates needs 37 bounded
+draws, mutable permutation access, conditional swaps, and hundreds of XOF
+bytes. This is a structural advantage, not merely a faster hash choice.
+
+Combinatorial unranking is not claimed to be globally constraint-minimal.
+PLONK lookup tables, chunked arithmetic decoding, or a deliberately structured
+`2^128` subset of the certified shell may lower the same mapping more cheaply.
+Any replacement MUST remain injective, retain the deterministic response
+bounds and unit-difference certificate, and beat combinadic unranking in the
+complete backend. Changing only the unranking algorithm while preserving the
+same canonical rank order does not change the challenge distribution.
+
 The planner SHOULD still benchmark the current partial Fisher-Yates law. For a
 shell of weight `w = 37`, step `i` draws `j_i` uniformly from `[i, 63]`, swaps
 `perm[i]` and `perm[j_i]`, and emits `perm[i]`. A faithful symbolic lowering
 constrains:
 
-1. SHA-256 counter expansion of the sampler seed;
+1. exact counter/XOF expansion under the profile's selected standard hash;
 2. fixed-width unsigned candidate words;
 3. the exact rejection threshold `floor(2^b / (64-i)) * (64-i)`;
 4. selection of the first accepted candidate within a fixed public attempt
@@ -427,8 +448,9 @@ Cap exhaustion is a public sampler failure, not modulo reduction. For example,
 with 32-bit candidates and five attempts per draw, the exact union bound over
 moduli 28 through 64 is below `2^-129.15`; this consumes 740 candidate bytes
 before hash-expander framing. A 16-bit decoder needs 13 attempts to push the
-same union bound below `2^-132.93` and consumes 962 candidate bytes. Those
-extra SHA-256 blocks are why enumerative decoding is the baseline.
+same union bound below `2^-132.93` and consumes 962 candidate bytes. Even with
+BLAKE3, producing that many constrained XOF bytes requires many compression
+calls. This is why enumerative decoding is the baseline.
 
 The first Groth16 Fisher-Yates backend can use a dense 64-entry array with
 one-hot or bitwise index selection. Its swap cost is only thousands of simple
@@ -459,13 +481,40 @@ first implementation SHOULD preserve this composition and its domain
 separation; replacing it with one shared state would change the protocol and
 requires a separate security analysis.
 
-The initial complete-circuit baseline SHOULD use SHA-256 for both states
-because it has a mature gnark gadget and was cheaper than legacy Keccak-256 in
-a direct BN254 microbenchmark. Current Jolt and Akita do not yet expose this
-combination: Jolt has Blake2b, Keccak, and Poseidon transcript backends, while
-Akita has Blake2b and Keccak. A fixed SHA-256 transcript implementation and
-cross-language vectors are therefore part of the work, not a configuration
-toggle. At gnark commit
+The preferred circuit target SHOULD be BLAKE3 for both states. It uses 32-bit
+ARX operations like BLAKE2s, but only seven compression rounds, and its root
+XOF can derive a 32-byte next state and a 16-byte field challenge from one
+64-byte output block. Jolt PR
+[#1837](https://github.com/a16z/jolt/pull/1837) already contains a streaming
+keyed-BLAKE3 transcript and a bit-R1CS compression gadget. At the pinned PR
+head `89f73577af3ea3e709ddb2557be62d1afb462675`, one variable-IV compression
+plus feed-forward is asserted to use 15,792 R1CS constraints; the fixed-IV
+case uses 15,408. This is direct evidence that BLAKE3 can be much cheaper than
+the current standard-hash alternatives when the Boolean lowering is designed
+for it.
+
+A small gnark prototype at commit
+[`fd5c2443d59970eb1c3e4202fb8f10a23ef60632`](https://github.com/Consensys/gnark/tree/fd5c2443d59970eb1c3e4202fb8f10a23ef60632)
+implemented the same seven-round compression through gnark's `uints.U32`
+API. It compiled the following fixed-length digest circuits, each with a
+32-byte public-output equality:
+
+| Input bytes | BLAKE3 R1CS | SHA-256 R1CS | BLAKE3 SCS | SHA-256 SCS |
+|---:|---:|---:|---:|---:|
+| 32 | 76,496 | 165,986 | 229,266 | 497,472 |
+| 64 | 76,560 | 200,663 | 229,506 | 601,761 |
+| 740 | 192,440 | 554,068 | 580,912 | 1,662,424 |
+
+Thus the unoptimized gnark BLAKE3 port used about 54% fewer constraints at 32
+bytes and 62% fewer at 64 bytes; over 740 bytes it used about 65% fewer. The
+prototype is cost evidence, not an audited gadget or a committed artifact. It
+also understates the cost of a Fisher-Yates counter expander, which must
+generate 740 output bytes rather than merely hash a 740-byte message.
+
+SHA-256 remains the fallback because gnark ships a maintained gadget and its
+standardization and security margin are conservative. It was also cheaper than
+legacy Keccak-256 in the earlier direct BN254 benchmark. At the same gnark
+commit
 [`fd5c2443d59970eb1c3e4202fb8f10a23ef60632`](https://github.com/Consensys/gnark/tree/fd5c2443d59970eb1c3e4202fb8f10a23ef60632),
 compiling a variable-byte digest circuit with a 32-byte output equality gave:
 
@@ -484,10 +533,12 @@ pending transcript bytes into fixed blocks, avoid hashing static profile
 material repeatedly, and derive multiple jointly analyzed values from one
 digest only when the proof gives a joint soundness bound for doing so.
 
-BLAKE2s or BLAKE3 MAY be benchmarked as standard-hash alternatives, especially
-because Jolt already has Blake3 transcript work, but adopting either requires
-an audited gadget, exact Rust/Go test vectors, and lower complete-circuit cost.
-Current gnark exposes SHA-2 and SHA-3 standard gadgets but no BLAKE2s package.
+Adopting BLAKE3 requires an audited gadget, exact Rust/IR/Go vectors, and a
+security review of the keyed rolling transcript rather than only the
+compression function. BLAKE3's specification targets 128-bit security; the
+profile MUST state the classical and quantum transcript-security claims
+explicitly and MUST NOT infer a 256-bit margin merely from the output length.
+Current gnark exposes SHA-2 and SHA-3 standard gadgets but no BLAKE3 package.
 Keccak SHOULD remain the Solidity-facing default for generated PLONK verifier
 transcripts. `P1`, including the nested Akita proof, remains private witness
 data to `P2`; the contract replays neither the Jolt nor Akita transcript.
@@ -751,9 +802,9 @@ constraints but changes the requested standard-hash trust and compatibility
 surface.
 
 **Keccak as the in-circuit Jolt/Akita transcript.** Not selected initially. It
-aligns with the EVM opcode but is substantially more expensive than SHA-256 in
-the current gnark BN254 microbenchmark. The contract replays neither proof
-transcript, so EVM opcode alignment provides little benefit.
+aligns with the EVM opcode but is substantially more expensive than both
+BLAKE3 and SHA-256 in the current BN254 evidence. The contract replays neither
+proof transcript, so EVM opcode alignment provides little benefit.
 
 **Hand-write separate Groth16 and PLONK verifiers.** Rejected. The maintenance
 and soundness risk is exactly what the symbolic verifier/compiler is intended
@@ -767,7 +818,8 @@ to remove.
 - Count Jolt and Akita transcript messages and compressions separately,
   including the bridge, plus field operations, digit widths, sampler
   coordinates, setup coefficients, and terminal coordinates.
-- Reproduce the SHA-256/Keccak gnark microbenchmark in a pinned tool directory.
+- Reproduce the BLAKE3/SHA-256/Keccak gnark microbenchmarks in a pinned tool
+  directory, including amortized multi-compression transcript schedules.
 - Measure direct fp128-verifier R1CS as a lower-level comparison.
 - Record current `profile/akita-recursion` guest cycles and memory at small and
   production-representative sizes.
@@ -801,11 +853,12 @@ mutation corpus.
 
 ### Milestone 3: Standard Transcript and Sparse Sampler
 
-- Specify SHA-256 duplex/rolling transcripts for Jolt and Akita, their domain
+- Specify keyed rolling BLAKE3 transcripts for Jolt and Akita, their domain
   separation, exact field/byte encodings, and the existing one-challenge
   bridge. Preserve separate states in the first implementation.
-- Add the SHA-256 transcript backends to both Rust protocols and generate
-  Rust/IR/Go vectors for every absorb and squeeze.
+- Port and audit the BLAKE3 bit gadget, and generate Rust/IR/Go vectors for
+  every absorb and squeeze. Retain SHA-256 as the fallback backend and parity
+  fixture.
 - Specify the 128-bit enumerative decoder and canonical combinadic order.
 - Compile and benchmark dense Fisher-Yates for R1CS and lookup/RAM lowering for
   SCS as a compatibility fallback, including its cap failure bound.
@@ -857,10 +910,10 @@ Deliverable: `P0 -> P1 -> P2 -> Solidity` acceptance and mutation rejection.
    largest performance risk. A generic RISC-V fp128 verifier may be too large
    even if the final circuit is excellent.
 2. **Standard hashes may dominate the circuit.** `P2` constrains the complete
-   Jolt transcript as well as Akita's nested transcript. Hundreds of
-   Fiat-Shamir challenges multiplied by SHA-256 gadgets can produce millions
-   of constraints. Transcript scheduling is likely more important than field
-   multiplication tuning.
+   Jolt transcript as well as Akita's nested transcript. Even BLAKE3 can
+   produce millions of constraints when replayed hundreds of times.
+   Transcript scheduling is likely more important than field multiplication
+   tuning.
 3. **Setup offloading may not be cheapest in R1CS.** Constant setup
    coefficients enter linear combinations cheaply. The planner must measure
    the complete circuit rather than inherit the native setup-scan objective.
@@ -918,6 +971,8 @@ normal lifecycle policy.
   [a16z/jolt PR #1322](https://github.com/a16z/jolt/pull/1322).
 - Current Jolt/Dory wrapper:
   [a16z/jolt PR #1837](https://github.com/a16z/jolt/pull/1837).
+- BLAKE3 specification and security rationale:
+  [BLAKE3 specification source](https://github.com/BLAKE3-team/BLAKE3-specs/blob/master/blake3.tex).
 - gnark Groth16 BN254 Solidity exporter:
   [BN254 verifier source](https://github.com/Consensys/gnark/blob/master/backend/groth16/bn254/verify.go).
 - gnark PLONK BN254 Solidity verifier:
