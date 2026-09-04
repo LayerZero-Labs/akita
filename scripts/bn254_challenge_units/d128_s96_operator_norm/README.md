@@ -60,8 +60,8 @@ The certificate bounds that marginal by `q1` and applies a union bound.
 
 ## Reproduction pipeline
 
-`moments_mod.cpp` computes the first 31 unnormalized spectral moments modulo a
-prime with a primitive 256th root. The seven reconstruction primes have a
+`../masked_moments_mod.cpp` computes the first 31 unnormalized spectral moments
+modulo a prime with a primitive 256th root. The seven reconstruction primes have a
 427-bit product, above the 406-bit a priori bound
 `C(96,36) * 36 * 1369^30`. The eighth prime is omitted from reconstruction and
 checks every recovered moment independently.
@@ -83,8 +83,11 @@ prime/generator pairs below:
 For each pair, invoke the generator as follows:
 
 ```bash
-./moments_mod PRIME GENERATOR 30 128 35 1
+./masked_moments_mod PRIME GENERATOR 30 128 35 1 3
 ```
+
+The final argument is a bit mask of selected 2-adic valuations. `3` selects
+valuations zero and one for S96.
 
 Then run:
 

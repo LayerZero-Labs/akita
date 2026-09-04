@@ -29,8 +29,8 @@ static inline void add_assign(u64 &target, u64 value, u64 p) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 7) {
-        std::cerr << "usage: moments_mod PRIME PRIMITIVE_ROOT MAX_MOMENT DIMENSION MAG1_COUNT MAG2_COUNT\n";
+    if (argc != 8) {
+        std::cerr << "usage: moments_mod PRIME PRIMITIVE_ROOT MAX_MOMENT DIMENSION MAG1_COUNT MAG2_COUNT VALUATION_MASK\n";
         return 2;
     }
     const u64 mod = std::stoull(argv[1]);
@@ -39,15 +39,19 @@ int main(int argc, char **argv) {
     const int dimension = std::stoi(argv[4]);
     const int mag1_count = std::stoi(argv[5]);
     const int mag2_count = std::stoi(argv[6]);
+    const unsigned int valuation_mask = std::stoul(argv[7]);
     if (max_moment < 0 || dimension <= 0 || mag1_count < 0 || mag2_count < 0 ||
-        (mod - 1) % (2 * dimension) != 0) {
+        valuation_mask == 0 || (mod - 1) % (2 * dimension) != 0) {
         std::cerr << "invalid moment, dimension, shell counts, or modulus\n";
         return 2;
     }
 
     std::vector<int> positions;
     for (int position = 1; position < dimension; ++position) {
-        if (position % 4 != 0) positions.push_back(position);
+        int valuation = 0;
+        for (int reduced = position; reduced % 2 == 0; reduced /= 2)
+            ++valuation;
+        if ((valuation_mask >> valuation) & 1U) positions.push_back(position);
     }
     if (mag1_count + mag2_count > static_cast<int>(positions.size())) {
         std::cerr << "shell has more nonzero coefficients than selected positions\n";

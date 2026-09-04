@@ -50,6 +50,7 @@ CANDIDATES = (
     Candidate("S96", frozenset((0, 1)), 35, 1),
     Candidate("S88", frozenset((0, 2, 3)), 35, 2),
     Candidate("S80", frozenset((0, 2)), 36, 3),
+    Candidate("S72", frozenset((0, 3)), 38, 5),
 )
 
 
@@ -87,7 +88,7 @@ def sample_candidate(candidate: Candidate, samples: int, seed: int, batch: int) 
     positions = candidate.positions()
     weight = candidate.count_pm1 + candidate.count_pm2
     twist = np.exp(1j * np.pi * np.arange(RING_DIMENSION) / RING_DIMENSION)
-    thresholds = range(13, 19)
+    thresholds = range(13, 25)
     accepted = {threshold: 0 for threshold in thresholds}
 
     for start in range(0, samples, batch):

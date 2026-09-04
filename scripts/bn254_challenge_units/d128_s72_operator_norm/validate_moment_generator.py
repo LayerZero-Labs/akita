@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the S96 modular EGF generator against exhaustive enumeration."""
+"""Check the S72 modular EGF generator against exhaustive enumeration."""
 
 import itertools
 import json
@@ -15,7 +15,7 @@ GENERATOR_SOURCE = SOURCE_DIRECTORY.parent / "masked_moments_mod.cpp"
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="akita-s96-moments-") as temporary_directory:
+    with tempfile.TemporaryDirectory(prefix="akita-s72-moments-") as temporary_directory:
         executable = str(Path(temporary_directory) / "moments_mod")
         subprocess.run(
             [
@@ -39,7 +39,7 @@ def main():
                 str(dimension),
                 str(mag1_count),
                 str(mag2_count),
-                "3",
+                "9",
             ],
             check=True,
             capture_output=True,
@@ -49,7 +49,7 @@ def main():
 
     root = pow(PRIMITIVE, (PRIME - 1) // (2 * dimension), PRIME)
     root_inverse = pow(root, PRIME - 2, PRIME)
-    positions = [position for position in range(1, dimension) if position % 4 != 0]
+    positions = [position for position in range(1, dimension) if position % 2 == 1]
     sign_count = 2 ** (mag1_count + mag2_count)
     inverse_sign_count = pow(sign_count, PRIME - 2, PRIME)
     exhaustive = [0] * (max_moment + 1)
@@ -78,20 +78,20 @@ def main():
                     exhaustive[moment] + support_moments[moment] * inverse_sign_count
                 ) % PRIME
     assert generated == {moment: exhaustive[moment] for moment in range(max_moment + 1)}
-    print("PASS: modular EGF generator matches exhaustive d=8,S6,(a,b)=(2,1) shell")
+    print("PASS: masked modular EGF generator matches exhaustive d=8,S4 shell")
 
-    certificate = json.loads((SOURCE_DIRECTORY / "cert_d128_s96_a35_b1_gamma15.json").read_text())
+    certificate = json.loads((SOURCE_DIRECTORY / "cert_d128_s72_a38_b5_gamma18.json").read_text())
     moments = {int(key): F(value) for key, value in certificate["moments_M0_to_M30"].items()}
-    energy = 35 + 4
-    fourth_power_sum = 35 + 16
-    selected_positions = 96
+    energy = 38 + 4 * 5
+    fourth_power_sum = 38 + 16 * 5
+    selected_positions = 72
     expected_second = (
         2 * energy**2
         - fourth_power_sum
         - F(energy**2 - fourth_power_sum, selected_positions - 1)
     )
     assert moments[2] == expected_second
-    print(f"PASS: D128 S96 M2 matches independent closed form: {moments[2]}")
+    print(f"PASS: D128 S72 M2 matches independent closed form: {moments[2]}")
 
 
 if __name__ == "__main__":
