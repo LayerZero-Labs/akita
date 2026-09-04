@@ -84,17 +84,18 @@ The root live set is deliberately small and is synchronized with
 4. `fold-linf-rejection.md`
 5. `heterogeneous-group-source-contracts.md`
 6. `large-digit-ntt-infrastructure.md`
-7. `packed-sumcheck.md`
-8. `role-native-projected-digit-layout.md`
-9. `runtime-ring-cutover.md`
-10. `selective-l2-fold-security-sizing.md`
-11. `setup-offloading-planner.md`
-12. `sis-quantum128-scalar-n-table.md`
-13. `structured-e-term.md`
-14. `subring-coefficient-packing.md`
-15. `transcript-grinding.md`
+7. `on-chain-lattice-jolt-wrapper.md`
+8. `packed-sumcheck.md`
+9. `role-native-projected-digit-layout.md`
+10. `runtime-ring-cutover.md`
+11. `selective-l2-fold-security-sizing.md`
+12. `setup-offloading-planner.md`
+13. `sis-quantum128-scalar-n-table.md`
+14. `structured-e-term.md`
+15. `subring-coefficient-packing.md`
+16. `transcript-grinding.md`
 
-All 15 live specifications must pass the default dead-symbol scan. A record
+All 16 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

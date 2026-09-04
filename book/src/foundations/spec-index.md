@@ -17,6 +17,7 @@ policy and the checker use the same live set in
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
 | [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | implemented | Defines current source-free group and fold-admission rules. |
 | [`large-digit-ntt-infrastructure`](../../../specs/large-digit-ntt-infrastructure.md) | implemented | Load-bearing large-digit NTT and terminal verification contract. |
+| [`on-chain-lattice-jolt-wrapper`](../../../specs/on-chain-lattice-jolt-wrapper.md) | proposed | Defines the circuit-oriented BN254 Akita profile and lattice-Jolt wrapping plan. |
 | [`packed-sumcheck`](../../../specs/packed-sumcheck.md) | approved | Approved packed EOR and sum-check implementation; earlier Stage 1 and Stage 2 prerequisite gates are complete. |
 | [`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md) | implemented | Normative witness and verifier layout source. |
 | [`runtime-ring-cutover`](../../../specs/runtime-ring-cutover.md) | implemented | Normative runtime ring contract cited by the architecture chapter. |

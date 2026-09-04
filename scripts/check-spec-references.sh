@@ -131,6 +131,7 @@ live_specs=(
   specs/fold-linf-rejection.md
   specs/heterogeneous-group-source-contracts.md
   specs/large-digit-ntt-infrastructure.md
+  specs/on-chain-lattice-jolt-wrapper.md
   specs/packed-sumcheck.md
   specs/role-native-projected-digit-layout.md
   specs/runtime-ring-cutover.md
