@@ -271,8 +271,9 @@ impl TrustedScheduleCatalog {
                             "invalid schedule artifact row {index}: {error}"
                         ))
                     })?;
-                // Validate topology before using the root's final/precommitted views.
-                row.schedule.validate_structure()?;
+                // Validate root topology before deriving its profiles. The canonical
+                // row audit below checks the complete schedule once.
+                row.schedule.root.params.validate_group_topology()?;
                 let profiles = CommittedGroupBatchProfile {
                     final_group: row.schedule.root.params.own_group().profile,
                     precommitteds: row
