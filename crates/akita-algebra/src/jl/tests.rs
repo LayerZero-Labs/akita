@@ -4,14 +4,37 @@ use jolt_field::{Fp64, Ring, Zero};
 
 type F = Fp64<4294967197>;
 
+fn matrix_from_entries(entries: &[Vec<i8>]) -> TernaryProjectionMatrix {
+    let rows = entries.len();
+    let cols = entries.first().unwrap().len();
+    let shape = TernaryProjectionShape::new(rows, cols).unwrap();
+    let mut first = vec![0u8; shape.plane_len()];
+    let mut second = vec![0u8; shape.plane_len()];
+    for (row, values) in entries.iter().enumerate() {
+        assert_eq!(values.len(), cols);
+        for (col, &value) in values.iter().enumerate() {
+            let index = (col >> 2) * shape.row_pairs() + (row >> 1);
+            let bit = 1u8 << (((row & 1) << 2) | (col & 3));
+            match value {
+                -1 => {}
+                0 => first[index] |= bit,
+                1 => {
+                    first[index] |= bit;
+                    second[index] |= bit;
+                }
+                _ => panic!("test matrix entry is not ternary"),
+            }
+        }
+    }
+    TernaryProjectionMatrix::from_rademacher_bitplanes(shape, first, second).unwrap()
+}
+
 fn fixture() -> TernaryProjectionMatrix {
-    let shape = TernaryProjectionShape::new(3, 5).unwrap();
-    TernaryProjectionMatrix::from_bitplanes(
-        shape,
-        vec![0b0_01101, 0b0_10011, 0b0_11110],
-        vec![0b0_01001, 0b0_10000, 0b0_00110],
-    )
-    .unwrap()
+    matrix_from_entries(&[
+        vec![1, 0, -1, 1, 0],
+        vec![-1, -1, 0, 0, 1],
+        vec![0, 1, 1, -1, -1],
+    ])
 }
 
 fn field_from_i128(value: i128) -> F {
@@ -26,7 +49,8 @@ fn shape_checks_empty_overflow_and_materialization_budget() {
     assert!(TernaryProjectionShape::new(1 << 20, 1 << 20).is_err());
 
     let shape = TernaryProjectionShape::new(3, 9).unwrap();
-    assert_eq!(shape.row_bytes(), 2);
+    assert_eq!(shape.col_groups(), 3);
+    assert_eq!(shape.row_pairs(), 2);
     assert_eq!(shape.plane_len(), 6);
     assert_eq!(shape.packed_len(), 12);
     assert_eq!(shape.dense_len(), 27);
@@ -39,7 +63,7 @@ fn shape_checks_empty_overflow_and_materialization_budget() {
 }
 
 #[test]
-fn bitplanes_are_canonical_and_decode_balanced_ternary() {
+fn rademacher_bitplanes_are_canonical_and_decode_balanced_ternary() {
     let matrix = fixture();
     let expected = [[1, 0, -1, 1, 0], [-1, -1, 0, 0, 1], [0, 1, 1, -1, -1]];
     for (row, entries) in expected.iter().enumerate() {
@@ -51,8 +75,31 @@ fn bitplanes_are_canonical_and_decode_balanced_ternary() {
     assert!(matrix.entry(0, 5).is_err());
 
     let shape = TernaryProjectionShape::new(1, 5).unwrap();
-    assert!(TernaryProjectionMatrix::from_bitplanes(shape, vec![0], vec![1]).is_err());
-    assert!(TernaryProjectionMatrix::from_bitplanes(shape, vec![0b1000_0000], vec![0]).is_err());
+    assert!(
+        TernaryProjectionMatrix::from_rademacher_bitplanes(shape, vec![0xf0, 0], vec![0, 0],)
+            .is_err()
+    );
+    assert!(
+        TernaryProjectionMatrix::from_rademacher_bitplanes(shape, vec![0, 0b0010], vec![0, 0],)
+            .is_err()
+    );
+}
+
+#[test]
+fn dense_compute_plane_is_lazy_cached_and_not_matrix_identity() {
+    let matrix = fixture();
+    let canonical_clone = matrix.clone();
+    assert!(matrix.dense.get().is_none());
+    assert_eq!(matrix, canonical_clone);
+
+    let first = matrix.dense_rows().unwrap().as_ptr();
+    let second = matrix.dense_rows().unwrap().as_ptr();
+    assert_eq!(first, second);
+    assert!(matrix.dense.get().is_some());
+    assert_eq!(matrix, canonical_clone);
+    let materialized_clone = matrix.clone();
+    assert!(materialized_clone.dense.get().is_none());
+    assert_eq!(matrix, materialized_clone);
 }
 
 #[test]
@@ -84,31 +131,16 @@ fn integer_and_field_projection_match_dense_reference() {
     assert_eq!(matrix.project_field(&field_input).unwrap(), field_expected);
     assert!(matrix.project_i128(&input[..4]).is_err());
 
-    let overflow_matrix = TernaryProjectionMatrix::from_bitplanes(
-        TernaryProjectionShape::new(1, 2).unwrap(),
-        vec![0b11],
-        vec![0b11],
-    )
-    .unwrap();
+    let overflow_matrix = matrix_from_entries(&[vec![1, 1]]);
     assert!(overflow_matrix.project_i128(&[i128::MAX, 1]).is_err());
     assert!(overflow_matrix.project(&[i64::MAX, 1]).is_err());
 
-    let cancellation_matrix = TernaryProjectionMatrix::from_bitplanes(
-        TernaryProjectionShape::new(1, 2).unwrap(),
-        vec![0b11],
-        vec![0b01],
-    )
-    .unwrap();
+    let cancellation_matrix = matrix_from_entries(&[vec![1, -1]]);
     assert_eq!(
         cancellation_matrix.project(&[i64::MAX, 1]).unwrap(),
         [i64::MAX - 1]
     );
-    let intermediate_overflow_matrix = TernaryProjectionMatrix::from_bitplanes(
-        TernaryProjectionShape::new(1, 3).unwrap(),
-        vec![0b111],
-        vec![0b011],
-    )
-    .unwrap();
+    let intermediate_overflow_matrix = matrix_from_entries(&[vec![1, 1, -1]]);
     assert_eq!(
         intermediate_overflow_matrix
             .project(&[i64::MAX, 1, 1])
@@ -138,22 +170,18 @@ fn repeated_block_projection_reuses_the_same_matrix() {
 #[test]
 fn native_width_kernels_match_exact_reference_with_simd_tails() {
     let shape = TernaryProjectionShape::new(17, 259).unwrap();
-    let mut nonzero = vec![0u8; shape.plane_len()];
-    let mut positive = vec![0u8; shape.plane_len()];
-    for row in 0..shape.rows() {
-        for col in 0..shape.cols() {
+    let mut entries = vec![vec![0i8; shape.cols()]; shape.rows()];
+    for (row, row_entries) in entries.iter_mut().enumerate() {
+        for (col, entry) in row_entries.iter_mut().enumerate() {
             let code = (row * 37 + col * 19 + row * col) % 4;
-            if code != 0 {
-                let index = row * shape.row_bytes() + col / 8;
-                let bit = 1 << (col & 7);
-                nonzero[index] |= bit;
-                if code & 1 == 1 {
-                    positive[index] |= bit;
-                }
-            }
+            *entry = match code {
+                0 => 0,
+                1 | 3 => 1,
+                _ => -1,
+            };
         }
     }
-    let matrix = TernaryProjectionMatrix::from_bitplanes(shape, nonzero, positive).unwrap();
+    let matrix = matrix_from_entries(&entries);
     let input_i8: Vec<i8> = (0..shape.cols())
         .map(|index| (index % 127) as i8 - 63)
         .collect();
@@ -162,11 +190,17 @@ fn native_width_kernels_match_exact_reference_with_simd_tails() {
         .unwrap();
     let expected_i64: Vec<i64> = expected.iter().map(|value| *value as i64).collect();
     assert_eq!(matrix.project(&input_i8).unwrap(), expected_i64);
-    let first_row = &matrix.dense_rows()[..shape.cols()];
     assert_eq!(
-        projection::tests::scalar_i8(first_row, &input_i8),
-        expected_i64[0]
+        projection::tests::dense_scalar_i8(&matrix, &input_i8),
+        expected_i64
     );
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx512f") {
+        assert_eq!(
+            projection::tests::avx512_small(&matrix, &input_i8),
+            expected_i64
+        );
+    }
     let input_i16: Vec<i16> = input_i8
         .iter()
         .copied()
@@ -180,9 +214,22 @@ fn native_width_kernels_match_exact_reference_with_simd_tails() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        projection::tests::scalar_i16(first_row, &input_i16),
-        expected_i64[0] * 101
+        projection::tests::dense_scalar_i16(&matrix, &input_i16),
+        expected_i64
+            .iter()
+            .map(|value| value * 101)
+            .collect::<Vec<_>>()
     );
+    #[cfg(target_arch = "x86_64")]
+    if std::arch::is_x86_feature_detected!("avx512f") {
+        assert_eq!(
+            projection::tests::avx512_small(&matrix, &input_i16),
+            expected_i64
+                .iter()
+                .map(|value| value * 101)
+                .collect::<Vec<_>>()
+        );
+    }
     let input_i32: Vec<i32> = input_i8
         .iter()
         .copied()
@@ -196,8 +243,11 @@ fn native_width_kernels_match_exact_reference_with_simd_tails() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        projection::tests::scalar_i32(first_row, &input_i32),
-        expected_i64[0] * 100_003
+        projection::tests::dense_scalar_i32(&matrix, &input_i32),
+        expected_i64
+            .iter()
+            .map(|value| value * 100_003)
+            .collect::<Vec<_>>()
     );
     let input_i64: Vec<i64> = input_i8
         .iter()
@@ -212,8 +262,11 @@ fn native_width_kernels_match_exact_reference_with_simd_tails() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        projection::tests::scalar_i64(first_row, &input_i64),
-        expected_i64[0] * 10_000_019
+        projection::tests::dense_scalar_i64(&matrix, &input_i64),
+        expected_i64
+            .iter()
+            .map(|value| value * 10_000_019)
+            .collect::<Vec<_>>()
     );
 }
 

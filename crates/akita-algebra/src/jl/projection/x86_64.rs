@@ -1,140 +1,162 @@
-//! x86-64 AVX2 kernels with scalar runtime fallback in the parent module.
+//! x86-64 paired-Rademacher lookup kernels.
 
+use super::{
+    build_lookup_table_i32, build_lookup_table_i64, expand_selector_pair, SmallLookupInput,
+    TernaryProjectionMatrix, LOOKUP_GROUPS_PER_TILE,
+};
 use std::arch::x86_64::*;
 
-pub(super) fn dot_i8_avx2_dispatch(weights: &[i8], input: &[i8]) -> i64 {
-    // SAFETY: the caller selected this function only after detecting AVX2;
-    // the kernel uses unaligned loads and stays within the common slice length.
-    unsafe { dot_i8_avx2(weights, input) }
+#[target_feature(enable = "avx512f")]
+pub(super) unsafe fn project_lookup_i32_avx512<T: SmallLookupInput>(
+    matrix: &TernaryProjectionMatrix,
+    input: &[T],
+    output: &mut [i64],
+) {
+    let shape = matrix.shape();
+    let mut tables = [[0i32; 16]; LOOKUP_GROUPS_PER_TILE];
+    for group_base in (0..shape.col_groups()).step_by(LOOKUP_GROUPS_PER_TILE) {
+        let groups = (shape.col_groups() - group_base).min(LOOKUP_GROUPS_PER_TILE);
+        for (local_group, table) in tables.iter_mut().take(groups).enumerate() {
+            *table = build_lookup_table_i32(input, group_base + local_group);
+        }
+
+        let mut row = 0;
+        while row + 16 <= shape.rows() {
+            let mut accumulator = _mm512_setzero_si512();
+            let row_pair = row >> 1;
+            for (local_group, table) in tables.iter().take(groups).enumerate() {
+                let table = _mm512_loadu_si512(table.as_ptr().cast());
+                let (first, second) = matrix.sign_groups_unchecked(group_base + local_group);
+                let first_indices = selector_indices_16_i32(first.as_ptr().add(row_pair));
+                let second_indices = selector_indices_16_i32(second.as_ptr().add(row_pair));
+                accumulator =
+                    _mm512_add_epi32(accumulator, _mm512_permutexvar_epi32(first_indices, table));
+                accumulator =
+                    _mm512_add_epi32(accumulator, _mm512_permutexvar_epi32(second_indices, table));
+            }
+            add_i32x16_to_i64_output(accumulator, output.as_mut_ptr().add(row));
+            row += 16;
+        }
+        accumulate_scalar_tail_i32(matrix, group_base, groups, &tables, row, output);
+    }
 }
 
-pub(super) fn dot_i16_avx2_dispatch(weights: &[i8], input: &[i16]) -> i64 {
-    // SAFETY: see `dot_i8_avx2_dispatch`.
-    unsafe { dot_i16_avx2(weights, input) }
+#[target_feature(enable = "avx512f")]
+pub(super) unsafe fn project_lookup_i64_avx512(
+    matrix: &TernaryProjectionMatrix,
+    input: &[i64],
+    output: &mut [i64],
+) {
+    let shape = matrix.shape();
+    let mut tables = [[0i64; 16]; LOOKUP_GROUPS_PER_TILE];
+    for group_base in (0..shape.col_groups()).step_by(LOOKUP_GROUPS_PER_TILE) {
+        let groups = (shape.col_groups() - group_base).min(LOOKUP_GROUPS_PER_TILE);
+        for (local_group, table) in tables.iter_mut().take(groups).enumerate() {
+            *table = build_lookup_table_i64(input, group_base + local_group);
+        }
+
+        let mut row = 0;
+        while row + 8 <= shape.rows() {
+            let mut accumulator = _mm512_loadu_si512(output.as_ptr().add(row).cast());
+            let row_pair = row >> 1;
+            for (local_group, table) in tables.iter().take(groups).enumerate() {
+                let low = _mm512_loadu_si512(table.as_ptr().cast());
+                let high = _mm512_loadu_si512(table.as_ptr().add(8).cast());
+                let (first, second) = matrix.sign_groups_unchecked(group_base + local_group);
+                let first_indices = selector_indices_8_i64(first.as_ptr().add(row_pair));
+                let second_indices = selector_indices_8_i64(second.as_ptr().add(row_pair));
+                accumulator = _mm512_add_epi64(
+                    accumulator,
+                    _mm512_permutex2var_epi64(low, first_indices, high),
+                );
+                accumulator = _mm512_add_epi64(
+                    accumulator,
+                    _mm512_permutex2var_epi64(low, second_indices, high),
+                );
+            }
+            _mm512_storeu_si512(output.as_mut_ptr().add(row).cast(), accumulator);
+            row += 8;
+        }
+        accumulate_scalar_tail_i64(matrix, group_base, groups, &tables, row, output);
+    }
 }
 
-pub(super) fn dot_i32_avx2_dispatch(weights: &[i8], input: &[i32]) -> i64 {
-    // SAFETY: see `dot_i8_avx2_dispatch`.
-    unsafe { dot_i32_avx2(weights, input) }
+#[target_feature(enable = "avx512f")]
+unsafe fn selector_indices_16_i32(packed: *const u8) -> __m512i {
+    let bytes = std::ptr::read_unaligned(packed.cast::<u64>()).to_le_bytes();
+    let expanded = [
+        expand_selector_pair(bytes[0]),
+        expand_selector_pair(bytes[1]),
+        expand_selector_pair(bytes[2]),
+        expand_selector_pair(bytes[3]),
+        expand_selector_pair(bytes[4]),
+        expand_selector_pair(bytes[5]),
+        expand_selector_pair(bytes[6]),
+        expand_selector_pair(bytes[7]),
+    ];
+    _mm512_cvtepu8_epi32(_mm_loadu_si128(expanded.as_ptr().cast()))
 }
 
-pub(super) fn dot_i64_avx2_dispatch(weights: &[i8], input: &[i64]) -> i64 {
-    // SAFETY: see `dot_i8_avx2_dispatch`.
-    unsafe { dot_i64_avx2(weights, input) }
+#[target_feature(enable = "avx512f")]
+unsafe fn selector_indices_8_i64(packed: *const u8) -> __m512i {
+    let bytes = std::ptr::read_unaligned(packed.cast::<u32>()).to_le_bytes();
+    let expanded = u64::from(expand_selector_pair(bytes[0]))
+        | (u64::from(expand_selector_pair(bytes[1])) << 16)
+        | (u64::from(expand_selector_pair(bytes[2])) << 32)
+        | (u64::from(expand_selector_pair(bytes[3])) << 48);
+    _mm512_cvtepu8_epi64(_mm_cvtsi64_si128(expanded as i64))
 }
 
-#[target_feature(enable = "avx2")]
-unsafe fn dot_i8_avx2(weights: &[i8], input: &[i8]) -> i64 {
-    let len = weights.len().min(input.len());
-    let mut low_sum = _mm256_setzero_si256();
-    let mut high_sum = _mm256_setzero_si256();
-    let mut index = 0;
-    while index + 16 <= len {
-        let w8 = _mm_loadu_si128(weights.as_ptr().add(index).cast());
-        let x8 = _mm_loadu_si128(input.as_ptr().add(index).cast());
-        let pairs = _mm256_madd_epi16(_mm256_cvtepi8_epi16(w8), _mm256_cvtepi8_epi16(x8));
-        low_sum = _mm256_add_epi64(
-            low_sum,
-            _mm256_cvtepi32_epi64(_mm256_castsi256_si128(pairs)),
-        );
-        high_sum = _mm256_add_epi64(
-            high_sum,
-            _mm256_cvtepi32_epi64(_mm256_extracti128_si256::<1>(pairs)),
-        );
-        index += 16;
-    }
-    let mut result = horizontal_sum(_mm256_add_epi64(low_sum, high_sum));
-    while index < len {
-        result += i64::from(*weights.get_unchecked(index)) * i64::from(*input.get_unchecked(index));
-        index += 1;
-    }
-    result
+#[target_feature(enable = "avx512f")]
+unsafe fn add_i32x16_to_i64_output(values: __m512i, output: *mut i64) {
+    let low = _mm512_cvtepi32_epi64(_mm512_castsi512_si256(values));
+    let high = _mm512_cvtepi32_epi64(_mm512_extracti64x4_epi64::<1>(values));
+    let low_output = _mm512_loadu_si512(output.cast());
+    let high_output = _mm512_loadu_si512(output.add(8).cast());
+    _mm512_storeu_si512(output.cast(), _mm512_add_epi64(low_output, low));
+    _mm512_storeu_si512(output.add(8).cast(), _mm512_add_epi64(high_output, high));
 }
 
-#[target_feature(enable = "avx2")]
-unsafe fn dot_i16_avx2(weights: &[i8], input: &[i16]) -> i64 {
-    let len = weights.len().min(input.len());
-    let mut low_sum = _mm256_setzero_si256();
-    let mut high_sum = _mm256_setzero_si256();
-    let mut index = 0;
-    while index + 16 <= len {
-        let w8 = _mm_loadu_si128(weights.as_ptr().add(index).cast());
-        let x = _mm256_loadu_si256(input.as_ptr().add(index).cast());
-        let pairs = _mm256_madd_epi16(_mm256_cvtepi8_epi16(w8), x);
-        low_sum = _mm256_add_epi64(
-            low_sum,
-            _mm256_cvtepi32_epi64(_mm256_castsi256_si128(pairs)),
-        );
-        high_sum = _mm256_add_epi64(
-            high_sum,
-            _mm256_cvtepi32_epi64(_mm256_extracti128_si256::<1>(pairs)),
-        );
-        index += 16;
+fn accumulate_scalar_tail_i32(
+    matrix: &TernaryProjectionMatrix,
+    group_base: usize,
+    groups: usize,
+    tables: &[[i32; 16]; LOOKUP_GROUPS_PER_TILE],
+    first_row: usize,
+    output: &mut [i64],
+) {
+    for (row, value) in output.iter_mut().enumerate().skip(first_row) {
+        let row_pair = row >> 1;
+        let shift = (row & 1) << 2;
+        let mut sum = *value;
+        for (local_group, table) in tables.iter().take(groups).enumerate() {
+            let (first, second) = matrix.sign_groups_unchecked(group_base + local_group);
+            let first_selector = usize::from((first[row_pair] >> shift) & 0x0f);
+            let second_selector = usize::from((second[row_pair] >> shift) & 0x0f);
+            sum += i64::from(table[first_selector]) + i64::from(table[second_selector]);
+        }
+        *value = sum;
     }
-    let mut result = horizontal_sum(_mm256_add_epi64(low_sum, high_sum));
-    while index < len {
-        result += i64::from(*weights.get_unchecked(index)) * i64::from(*input.get_unchecked(index));
-        index += 1;
-    }
-    result
 }
 
-#[target_feature(enable = "avx2")]
-unsafe fn dot_i32_avx2(weights: &[i8], input: &[i32]) -> i64 {
-    let len = weights.len().min(input.len());
-    let mut even_sum = _mm256_setzero_si256();
-    let mut odd_sum = _mm256_setzero_si256();
-    let mut index = 0;
-    while index + 8 <= len {
-        let w8 = _mm_loadl_epi64(weights.as_ptr().add(index).cast());
-        let w = _mm256_cvtepi8_epi32(w8);
-        let x = _mm256_loadu_si256(input.as_ptr().add(index).cast());
-        even_sum = _mm256_add_epi64(even_sum, _mm256_mul_epi32(w, x));
-        odd_sum = _mm256_add_epi64(
-            odd_sum,
-            _mm256_mul_epi32(_mm256_srli_epi64::<32>(w), _mm256_srli_epi64::<32>(x)),
-        );
-        index += 8;
+fn accumulate_scalar_tail_i64(
+    matrix: &TernaryProjectionMatrix,
+    group_base: usize,
+    groups: usize,
+    tables: &[[i64; 16]; LOOKUP_GROUPS_PER_TILE],
+    first_row: usize,
+    output: &mut [i64],
+) {
+    for (row, value) in output.iter_mut().enumerate().skip(first_row) {
+        let row_pair = row >> 1;
+        let shift = (row & 1) << 2;
+        let mut sum = *value;
+        for (local_group, table) in tables.iter().take(groups).enumerate() {
+            let (first, second) = matrix.sign_groups_unchecked(group_base + local_group);
+            let first_selector = usize::from((first[row_pair] >> shift) & 0x0f);
+            let second_selector = usize::from((second[row_pair] >> shift) & 0x0f);
+            sum += table[first_selector] + table[second_selector];
+        }
+        *value = sum;
     }
-    let mut result = horizontal_sum(_mm256_add_epi64(even_sum, odd_sum));
-    while index < len {
-        result += i64::from(*weights.get_unchecked(index)) * i64::from(*input.get_unchecked(index));
-        index += 1;
-    }
-    result
-}
-
-#[target_feature(enable = "avx2")]
-unsafe fn dot_i64_avx2(weights: &[i8], input: &[i64]) -> i64 {
-    let len = weights.len().min(input.len());
-    let zero = _mm256_setzero_si256();
-    let mut sum = zero;
-    let mut index = 0;
-    while index + 4 <= len {
-        let packed = std::ptr::read_unaligned(weights.as_ptr().add(index).cast::<i32>());
-        let w = _mm256_cvtepi8_epi64(_mm_cvtsi32_si128(packed));
-        let x = _mm256_loadu_si256(input.as_ptr().add(index).cast());
-        let positive = _mm256_cmpgt_epi64(w, zero);
-        let negative = _mm256_cmpgt_epi64(zero, w);
-        sum = _mm256_add_epi64(sum, _mm256_and_si256(positive, x));
-        sum = _mm256_sub_epi64(sum, _mm256_and_si256(negative, x));
-        index += 4;
-    }
-    let mut result = horizontal_sum(sum);
-    while index < len {
-        result = match *weights.get_unchecked(index) {
-            -1 => result.wrapping_sub(*input.get_unchecked(index)),
-            1 => result.wrapping_add(*input.get_unchecked(index)),
-            _ => result,
-        };
-        index += 1;
-    }
-    result
-}
-
-#[target_feature(enable = "avx2")]
-unsafe fn horizontal_sum(value: __m256i) -> i64 {
-    let mut lanes = [0i64; 4];
-    _mm256_storeu_si256(lanes.as_mut_ptr().cast(), value);
-    lanes.into_iter().fold(0i64, i64::wrapping_add)
 }

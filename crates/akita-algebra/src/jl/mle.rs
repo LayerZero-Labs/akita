@@ -49,23 +49,12 @@ pub fn eval_ternary_matrix_mle_from_eq_tables<F: Field>(
     }
     let mut total = F::zero();
     for (row, &row_weight) in row_eq.iter().take(shape.rows()).enumerate() {
-        let (nonzero, positive) = matrix.row_bitplanes_unchecked(row);
         let mut row_sum = F::zero();
-        for (byte_index, (&nonzero_byte, &positive_byte)) in
-            nonzero.iter().zip(positive).enumerate()
-        {
-            let mut live = nonzero_byte;
-            while live != 0 {
-                let bit = live.trailing_zeros() as usize;
-                let col = byte_index * 8 + bit;
-                if col < shape.cols() {
-                    if positive_byte & (1u8 << bit) != 0 {
-                        row_sum += col_eq[col];
-                    } else {
-                        row_sum -= col_eq[col];
-                    }
-                }
-                live &= live - 1;
+        for (col, &col_weight) in col_eq.iter().take(shape.cols()).enumerate() {
+            match matrix.entry_unchecked(row, col) {
+                -1 => row_sum -= col_weight,
+                1 => row_sum += col_weight,
+                _ => {}
             }
         }
         total += row_weight * row_sum;
@@ -92,22 +81,11 @@ pub fn build_ternary_column_weights<F: Field>(
     let row_eq = EqPolynomial::evals(row_point)?;
     let mut weights = try_zeroed_vec(shape.col_domain_len()?, F::zero())?;
     for (row, &row_weight) in row_eq.iter().take(shape.rows()).enumerate() {
-        let (nonzero, positive) = matrix.row_bitplanes_unchecked(row);
-        for (byte_index, (&nonzero_byte, &positive_byte)) in
-            nonzero.iter().zip(positive).enumerate()
-        {
-            let mut live = nonzero_byte;
-            while live != 0 {
-                let bit = live.trailing_zeros() as usize;
-                let col = byte_index * 8 + bit;
-                if col < shape.cols() {
-                    if positive_byte & (1u8 << bit) != 0 {
-                        weights[col] += row_weight;
-                    } else {
-                        weights[col] -= row_weight;
-                    }
-                }
-                live &= live - 1;
+        for (col, weight) in weights.iter_mut().take(shape.cols()).enumerate() {
+            match matrix.entry_unchecked(row, col) {
+                -1 => *weight -= row_weight,
+                1 => *weight += row_weight,
+                _ => {}
             }
         }
     }

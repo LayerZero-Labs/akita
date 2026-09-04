@@ -1,4 +1,4 @@
-//! AArch64 NEON and dot-product kernels.
+//! AArch64 NEON dense projection kernels.
 
 use std::arch::aarch64::*;
 use std::arch::asm;
@@ -11,33 +11,28 @@ pub(super) fn selected_i8_dot() -> fn(&[i8], &[i8]) -> i64 {
     }
 }
 
-pub(super) fn dot_i8_dotprod_dispatch(weights: &[i8], input: &[i8]) -> i64 {
-    // SAFETY: dispatch checks `dotprod`; the kernel uses unaligned loads and
-    // stays within the common slice length.
+fn dot_i8_dotprod_dispatch(weights: &[i8], input: &[i8]) -> i64 {
+    // SAFETY: dispatch checks `dotprod`.
     unsafe { dot_i8_dotprod(weights, input) }
 }
 
-pub(super) fn dot_i8_neon_dispatch(weights: &[i8], input: &[i8]) -> i64 {
-    // SAFETY: Advanced SIMD is mandatory on AArch64; the kernel uses
-    // unaligned loads and stays within the common slice length.
+fn dot_i8_neon_dispatch(weights: &[i8], input: &[i8]) -> i64 {
+    // SAFETY: Advanced SIMD is mandatory on AArch64.
     unsafe { dot_i8_neon(weights, input) }
 }
 
 pub(super) fn dot_i16_neon_dispatch(weights: &[i8], input: &[i16]) -> i64 {
-    // SAFETY: Advanced SIMD is mandatory on AArch64; the kernel uses
-    // unaligned loads and stays within the common slice length.
+    // SAFETY: Advanced SIMD is mandatory on AArch64.
     unsafe { dot_i16_neon(weights, input) }
 }
 
 pub(super) fn dot_i32_neon_dispatch(weights: &[i8], input: &[i32]) -> i64 {
-    // SAFETY: Advanced SIMD is mandatory on AArch64; the kernel uses
-    // unaligned loads and stays within the common slice length.
+    // SAFETY: Advanced SIMD is mandatory on AArch64.
     unsafe { dot_i32_neon(weights, input) }
 }
 
 pub(super) fn dot_i64_neon_dispatch(weights: &[i8], input: &[i64]) -> i64 {
-    // SAFETY: Advanced SIMD is mandatory on AArch64; the kernel uses
-    // unaligned loads and stays within the common slice length.
+    // SAFETY: Advanced SIMD is mandatory on AArch64.
     unsafe { dot_i64_neon(weights, input) }
 }
 
@@ -50,9 +45,6 @@ unsafe fn dot_i8_dotprod(weights: &[i8], input: &[i8]) -> i64 {
         let w = vld1q_s8(weights.as_ptr().add(index));
         let x = vld1q_s8(input.as_ptr().add(index));
         let mut products = vdupq_n_s32(0);
-        // Rust's stable AArch64 intrinsics do not yet expose SDOT. Keep the
-        // target-feature boundary explicit and issue exactly the instruction
-        // selected by runtime dispatch.
         asm!(
             "sdot {products:v}.4s, {weights:v}.16b, {input:v}.16b",
             products = inout(vreg) products,

@@ -8,9 +8,9 @@ use akita_algebra::jl::{TernaryProjectionMatrix, TernaryProjectionShape};
 use akita_error::AkitaError;
 
 /// Version of the canonical balanced-ternary matrix expansion.
-pub const BALANCED_TERNARY_EXPANSION_VERSION: u32 = 1;
+pub const BALANCED_TERNARY_EXPANSION_VERSION: u32 = 2;
 
-const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/balanced-ternary/aes128-ctr";
+const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/paired-rademacher/aes128-ctr";
 
 /// Expand a 32-byte Fiat--Shamir seed into a canonical balanced-ternary matrix.
 ///
@@ -18,19 +18,22 @@ const BALANCED_TERNARY_DOMAIN: &[u8] = b"akita/jl/balanced-ternary/aes128-ctr";
 /// that is `0` with probability `1/2` and `-1` or `+1` with probability `1/4`
 /// each. The expansion derives a matrix-specific AES-128 key and base block
 /// from the domain tag, expansion version, shape, and seed. Disjoint AES-CTR
-/// streams fill the complete nonzero and raw-positive planes. This follows the
-/// hardware-accelerated expansion pattern used by Greyhound while retaining
-/// the balanced-ternary law required by the certified bounds.
+/// streams fill two Rademacher sign planes, and each ternary coefficient is
+/// half the sum of the corresponding signs. This is the two-binary-pass law
+/// used by optimized LaBRADOR implementations while retaining the
+/// balanced-ternary law required by the certified bounds.
 ///
 /// The exact byte encoding is
 /// `SHAKE256(domain || version_le32 || rows_le64 || cols_le64 || seed)[0..32]`
 /// for the root. The first 16 root bytes are the AES-128 key and the final 16
 /// are a base block, parsed as two little-endian words `(base_counter,
 /// base_nonce)`. AES input block `counter` of stream `s` is
-/// `(base_counter + counter)_le64 || (base_nonce XOR s)_le64`; stream `0` fills
-/// the row-major nonzero plane and stream `1` fills the row-major raw-positive
-/// plane. AES output bytes are concatenated in increasing counter order. Bits
-/// and columns are little-endian within each byte.
+/// `(base_counter + counter)_le64 || (base_nonce XOR s)_le64`. Streams `0` and
+/// `1` fill the first and second sign planes. Each plane is ordered first by a
+/// four-column group and then by row pair. The low nibble contains the signs
+/// for the even row and the high nibble contains the signs for the odd row;
+/// columns increase from the least-significant bit. AES output bytes are
+/// concatenated in increasing counter order.
 ///
 /// # Errors
 ///
@@ -58,22 +61,24 @@ pub fn expand_balanced_ternary_matrix(
     let key = std::array::from_fn(|index| root[index]);
     let base_block = std::array::from_fn(|index| root[index + 16]);
     let expander = Aes128CtrExpander::new(&key, base_block);
-    let mut nonzero = try_zeroed_bytes(shape.plane_len())?;
-    let mut positive = try_zeroed_bytes(shape.plane_len())?;
-    expander.fill_stream(0, &mut nonzero);
-    expander.fill_stream(1, &mut positive);
-    for (nonzero_row, positive_row) in nonzero
-        .chunks_exact_mut(shape.row_bytes())
-        .zip(positive.chunks_exact_mut(shape.row_bytes()))
-    {
-        for (positive_byte, &nonzero_byte) in positive_row.iter_mut().zip(&*nonzero_row) {
-            *positive_byte &= nonzero_byte;
+    let mut first_signs = try_zeroed_bytes(shape.plane_len())?;
+    let mut second_signs = try_zeroed_bytes(shape.plane_len())?;
+    expander.fill_stream(0, &mut first_signs);
+    expander.fill_stream(1, &mut second_signs);
+    for plane in [&mut first_signs, &mut second_signs] {
+        if shape.rows() & 1 != 0 {
+            for group in plane.chunks_exact_mut(shape.row_pairs()) {
+                group[shape.row_pairs() - 1] &= 0x0f;
+            }
         }
-        let final_byte = shape.row_bytes() - 1;
-        nonzero_row[final_byte] &= shape.final_byte_live_mask();
-        positive_row[final_byte] &= shape.final_byte_live_mask();
+        let final_group_start = (shape.col_groups() - 1) * shape.row_pairs();
+        let live = shape.final_selector_live_mask();
+        let live_pair = live | (live << 4);
+        for byte in &mut plane[final_group_start..] {
+            *byte &= live_pair;
+        }
     }
-    TernaryProjectionMatrix::from_bitplanes(shape, nonzero, positive)
+    TernaryProjectionMatrix::from_rademacher_bitplanes(shape, first_signs, second_signs)
 }
 
 fn try_zeroed_bytes(len: usize) -> Result<Vec<u8>, AkitaError> {
@@ -138,8 +143,8 @@ mod tests {
         assert_eq!(
             entries(&matrix),
             vec![
-                0, 0, 0, -1, 0, 0, -1, 0, 0, 0, 0, 1, -1, 1, 0, 0, 0, 1, 1, 1, -1, 0, -1, 0, 1, 0,
-                0, 0, 0, -1, 0, 0,
+                1, 0, 0, 1, 0, -1, 0, 0, 1, -1, -1, 0, 0, 1, 1, 0, 0, 0, -1, 0, -1, 0, 0, 0, 0, 1,
+                -1, -1, -1, 0, 0, 1,
             ]
         );
     }
