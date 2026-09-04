@@ -130,6 +130,7 @@ live_specs=(
   specs/quotient-free-tail-ring-relations-implementation.md
   specs/dyadic-chunk-partition.md
   specs/external-schedule-catalog-ownership.md
+  specs/guided-schedule-adaptation.md
   specs/flat-public-matrix-and-exact-ntt-cache.md
   specs/fold-linf-rejection.md
   specs/heterogeneous-group-source-contracts.md

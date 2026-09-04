@@ -45,7 +45,9 @@ catalog-security = ["catalog-check", "dep:akita-sis-estimator"]
 test-support = []
 
 [dev-dependencies]
-akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+] }
 
 [[bin]]
 name = "gen_schedule_artifacts"

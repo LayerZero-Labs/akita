@@ -36,6 +36,15 @@ pub(crate) struct RecursiveCandidateRequest<'a> {
     pub(crate) fold_level: usize,
     pub(crate) source_moment: Option<crate::response_model::SourceMomentEstimate>,
     pub(crate) relation_traversal_order: RelationTraversalOrder,
+    /// Optional structural replay constraint. Current lengths and security
+    /// ranks are still derived; only the approved split and slicing remain.
+    pub(crate) guide: Option<RecursiveCandidateGuide>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RecursiveCandidateGuide {
+    pub(crate) position_index_bits: usize,
+    pub(crate) outer_slice_count: akita_types::CommitmentSliceCount,
 }
 
 enum RecursiveSetupPrefix<'a> {
@@ -261,6 +270,12 @@ impl RecursiveCandidateContext<'_, '_> {
         }
         let mut candidates = Vec::new();
         for outer_slice_count in akita_types::CommitmentSliceCount::ALL {
+            if request
+                .guide
+                .is_some_and(|guide| outer_slice_count != guide.outer_slice_count)
+            {
+                continue;
+            }
             if outer_slice_count
                 .validate_for_commitment(
                     request.fold_level,
@@ -384,6 +399,11 @@ impl RecursiveCandidateContext<'_, '_> {
             search.num_chunks,
         );
         for r in splits {
+            if request.guide.is_some_and(|guide| {
+                search.reduced_vars.checked_sub(r) != Some(guide.position_index_bits)
+            }) {
+                continue;
+            }
             let lower_bound_input = RecursiveSplitLowerBoundInput {
                 num_ring_elems: search.num_ring_elems,
                 ring_dimension: request.dimensions.d_a(),

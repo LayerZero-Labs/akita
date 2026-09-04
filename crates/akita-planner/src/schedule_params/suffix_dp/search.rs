@@ -24,6 +24,21 @@ struct PlannedChildren {
     offloaded: Option<Arc<SuffixResult>>,
 }
 
+fn adaptation_guide_allows_state(ctx: &SuffixCtx<'_>, state: SuffixState) -> bool {
+    let Some(guide) = ctx.adaptation_guide else {
+        return true;
+    };
+    if state.level == 0 {
+        return state.topology.incoming_setup_prefix().is_none();
+    }
+    if let Some(step) = guide.recursive_folds.get(state.level - 1) {
+        return state.topology.incoming_setup_prefix().is_some()
+            == step.params.setup_prefix().is_some();
+    }
+    state.level == guide.recursive_folds.len() + 1
+        && state.topology.incoming_setup_prefix().is_none()
+}
+
 fn plan_candidate_children(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
@@ -31,7 +46,16 @@ fn plan_candidate_children(
     plan: ChildPlan<'_>,
 ) -> Result<PlannedChildren, AkitaError> {
     let state = search.state;
-    let direct_child = if !plan.direct_edge_is_admissible || plan.prune_direct_edge {
+    let guided_successor_is_offloaded = ctx.adaptation_guide.map(|guide| {
+        guide
+            .recursive_folds
+            .get(state.level)
+            .is_some_and(|successor| successor.params.setup_prefix().is_some())
+    });
+    let direct_child = if guided_successor_is_offloaded == Some(true)
+        || !plan.direct_edge_is_admissible
+        || plan.prune_direct_edge
+    {
         None
     } else if search.depth == MAX_RECURSION_DEPTH {
         Some(empty_suffix_result())
@@ -58,7 +82,8 @@ fn plan_candidate_children(
         plan.natural_setup_field_len,
     )
     .filter(|_| {
-        ctx.policy.recursive_setup_planning
+        guided_successor_is_offloaded != Some(false)
+            && ctx.policy.recursive_setup_planning
             && ctx
                 .policy
                 .recursive_setup_search_policy
@@ -294,6 +319,9 @@ pub(crate) fn derive_selected_suffix_schedule(
     state: SuffixState,
     depth: usize,
 ) -> Result<Arc<SuffixResult>, AkitaError> {
+    if !adaptation_guide_allows_state(ctx, state) {
+        return Ok(empty_suffix_result());
+    }
     let policy = ctx.policy;
     if let Some(diagnostics) = ctx.diagnostics {
         diagnostics.record_suffix_call();

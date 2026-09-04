@@ -130,10 +130,43 @@ impossible. Runtime schedule validation checks them before proving or
 transcript replay.
 
 The suffix search prices both realizations using their exact witness layouts,
-proof sizes, setup requirements, response models, and successor states. A
+proof sizes, setup requirements, response models, and successor states. An
 external artifact row records the selected mode at every nonterminal level. The mode
 is part of the canonical plan descriptor and transcript preamble; it is not a
 proof-supplied negotiation field and there is no verifier fallback.
+
+### Guided grouped schedule adaptation
+
+Applications sometimes select a schedule for one large final polynomial group
+before they know the exact small groups that will already be committed when the
+final group opens. `akita_planner::find_adapted_schedule` handles this offline
+case without rerunning the exhaustive planner.
+
+The application supplies a validated scalar `ResolvedScheduleRow` and a
+`GroupedGenerationRequest` containing exact frozen producer descriptors. The
+adapter retains the scalar row's structure: recursive depth, dimensions, block
+splits, slices, digit bases, opening choices, relation modes, witness chunking,
+terminal shape, and setup-prefix topology. It then rebuilds every value that
+depends on the combined groups, including D widths and ranks, witness lengths,
+relation rows, setup-prefix lengths, response bounds, grinding parameters, and
+proof accounting.
+
+This is a conditional search, not a second global optimizer. It returns
+`AkitaError::UnsupportedSchedule` if the scalar structure cannot support the
+grouped request. Coefficient-packing adaptation also rejects more than 256
+canonical precommit opening products before allocating them. Callers that need
+a different structure can run the exhaustive offline `find_schedule` path
+explicitly.
+
+An adapted row is not trusted merely because planning succeeded. The
+application merges its selected rows, constructs a new
+`TrustedScheduleCatalog`, and regenerates setup for that catalog. Runtime setup
+restoration, commitment, proving, proof decoding, and verification continue to
+resolve immutable catalog rows and never invoke the planner. Adaptation changes
+no proof field, transcript event, or `.aks` schema.
+
+The normative constraints and failure behavior are recorded in
+[Guided schedule adaptation](../../../specs/guided-schedule-adaptation.md).
 
 ### Selective L2 candidates
 
