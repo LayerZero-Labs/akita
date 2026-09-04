@@ -93,8 +93,9 @@ The root live set is deliberately small and is synchronized with
 13. `structured-e-term.md`
 14. `subring-coefficient-packing.md`
 15. `transcript-grinding.md`
+16. `iterated-jl-shortness.md`
 
-All 15 live specifications must pass the default dead-symbol scan. A record
+All 16 live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 

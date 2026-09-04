@@ -16,6 +16,7 @@ policy and the checker use the same live set in
 | [`flat-public-matrix-and-exact-ntt-cache`](../../../specs/flat-public-matrix-and-exact-ntt-cache.md) | implemented | Load-bearing setup layout with follow-up provenance and artifact work. |
 | [`fold-linf-rejection`](../../../specs/fold-linf-rejection.md) | implemented | Its sizing formula is used by the SIS cap implementation. |
 | [`heterogeneous-group-source-contracts`](../../../specs/heterogeneous-group-source-contracts.md) | implemented | Defines current source-free group and fold-admission rules. |
+| [`iterated-jl-shortness`](../../../specs/iterated-jl-shortness.md) | proposed | Defines the planned total cutover from generic digit range to iterated JL plus stage-native exact role norms. |
 | [`large-digit-ntt-infrastructure`](../../../specs/large-digit-ntt-infrastructure.md) | implemented | Load-bearing large-digit NTT and terminal verification contract. |
 | [`packed-sumcheck`](../../../specs/packed-sumcheck.md) | approved | Approved packed EOR and sum-check implementation; earlier Stage 1 and Stage 2 prerequisite gates are complete. |
 | [`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md) | implemented | Normative witness and verifier layout source. |
