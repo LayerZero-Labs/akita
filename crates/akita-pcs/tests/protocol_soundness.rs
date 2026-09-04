@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, Once};
 
 mod common;
-use common::{opening_from_poly_for_layout, WorkspaceScheduleArtifactExt as _};
+use common::{load_workspace_scheme, opening_from_poly_for_layout};
 
 type F = fp128::Field;
 const DENSE_TEST_NV: usize = 14;
@@ -349,8 +349,7 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         const D: usize = 256;
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(&scheme, DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
@@ -383,8 +382,7 @@ fn trace_internalization_rejects_tampered_recursive_fold_handle() {
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
         const NV: usize = 20;
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let layout = scheme
             .schedules()
@@ -495,8 +493,7 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         const D: usize = 256;
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(
@@ -528,13 +525,21 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 
 #[test]
 fn small_field_dense_uncataloged_roots_fail_fast() {
+    let fp32_catalog = akita_config::test_support::workspace_schedule_catalog::<fp32::Dense>()
+        .expect("fp32 dense catalog");
+    let fp64_catalog = akita_config::test_support::workspace_schedule_catalog::<fp64::Dense>()
+        .expect("fp64 dense catalog");
     for result in [
-        fp32::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
-        )),
-        fp64::Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
-        )),
+        fp32::Dense::resolve_catalog_row_for_key(
+            &fp32_catalog,
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV)),
+        ),
+        fp64::Dense::resolve_catalog_row_for_key(
+            &fp64_catalog,
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(
+                SMALL_FIELD_TEST_NV + 1,
+            )),
+        ),
     ] {
         assert!(matches!(
             result,
@@ -550,16 +555,17 @@ fn adaptive_dense_tiny_roots_and_setup_capacities_are_rejected() {
     run_on_large_stack(|| {
         type Cfg = fp128::Dense;
         let nv = 4;
-        let err = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(nv),
-        ))
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
+        let err = Cfg::resolve_catalog_row_for_key(
+            scheme.schedules(),
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(nv)),
+        )
         .expect_err("tiny roots must not produce a degenerate proof schedule");
         assert!(matches!(
             err,
             akita_error::AkitaError::UnsupportedSchedule(_)
         ));
-        let setup_err = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog")
+        let setup_err = scheme
             .setup_prover(nv, 1)
             .expect_err("tiny capacity must not produce a prover setup");
         assert!(
@@ -575,8 +581,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
         type Cfg = fp128::OneHot;
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let nv = ONEHOT_TEST_NV;
         let layout = scheme
@@ -736,8 +741,7 @@ fn fp32_ext4_rejects_wrong_opening_and_tampered_or_missing_terminal_eor() {
         type SF = fp32::Field;
         type SE = fp32::ExtensionField;
         const LABEL: &[u8] = b"soundness/fp32-ext4-eor";
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let polys = [ext4_onehot_poly(0), ext4_onehot_poly(1)];
         let poly_refs: Vec<_> = polys.iter().collect();
@@ -1031,8 +1035,7 @@ fn batched_dense_rejects_wrong_opening_and_oversized_payload() {
         type Cfg = fp128::Dense;
         const NV: usize = 16;
         const LABEL: &[u8] = b"soundness/batched-dense-payload";
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let len = 1usize << NV;
         let evals_a: Vec<F> = (0..len).map(|i| F::from_u64((i + 5) as u64)).collect();
@@ -1149,8 +1152,7 @@ fn batched_onehot_terminal_structure_and_truncated_recursive_suffix() {
         // recursive suffix.
         const NV: usize = 20;
         const LABEL: &[u8] = b"soundness/batched-onehot-terminal";
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let plan = scheme
             .schedules()
@@ -1314,8 +1316,7 @@ fn dense_rejects_mismatched_committed_group_profile_geometry() {
         type Cfg = fp128::Dense;
         const D: usize = 256;
         const LABEL: &[u8] = b"soundness/profile-geometry";
-        let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout, selection) =
             make_dense_fixture::<F, D, Cfg>(&scheme, DENSE_TEST_NV, LABEL);

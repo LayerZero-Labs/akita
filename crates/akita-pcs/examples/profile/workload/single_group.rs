@@ -10,7 +10,6 @@ use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, print_batched_proof_summary,
     report_crt_profile, report_setup_sizes, report_timing, report_verifier_ntt_cache_size,
 };
-use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::{derive_transcript_grinding_plan, CommitmentConfig};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
@@ -273,6 +272,7 @@ fn run_prove<
 }
 
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
     label: &str,
     nv: usize,
     layout: &CommittedGroupParams,
@@ -300,7 +300,6 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + AkitaSerialize
         + Valid,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let statement_prepare_start = Instant::now();
     let statement_prepare_span =
         tracing::info_span!("profile_dense_prepare_statement", num_vars = nv).entered();
@@ -397,7 +396,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     );
     run_prove::<FF, D, Cfg, DensePoly<FF>>(
         label,
-        &scheme,
+        scheme,
         &setup,
         &stack,
         &poly,
@@ -422,6 +421,7 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
+    scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
     label: &str,
     nv: usize,
     layout: &CommittedGroupParams,
@@ -443,7 +443,6 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + 'static,
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
-    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let onehot_poly = make_profile_onehot_poly::<Cfg>(nv, 0xbeef_cafe);
     let mut rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
@@ -483,7 +482,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     );
     run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
         label,
-        &scheme,
+        scheme,
         &setup,
         &stack,
         &onehot_poly,

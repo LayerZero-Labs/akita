@@ -90,9 +90,12 @@ mod tests {
 
     #[test]
     fn terminal_builder_binds_the_resolved_schedule_and_installs() {
-        let row = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::new(15, 1),
-        ))
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
+            .expect("workspace schedule catalog");
+        let row = OneHot::resolve_catalog_row_for_key(
+            &catalog,
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(15, 1)),
+        )
         .expect("generated fp128 schedule");
         let selection = row.selection();
         let schedule = row.schedule();

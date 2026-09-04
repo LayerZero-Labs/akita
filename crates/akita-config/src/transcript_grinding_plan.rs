@@ -38,8 +38,10 @@ mod tests {
 
     #[test]
     fn production_onehot_plan_is_canonical_and_fully_priced() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout)
+        let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &layout)
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");
@@ -90,8 +92,10 @@ mod tests {
 
     #[test]
     fn stage1_prices_the_full_eq_factored_round_degree() {
+        let catalog = crate::test_support::workspace_schedule_catalog::<fp128::OneHot>()
+            .expect("one-hot schedule catalog");
         let layout = OpeningClaimsLayout::new(14, 1).expect("opening layout");
-        let row = fp128::OneHot::resolve_catalog_row_for_opening(&layout)
+        let row = fp128::OneHot::resolve_catalog_row_for_opening(&catalog, &layout)
             .expect("generated production row");
         let plan = derive_transcript_grinding_plan::<fp128::OneHot>(row.schedule(), &layout)
             .expect("grinding plan");

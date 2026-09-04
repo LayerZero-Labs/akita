@@ -401,9 +401,12 @@ mod tests {
 
     #[test]
     fn offloaded_setup_ignores_shared_matrix_divisibility() {
-        let level_params = Dense::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(16),
-        ))
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<Dense>()
+            .expect("workspace schedule catalog");
+        let level_params = Dense::resolve_catalog_row_for_key(
+            &catalog,
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16)),
+        )
         .expect("scalar schedule")
         .schedule()
         .root

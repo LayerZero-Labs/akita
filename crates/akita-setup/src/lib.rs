@@ -624,6 +624,7 @@ mod tests {
 
     impl akita_config::test_support::TestScheduleProvider for WrongModulusProfileConfig {
         fn setup_matrix_capacity(
+            _catalog: &akita_config::TrustedScheduleCatalog,
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
         ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
@@ -949,7 +950,8 @@ mod tests {
 
                 let large = new_prover_setup::<TestF, Cfg>(&schedules(), LARGE_VARS, 1).unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
-                let small_required = Cfg::setup_matrix_capacity(SMALL_VARS, 1)
+                let catalog = schedules();
+                let small_required = Cfg::setup_matrix_capacity(&catalog, SMALL_VARS, 1)
                     .unwrap()
                     .num_field_elements;
                 assert!(large_fields >= small_required);
@@ -990,13 +992,13 @@ mod tests {
                 let small = AkitaProverSetup::generate_with_capacity(
                     SMALL_VARS,
                     1,
-                    Cfg::setup_matrix_capacity(SMALL_VARS, 1).unwrap(),
+                    Cfg::setup_matrix_capacity(&schedules(), SMALL_VARS, 1).unwrap(),
                 )
                 .unwrap();
                 let large = AkitaProverSetup::generate_with_capacity(
                     LARGE_VARS,
                     1,
-                    Cfg::setup_matrix_capacity(LARGE_VARS, 1).unwrap(),
+                    Cfg::setup_matrix_capacity(&schedules(), LARGE_VARS, 1).unwrap(),
                 )
                 .unwrap();
                 let large_fields = large.expanded.shared_matrix().num_field_elements();
@@ -1104,7 +1106,9 @@ mod tests {
                 let disk_setup =
                     load_prover_setup::<TestF, Cfg>(&schedules(), MAX_VARS, 1).unwrap();
 
+                let catalog = schedules();
                 let lp = Cfg::resolve_catalog_row_for_opening(
+                    &catalog,
                     &akita_types::OpeningClaimsLayout::new(MAX_VARS, 1)
                         .expect("singleton opening batch"),
                 )

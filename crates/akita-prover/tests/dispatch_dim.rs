@@ -9,6 +9,8 @@ use akita_types::{
 };
 
 fn schedule<Cfg: CommitmentConfig + TestScheduleProvider>(num_vars: usize) -> FoldSchedule {
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<Cfg>()
+        .expect("workspace schedule catalog");
     let group = match akita_config::honest_fold_policy_of::<Cfg>() {
         akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(_) => {
             PolynomialGroupLayout::singleton(num_vars)
@@ -17,7 +19,7 @@ fn schedule<Cfg: CommitmentConfig + TestScheduleProvider>(num_vars: usize) -> Fo
             PolynomialGroupLayout::new(num_vars, 1)
         }
     };
-    Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+    Cfg::resolve_catalog_row_for_key(&catalog, &AkitaScheduleLookupKey::single(group))
         .expect("runtime schedule")
         .into_schedule()
 }

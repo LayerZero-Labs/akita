@@ -34,10 +34,13 @@ use common::*;
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 
 type W8R2Cfg = RecursiveCommitmentConfig<fp128::OneHotMultiChunk>;
-fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
+fn w8r2_profiling_key(
+    base_catalog: &akita_config::TrustedScheduleCatalog,
+) -> AkitaScheduleLookupKey {
     let pre_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted = fp128::OneHotMultiChunk::profile_without_precommitted_groups(pre_group)
-        .expect("independent profile");
+    let precommitted =
+        fp128::OneHotMultiChunk::profile_without_precommitted_groups(base_catalog, pre_group)
+            .expect("independent profile");
     AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
@@ -46,15 +49,22 @@ fn w8r2_profiling_key() -> AkitaScheduleLookupKey {
 
 #[test]
 fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
-    let key = w8r2_profiling_key();
+    let base_catalog =
+        akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>()
+            .expect("base W8R2 catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>()
+        .expect("recursive W8R2 catalog");
+    let key = w8r2_profiling_key(&base_catalog);
     let root_layout = key.opening_layout().expect("root layout");
-    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key).expect("W8R2 schedule");
+    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&catalog, &key).expect("W8R2 schedule");
     assert_w8r2_profile_shape(schedule.schedule());
     let prover = setup_matrix_capacity_for_schedule(schedule.schedule()).expect("prover capacity");
     let verifier = verifier_setup_matrix_capacity_for_schedule(schedule.schedule(), &root_layout)
         .expect("verifier capacity");
-    let setup_for_two = W8R2Cfg::setup_matrix_capacity(32, 2).expect("setup capacity for K=2");
-    let setup_for_four = W8R2Cfg::setup_matrix_capacity(32, 4).expect("setup capacity for K=4");
+    let setup_for_two =
+        W8R2Cfg::setup_matrix_capacity(&catalog, 32, 2).expect("setup capacity for K=2");
+    let setup_for_four =
+        W8R2Cfg::setup_matrix_capacity(&catalog, 32, 4).expect("setup capacity for K=4");
     let incoming_prefixes = schedule
         .schedule()
         .recursive_folds
@@ -106,8 +116,13 @@ fn w8r2_verifier_setup_stops_after_the_offloaded_chain() {
 
 #[test]
 fn w8r2_ntt_requirements_match_distributed_a_tail_decisions() {
-    let key = w8r2_profiling_key();
-    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&key)
+    let base_catalog =
+        akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>()
+            .expect("base W8R2 catalog");
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<W8R2Cfg>()
+        .expect("recursive W8R2 catalog");
+    let key = w8r2_profiling_key(&base_catalog);
+    let schedule = W8R2Cfg::resolve_catalog_row_for_key(&catalog, &key)
         .expect("W8R2 schedule")
         .into_schedule();
     let first_recursive = &schedule.recursive_folds[0].params;

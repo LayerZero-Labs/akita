@@ -12,7 +12,7 @@ use akita_types::sis::{
     BalancedSignedDigitFoldPolicy, FoldWitnessNorms, HonestFoldPolicy, HonestFoldSizingQuery,
 };
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, DecompositionParams,
     GroupCommitPhaseParams, OpeningScheduleSelection, PolynomialGroupLayout, SetupMatrixCapacity,
     SisModulusProfileId,
 };
@@ -34,13 +34,14 @@ fn synthetic_resolved_rows() -> &'static Mutex<Vec<SyntheticResolvedRow>> {
 }
 
 fn select_synthetic_schedule_row<C>(
+    catalog: &akita_config::TrustedScheduleCatalog,
     profiles: &CommittedGroupBatchProfile,
     key: AkitaScheduleLookupKey,
 ) -> Result<akita_config::ResolvedScheduleRow, AkitaError>
 where
     C: CommitmentConfig + TestScheduleProvider + 'static,
 {
-    let row = C::resolve_catalog_row_for_key(&key)?;
+    let row = C::resolve_catalog_row_for_key(catalog, &key)?;
     if row.profiles() != profiles {
         return Err(AkitaError::InvalidSetup(
             "synthetic selected row does not match exact committed profiles".into(),
@@ -351,6 +352,7 @@ where
     Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     pub(crate) fn derive_catalog_row(
+        catalog: &akita_config::TrustedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
         challenge_subring_dimension: usize,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
@@ -359,7 +361,7 @@ where
                 "the coefficient-packing test catalog supports one root group".into(),
             ));
         }
-        let base = Base::resolve_catalog_row_for_key(key)?;
+        let base = Base::resolve_catalog_row_for_key(catalog, key)?;
         let successor_template = match base.schedule().recursive_folds.first() {
             Some(successor) => successor.clone(),
             None => {
@@ -367,7 +369,7 @@ where
                     final_group: key.final_group,
                     precommitteds: vec![base.profiles().final_group],
                 };
-                Base::resolve_catalog_row_for_key(&grouped_key)?
+                Base::resolve_catalog_row_for_key(catalog, &grouped_key)?
                     .schedule()
                     .recursive_folds
                     .first()
@@ -710,10 +712,7 @@ where
             final_group: GroupCommitPhaseParams::try_from_params(key.final_group, root)?,
             precommitteds: Vec::new(),
         };
-        let selection = OpeningScheduleSelection {
-            row_digest: schedule_row_digest(&profiles, &schedule)?,
-        };
-        akita_config::ResolvedScheduleRow::try_new(selection, profiles, schedule, &policy)
+        akita_config::ResolvedScheduleRow::try_new(profiles, schedule, &policy)
     }
 }
 
@@ -722,9 +721,10 @@ where
     Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     fn derive_row(
+        catalog: &akita_config::TrustedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(key, 64)?;
+        let base = RootCoefficientPackingConfig::<Base>::derive_catalog_row(catalog, key, 64)?;
         let profiles = base.profiles().clone();
         let mut schedule = base.into_schedule();
         let params = if LEVEL == 0 {
@@ -768,15 +768,7 @@ where
                 .fold_challenge_config = params.own_group_mut().opening.fold_challenge_config;
         }
         schedule.validate_nonterminal_opening_execution(Self::EXT_DEGREE)?;
-        let selection = OpeningScheduleSelection {
-            row_digest: akita_types::schedule_row_digest(&profiles, &schedule)?,
-        };
-        akita_config::ResolvedScheduleRow::try_new(
-            selection,
-            profiles,
-            schedule,
-            &policy_of::<Self>(),
-        )
+        akita_config::ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Self>())
     }
 }
 
@@ -837,10 +829,11 @@ where
     Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     fn setup_matrix_capacity(
+        catalog: &akita_config::TrustedScheduleCatalog,
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
-        let base = Base::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
+        let base = Base::setup_matrix_capacity(catalog, max_num_vars, max_num_batched_polys)?;
         Ok(SetupMatrixCapacity {
             num_field_elements: base.num_field_elements.checked_mul(16).ok_or_else(|| {
                 AkitaError::InvalidSetup("coefficient-packing test setup capacity overflow".into())
@@ -849,18 +842,21 @@ where
     }
 
     fn resolve_catalog_row_for_key(
+        catalog: &akita_config::TrustedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        Self::derive_catalog_row(key, 64)
+        Self::derive_catalog_row(catalog, key, 64)
     }
 
     fn resolve_catalog_row_for_profiles(
+        catalog: &akita_config::TrustedScheduleCatalog,
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+        select_synthetic_schedule_row::<Self>(catalog, profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
+        _catalog: &akita_config::TrustedScheduleCatalog,
         selection: OpeningScheduleSelection,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         resolve_synthetic_schedule_row::<Self>(selection)
@@ -924,36 +920,45 @@ where
     Base: CommitmentConfig + TestScheduleProvider + 'static,
 {
     fn setup_matrix_capacity(
+        catalog: &akita_config::TrustedScheduleCatalog,
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
         RootCoefficientPackingConfig::<Base>::setup_matrix_capacity(
+            catalog,
             max_num_vars,
             max_num_batched_polys,
         )
     }
 
     fn resolve_catalog_row_for_key(
+        catalog: &akita_config::TrustedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        Self::derive_row(key)
+        Self::derive_row(catalog, key)
     }
 
     fn resolve_catalog_row_for_profiles(
+        catalog: &akita_config::TrustedScheduleCatalog,
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        Self::derive_row(&AkitaScheduleLookupKey {
-            final_group: profiles.final_group.group,
-            precommitteds: profiles.precommitteds.clone(),
-        })
+        Self::derive_row(
+            catalog,
+            &AkitaScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                precommitteds: profiles.precommitteds.clone(),
+            },
+        )
     }
 
     fn resolve_schedule_selection(
+        catalog: &akita_config::TrustedScheduleCatalog,
         selection: OpeningScheduleSelection,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        let row = Self::derive_row(&AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(20),
-        ))?;
+        let row = Self::derive_row(
+            catalog,
+            &AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(20)),
+        )?;
         if row.selection() != selection {
             return Err(AkitaError::UnsupportedSchedule(
                 "unknown early-ET test row".into(),
@@ -1023,28 +1028,33 @@ where
         + 'static,
 {
     fn setup_matrix_capacity(
+        catalog: &akita_config::TrustedScheduleCatalog,
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixCapacity, AkitaError> {
         let mut num_field_elements =
-            Envelope::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?
+            Envelope::setup_matrix_capacity(catalog, max_num_vars, max_num_batched_polys)?
                 .num_field_elements
                 .max(
-                    Final::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?
+                    Final::setup_matrix_capacity(catalog, max_num_vars, max_num_batched_polys)?
                         .num_field_elements,
                 );
         for final_polys in 1..max_num_batched_polys {
             let pre_polys = max_num_batched_polys - final_polys;
             for pre_num_vars in [14usize, 15, 16].into_iter().filter(|&n| n <= max_num_vars) {
                 let Ok(precommitted) = Self::profile_without_precommitted_groups(
+                    catalog,
                     PolynomialGroupLayout::new(pre_num_vars, pre_polys),
                 ) else {
                     continue;
                 };
-                let Ok(schedule) = Self::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
-                    final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
-                    precommitteds: vec![precommitted],
-                }) else {
+                let Ok(schedule) = Self::resolve_catalog_row_for_key(
+                    catalog,
+                    &AkitaScheduleLookupKey {
+                        final_group: PolynomialGroupLayout::new(max_num_vars, final_polys),
+                        precommitteds: vec![precommitted],
+                    },
+                ) else {
                     continue;
                 };
                 num_field_elements = num_field_elements.max(
@@ -1057,6 +1067,7 @@ where
     }
 
     fn resolve_catalog_row_for_key(
+        _catalog: &akita_config::TrustedScheduleCatalog,
         key: &AkitaScheduleLookupKey,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         let (policy, ring_challenge_config) = if key.precommitteds.is_empty() {
@@ -1089,24 +1100,18 @@ where
             )?,
             precommitteds: key.precommitteds.clone(),
         };
-        let selection = OpeningScheduleSelection {
-            row_digest: schedule_row_digest(&profiles, &schedule)?,
-        };
-        akita_config::ResolvedScheduleRow::try_new(
-            selection,
-            profiles,
-            schedule,
-            &policy_of::<Self>(),
-        )
+        akita_config::ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Self>())
     }
 
     fn resolve_catalog_row_for_profiles(
+        catalog: &akita_config::TrustedScheduleCatalog,
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
+        select_synthetic_schedule_row::<Self>(catalog, profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
+        _catalog: &akita_config::TrustedScheduleCatalog,
         selection: OpeningScheduleSelection,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
         resolve_synthetic_schedule_row::<Self>(selection)

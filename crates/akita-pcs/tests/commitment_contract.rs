@@ -202,7 +202,7 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         .expect("embedded schedule catalog");
     let dense = DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("dense oracle");
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
-    let params = Cfg::resolve_catalog_row_for_opening(&opening_batch)
+    let params = Cfg::resolve_catalog_row_for_opening(&schedules, &opening_batch)
         .map(|row| row.schedule().root.params.clone())
         .expect("layout");
     assert_eq!(
@@ -211,7 +211,8 @@ fn custom_commit_source_runs_unified_explicit_commit() {
         "the selected packing root must exercise the canonical commit capability"
     );
 
-    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup_envelope =
+        Cfg::setup_matrix_capacity(&schedules, CONTRACT_NUM_VARS, 1).expect("envelope");
     let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
         .expect("setup");
     let contract_backend = ContractCommitBackend;

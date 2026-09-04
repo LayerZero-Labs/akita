@@ -22,15 +22,14 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{AkitaBatchedProof, BasisMode, SetupMatrixCapacity};
 use common::{
-    dense_field_evals, init_rayon_pool, opening_from_poly_for_layout, prove_input, random_point,
-    run_on_large_stack, verify_input, WorkspaceScheduleArtifactExt as _, F,
+    dense_field_evals, init_rayon_pool, load_workspace_scheme, opening_from_poly_for_layout,
+    prove_input, random_point, run_on_large_stack, verify_input, F,
 };
 use jolt_field::{CanonicalEncoding, One, Zero};
 use rand::rngs::StdRng;
@@ -108,8 +107,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-        .expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(poly_nv >= D.trailing_zeros() as usize);
 
@@ -240,8 +238,7 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-        .expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     assert_eq!(256, D);
 
     let opening_layout =
@@ -255,7 +252,8 @@ where
     let layout = row.schedule().root.params.clone();
     let schedule = row.into_schedule();
     let root_d = layout.d_a();
-    let k = 256;
+    let k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
+        .expect("one-hot setup test requires a unit-one-hot config");
     let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(
         total_ring * root_d,
@@ -416,8 +414,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-        .expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
@@ -529,8 +526,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
     Cfg: 'static,
 {
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-        .expect("workspace schedule artifact");
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     assert_eq!(256, D);
     assert!(commit_batch >= 1);
 
@@ -545,7 +541,8 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         .params
         .clone();
     let root_d = layout.d_a();
-    let k = 256;
+    let k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
+        .expect("one-hot setup test requires a unit-one-hot config");
     let total_ring = layout.blocks().live_blocks * layout.blocks().positions_per_block;
     assert_eq!(total_ring * root_d, 1usize << poly_nv);
     let total_chunks = total_ring * root_d / k;

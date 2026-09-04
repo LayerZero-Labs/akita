@@ -88,7 +88,6 @@ mod heterogeneous;
 mod matrix_drivers;
 
 use akita_config::{proof_optimized::fp128, test_support::TestScheduleProvider, CommitmentConfig};
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
     batched_prove, CommitCluster, ComputeBackendSetup, CpuBackend, MultilinearPolynomial,
     OpeningCluster, ProverComputeStack, RingSwitchCluster, TensorCluster, UniformProverStack,
@@ -119,14 +118,13 @@ macro_rules! matrix_test {
             });
         }
     };
-    (onehot; $name:ident; $cfg:ty; nvs=[$($nv:expr),+]; k=$k:expr) => {
+    (onehot; $name:ident; $cfg:ty; nvs=[$($nv:expr),+]) => {
         #[test]
         fn $name() {
             init_rayon_pool();
             run_on_large_stack(|| {
                 prove_verify_onehot_roundtrip::<$cfg>(
                     &[$($nv),+],
-                    $k,
                     concat!("completeness/", stringify!($name)).as_bytes(),
                 );
             });
@@ -145,7 +143,7 @@ macro_rules! matrix_test {
             });
         }
     };
-    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; final_nvs=[$($nv:expr),+]) => {
         $(#[$attr])*
         #[test]
         fn $name() {
@@ -153,7 +151,6 @@ macro_rules! matrix_test {
             run_on_large_stack(|| {
                 prove_verify_onehot_precommitted_roundtrip::<$cfg>(
                     &[$($nv),+],
-                    $k,
                     concat!("completeness/", stringify!($name)).as_bytes(),
                 );
             });
@@ -211,7 +208,11 @@ matrix_test!(dense_pre; fp128_dense_pre; fp128::Dense; final_nvs=[16]);
 fn fp128_dense_mc() {
     init_rayon_pool();
     run_on_large_stack(|| {
+        let catalog =
+            akita_config::test_support::workspace_schedule_catalog::<fp128::DenseMultiChunk>()
+                .expect("dense multi-chunk catalog");
         let schedule = fp128::DenseMultiChunk::resolve_catalog_row_for_key(
+            &catalog,
             &akita_types::AkitaScheduleLookupKey::single(
                 akita_types::PolynomialGroupLayout::singleton(16),
             ),
@@ -255,11 +256,11 @@ fn fp128_dense_mc() {
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × non-recursive    [12, 15, 20, 28]
 // ----------------------------------------------------------------------------
-matrix_test!(onehot; fp128_onehot; fp128::OneHot; nvs=[12, 15, 20, 28]; k=256);
+matrix_test!(onehot; fp128_onehot; fp128::OneHot; nvs=[12, 15, 20, 28]);
 
 // OneHot × single-chunk × precommitted × non-recursive    [16, 20]
 // Catalog rows: final=(16,1) and final=(20,1), both <- pre=[(14,1)].
-matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]; k=256);
+matrix_test!(onehot_pre; fp128_onehot_pre; fp128::OneHot; final_nvs=[16, 20]);
 
 // ----------------------------------------------------------------------------
 // OneHot × single-chunk × direct × recursive    (production-sized, ignored)
@@ -295,8 +296,11 @@ matrix_test!(recursive_pre; fp128_onehot_mc_rec_pre; fp128::OneHotMultiChunk);
 // keep the W8R2 feature graph wired to a real catalog row.
 #[test]
 fn fp128_onehot_mc_catalog_resolves() {
+    let catalog =
+        akita_config::test_support::workspace_schedule_catalog::<fp128::OneHotMultiChunk>()
+            .expect("one-hot multi-chunk catalog");
     let opening_batch = OpeningClaimsLayout::new(32, 1).expect("opening batch");
-    fp128::OneHotMultiChunk::resolve_catalog_row_for_opening(&opening_batch)
+    fp128::OneHotMultiChunk::resolve_catalog_row_for_opening(&catalog, &opening_batch)
         .expect("W8R2 multi-chunk catalog row");
 }
 
@@ -307,7 +311,6 @@ fn fp128_onehot_mc() {
     run_on_large_stack(|| {
         prove_verify_onehot_roundtrip::<fp128::OneHotMultiChunk>(
             &[32],
-            256,
             b"completeness/fp128_onehot_mc",
         );
     });
@@ -330,8 +333,7 @@ fn fp128_onehot_mc() {
 #[test]
 fn fp128_onehot_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let scheme = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
         let polys: Vec<_> = (0..batch_size)
             .map(|i| make_onehot_poly::<OneHotCfg>(nv, 0xa66e_0000 + nv as u64 * 100 + i as u64))
             .collect();
@@ -409,8 +411,7 @@ fn fp128_onehot_batched() {
 #[test]
 fn fp128_dense_batched() {
     fn run(nv: usize, batch_size: usize) {
-        let scheme = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
         let seeds: Vec<u64> = (0..batch_size)
             .map(|i| 0xd3e5_0000 + nv as u64 * 100 + i as u64)
             .collect();
@@ -496,8 +497,9 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
     run_on_large_stack(|| {
         const NV: usize = 17;
         const BATCH: usize = 4;
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(NV, BATCH).expect("opening batch");
-        let layout = DenseCfg::resolve_catalog_row_for_opening(&opening_batch)
+        let layout = DenseCfg::resolve_catalog_row_for_opening(scheme.schedules(), &opening_batch)
             .expect("layout")
             .into_schedule()
             .root
@@ -532,8 +534,6 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
             MultilinearPolynomial::onehot(onehot_b),
         ];
 
-        let scheme = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
         let setup = scheme.setup_prover(NV, BATCH).unwrap();
         let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).unwrap();
         let stack =
@@ -567,8 +567,7 @@ fn fp128_mixed_batched_uses_source_free_group_geometry() {
 #[test]
 fn fp128_onehot_oversized_setup() {
     fn run(setup_nv: usize, poly_nv: usize) {
-        let scheme = AkitaCommitmentScheme::<OneHotCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<OneHotCfg>().expect("embedded schedule catalog");
         let opening_batch = OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch");
         let layout = scheme
             .schedules()
@@ -671,8 +670,7 @@ fn fp128_dense_monomial_basis() {
     init_rayon_pool();
     run_on_large_stack(|| {
         const NV: usize = 14;
-        let scheme = AkitaCommitmentScheme::<DenseCfg>::from_workspace_schedule_artifact()
-            .expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<DenseCfg>().expect("embedded schedule catalog");
         let evals = dense_field_evals(NV, 0xb0b0_0000);
         let poly = akita_prover::DensePoly::<F>::from_field_evals(NV, &evals).expect("dense poly");
         let pt = random_point(NV, 0xc0de_0000);

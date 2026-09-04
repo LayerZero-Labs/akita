@@ -1,9 +1,6 @@
 use akita_challenges::SparseChallengeConfig;
 use akita_error::AkitaError;
-use akita_types::{
-    schedule_row_digest, FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute,
-    OpeningMethod, OpeningScheduleSelection,
-};
+use akita_types::{FoldSchedule, GroupOpenPhaseParams, InnerCommitSecurityRoute, OpeningMethod};
 
 use crate::proof_optimized::fp128;
 use crate::{policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog};
@@ -15,16 +12,8 @@ pub(crate) fn mutated_row_admission_error<Cfg: CommitmentConfig>(
     let profiles = row.profiles().clone();
     let mut schedule = row.schedule().clone();
     mutate(&mut schedule);
-    let selection = OpeningScheduleSelection {
-        row_digest: schedule_row_digest(&profiles, &schedule).expect("mutated row digest"),
-    };
-    akita_schedules::ResolvedScheduleRow::try_new(
-        selection,
-        profiles,
-        schedule,
-        &policy_of::<Cfg>(),
-    )
-    .expect_err("noncanonical row must fail at admission")
+    akita_schedules::ResolvedScheduleRow::try_new(profiles, schedule, &policy_of::<Cfg>())
+        .expect_err("noncanonical row must fail at admission")
 }
 
 fn row_with_setup_prefix<Cfg: CommitmentConfig>(

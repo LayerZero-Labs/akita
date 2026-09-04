@@ -14,12 +14,14 @@ type RecursiveEvaluationTraceCfg = crate::test_support::EarlyEvaluationTraceConf
 
 #[test]
 fn synthetic_packing_row_is_derived_from_one_checked_authority() {
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
+        .expect("workspace schedule catalog");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(20),
         precommitteds: Vec::new(),
     };
-    let first = PackingCfg::derive_catalog_row(&key, 64).unwrap();
-    let second = PackingCfg::derive_catalog_row(&key, 64).unwrap();
+    let first = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
+    let second = PackingCfg::derive_catalog_row(&catalog, &key, 64).unwrap();
     assert_eq!(first.selection(), second.selection());
     assert_eq!(first.schedule(), second.schedule());
 
@@ -93,14 +95,16 @@ fn synthetic_packing_row_is_derived_from_one_checked_authority() {
     );
     schedule.validate_structure().unwrap();
 
-    PackingCfg::derive_catalog_row(&key, 96)
+    PackingCfg::derive_catalog_row(&catalog, &key, 96)
         .expect_err("a non-production challenge subring must reject");
 }
 
 #[test]
 fn fixed_root_packing_rejects_a_stale_successor_length() {
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
+        .expect("workspace schedule catalog");
     let opening_batch = OpeningClaimsLayout::new(20, 1).unwrap();
-    let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
+    let row = PackingCfg::resolve_catalog_row_for_opening(&catalog, &opening_batch).unwrap();
     let mut schedule = row.schedule().clone();
     schedule.terminal.input_witness_len += 1;
     schedule
@@ -124,9 +128,12 @@ fn fixed_root_packing_round_trips_in_both_bases() {
     std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
         .spawn(|| {
+            let catalog = akita_config::test_support::workspace_schedule_catalog::<PackingCfg>()
+                .expect("workspace schedule catalog");
             let num_vars = 20;
             let opening_batch = OpeningClaimsLayout::new(num_vars, 1).unwrap();
-            let row = PackingCfg::resolve_catalog_row_for_opening(&opening_batch).unwrap();
+            let row =
+                PackingCfg::resolve_catalog_row_for_opening(&catalog, &opening_batch).unwrap();
             let schedules = akita_config::TrustedScheduleCatalog::try_new(
                 PackingCfg::schedule_family_name(),
                 [(row.profiles().clone(), row.schedule().clone())],
@@ -392,16 +399,19 @@ fn fixed_root_packing_round_trips_in_both_bases() {
 
                     macro_rules! assert_early_evaluation_trace_rejects_at_catalog_boundary {
                         ($config:ty, $context:literal) => {{
-                            let result = <$config>::resolve_catalog_row_for_opening(&opening_batch)
-                                .and_then(|row| {
-                                    akita_config::TrustedScheduleCatalog::try_new(
-                                        <$config>::schedule_family_name(),
-                                        [(row.profiles().clone(), row.schedule().clone())],
-                                        &akita_config::policy_of::<$config>(),
-                                        <$config>::ring_challenge_config,
-                                    )
-                                })
-                                .and_then(AkitaCommitmentScheme::<$config>::new);
+                            let result = <$config>::resolve_catalog_row_for_opening(
+                                &catalog,
+                                &opening_batch,
+                            )
+                            .and_then(|row| {
+                                akita_config::TrustedScheduleCatalog::try_new(
+                                    <$config>::schedule_family_name(),
+                                    [(row.profiles().clone(), row.schedule().clone())],
+                                    &akita_config::policy_of::<$config>(),
+                                    <$config>::ring_challenge_config,
+                                )
+                            })
+                            .and_then(AkitaCommitmentScheme::<$config>::new);
                             assert!(
                                 result.is_err(),
                                 concat!($context, " must reject at the trusted catalog boundary")

@@ -8,9 +8,10 @@ use crate::workload::{
     onehot_k_for_num_vars, profile_setup_contribution_mode, run_batched_onehot, run_dense_for,
     run_onehot, run_recursive_multi_group_onehot,
 };
+use crate::workspace_schedules::load_workspace_scheme;
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::test_support::TestScheduleProvider;
 use akita_config::{CommitmentConfig, RecursiveCommitmentConfig};
+use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
@@ -36,29 +37,25 @@ fn fp128_prime_label() -> String {
     }
 }
 
-fn run_dense_mode<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
->(
+fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
+    scheme: &AkitaCommitmentScheme<Cfg>,
     label: &str,
     title: &str,
     nv: usize,
 ) {
     let group = PolynomialGroupLayout::singleton(nv);
-    let layout = resolve_layout::<F, Cfg>(group);
-    let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+    let layout = resolve_layout(scheme.schedules(), group);
+    let plan = scheme
+        .schedules()
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
         .into_schedule();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
-    run_dense_for::<F, D, Cfg>(label, nv, &layout, Some(&plan), true);
+    run_dense_for::<F, D, Cfg>(scheme, label, nv, &layout, Some(&plan), true);
 }
 
-fn run_dense_mode_for<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
->(
+fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
     nv: usize,
@@ -78,24 +75,23 @@ fn run_dense_mode_for<
         + 'static,
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     // The dense profile opens one polynomial at one point, so the schedule key
     // is the singleton root the prover actually resolves via
     // `new_from_opening_batch`.
     let group = PolynomialGroupLayout::singleton(nv);
-    let layout = resolve_layout::<FF, Cfg>(group);
-    let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+    let layout = resolve_layout(scheme.schedules(), group);
+    let plan = scheme
+        .schedules()
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("schedule plan")
         .into_schedule();
     tracing::info!("{}", title);
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
-    run_dense_for::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
+    run_dense_for::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
 }
 
-fn run_onehot_mode_for<
-    FF,
-    const D: usize,
-    Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider,
->(
+fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     title: &str,
     nv: usize,
@@ -116,10 +112,11 @@ fn run_onehot_mode_for<
         + 'static,
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     tracing::info!("{}", title);
     let group = PolynomialGroupLayout::new(nv, num_polys);
     if num_polys == 1 {
-        let layout = resolve_layout::<FF, Cfg>(group);
+        let layout = resolve_layout(scheme.schedules(), group);
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
             + layout.d_a().trailing_zeros() as usize;
@@ -134,21 +131,25 @@ fn run_onehot_mode_for<
                 "[{label}] fixed onehot profile requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
             );
         }
-        let plan = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+        let plan = scheme
+            .schedules()
+            .resolve_key(&AkitaScheduleLookupKey::single(group))
             .expect("schedule plan")
             .into_schedule();
         print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
-        run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
+        run_onehot::<FF, D, Cfg>(&scheme, label, nv, &layout, Some(&plan), true);
     } else {
         let lookup_key = AkitaScheduleLookupKey::single(group);
-        let plan = Cfg::resolve_catalog_row_for_key(&lookup_key)
+        let plan = scheme
+            .schedules()
+            .resolve_key(&lookup_key)
             .expect("schedule plan")
             .into_schedule();
-        let layout = Cfg::resolve_catalog_row_for_opening(
-            &lookup_key.opening_layout().expect("opening layout"),
-        )
-        .map(|row| row.schedule().root.params.clone())
-        .expect("layout");
+        let layout = scheme
+            .schedules()
+            .resolve_key(&lookup_key)
+            .map(|row| row.schedule().root.params.clone())
+            .expect("layout");
         let required_vars = layout.position_index_bits()
             + layout.block_index_bits()
             + layout.d_a().trailing_zeros() as usize;
@@ -166,14 +167,11 @@ fn run_onehot_mode_for<
         }
         print_layout(&layout, num_polys, Cfg::decomposition().field_bits())
             .expect("profile B geometry");
-        run_batched_onehot::<FF, D, Cfg>(label, nv, num_polys, &layout, Some(&plan));
+        run_batched_onehot::<FF, D, Cfg>(&scheme, label, nv, num_polys, &layout, Some(&plan));
     }
 }
 
-fn run_onehot_mode<
-    const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
->(
+fn run_onehot_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     label: &str,
     title: &str,
     nv: usize,
@@ -385,11 +383,13 @@ fn run_profile_dense_fp128(nv: usize, num_polys: usize) {
     assert_singleton_mode("dense_fp128", num_polys);
     let prime = fp128_prime_label();
     let title = format!("=== dense_fp128 (fp128, {prime}, generated per-level dimensions) ===");
-    let root_dimension = resolve_layout::<F, Cfg>(PolynomialGroupLayout::singleton(nv)).d_a();
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
+    let root_dimension =
+        resolve_layout(scheme.schedules(), PolynomialGroupLayout::singleton(nv)).d_a();
     match root_dimension {
-        256 => run_dense_mode::<256, Cfg>("dense_fp128", &title, nv),
-        512 => run_dense_mode::<512, Cfg>("dense_fp128", &title, nv),
-        1024 => run_dense_mode::<1024, Cfg>("dense_fp128", &title, nv),
+        256 => run_dense_mode::<256, Cfg>(&scheme, "dense_fp128", &title, nv),
+        512 => run_dense_mode::<512, Cfg>(&scheme, "dense_fp128", &title, nv),
+        1024 => run_dense_mode::<1024, Cfg>(&scheme, "dense_fp128", &title, nv),
         dimension => panic!("dense_fp128 profile does not compile ring dimension D={dimension}"),
     }
 }
@@ -399,7 +399,9 @@ fn run_profile_dense_fp128_multi_chunk_w8r2(nv: usize, num_polys: usize) {
     assert_eq!(nv, 16, "dense W8R2 profiles nv=16");
     assert_singleton_mode("dense_fp128_multi_chunk_w8r2", num_polys);
     let prime = fp128_prime_label();
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     run_dense_mode::<256, Cfg>(
+        &scheme,
         "dense_fp128_multi_chunk_w8r2",
         &format!(
             "=== dense_fp128_multi_chunk_w8r2 (fp128, {prime}, adaptive ring dimensions, distributed chunked relation, num_chunks=8 x 2 leading levels) ==="
@@ -424,7 +426,7 @@ fn run_profile_onehot_fp128(nv: usize, num_polys: usize) {
 
 fn run_profile_onehot_fp128_with_cfg<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 >(
     label: &str,
     nv: usize,
@@ -436,8 +438,11 @@ fn run_profile_onehot_fp128_with_cfg<
     );
     assert_singleton_mode(label, num_polys);
 
+    let scheme = load_workspace_scheme::<Cfg>().expect("workspace schedule artifact");
     let group = PolynomialGroupLayout::new(nv, 1);
-    let schedule = Cfg::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
+    let schedule = scheme
+        .schedules()
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
         .expect("generated fp128 one-hot schedule")
         .into_schedule();
     let selected_dims = std::iter::once(schedule.root.params.role_dims())
@@ -453,15 +458,17 @@ fn run_profile_onehot_fp128_with_cfg<
         "generated fp128 one-hot schedule selection"
     );
 
-    let layout = resolve_layout::<F, Cfg>(group);
+    let layout = resolve_layout(scheme.schedules(), group);
+    let onehot_k = akita_config::unit_onehot_source_chunk_size::<Cfg>()
+        .expect("one-hot profile requires a unit-one-hot config");
     tracing::info!(
-        "=== {label} (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
+        "=== {label} (fp128, flat public setup, generated per-level dimensions, 1-of-{onehot_k}) ==="
     );
     print_layout(&layout, 1, Cfg::decomposition().field_bits()).expect("profile B geometry");
     // The catalog row selected here is the same exact row used by the PCS
     // prover and verifier. The benchmark intentionally does not compare it
     // against a different uniform-D family.
-    run_onehot::<F, D, Cfg>(label, nv, &layout, Some(&schedule), false);
+    run_onehot::<F, D, Cfg>(&scheme, label, nv, &layout, Some(&schedule), false);
 }
 
 /// Shared driver for the multi-group profiles. Every such profile fixes the
@@ -470,7 +477,6 @@ fn run_profile_onehot_fp128_with_cfg<
 fn run_multi_group_mode<
     const D: usize,
     Cfg: CommitmentConfig<Field = F, ExtField = F>
-        + TestScheduleProvider
         + akita_config::recursive_commitment::RecursiveScheduleConfig,
 >(
     label: &str,
@@ -536,7 +542,7 @@ fn run_profile_onehot_fp128_multi_group_recursive_multi_chunk_w8r2(nv: usize, nu
 
 fn run_profile_onehot_fp128_multi_chunk_named<
     const D: usize,
-    Cfg: CommitmentConfig<Field = F, ExtField = F> + TestScheduleProvider,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
 >(
     label: &str,
     profile: MultiChunkProfileId,
@@ -635,18 +641,17 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
     }
 }
 
-fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF> + TestScheduleProvider>(
+fn resolve_layout(
+    catalog: &akita_config::TrustedScheduleCatalog,
     group: PolynomialGroupLayout,
 ) -> CommittedGroupParams {
-    Cfg::resolve_catalog_row_for_opening(
-        &akita_types::OpeningClaimsLayout::from_root_groups(&[], group)
-            .expect("singleton opening batch"),
-    )
-    .expect("layout")
-    .schedule()
-    .root
-    .params
-    .clone()
+    catalog
+        .resolve_key(&AkitaScheduleLookupKey::single(group))
+        .expect("layout")
+        .schedule()
+        .root
+        .params
+        .clone()
 }
 #[cfg(feature = "profile-onehot-fp128")]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {

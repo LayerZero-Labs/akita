@@ -4,7 +4,8 @@ fn fp32_l2_onehot_poly(
     params: &CommittedGroupParams,
     seed: usize,
 ) -> akita_prover::OneHotPoly<fp32::Field, u8> {
-    let onehot_k = 256;
+    let onehot_k = akita_config::unit_onehot_source_chunk_size::<fp32::OneHot>()
+        .expect("fp32 one-hot fixture requires a unit-one-hot config");
     let total_field = params
         .blocks()
         .live_blocks
@@ -51,13 +52,12 @@ fn fp32_ext4_l2_pcs_roundtrip_and_stage2_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
-    type Scheme = AkitaCommitmentScheme<Cfg>;
     const NUM_VARS: usize = 28;
     const LABEL: &[u8] = b"test/fp32-ext4-multiblock-l2-pcs";
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("L2 opening layout");
         let schedule = scheme
             .schedules()
@@ -248,13 +248,12 @@ fn fp32_nv20_shipped_terminal_route_roundtrip_and_rejections() {
     type Cfg = fp32::OneHot;
     type F = fp32::Field;
     type E = fp32::ExtensionField;
-    type Scheme = AkitaCommitmentScheme<Cfg>;
     const NUM_VARS: usize = 20;
     const LABEL: &[u8] = b"test/fp32-nv20-shipped-terminal-route";
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme = Scheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
         let opening_layout = OpeningClaimsLayout::new(NUM_VARS, 1).expect("terminal L2 layout");
         let schedule = scheme
             .schedules()

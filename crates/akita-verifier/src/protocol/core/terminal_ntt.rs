@@ -330,10 +330,13 @@ mod tests {
 
     #[test]
     fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
+        let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
+            .expect("workspace schedule catalog");
         let group = PolynomialGroupLayout::new(15, 1);
-        let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey::single(group))
-            .expect("adaptive schedule")
-            .into_schedule();
+        let schedule =
+            OneHot::resolve_catalog_row_for_key(&catalog, &AkitaScheduleLookupKey::single(group))
+                .expect("adaptive schedule")
+                .into_schedule();
         let params = &schedule.terminal;
         let prefix_len = params
             .inner

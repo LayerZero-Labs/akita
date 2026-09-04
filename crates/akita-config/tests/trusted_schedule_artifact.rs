@@ -109,6 +109,54 @@ fn swap_first_two_json_rows(bytes: &[u8]) -> Vec<u8> {
     swapped
 }
 
+fn empty_nth_fold_group_list(bytes: &[u8], occurrence: usize) -> Vec<u8> {
+    let marker = b"\"groups\":{\"entries\":[";
+    let array_start = bytes
+        .windows(marker.len())
+        .enumerate()
+        .filter_map(|(offset, window)| (window == marker).then_some(offset + marker.len() - 1))
+        .nth(occurrence)
+        .expect("fold group list marker");
+
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let array_end = bytes[array_start..]
+        .iter()
+        .enumerate()
+        .find_map(|(relative, &byte)| {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == b'"' {
+                    in_string = false;
+                }
+                return None;
+            }
+            match byte {
+                b'"' => in_string = true,
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(array_start + relative);
+                    }
+                }
+                _ => {}
+            }
+            None
+        })
+        .expect("complete fold group list");
+
+    let mut malformed = Vec::with_capacity(bytes.len() - (array_end - array_start - 1));
+    malformed.extend_from_slice(&bytes[..array_start]);
+    malformed.extend_from_slice(b"[]");
+    malformed.extend_from_slice(&bytes[array_end + 1..]);
+    malformed
+}
+
 #[test]
 fn trusted_artifact_round_trip_preserves_rows_and_selection() {
     let checked_in = checked_in_catalog::<fp128::Dense>();
@@ -167,6 +215,23 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
     let noncanonical_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&noncanonical)
         .expect_err("trailing whitespace must reject");
     assert!(format!("{noncanonical_error}").contains("canonical JSON"));
+}
+
+#[test]
+fn decoder_rejects_empty_root_and_recursive_groups_without_panicking() {
+    let bytes = checked_in_artifact_bytes::<fp128::Dense>();
+    for (label, occurrence) in [("root", 0), ("recursive", 1)] {
+        let malformed = empty_nth_fold_group_list(&bytes, occurrence);
+        let result = std::panic::catch_unwind(|| {
+            trusted_schedule_catalog_from_bytes::<fp128::Dense>(&malformed)
+        });
+        let decoded = result.unwrap_or_else(|_| panic!("{label} empty groups panicked"));
+        let error = decoded.expect_err("empty fold groups must reject");
+        assert!(
+            error.to_string().contains("own group"),
+            "unexpected {label} empty-groups error: {error}"
+        );
+    }
 }
 
 #[test]

@@ -419,12 +419,15 @@ where
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF> + TestScheduleProvider,
 {
+    let embedded = akita_config::test_support::workspace_schedule_catalog::<ProtocolCfg>()
+        .expect("embedded schedule catalog");
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
     let opening_num_vars = pre_num_vars.max(final_num_vars);
     let pre_layouts = pre_sizes
         .iter()
         .map(|&num_polynomials| {
             ProtocolCfg::profile_without_precommitted_groups(
+                &embedded,
                 akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials),
             )
             .expect("independent profile")
@@ -434,15 +437,13 @@ where
         final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds: pre_layouts.clone(),
     };
-    let requested_row = ProtocolCfg::resolve_catalog_row_for_key(&multi_group_key)
+    let requested_row = ProtocolCfg::resolve_catalog_row_for_key(&embedded, &multi_group_key)
         .expect("multi-group runtime schedule");
     let multi_group_schedule = requested_row.schedule().clone();
 
     // Synthetic test configs may generate a row that is intentionally absent
     // from the shipped table. Install that row into one trusted catalog before
     // exercising setup, commitment, proving, and verification.
-    let embedded = akita_config::test_support::workspace_schedule_catalog::<ProtocolCfg>()
-        .expect("embedded schedule catalog");
     let requested_is_embedded = embedded
         .rows()
         .any(|row| row.selection() == requested_row.selection());

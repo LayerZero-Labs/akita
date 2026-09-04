@@ -49,7 +49,6 @@ mod common;
 mod small_field_drivers;
 
 use akita_config::proof_optimized::{fp32, fp64};
-use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, UniformProverStack};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -88,7 +87,6 @@ use small_field_drivers::*;
 //   pre_nv     — pre-group num_vars (precommitted arms); per config, because the
 //                smallest usable pre size differs between families
 //   final_nvs  — list of final-group num_vars (precommitted arms)
-//   k          — one-hot group size K (onehot arms)
 // ============================================================================
 
 macro_rules! small_field_test {
@@ -151,7 +149,7 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let scheme = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact()
+                    let scheme = load_workspace_scheme::<$cfg>()
                         .expect("embedded schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
@@ -277,14 +275,15 @@ macro_rules! small_field_test {
     // ------------------------------------------------------------------
     // onehot — single-group, non-precommitted, one-hot polynomial
     // ------------------------------------------------------------------
-    ($(#[$attr:meta])* onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot; $name:ident; $cfg:ty; $sf:ty; $se:ty; nvs=[$($nv:expr),+]) => {
         $(#[$attr])*
         #[test]
         fn $name() {
             init_rayon_pool();
             run_on_large_stack(|| {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
-                let onehot_k: usize = $k;
+                let onehot_k = akita_config::unit_onehot_source_chunk_size::<$cfg>()
+                    .expect("one-hot test requires a unit-one-hot config");
                 for &nv in &[$($nv),+] {
                     let num_chunks = (1usize << nv) / onehot_k;
                     let indices: Vec<Option<u8>> = (0..num_chunks)
@@ -318,7 +317,7 @@ macro_rules! small_field_test {
     // onehot_pre — two-group precommitted, one-hot polynomial
     // pre-group: nv=pre_nv  |  final-group: nv from final_nvs list
     // ------------------------------------------------------------------
-    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]; k=$k:expr) => {
+    ($(#[$attr:meta])* onehot_pre; $name:ident; $cfg:ty; $sf:ty; $se:ty; pre_nv=$pnv:expr; final_nvs=[$($fnv:expr),+]) => {
         $(#[$attr])*
         #[test]
         fn $name() {
@@ -326,7 +325,8 @@ macro_rules! small_field_test {
             run_on_large_stack(|| {
                 let label = concat!("completeness/", stringify!($name)).as_bytes();
                 const PRE_NV: usize = $pnv;
-                let onehot_k: usize = $k;
+                let onehot_k = akita_config::unit_onehot_source_chunk_size::<$cfg>()
+                    .expect("one-hot test requires a unit-one-hot config");
 
                 let pre_chunks = (1usize << PRE_NV) / onehot_k;
                 let pre_indices: Vec<Option<u8>> = (0..pre_chunks)
@@ -334,7 +334,7 @@ macro_rules! small_field_test {
                     .collect();
 
                 for &final_nv in &[$($fnv),+] {
-                    let scheme = AkitaCommitmentScheme::<$cfg>::from_workspace_schedule_artifact()
+                    let scheme = load_workspace_scheme::<$cfg>()
                         .expect("embedded schedule catalog");
                     let setup = scheme.setup_prover(
                         final_nv.max(PRE_NV),
@@ -488,9 +488,9 @@ small_field_test!(dense;     fp32_dense;     fp32::Dense;  fp32::Field; fp32::Ex
 // folds below 20, so no such row exists at 14.
 small_field_test!(dense_pre; fp32_dense_pre; fp32::Dense; fp32::Field; fp32::ExtensionField; pre_nv=20; final_nvs=[20]);
 // fp32 × OneHot × direct             catalog: single(14,1), single(16,1)
-small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]; k=256);
+small_field_test!(onehot;     fp32_onehot;     fp32::OneHot; fp32::Field; fp32::ExtensionField; nvs=[14, 16]);
 // fp32 × OneHot × precommitted       catalog: final=(20,1) <- pre=[(14,1)]
-small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]; k=256);
+small_field_test!(onehot_pre; fp32_onehot_pre; fp32::OneHot; fp32::Field; fp32::ExtensionField; pre_nv=14; final_nvs=[20]);
 
 // ----------------------------------------------------------------------------
 // fp64  (Field = Prime64Offset59, ExtField = Ext2)
@@ -512,7 +512,7 @@ small_field_test!(dense_pre; fp64_dense_pre; fp64::Dense; fp64::Field; fp64::Ext
 // production-sized and skipped by default; run it with `-- --ignored`. It is
 // runnable: the independent oracle no longer materializes a 2^28 weight table,
 // which is what previously made it infeasible.
-small_field_test!(#[ignore = "production-sized: fp64::OneHot starts at nv=28; run with --ignored --release"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]; k=256);
+small_field_test!(#[ignore = "production-sized: fp64::OneHot starts at nv=28; run with --ignored --release"] onehot; fp64_onehot; fp64::OneHot; fp64::Field; fp64::ExtensionField; nvs=[28]);
 //
 // fp64 × OneHot × precommitted — NA. The fp64::OneHot catalog ships no combined
 // precommit+final row, and its smallest final size is nv=28. Adding one purely
@@ -532,14 +532,12 @@ fn fp32_onehot_multi_group() {
     type SmallCfg = fp32::OneHot;
     type SmallF = fp32::Field;
     type SmallE = fp32::ExtensionField;
-    type SmallScheme = AkitaCommitmentScheme<SmallCfg>;
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;
 
     init_rayon_pool();
     run_on_large_stack(|| {
-        let scheme =
-            SmallScheme::from_workspace_schedule_artifact().expect("embedded schedule catalog");
+        let scheme = load_workspace_scheme::<SmallCfg>().expect("embedded schedule catalog");
         let grouped_poly = |params: &CommittedGroupParams, seed: usize| {
             let onehot_k =
                 akita_config::unit_onehot_source_chunk_size::<SmallCfg>().expect("one-hot config");

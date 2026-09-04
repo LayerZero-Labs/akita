@@ -17,21 +17,3 @@ where
 {
     AkitaCommitmentScheme::new(akita_config::test_support::workspace_schedule_catalog::<Cfg>()?)
 }
-
-/// Extension used only by repository-owned development targets.
-#[allow(dead_code)]
-pub(crate) trait WorkspaceScheduleArtifactExt: Sized {
-    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError>;
-}
-
-impl<Cfg> WorkspaceScheduleArtifactExt for AkitaCommitmentScheme<Cfg>
-where
-    Cfg: CommitmentConfig,
-    Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
-    Cfg::ExtField: FpExtEncoding<Cfg::Field>,
-    Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
-{
-    fn from_workspace_schedule_artifact() -> Result<Self, AkitaError> {
-        load_workspace_scheme::<Cfg>()
-    }
-}

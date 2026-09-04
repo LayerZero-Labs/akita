@@ -10,7 +10,7 @@
 //! and how its opening is computed from an independent oracle — stays at the
 //! call site, which is the only part worth reading per cell.
 
-use crate::common::WorkspaceScheduleArtifactExt as _;
+use crate::common::load_workspace_scheme;
 use akita_config::CommitmentConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, MultilinearPolynomial, UniformProverStack};
@@ -61,8 +61,7 @@ pub(super) fn single_group_roundtrip<Cfg>(
         + AkitaSerialize,
     <Cfg::Field as Unreduced>::Wide: From<Cfg::Field>,
 {
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
-        .expect("embedded schedule catalog");
+    let scheme = load_workspace_scheme::<Cfg>().expect("embedded schedule catalog");
     let setup = scheme.setup_prover(nv, 1).expect("setup");
     let prepared = CpuBackend::DEFAULT.prepare_setup(&setup).expect("prepared");
     let stack =

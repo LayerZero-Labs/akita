@@ -5,7 +5,7 @@ mod opening_oracles;
 mod workspace_schedules;
 
 pub(super) use opening_oracles::*;
-pub(super) use workspace_schedules::WorkspaceScheduleArtifactExt;
+pub(super) use workspace_schedules::load_workspace_scheme;
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;

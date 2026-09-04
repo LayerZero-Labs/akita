@@ -6,8 +6,7 @@ use akita_types::instance_descriptor::{
     digest_descriptor_bytes, AKITA_INSTANCE_DESCRIPTOR_VERSION,
 };
 use akita_types::{
-    schedule_row_digest, AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule,
-    OpeningScheduleSelection,
+    AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,13 +70,7 @@ impl TrustedScheduleCatalog {
 
         let mut resolved = Vec::with_capacity(rows.len());
         for (profiles, schedule) in rows {
-            let row_digest = schedule_row_digest(&profiles, &schedule)?;
-            let row = ResolvedScheduleRow::try_new(
-                OpeningScheduleSelection { row_digest },
-                profiles,
-                schedule,
-                policy,
-            )?;
+            let row = ResolvedScheduleRow::try_new(profiles, schedule, policy)?;
             validate_schedule_challenge_hooks(row.schedule(), &ring_challenge_config)?;
             resolved.push(row);
         }

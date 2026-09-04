@@ -20,11 +20,10 @@ pub struct ResolvedScheduleRow {
 impl ResolvedScheduleRow {
     /// Construct a row already authorized by a configuration-owned catalog.
     ///
-    /// This validates the exact committed profiles, expanded schedule, and row
-    /// digest. The caller remains responsible for admitting the row from its
-    /// configured catalog.
+    /// This validates the exact committed profiles and expanded schedule before
+    /// deriving the public row digest. The caller remains responsible for
+    /// admitting the row from its configured catalog.
     pub fn try_new(
-        selection: OpeningScheduleSelection,
         profiles: CommittedGroupBatchProfile,
         schedule: FoldSchedule,
         policy: &PlannerPolicy,
@@ -32,11 +31,9 @@ impl ResolvedScheduleRow {
         audit_resolved_schedule(&profiles, &schedule, policy)?;
         validate_schedule_ring_dims(&schedule)?;
         validate_canonical_transition_lengths(&profiles, &schedule, policy)?;
-        if schedule_row_digest(&profiles, &schedule)? != selection.row_digest {
-            return Err(AkitaError::InvalidSetup(
-                "schedule row digest does not match the supplied profiles and schedule".to_string(),
-            ));
-        }
+        let selection = OpeningScheduleSelection {
+            row_digest: schedule_row_digest(&profiles, &schedule)?,
+        };
         Ok(Self {
             selection,
             profiles,

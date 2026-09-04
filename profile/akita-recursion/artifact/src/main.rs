@@ -40,30 +40,24 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 
-trait WorkspaceScheduleArtifactExt: Sized {
-    fn from_workspace_schedule_artifact() -> Result<Self, akita_error::AkitaError>;
-}
-
-impl<Cfg> WorkspaceScheduleArtifactExt for AkitaCommitmentScheme<Cfg>
+fn load_workspace_scheme<Cfg>() -> Result<AkitaCommitmentScheme<Cfg>, akita_error::AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: Field + CanonicalEncoding + Unreduced + PseudoMersenne + Valid + AkitaSerialize,
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     Cfg::ExtField: ExtField<Cfg::Field> + Ring + Unreduced + Fold + AkitaSerialize,
 {
-    fn from_workspace_schedule_artifact() -> Result<Self, akita_error::AkitaError> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join("artifacts/schedules")
-            .join(format!("{}.aks", Cfg::schedule_family_name()));
-        let bytes = fs::read(&path).map_err(|error| {
-            akita_error::AkitaError::InvalidSetup(format!(
-                "failed to read workspace schedule artifact {}: {error}",
-                path.display()
-            ))
-        })?;
-        Self::from_schedule_artifact(&bytes)
-    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("artifacts/schedules")
+        .join(format!("{}.aks", Cfg::schedule_family_name()));
+    let bytes = fs::read(&path).map_err(|error| {
+        akita_error::AkitaError::InvalidSetup(format!(
+            "failed to read workspace schedule artifact {}: {error}",
+            path.display()
+        ))
+    })?;
+    AkitaCommitmentScheme::from_schedule_artifact(&bytes)
 }
 
 #[derive(Debug, Parser)]
@@ -85,7 +79,6 @@ type Cfg = RecursiveCommitmentConfig<BaseCfg>;
 const SOURCE_VIEW_D: usize = 512;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
-const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
 const PRE_GROUPS: usize = 2;
 const PRE_NUM_VARS: usize = 16;
 const FINAL_POLYS: usize = 2;
@@ -93,9 +86,11 @@ const FINAL_POLYS: usize = 2;
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot";
 
 fn onehot_k_for_num_vars(nv: usize) -> usize {
-    let max_supported_log_k = ONEHOT_K.trailing_zeros() as usize;
+    let source_chunk_size = akita_config::unit_onehot_source_chunk_size::<BaseCfg>()
+        .expect("recursion artifact requires a unit-one-hot base config");
+    let max_supported_log_k = source_chunk_size.trailing_zeros() as usize;
     if nv >= max_supported_log_k {
-        ONEHOT_K
+        source_chunk_size
     } else {
         1usize << nv
     }
@@ -359,7 +354,7 @@ macro_rules! generate_scalar_case {
 
         let case = $case;
         let num_vars = $nv;
-        let scheme = AkitaCommitmentScheme::<ScalarCfg>::from_workspace_schedule_artifact()
+        let scheme = load_workspace_scheme::<ScalarCfg>()
             .map_err(|err| format!("{} trusted schedule catalog: {err}", case))?;
         let opening_layout = OpeningClaimsLayout::new(num_vars, 1)
             .map_err(|err| format!("{} opening layout: {err}", case))?;
@@ -629,9 +624,9 @@ fn run() -> Result<(), String> {
         ));
     }
     let onehot_k = onehot_k_for_num_vars(nv);
-    let scheme = AkitaCommitmentScheme::<Cfg>::from_workspace_schedule_artifact()
+    let scheme = load_workspace_scheme::<Cfg>()
         .map_err(|err| format!("failed to load trusted recursive schedule catalog: {err}"))?;
-    let base_scheme = AkitaCommitmentScheme::<BaseCfg>::from_workspace_schedule_artifact()
+    let base_scheme = load_workspace_scheme::<BaseCfg>()
         .map_err(|err| format!("failed to load trusted base schedule catalog: {err}"))?;
 
     let prime = fp128_prime_label();

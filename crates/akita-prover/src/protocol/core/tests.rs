@@ -491,6 +491,8 @@ fn mixed_setup_prefix_and_suffix_eor_matches_independent_dense_oracle() {
 
 #[test]
 fn proof_schedule_from_layout_includes_entire_batch() {
+    let catalog = akita_config::test_support::workspace_schedule_catalog::<OneHot>()
+        .expect("workspace schedule catalog");
     let batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(16, 1),
         PolynomialGroupLayout::new(16, 1),
@@ -499,12 +501,15 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
     let precommitted =
-        OneHot::profile_without_precommitted_groups(PolynomialGroupLayout::new(16, 1))
+        OneHot::profile_without_precommitted_groups(&catalog, PolynomialGroupLayout::new(16, 1))
             .expect("independent profile");
-    let schedule = OneHot::resolve_catalog_row_for_key(&AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(32, 2),
-        precommitteds: vec![precommitted, precommitted],
-    })
+    let schedule = OneHot::resolve_catalog_row_for_key(
+        &catalog,
+        &AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(32, 2),
+            precommitteds: vec![precommitted, precommitted],
+        },
+    )
     .expect("multi-group schedule")
     .into_schedule();
     let root_params = schedule.root.params.clone();

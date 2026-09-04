@@ -109,40 +109,48 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     Cfg::ExtField: ExtField<FF> + FpExtEncoding<FF> + Unreduced + Fold + AkitaSerialize + Valid,
 {
     let setup_contribution_mode = profile_setup_contribution_mode();
+    let base_scheme = load_workspace_scheme::<Cfg>().expect("base workspace schedule artifact");
     match setup_contribution_mode {
         SetupContributionMode::Direct => {
             run_recursive_multi_group_onehot_with_proof_cfg::<FF, D, Cfg, Cfg>(
+                &base_scheme,
+                &base_scheme,
                 label,
                 pre_num_vars,
                 final_num_vars,
                 final_num_polys,
                 setup_contribution_mode,
-                true,
             )
         }
-        SetupContributionMode::Recursive => run_recursive_multi_group_onehot_with_proof_cfg::<
-            FF,
-            D,
-            Cfg,
-            RecursiveCommitmentConfig<Cfg>,
-        >(
-            label,
-            pre_num_vars,
-            final_num_vars,
-            final_num_polys,
-            setup_contribution_mode,
-            true,
-        ),
+        SetupContributionMode::Recursive => {
+            let proof_scheme = load_workspace_scheme::<RecursiveCommitmentConfig<Cfg>>()
+                .expect("recursive workspace schedule artifact");
+            run_recursive_multi_group_onehot_with_proof_cfg::<
+                FF,
+                D,
+                Cfg,
+                RecursiveCommitmentConfig<Cfg>,
+            >(
+                &base_scheme,
+                &proof_scheme,
+                label,
+                pre_num_vars,
+                final_num_vars,
+                final_num_polys,
+                setup_contribution_mode,
+            )
+        }
     }
 }
 
 fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, ProofCfg>(
+    base_scheme: &akita_pcs::AkitaCommitmentScheme<Cfg>,
+    proof_scheme: &akita_pcs::AkitaCommitmentScheme<ProofCfg>,
     label: &str,
     pre_num_vars: usize,
     final_num_vars: usize,
     final_num_polys: usize,
     setup_contribution_mode: SetupContributionMode,
-    validate_against_planner: bool,
 ) where
     Cfg: CommitmentConfig<Field = FF>,
     ProofCfg: CommitmentConfig<Field = FF, ExtField = Cfg::ExtField>,
@@ -164,9 +172,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     const PRE_GROUPS: usize = 2;
     const PRE_POLYS_PER_GROUP: usize = 1;
 
-    let base_scheme = load_workspace_scheme::<Cfg>().expect("base workspace schedule artifact");
-    let proof_scheme =
-        load_workspace_scheme::<ProofCfg>().expect("proof workspace schedule artifact");
     let total_polys = PRE_GROUPS * PRE_POLYS_PER_GROUP + final_num_polys;
     let pools = ProfileThreadPools::get();
 
@@ -392,21 +397,14 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         Some(&schedule),
         &grinding_plan,
     );
-    if validate_against_planner {
-        report_proof_size_against_planner(
-            label,
-            &proof,
-            planned_payload_bytes::<ProofCfg>(&schedule, final_group),
-            "planned",
-            setup_contribution_mode,
-            &schedule,
-        );
-    } else {
-        tracing::info!(
-            label,
-            "skipping shipped-planner proof-size comparison for synthetic mixed-D schedule"
-        );
-    }
+    report_proof_size_against_planner(
+        label,
+        &proof,
+        planned_payload_bytes::<ProofCfg>(&schedule, final_group),
+        "planned",
+        setup_contribution_mode,
+        &schedule,
+    );
     emit_runtime_schedule_summary(
         label,
         &schedule,
