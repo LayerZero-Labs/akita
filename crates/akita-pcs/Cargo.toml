@@ -117,9 +117,8 @@ tracing = "0.1"
 rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
-# Test-only: pull in `akita-config`'s test-support layout helpers
-# (e.g. `test_support::akita_batched_root_layout`). Do not enable
-# schedule rows here: tests load checked-in external artifacts at runtime.
+# Test-only: pull in `akita-config`'s workspace artifact loader and ring-plan
+# seed. Schedule rows remain checked-in external artifacts loaded at runtime.
 akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
   "test-support",
 ] }
