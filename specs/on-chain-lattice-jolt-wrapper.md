@@ -22,8 +22,9 @@ application proof remains a fast Jolt proof over the 128-bit Solinas field with
 Akita. A second Jolt instance over the BN254 scalar field proves that a RISC-V
 program accepted that application proof. A circuit-oriented BN254 Akita profile
 makes the second Jolt verifier almost entirely native BN254 field arithmetic.
-Finally, a generated Groth16 or PLONK circuit proves that the BN254 Jolt verifier
-accepted, and Ethereum verifies only that short outer proof.
+Finally, a generated circuit proves that the BN254 Jolt verifier accepted, and
+Ethereum verifies only that short outer proof. Groth16 is the first baseline;
+Spartan plus HyperKZG and PLONK are later backends for the same verifier IR.
 
 The central engineering claim is deliberately narrower than a performance
 claim: this route removes the non-native elliptic-curve, extension-field, and
@@ -41,7 +42,7 @@ assumption of this design.
 Build one fixed-profile pipeline that proves, on Ethereum, that a lattice-Jolt
 application proof was accepted, while keeping the 128-bit application prover
 and using a circuit-generated BN254 Akita verifier rather than hand-maintained
-Groth16 or PLONK code.
+wrapper-specific verifier code.
 
 ### Decisions
 
@@ -71,11 +72,12 @@ The first implementation SHOULD make the following choices:
    appropriate for Solidity or an outer PLONK transcript, but is not the
    initial in-circuit proof transcript.
 9. One typed semantic verifier emits both concrete checks and a circuit IR.
-   Groth16 and PLONK are compiler backends, not separately rewritten
-   verifiers.
+   Groth16, Spartan plus HyperKZG, and PLONK are compiler backends, not
+   separately rewritten verifiers.
 10. Groth16 is the first on-chain target because fixed circuit classes make a
     circuit-specific setup tolerable and its verifier cost is largely
-    independent of circuit size. PLONK follows from the same IR when a universal
+    independent of circuit size. Spartan plus HyperKZG follows as the closest
+    reuse of Jolt's current wrapper machinery. PLONK follows when a universal
     SRS or easier circuit upgrades are more important.
 
 ### End-to-end statement
@@ -88,7 +90,7 @@ flowchart TD
     P0 --> G["RISC-V guest: verify_fp128_jolt_akita(S, P0)"]
     G --> P1["P1: Jolt over BN254 Fr + Akita BN254"]
     P1 --> V["Generated semantic verifier / circuit IR"]
-    V --> P2["P2: Groth16 first; PLONK second"]
+    V --> P2["P2: Groth16 first; Spartan+HyperKZG and PLONK next"]
     P2 --> E["Solidity verifier using BN254 precompiles"]
 ```
 
@@ -104,10 +106,10 @@ mode.
 ### Security boundary
 
 The application and field-switch proofs can retain Akita's lattice assumptions,
-but the final Groth16 or PLONK proof is pairing-based. The on-chain statement is
-therefore **not post-quantum**, even though it certifies a post-quantum proof
-stack. `P1` remains useful as a future input to a post-quantum on-chain verifier
-or another transparent wrapper.
+but every proposed final wrapper uses a classical elliptic-curve commitment or
+pairing assumption. The on-chain statement is therefore **not post-quantum**,
+even though it certifies a post-quantum proof stack. `P1` remains useful as a
+future input to a post-quantum on-chain verifier or another transparent wrapper.
 
 The public statement MUST bind at least:
 
@@ -189,9 +191,22 @@ or relation list may alter the circuit after key generation.
 - [ ] `jolt-field::Fr` supports the degree-one `ExtField<Fr>` and
   `MulBaseUnreduced<Fr>` contracts required by Akita, with differential tests
   against arkworks BN254 `Fr`.
+- [ ] BN254 elements use strict canonical 32-byte encodings. Decoders reject
+  noncanonical values, and the Solinas-only, BN254-only, and combined feature
+  graphs build independently.
+- [ ] A canonical fixed-width integer representation supports modulus
+  comparison, subtraction, small shifts, low-bit extraction, centered
+  representatives, balanced digit peeling, and exact reconstruction for every
+  BN254 decomposition basis selected by the planner.
 - [ ] Akita has a BN254 SIS modulus identity that is not truncated to `u128`,
   and generated security tables cover every matrix role, width, dimension, and
   response bound used by the fixed circuit schedule.
+- [ ] A scalar-reference D64 backend completes setup, commit, prove, and verify
+  for dense and one-hot fixtures, and rejects proof mutations, before any
+  optimized BN254 NTT backend becomes trusted.
+- [ ] The native BN254 radix-2 backend is differentially tested against the
+  scalar reference for every ring operation used by setup, proving, and
+  verification.
 - [ ] An exact checker proves the selected D64 shell's support floor and
   pairwise-unit-difference property over BN254 `Fr`.
 - [ ] The fixed sparse sampler has concrete, scalar-reference, symbolic, and
@@ -209,14 +224,16 @@ or relation list may alter the circuit after key generation.
 - [ ] One deterministic, versioned IR is emitted from the canonical semantic
   verifier. Re-emitting the same profile produces an identical IR digest.
 - [ ] The concrete optimized verifier, scalar verifier, IR interpreter, gnark
-  solver, Groth16 proof, and PLONK proof agree on an accepted corpus and reject
-  every single-field mutation in the adversarial corpus.
+  solver, Groth16 proof, Spartan-plus-HyperKZG proof, and PLONK proof agree on
+  an accepted corpus and reject every single-field mutation in the adversarial
+  corpus.
 - [ ] The compiler reports operation counts by source label and protocol layer:
   field multiplication, Boolean/range constraint, Jolt standard-hash
   compression, Akita standard-hash compression, sampler swap, setup-MLE
   multiplication, and public input.
 - [ ] The bootstrap direct-BN254 Jolt proof is wrapped end to end and accepted
-  by generated Solidity contracts for both Groth16 and PLONK.
+  by generated Solidity contracts for Groth16 and at least one reusable-SRS
+  backend.
 - [ ] The fp128 verifier guest produces `P1` under BN254 Jolt/Akita, and the
   generated circuit and Solidity contract accept the resulting `P2`.
 - [ ] The final benchmark report records `P0` prover time and size, verifier
@@ -244,10 +261,10 @@ wrong schedule/circuit IDs, out-of-range digits, duplicate shuffle positions,
 biased or over-cap sampler draws, missing setup values, and unused IR inputs.
 
 **Compiler tests** interpret the IR, solve generated R1CS and SCS constraints,
-and create and verify Groth16 and PLONK proofs. Every serialized proof field and
-public input receives a tamper test. A compiler audit MUST show that every
-private input reaches an assertion and that every assertion reaches the final
-constraint system.
+and create and verify Groth16, Spartan-plus-HyperKZG, and PLONK proofs. Every
+serialized proof field and public input receives a tamper test. A compiler
+audit MUST show that every private input reaches an assertion and that every
+assertion reaches the final constraint system.
 
 **End-to-end tests** prove a small direct-BN254 Jolt program first, then prove
 the fp128 verifier guest. The generated Solidity contracts run in an EVM test
@@ -301,6 +318,33 @@ The work MUST stop for design review at these gates:
 
 ## Design
 
+### Audited Implementation Baseline
+
+This plan is based on a code audit of Akita `main` at
+`26bdbac796a2fcc8092a2fa3be9ffdc1721a380d`, the quotient-free work in
+[#466](https://github.com/LayerZero-Labs/akita/pull/466) at
+`1d2800432a81755e51af3edd30360a160a4b811b`, and the external-catalog work in
+[#428](https://github.com/LayerZero-Labs/akita/pull/428) at
+`c02ed79283d424ac5aabaaa23cceb582750eec2b`. The PR revisions are dependencies,
+not assertions about current `main`; implementation PRs MUST record the exact
+rebased revisions they use.
+
+The audit supports the mathematical premise but rejects the idea that BN254 is
+only a configuration change. The generic cyclotomic-ring layer does not
+fundamentally require a pseudo-Mersenne field, and the instance descriptor
+already has room for a 32-byte modulus. The SIS estimator already performs its
+core arithmetic with arbitrary-precision integers. The hard work lies at
+concrete boundaries that still assume a 128-bit field: Jolt capability traits,
+canonical scalar encoding, balanced decomposition, SIS-profile dispatch, and
+the optimized CRT/NTT backend.
+
+Akita currently pins Jolt revision
+`72dc6451628d8b1dd794147a1f1cc40be0d77963`. That revision contains a canonical
+32-byte BN254 `Fr` implementation, field arithmetic, serialization, and
+Montgomery accumulators. It does not implement all Akita capability traits.
+Because both the traits and `Fr` are owned by Jolt crates, Rust's orphan rules
+require the missing implementations to land on the Jolt side.
+
 ### Two Profiles, Not One Compromise
 
 The final pipeline has two different verifier workloads and SHOULD treat them
@@ -309,30 +353,82 @@ as separate profiles:
 | Profile | Proof it opens | Primary objective |
 |---|---|---|
 | `Fp128RecursionGuest` | Application proof `P0` inside RISC-V/Jolt | Minimize guest trace, input decode, and guest memory |
-| `Bn254Circuit` | Field-switch proof `P1` inside Groth16/PLONK | Minimize circuit operations and standard-hash calls |
+| `Bn254CircuitV1` | Field-switch proof `P1` inside an outer wrapper | Minimize circuit operations and standard-hash calls |
 
 The existing fp128 application profile can bootstrap `Fp128RecursionGuest`, but
 the recursion profile MAY choose more setup offloading or a different fixed
-schedule if that substantially reduces guest cost. The `Bn254Circuit` profile
-does not optimize ordinary native verification at all.
+schedule if that substantially reduces guest cost. `Bn254CircuitV1` does not
+optimize ordinary native verification at all.
 
-### BN254 Field and SIS Work
+The implementation SHOULD begin with a test-only `Bn254D64Fixture` that exists
+solely to establish scalar correctness and backend parity. It MUST NOT expose a
+public, stable BN254 config while the challenge law, transcript, schedule, and
+terminal relation can still change. `Bn254CircuitV1` becomes public only after
+those choices and its external catalog are frozen and bound into the profile
+identity.
 
-Power-of-two ring support does not make BN254 a configuration-only change in
-the current repository. The implementation has at least three required field
-cutovers:
+### BN254 Field, Decomposition, and SIS Work
 
-1. `CommitmentConfig::ExtField` supports a degree-one field for the fp128 path,
-   but current `jolt-field::Fr` does not implement that degree-one extension
-   contract. It must do so without pretending BN254 is pseudo-Mersenne.
-2. `CommitmentConfig::validate_sis_modulus_profile` currently reconstructs the
-   field modulus through `u128`, and `SisModulusProfileId::modulus()` returns
-   `u128`. BN254 therefore needs a wide canonical modulus identity throughout
-   config validation, descriptor hashing, estimator conversion, and generated
-   table lookup.
-3. The generated SIS tables currently cover Q32, Q64, and Q128 profiles. BN254
-   needs its own exact rows and review artifacts for every circuit schedule
-   matrix and collision bound.
+The BN254 scalar modulus is:
+
+```text
+decimal = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+hex     = 0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001
+LE u64  = [43e1f593f0000001, 2833e84879b97091,
+           b85045b68181585d, 30644e72e131a029]
+```
+
+The first implementation has four field cutovers.
+
+1. **Jolt capability traits.** `jolt-field::Fr` needs Akita's degree-one
+   `ExtField<Fr>`, `MulBaseUnreduced<Fr>`, `Unreduced`,
+   `WithCommitAccumulator`, `Fold`, and `WithPacking` contracts. The initial
+   implementation SHOULD use degree-one identities, `Fr` for product and wide
+   values, immediate reduction, the canonical fold formula, and
+   `NoPacking<Fr>`. Delayed reduction and packing are later optimizations.
+2. **Canonical encoding.** Akita needs strict 32-byte little-endian `Fr`
+   encoding and decoding, including `FpExtEncoding<Fr>`. A decoder MUST reject
+   a 256-bit integer greater than or equal to the modulus. Feature graphs for
+   the Solinas field, BN254, and both fields together MUST compile.
+3. **Wide balanced decomposition.** There are 84 non-test
+   `to_u128_checked()` call sites across 25 files at the audited baseline. The
+   central blocker is
+   `crates/akita-algebra/src/ring/cyclotomic/decomposition.rs`. The hot path
+   SHOULD use a fixed `[u64; 4]` canonical integer, not `BigUint`, for compare,
+   subtract, shifts of at most eight bits, low-bit extraction, the
+   `q`-representative, balanced digit peeling, and exact reconstruction. The
+   current `u128` path MAY remain as a specialized fast path. Small security
+   bounds that are genuinely below `u128` MUST remain small rather than being
+   widened indiscriminately.
+4. **Exact SIS profile identity.** `SisModulusProfileId::modulus()` and config
+   validation currently round-trip through `u128`. The BN254 profile MUST own
+   the exact `[u8; 32]` modulus, `field_bits = 254`, a stable profile tag, and a
+   generated-table identity. Config validation and instance descriptors SHOULD
+   use a generic `field_modulus_be_bytes::<F>()`. Cache names and digests MUST
+   include the full modulus identity rather than a 32-hex-digit `q` label.
+
+The larger modulus roughly doubles the digit count at the same decomposition
+basis. For a 128-bit versus 254-bit representative, the planner starts from:
+
+| `log2(basis)` | fp128 digits | BN254 digits |
+|---:|---:|---:|
+| 3 | 43 | 85 |
+| 4 | 32 | 64 |
+| 5 | 26 | 51 |
+| 6 | 22 | 43 |
+| 7 | 19 | 37 |
+| 8 | 16 | 32 |
+
+The circuit planner MUST search through basis eight. It MUST NOT inherit the
+current basis-three-through-six search merely because those values are good
+for native fp128 execution.
+
+The generated SIS tables currently cover Q32, Q64, and Q128 profiles. BN254
+needs independent exact rows for every matrix role, width, ring dimension, and
+response bound selected by the fixed schedule. Table generation SHOULD use the
+existing arbitrary-precision estimator, emit both `Linf` and selected `L2`
+rows, and bind the generator revision, inputs, and digest. A wrong field modulus
+MUST fail profile dispatch; it MUST NOT reuse Q128 rows.
 
 The recommended first geometry is uniform `D = 64`. BN254 `Fr` satisfies
 `r = 1 mod 2^28`, so `X^D + 1` splits completely for every power-of-two
@@ -341,6 +437,28 @@ evaluation-kernel certificate at commit
 [`743fbeb830423d4430c043b6a220f9b47876511e`](https://github.com/LayerZero-Labs/akita/tree/743fbeb830423d4430c043b6a220f9b47876511e/scripts/bn254_challenge_units)
 proves that the kernel contains no nonzero integer vector of squared norm at
 most `336`.
+
+### Native Correctness and Ring Backends
+
+The existing optimized ring path is not a BN254 backend. In particular,
+`crates/akita-types/src/ntt_cache.rs` selects auxiliary Q32, Q64, or Q128 CRT
+machinery. BN254 should not be forced through that enum merely to reuse the
+native fp128 architecture.
+
+Bring-up SHOULD use two explicit backends:
+
+1. `ScalarReferenceBackend<F>` performs schoolbook field and polynomial
+   arithmetic without NTT or auxiliary CRT. It is the correctness oracle and
+   enables small end-to-end D64 fixtures before optimization.
+2. `Bn254Radix2Backend` performs native cyclic and negacyclic radix-2 NTTs in
+   `Fr`. Complete splitting and the field's two-adicity make this the natural
+   optimized path.
+
+The scalar backend MUST complete setup, commit, prove, and verify for both a
+dense and a one-hot fixture before the optimized backend is accepted. Every
+relevant ring operation and resulting proof MUST then be checked
+differentially. This ordering isolates field and protocol correctness from NTT
+layout, twiddle, and cache bugs.
 
 ### Circuit-Oriented D64 Challenge Shell
 
@@ -371,6 +489,38 @@ and the response schedule uses the worst-case shell bounds. This removes the
 current fixed-point roots, trigonometric table, retry loop, and verifier replay
 from the circuit. It may require more or wider response digits than an
 operator-rejected profile; that trade is measured in range constraints.
+
+### D128 and Larger-Ring Optimization Path
+
+D64 is the bring-up profile, not a claim that it is the final circuit optimum.
+The selected exact zero-collision D128 candidate uses a fixed 72-position
+Galois mask and the shell `(count_pm1, count_pm2) = (38, 5)`:
+
+```text
+ambient dimension = 128
+allowed positions = 72
+weight            = 43
+L1                = 38 + 2*5 = 48
+L2^2              = 38 + 4*5 = 58
+log2(support)      ~= 129.51
+difference L2^2   <= 4*58 = 232
+```
+
+The exact certificate at
+[`ff4481b2e59f3c9d09016ac97045ef65ea4af490`](https://github.com/LayerZero-Labs/akita/tree/ff4481b2e59f3c9d09016ac97045ef65ea4af490/scripts/bn254_challenge_units)
+covers this mask and shell. The same supported challenges embed into D256 and
+larger power-of-two rings. This family improves the deterministic `L1` bound
+from 50 to 48, but pays for a larger ring and a 72-position decoder. The
+planner SHOULD compare its complete constraint cost with D64 after the D64
+backend is correct; the smaller response bound alone does not determine the
+winner.
+
+A challenge-family descriptor MUST bind the ambient dimension, allowed-position
+mask, signed-magnitude counts, decoder ID, entropy width, deterministic `L1`
+and `L2` bounds, exact-certificate digest, and rejection policy. The circuit
+profiles described here set rejection to `None`. This descriptor is part of
+the schedule and instance identity, so D64 and D128 proofs cannot be
+cross-interpreted.
 
 ### Sparse Challenge Decoding and Fisher-Yates Fallback
 
@@ -630,9 +780,9 @@ The minimum value domains are:
 - public and private input handles with stable source labels.
 
 The semantic verifier uses explicit operations such as `add`, `mul`,
-`assert_equal`, `range_check_signed`, `sha256_compress`, `sample_shell`, and
-`evaluate_fixed_mle`. Assertions are never inferred from `PartialEq`, and IR
-state is passed explicitly rather than through thread-local storage.
+`assert_equal`, `range_check_signed`, `standard_hash_compress`, `sample_shell`,
+and `evaluate_fixed_mle`. Assertions are never inferred from `PartialEq`, and
+IR state is passed explicitly rather than through thread-local storage.
 
 ```mermaid
 flowchart LR
@@ -640,10 +790,12 @@ flowchart LR
     S --> N["Optimized native backend"]
     S --> I["Typed SSA/DAG IR backend"]
     I --> G["gnark R1CS / Groth16"]
+    I --> H["R1CS / Spartan + HyperKZG"]
     I --> P["gnark SCS / PLONK"]
     R --> T["Twin and mutation tests"]
     N --> T
     G --> T
+    H --> T
     P --> T
 ```
 
@@ -683,7 +835,21 @@ LATTICE_JOLT_WRAP_V1_LARGE
 Each class fixes maximum trace variables, advice/program layout, Akita schedule,
 setup seed, proof shape, transcript schedule, terminal caps, and public-input
 count. Smaller statements pad canonically. A class has one circuit ID, IR
-digest, Groth16 key, PLONK key, Solidity contract, and benchmark record.
+digest, backend-specific keys, Solidity contract, and benchmark record.
+
+The initial public Akita component SHOULD use BN254 `Fr` as both field types,
+degree-one extensions, uniform D64 rings, `EvaluationTrace`, reduced evaluation
+where algebraically permitted, the certified D64 shell, no operator rejection,
+one fixed standard transcript, and one fixed external catalog. Setup uses a
+fixed seed and a finite offloading plan. The terminal is the fixed
+matrix-product/MLE sumcheck described above. Coefficient packing, response
+compression, adaptive schedules, and native-verifier terminal NTTs are disabled
+unless their complete circuit lowering reduces constraints.
+
+Schedule search SHOULD rank candidates first by standard-hash compressions,
+then Boolean and range constraints, setup-MLE multiplications, remaining field
+multiplications, proof bytes, and finally native prover time. This ordering is
+the default only until measured backend weights replace it.
 
 Key generation MUST NOT record one unverified reference run to discover the
 accepted transcript schedule. The schedule is generated from the public
@@ -713,11 +879,12 @@ The final two-proof path is:
 1. Produce `P0` with fp128 lattice Jolt and Akita.
 2. Run a fixed RISC-V guest that strictly decodes `P0`, reconstructs the exact
    public statement, verifies Jolt and Akita, and returns success.
-3. Prove that guest execution with Jolt over BN254 `Fr`, using `Bn254Circuit`
-   Akita for its polynomial openings, producing `P1`.
+3. Prove that guest execution with Jolt over BN254 `Fr`, using
+   `Bn254CircuitV1` Akita for its polynomial openings, producing `P1`.
 4. Run the generated semantic BN254 Jolt/Akita verifier on `P1` to produce the
    circuit witness.
-5. Prove the circuit with Groth16 or PLONK, producing `P2`.
+5. Prove the circuit with Groth16, Spartan plus HyperKZG, or PLONK, producing
+   `P2`.
 6. Verify `P2` in Solidity.
 
 Inside step 2, fp128 arithmetic is ordinary RISC-V word computation proved by
@@ -731,7 +898,7 @@ tool. Its trusted expanded-matrix input path is not a production trust boundary.
 A production guest MUST either derive setup from a pinned seed, authenticate a
 prepared setup artifact, or bind setup through the proof/circuit profile.
 
-### Groth16 and PLONK Outputs
+### Wrapper Outputs
 
 The same IR SHOULD compile through gnark's R1CS and SCS builders. The first
 Groth16 artifact is the production candidate because a BN254 Groth16 verifier
@@ -740,6 +907,14 @@ input vector. Ethereum's EIP-1108 prices BN254 addition at 150 gas,
 multiplication at 6,000 gas, and a `k`-pair pairing check at
 `45,000 + 34,000*k`, before call, memory, calldata, and contract overhead.
 Actual gas MUST come from the generated contract.
+
+Spartan plus HyperKZG is the second backend to evaluate because Jolt's current
+wrapper work already supplies a relevant R1CS-to-on-chain path. Akita's verifier
+relation is native BN254 scalar-field arithmetic, so it does not inherit the
+Dory path's deferred non-native curve and pairing subproof. The backend can
+commit to and open the same emitted R1CS relation, but it MUST consume the same
+public statement and IR digest as Groth16. Reuse of wrapper infrastructure does
+not justify a separately maintained verifier program.
 
 PLONK is retained because a universal SRS and easier circuit-class changes may
 outweigh its larger proof and verifier. gnark currently exports Solidity
@@ -755,20 +930,22 @@ so large statements are hashed into fixed limbs.
 
 The current Dory wrapper effort in Jolt PR
 [#1837](https://github.com/a16z/jolt/pull/1837), head
-`89f73577af3ea3e709ddb2557be62d1afb462675`, is a sophisticated single-layer
+`56343ddbea18b5021b6971b7c2c3f17d1a67726f`, is a sophisticated single-layer
 Spartan/HyperKZG construction. Its field-arithmetic R1CS is only 5,254
 constraints, but the deferred Dory final check requires a 201,575-row,
 149-column limb table for G1/G2 multi-scalar multiplication, a four-pair Miller
 loop, final exponentiation, subgroup checks, GT norm-one checks, canonical
 extension-field limbs, and guarded incomplete curve additions. The reported
-wrapper proof is 7,488 payload bytes, the prover takes roughly 27--38 seconds
-under load, and its op-count EVM model is about 5.05 million gas. The PR does
-not yet include a Solidity verifier.
+default proof is 7,392 payload bytes and 7,533 bincode bytes. On the reported
+M4 Mac mini run with ten threads, the online wrapper prover takes roughly
+16.5--16.9 seconds on an idle machine, and its op-count EVM model is about 4.94
+million gas. The PR does not yet include a Solidity verifier.
 
 The proposed Akita circuit has no inner curve points, pairings, Miller loop,
 final exponentiation, subgroup checks, or Fq/Fq2/Fq12 canonicality. Its hard
-parts are standard hashes, small integer ranges, Fisher-Yates, and setup/witness
-MLEs. This is a much smaller semantic attack surface.
+parts are standard hashes, small integer ranges, exact sparse-challenge
+decoding, and setup/witness MLEs. This is a much smaller semantic attack
+surface.
 
 The comparison is not one-sided. The Dory work is single-layer and already has
 concrete measurements. The Akita field-switch path adds an entire Jolt proof of
@@ -806,128 +983,254 @@ aligns with the EVM opcode but is substantially more expensive than both
 BLAKE3 and SHA-256 in the current BN254 evidence. The contract replays neither
 proof transcript, so EVM opcode alignment provides little benefit.
 
-**Hand-write separate Groth16 and PLONK verifiers.** Rejected. The maintenance
-and soundness risk is exactly what the symbolic verifier/compiler is intended
-to remove.
+**Hand-write separate wrapper verifiers.** Rejected. Groth16, Spartan plus
+HyperKZG, and PLONK must consume one semantic verifier IR. The maintenance and
+soundness risk of protocol-specific rewrites is exactly what the compiler is
+intended to remove.
 
 ## Execution
 
-### Milestone 0: Reproducible Cost Inventory
+### Critical Path
 
-- Add operation-count instrumentation to one fixed Jolt/Akita verification.
-- Count Jolt and Akita transcript messages and compressions separately,
-  including the bridge, plus field operations, digit widths, sampler
-  coordinates, setup coefficients, and terminal coordinates.
-- Reproduce the BLAKE3/SHA-256/Keccak gnark microbenchmarks in a pinned tool
-  directory, including amortized multi-compression transcript schedules.
-- Measure direct fp128-verifier R1CS as a lower-level comparison.
-- Record current `profile/akita-recursion` guest cycles and memory at small and
-  production-representative sizes.
+The merge-order critical path is:
 
-Deliverable: one evidence report and a go/no-go threshold for the field-switch
-guest.
+```text
+#466 and #428 stabilization
+  -> Jolt Fr capability traits
+  -> canonical 256-bit decomposition
+  -> exact BN254 SIS profile and tables
+  -> scalar-reference D64 end to end
+  -> native Fr radix-2 NTT
+  -> exact sampler and transcript
+  -> fixed Bn254CircuitV1 catalog and schedule
+  -> circuit terminal and finite setup closure
+  -> semantic verifier IR
+  -> Jolt integration
+  -> Groth16, Spartan+HyperKZG, and PLONK wrappers
+```
 
-### Milestone 1: BN254 Akita Foundation
+The first critical risk is not the fully split ring. It is whether the 254-bit
+decomposition and scalar backend reproduce every Akita invariant without an
+implicit `u128` assumption. The later critical risk is compiler completeness:
+the terminal, transcript, and every proof field must reach an explicit circuit
+assertion.
 
-- Add wide SIS modulus identities and BN254 generated tables.
-- Add degree-one BN254 extension contracts.
-- Add a uniform D64 BN254 config with fixed decomposition and source classes.
-- Import or independently replay the D64 challenge-unit certificate.
-- Add exact `(24,13)` and `(21,15)` support/unit tests.
-- Generate one fixed schedule for dense and one-hot Jolt groups.
+The sequence below uses PR-sized units. Review branches MAY be stacked, and the
+Jolt capability change can proceed while Akita's base PRs stabilize. A later
+unit MUST NOT publish a stable profile or generated key before all earlier
+language-defining units are merged.
 
-Deliverable: native setup, commit, open, and verify for fixed BN254 Akita
-fixtures, without circuit work.
+### Ordered Change Series
 
-### Milestone 2: Canonical Semantic Verifier IR
+1. **PR 0 — Stabilize the base stack.** Rebase or merge the quotient-free work
+   from #466 and the external-catalog work from #428. Record exact Akita and
+   Jolt revisions in the implementation worklog. Resolve schedule and catalog
+   interfaces before adding BN254-specific APIs.
 
-- Define typed values, explicit assertions, transcript events, and operation
-  labels.
-- Route one Akita verification slice through reference, optimized, and IR
-  backends.
-- Extend slice by slice until the full fixed verifier is emitted.
-- Add deterministic IR serialization/digest and unused-input checks.
+   **Acceptance gate:** `main` has one canonical schedule/catalog path and all
+   existing fp128 tests pass unchanged.
 
-Deliverable: the IR interpreter and concrete verifier agree on the full
-mutation corpus.
+2. **PR 1 — Implement Jolt `Fr` capability traits.** In Jolt, implement
+   `ExtField<Fr>`, `MulBaseUnreduced<Fr>`, `Unreduced`,
+   `WithCommitAccumulator`, `Fold`, and `WithPacking`. Begin with degree-one
+   identities, immediate reductions, and `NoPacking<Fr>`.
 
-### Milestone 3: Standard Transcript and Sparse Sampler
+   **Acceptance gate:** trait-law and randomized differential tests against
+   arkworks cover canonical encoding, base multiplication, accumulator
+   reduction, and folding.
 
-- Specify keyed rolling BLAKE3 transcripts for Jolt and Akita, their domain
-  separation, exact field/byte encodings, and the existing one-challenge
-  bridge. Preserve separate states in the first implementation.
-- Port and audit the BLAKE3 bit gadget, and generate Rust/IR/Go vectors for
-  every absorb and squeeze. Retain SHA-256 as the fallback backend and parity
-  fixture.
-- Specify the 128-bit enumerative decoder and canonical combinadic order.
-- Compile and benchmark dense Fisher-Yates for R1CS and lookup/RAM lowering for
-  SCS as a compatibility fallback, including its cap failure bound.
-- Remove operator-norm rejection and retune response digit bounds.
+3. **PR 2 — Add the Akita `bn254` feature and strict encoding.** Wire
+   `jolt-field::Fr` through field identity and `FpExtEncoding`. Use canonical
+   32-byte little-endian values and reject noncanonical inputs. Keep feature
+   dependencies narrow.
 
-Deliverable: native/IR/gnark parity fixtures for both transcripts, their
-bridge, and the sparse challenge.
+   **Acceptance gate:** Solinas-only, BN254-only, and combined feature graphs
+   build and test; malformed BN254 encodings reject without panic.
 
-### Milestone 4: Circuit Terminal and Setup Closure
+4. **PR 3 — Introduce canonical 256-bit field integers.** Add one fixed-width
+   integer abstraction and route modulus comparison, centered
+   representatives, balanced decomposition, reconstruction, and source-bound
+   calculations through it. Retain the existing `u128` specialization where
+   appropriate. Test decomposition bases one through eight and values around
+   zero, `q/2`, and `q - 1`.
 
-- Specify the exact batched terminal relation and degrees.
-- Implement fixed signed-digit range checks and MLE evaluation.
-- Allow the fixed Jolt schedule to carry setup-prefix openings.
-- Implement a circuit terminal that consumes the final setup claim.
-- Compare recursive offloading with full constant setup-MLE evaluation.
+   **Acceptance gate:** every selected digit sequence reconstructs exactly,
+   bounds are checked before allocation, endpoint tests do not panic, and no
+   BN254 verifier path calls `to_u128_checked()` on a field representative.
 
-Deliverable: no verifier path selected by `Bn254Circuit` reaches terminal
-NTT/CRT, Golomb-Rice, operator norm, or an unauthenticated setup value.
+5. **PR 4 — Add exact BN254 profile dispatch.** Give the profile its full
+   modulus bytes, 254-bit width, stable tag, descriptor encoding, table ID,
+   cache naming, and proof-size accounting. Support D64 only at this stage.
 
-### Milestone 5: Groth16 and PLONK Backends
+   **Acceptance gate:** a one-bit modulus change fails config and table
+   selection; BN254 cannot dispatch to a Q128 table or cache artifact.
 
-- Generate gnark R1CS and SCS from the same IR.
-- Produce solver, setup, proof, verification, and Solidity artifacts.
-- Pin tool versions, circuit IDs, keys, and public-input layouts.
-- Add EVM gas and bytecode snapshots.
+6. **PR 5 — Generate and verify BN254 SIS tables.** Add an exact BN254
+   estimator constructor and stable label. Generate the `Linf` rows and
+   selected `L2` rows needed by the finite D64 fixture, with provenance and
+   digests. Exercise one-below and one-above boundary values.
 
-Deliverable: direct-BN254 Jolt proof wrapped end to end.
+   **Acceptance gate:** every scheduled matrix query resolves to a generated
+   BN254 row, deliberately missing or undersized rows fail closed, and an
+   independent report reproduces the selected security values.
 
-### Milestone 6: Field-Switch Jolt Proof
+7. **PR 6 — Remove accidental pseudo-Mersenne bounds.** Audit generic ring,
+   prover, and verifier APIs. Retain `PseudoMersenne` only on kernels that
+   actually use Solinas reduction; replace broad convenience bounds with the
+   narrow field capabilities each operation requires.
 
-- Freeze the fp128 verifier guest and strict input format.
-- Add verifier-specific Jolt inlines only where measurements justify them.
-- Produce `P1` with BN254 Jolt and `Bn254Circuit` Akita.
-- Feed `P1` through the generated circuit and contract.
+   **Acceptance gate:** the generic BN254 scalar verifier type-checks without
+   claiming pseudo-Mersenne structure, and existing fp128 optimized kernels
+   retain their specialized bounds.
 
-Deliverable: `P0 -> P1 -> P2 -> Solidity` acceptance and mutation rejection.
+8. **PR 7 — Add the scalar reference backend.** Implement
+   `ScalarReferenceBackend<F>` using schoolbook field and polynomial
+   arithmetic. Add the test-only `Bn254D64Fixture`. Complete setup, commit,
+   prove, and verify for dense and one-hot inputs, plus mutation negatives.
 
-### Milestone 7: Audit and Deployment Decision
+   **Acceptance gate:** this is the decisive foundation milestone. No native
+   BN254 NTT or public BN254 config proceeds until both fixtures pass under
+   sanitizers or equivalent checked test builds.
 
-- Audit the shell certificate, transcript/sampler, terminal identity, setup
-  closure, compiler completeness, and statement binding independently.
-- Reproduce the full benchmark on a fixed machine and EVM fork.
-- Compare with the current Dory wrapper and direct-BN254 bootstrap.
-- Decide Groth16, PLONK, both, or stop.
+9. **PR 8 — Add the native BN254 radix-2 backend.** Implement native cyclic
+   and negacyclic `Fr` NTTs, twiddle generation, cache identities, and inverse
+   normalization. Do not route BN254 through the Q128 auxiliary-CRT enum.
+
+   **Acceptance gate:** forward/inverse transforms, multiplication, folding,
+   setup, proof generation, proof bytes, and verification agree with the scalar
+   backend for every relevant D64 operation.
+
+10. **PR 9 — Bind certified challenge-family descriptors.** Define the
+    descriptor fields for ambient dimension, allowed mask, signed-magnitude
+    counts, entropy width, decoder, deterministic bounds, certificate digest,
+    and rejection policy. Import reproducible D64 `(24,13)` and D128
+    72-position `(38,5)` certificates.
+
+    **Acceptance gate:** descriptor mutations change the profile identity and
+    fail verification; exact support and unit-difference checks replay from
+    committed artifacts.
+
+11. **PR 10 — Implement the 128-bit enumerative decoder.** Specify one
+    combinadic order and implement the injective D64 mapping. Retain partial
+    Fisher-Yates under a separate legacy decoder ID; do not silently change its
+    distribution.
+
+    **Acceptance gate:** native and independent reference implementations agree
+    at first, last, and internal rank boundaries; injectivity, position
+    distinctness, magnitude counts, signs, and no-rejection behavior are tested.
+
+12. **PR 11 — Freeze the circuit transcript.** Implement keyed rolling BLAKE3
+    as the leading candidate and SHA-256 as the maintained fallback. Specify
+    domain tags, framing, absorb and squeeze order, field reduction, proof
+    encoding, and the Jolt-to-Akita bridge. Give each transcript a distinct
+    profile identity.
+
+    **Acceptance gate:** logging, optimized native, scalar reference, IR, and
+    independent gadget vectors agree on every event and challenge. A hash
+    audit selects the production transcript before `Bn254CircuitV1` freezes.
+
+13. **PR 12 — Materialize `Bn254CircuitV1` and its external catalog.** Freeze
+    D64, evaluation trace, reduction modes, source classes, digit bases, setup
+    seed, challenge descriptor, transcript, and a small fixed schedule family.
+    Instrument the complete verifier and search candidates through basis eight
+    using the circuit-cost order in this spec.
+
+    **Acceptance gate:** schedule generation is deterministic; the profile
+    contains no coefficient packing, response compression, operator rejection,
+    adaptive branch, or native-terminal optimization unless a complete circuit
+    benchmark proves a constraint reduction.
+
+14. **PR 13 — Add the circuit terminal and setup closure.** Introduce explicit
+    `DirectNtt` and `MatrixProductSumcheck` terminal modes. Implement the
+    batched relation, small signed-digit MLE, fixed setup MLE, range checks, and
+    finite setup-prefix closure. Compare recursive offloading with direct
+    constant setup evaluation.
+
+    **Acceptance gate:** the `Bn254CircuitV1` path reaches no NTT, auxiliary
+    CRT, Golomb-Rice codec, operator-norm check, floating point, prepared native
+    cache, or unauthenticated setup value.
+
+15. **PR 14 — Build the semantic verifier IR.** Define explicit field, Boolean,
+    byte, range, transcript, sampler, fold, sumcheck, MLE, and terminal
+    operations. Port the verifier slice by slice: input and range validation,
+    transcripts, sumchecks, sampler, folding, terminal, then the full program.
+    Serialize and hash the deterministic IR.
+
+    **Acceptance gate:** scalar, optimized, and interpreted executions agree on
+    the accepted corpus and mutation corpus; every input is consumed, every
+    assertion is explicit, and every operation has a compiler lowering.
+
+16. **PR 15 — Generalize `jolt-akita`.** Remove the adapter's fp128 hard-coding
+    and expose one semantic integration path with concrete
+    `Fp128RecursionGuest` and `Bn254CircuitV1` bundles. First prove and verify a
+    direct BN254 Jolt program. Then freeze the strict fp128-verifier guest and
+    produce `P1` for `P0`.
+
+    **Acceptance gate:** mutations at both proof layers reject, the bridge and
+    nested transcript match the standalone verifiers, and guest cycles and
+    memory satisfy the predeclared go/no-go threshold.
+
+17. **PR 16 — Emit and benchmark wrapper backends.** Compile the same IR/R1CS
+    to Groth16 first, Spartan plus HyperKZG second, and PLONK third. Pin tool
+    revisions, setup artifacts, circuit IDs, keys, public-input layouts, and
+    generated Solidity. Measure constraints, prover time and memory, key size,
+    proof bytes, bytecode size, calldata, and verification gas.
+
+    **Acceptance gate:** direct BN254 and `P0 -> P1 -> P2` fixtures verify in an
+    EVM harness; every public input and proof field has a mutation test; the
+    report compares all three backends with the commit-pinned Dory wrapper.
+
+### Parallel Evidence Track
+
+Cost instrumentation SHOULD begin once PR 2 provides stable field encoding and
+MUST finish before PR 12 freezes the catalog. It records Jolt and Akita
+transcript messages separately, including the bridge, plus digit widths,
+sampler work, setup coefficients, terminal coordinates, and field operations.
+The track also reproduces BLAKE3, SHA-256, and Keccak gadget benchmarks at
+pinned revisions, measures a direct fp128-verifier circuit as a control, and
+records `profile/akita-recursion` guest cycles and memory at small and
+production-representative sizes.
+
+After PR 16, an independent audit MUST cover the challenge certificates,
+transcript and sampler, terminal identity, setup closure, compiler completeness,
+statement binding, and generated contracts. Deployment proceeds only after the
+full benchmark is reproduced on a fixed machine and EVM fork. The valid final
+decision is Groth16, Spartan plus HyperKZG, PLONK, more than one backend, or
+stop; completing the implementation does not predetermine deployment.
 
 ## Risks and Open Questions
 
-1. **Guest recursion may dominate everything.** The extra `P1` proof is the
+1. **The 254-bit port can fail before circuit work begins.** Balanced
+   decomposition, centered representatives, profile dispatch, and source
+   bounds cross many `u128` assumptions. The scalar-reference milestone is a
+   correctness gate, not optional scaffolding.
+2. **Guest recursion may dominate everything.** The extra `P1` proof is the
    largest performance risk. A generic RISC-V fp128 verifier may be too large
    even if the final circuit is excellent.
-2. **Standard hashes may dominate the circuit.** `P2` constrains the complete
+3. **Standard hashes may dominate the circuit.** `P2` constrains the complete
    Jolt transcript as well as Akita's nested transcript. Even BLAKE3 can
    produce millions of constraints when replayed hundreds of times.
    Transcript scheduling is likely more important than field multiplication
    tuning.
-3. **Setup offloading may not be cheapest in R1CS.** Constant setup
+4. **Setup offloading may not be cheapest in R1CS.** Constant setup
    coefficients enter linear combinations cheaply. The planner must measure
    the complete circuit rather than inherit the native setup-scan objective.
-4. **BN254 SIS work is substantial.** Power-of-two ring compatibility avoids a
+5. **BN254 SIS work is substantial.** Power-of-two ring compatibility avoids a
    non-cyclotomic redesign, but it does not avoid wide-modulus plumbing, table
    generation, decomposition retuning, or security review.
-5. **Fixed circuit classes create key operations.** Groth16 needs a setup per
-   class, and even PLONK needs versioned verifying keys and deployment policy.
-6. **Compiler soundness becomes a security boundary.** A missed assertion,
+6. **The native NTT can disagree with the protocol oracle.** Complete splitting
+   makes an `Fr` NTT available, but does not prove twiddle order, negacyclic
+   twisting, inverse normalization, or cache identity. Differential tests must
+   remain permanent.
+7. **Fixed circuit classes create key operations.** Groth16 needs a setup per
+   class, and every backend needs versioned verifying keys and deployment
+   policy.
+8. **Compiler soundness becomes a security boundary.** A missed assertion,
    unused proof input, or mismatched hash encoding can accept false statements
    even when the Rust verifier is correct.
-7. **The final proof is classical.** The wrapper should be described as
+9. **The final proof is classical.** The wrapper should be described as
    on-chain verification of a lattice proof, not a post-quantum on-chain proof.
-8. **Jolt and Akita move quickly.** Commit-pinned evidence and generated
+10. **Jolt and Akita move quickly.** Commit-pinned evidence and generated
    artifacts are mandatory; branch-head assumptions are not durable.
 
 ## Documentation
@@ -965,8 +1268,8 @@ normal lifecycle policy.
   `profile/akita-recursion/README.md`.
 - Exact BN254 D64 challenge certificate:
   [commit `743fbeb830423d4430c043b6a220f9b47876511e`](https://github.com/LayerZero-Labs/akita/tree/743fbeb830423d4430c043b6a220f9b47876511e/scripts/bn254_challenge_units).
-- D128 follow-up and modulus-portability analysis:
-  [commit `35ce4aad248b1d51b8d730f2030b87c01bbee769`](https://github.com/LayerZero-Labs/akita/tree/35ce4aad248b1d51b8d730f2030b87c01bbee769/scripts/bn254_challenge_units).
+- Exact BN254 D128 S72 challenge certificate and larger-ring embedding:
+  [commit `ff4481b2e59f3c9d09016ac97045ef65ea4af490`](https://github.com/LayerZero-Labs/akita/tree/ff4481b2e59f3c9d09016ac97045ef65ea4af490/scripts/bn254_challenge_units).
 - Jolt symbolic verifier/Groth16 transpiler:
   [a16z/jolt PR #1322](https://github.com/a16z/jolt/pull/1322).
 - Current Jolt/Dory wrapper:
