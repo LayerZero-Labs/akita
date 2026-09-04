@@ -50,9 +50,9 @@ Every spec header uses **one** of these values (see `specs/TEMPLATE.md`):
 
 Target steady state: **≤15** specs in `specs/` root with status
 `proposed` / `approved` / `active` / `implemented`. Everything else is archived.
-The current set temporarily contains 16 while
-`external-schedule-catalog-ownership.md` is active; that record returns to the archive
-after its durable contract is folded into the Book.
+The current set temporarily exceeds that target while external catalog ownership
+and guided schedule adaptation are active; those records return to the archive
+after their durable contracts are folded into the Book.
 
 ## Status transitions (required actions)
 
@@ -86,21 +86,22 @@ The root live set is deliberately small and is synchronized with
 3. `quotient-free-tail-ring-relations-implementation.md`
 4. `dyadic-chunk-partition.md`
 5. `external-schedule-catalog-ownership.md`
-6. `flat-public-matrix-and-exact-ntt-cache.md`
-7. `fold-linf-rejection.md`
-8. `heterogeneous-group-source-contracts.md`
-9. `large-digit-ntt-infrastructure.md`
-10. `packed-sumcheck.md`
-11. `role-native-projected-digit-layout.md`
-12. `runtime-ring-cutover.md`
-13. `selective-l2-fold-security-sizing.md`
-14. `setup-offloading-planner.md`
-15. `sis-quantum128-scalar-n-table.md`
-16. `structured-e-term.md`
-17. `subring-coefficient-packing.md`
-18. `transcript-grinding.md`
+6. `guided-schedule-adaptation.md`
+7. `flat-public-matrix-and-exact-ntt-cache.md`
+8. `fold-linf-rejection.md`
+9. `heterogeneous-group-source-contracts.md`
+10. `large-digit-ntt-infrastructure.md`
+11. `packed-sumcheck.md`
+12. `role-native-projected-digit-layout.md`
+13. `runtime-ring-cutover.md`
+14. `selective-l2-fold-security-sizing.md`
+15. `setup-offloading-planner.md`
+16. `sis-quantum128-scalar-n-table.md`
+17. `structured-e-term.md`
+18. `subring-coefficient-packing.md`
+19. `transcript-grinding.md`
 
-All 18 current live specifications must pass the default dead-symbol scan. A record
+All 19 current live specifications must pass the default dead-symbol scan. A record
 that still contains a historical API name must either describe it explicitly as
 a historical snapshot or be repaired before it is added to the live set.
 
