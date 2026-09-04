@@ -92,7 +92,6 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "jolt-field",
- "tracing",
 ]
 
 [[package]]

@@ -43,7 +43,6 @@ akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-feat
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types", default-features = false }
-tracing = "0.1"
 
 [lints]
 workspace = true
