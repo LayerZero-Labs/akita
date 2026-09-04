@@ -1,6 +1,6 @@
 use akita_config::{
     policy_of, proof_optimized::fp128, trusted_schedule_catalog_from_bytes, CommitmentConfig,
-    TrustedScheduleCatalog,
+    TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
 };
 use akita_types::{OpeningScheduleSelection, ScheduleRowDigest};
 
@@ -125,6 +125,42 @@ fn swap_first_two_json_rows(bytes: &[u8]) -> Vec<u8> {
     swapped
 }
 
+fn replace_family_name(bytes: &[u8], family_name: &str) -> Vec<u8> {
+    let value_start = json_value_start(bytes, b"\"family_name\"", 0);
+    assert_eq!(bytes.get(value_start), Some(&b'"'));
+    let value_end = bytes[value_start + 1..]
+        .iter()
+        .position(|byte| *byte == b'"')
+        .map(|relative| value_start + 1 + relative)
+        .expect("family name terminator");
+    let mut replaced = Vec::with_capacity(bytes.len() + family_name.len());
+    replaced.extend_from_slice(&bytes[..value_start + 1]);
+    replaced.extend_from_slice(family_name.as_bytes());
+    replaced.extend_from_slice(&bytes[value_end..]);
+    replaced
+}
+
+fn replace_rows_with_empty_objects(bytes: &[u8], row_count: usize) -> Vec<u8> {
+    let rows_start = json_value_start(bytes, b"\"rows\"", 0);
+    assert_eq!(bytes.get(rows_start), Some(&b'['));
+    let ranges = json_row_ranges(bytes);
+    let rows_end = bytes[ranges.last().expect("last artifact row").end..]
+        .iter()
+        .position(|byte| *byte == b']')
+        .map(|relative| ranges.last().expect("last artifact row").end + relative)
+        .expect("rows array terminator");
+    let mut replaced = Vec::with_capacity(bytes.len() + row_count * 3);
+    replaced.extend_from_slice(&bytes[..rows_start + 1]);
+    for index in 0..row_count {
+        if index != 0 {
+            replaced.push(b',');
+        }
+        replaced.extend_from_slice(b"{}");
+    }
+    replaced.extend_from_slice(&bytes[rows_end..]);
+    replaced
+}
+
 fn empty_nth_fold_group_list(bytes: &[u8], occurrence: usize) -> Vec<u8> {
     let array_start = json_value_start(bytes, b"\"entries\"", occurrence);
     assert_eq!(bytes.get(array_start), Some(&b'['));
@@ -221,7 +257,7 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
         .expect_err("an empty artifact must reject");
     assert!(format!("{empty}").contains("byte length"));
 
-    let oversized = vec![b' '; 64 * 1024 * 1024 + 1];
+    let oversized = vec![b' '; MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES + 1];
     let oversized_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized)
         .expect_err("an oversized artifact must reject before decoding");
     assert!(format!("{oversized_error}").contains("byte length"));
@@ -231,6 +267,21 @@ fn decoder_rejects_empty_oversized_and_noncanonical_bytes() {
     let noncanonical_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&noncanonical)
         .expect_err("trailing whitespace must reject");
     assert!(format!("{noncanonical_error}").contains("canonical JSON"));
+}
+
+#[test]
+fn decoder_rejects_family_and_row_limits_during_envelope_preflight() {
+    let bytes = checked_in_artifact_bytes::<fp128::Dense>();
+
+    let oversized_family = replace_family_name(&bytes, &"x".repeat(129));
+    let family_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_family)
+        .expect_err("oversized family must reject during envelope decoding");
+    assert!(format!("{family_error}").contains("family name length"));
+
+    let oversized_rows = replace_rows_with_empty_objects(&bytes, 16_385);
+    let row_error = trusted_schedule_catalog_from_bytes::<fp128::Dense>(&oversized_rows)
+        .expect_err("the sentinel artifact row must reject before row decoding");
+    assert!(format!("{row_error}").contains("row count exceeds 16384"));
 }
 
 #[test]
@@ -322,9 +373,30 @@ fn catalog_constructor_enforces_family_and_row_count_bounds() {
     .expect_err("empty catalogs must reject");
     assert!(format!("{empty}").contains("row count"));
 
+    struct PanicAfterSentinel<T> {
+        row: T,
+        polls: usize,
+    }
+
+    impl<T: Clone> Iterator for PanicAfterSentinel<T> {
+        type Item = T;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            assert!(
+                self.polls <= 16_384,
+                "catalog constructor polled beyond the sentinel row"
+            );
+            self.polls += 1;
+            Some(self.row.clone())
+        }
+    }
+
     let too_many = TrustedScheduleCatalog::try_new(
         fp128::Dense::schedule_family_name(),
-        std::iter::repeat_n(owned_row, 16_385),
+        PanicAfterSentinel {
+            row: owned_row,
+            polls: 0,
+        },
         &policy,
         fp128::Dense::ring_challenge_config,
     )

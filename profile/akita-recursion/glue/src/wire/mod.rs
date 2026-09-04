@@ -8,7 +8,10 @@
 //! strict decoding remains the default.
 
 use crate::{AkitaJoltCase, AkitaJoltInputs, AkitaJoltOpeningGroup};
-use akita_config::{derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog};
+use akita_config::{
+    derive_transcript_grinding_plan, CommitmentConfig, TrustedScheduleCatalog,
+    MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
+};
 use akita_error::checked;
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
@@ -48,7 +51,6 @@ pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv5";
 const CATALOG_FRAME_MAGIC: [u8; 8] = *b"AKCATF01";
 const CATALOG_FRAME_HEADER_BYTES: usize = CATALOG_FRAME_MAGIC.len() + 8;
-const MAX_SCHEDULE_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 const MAX_BLOB_GROUPS: usize = 16;
@@ -108,12 +110,12 @@ fn inner_blob_bytes(bytes: &[u8]) -> Result<&[u8], SerializationError> {
     let artifact_len =
         usize::try_from(artifact_len_u64).map_err(|_| SerializationError::LengthLimitExceeded {
             len: artifact_len_u64,
-            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+            max: MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
         })?;
-    if artifact_len == 0 || artifact_len > MAX_SCHEDULE_ARTIFACT_BYTES {
+    if artifact_len == 0 || artifact_len > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
         return Err(SerializationError::LengthLimitExceeded {
             len: artifact_len_u64,
-            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+            max: MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
         });
     }
     let inner_offset = CATALOG_FRAME_HEADER_BYTES
@@ -140,10 +142,10 @@ pub fn frame_with_schedule_catalog<Cfg: CommitmentConfig>(
     let artifact = schedules
         .to_artifact_bytes()
         .map_err(|error| SerializationError::InvalidData(error.to_string()))?;
-    if artifact.is_empty() || artifact.len() > MAX_SCHEDULE_ARTIFACT_BYTES {
+    if artifact.is_empty() || artifact.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
         return Err(SerializationError::LengthLimitExceeded {
             len: artifact.len() as u64,
-            max: MAX_SCHEDULE_ARTIFACT_BYTES,
+            max: MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES,
         });
     }
     let framed_len =

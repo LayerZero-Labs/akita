@@ -76,7 +76,7 @@ mod transcript_binding;
 mod transcript_grinding_plan;
 pub use akita_schedules::ResolvedScheduleRow;
 pub use akita_schedules::RingDimensionScheduleMode;
-pub use akita_schedules::TrustedScheduleCatalog;
+pub use akita_schedules::{TrustedScheduleCatalog, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES};
 pub use proof_optimized::{
     ensure_prover_schedule_fits_setup, ensure_verifier_schedule_fits_setup,
     setup_level_params_from_schedule, trusted_setup_matrix_capacity,

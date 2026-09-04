@@ -8,8 +8,11 @@ use akita_types::instance_descriptor::{
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupBatchProfile, FoldSchedule, OpeningScheduleSelection,
 };
-use serde::{Deserialize, Serialize};
+use serde::de::{self, DeserializeSeed, IgnoredAny, SeqAccess, Visitor};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::ser::Formatter;
+use std::fmt;
 use std::io::{self, Write};
 
 use crate::policy_digest::policy_digest;
@@ -19,7 +22,8 @@ use crate::PlannerPolicy;
 
 const ARTIFACT_MAGIC: [u8; 8] = *b"AKSCHD01";
 const ARTIFACT_VERSION: u32 = 1;
-const MAX_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum encoded bytes accepted for one trusted schedule artifact.
+pub const MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FAMILY_NAME_BYTES: usize = 128;
 pub(crate) const MAX_TRUSTED_CATALOG_ROWS: usize = 1 << 14;
 
@@ -37,6 +41,133 @@ struct ScheduleCatalogArtifactV1 {
 struct ScheduleCatalogArtifactRowV1 {
     profiles: CommittedGroupBatchProfile,
     schedule: FoldSchedule,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScheduleCatalogArtifactEnvelopeV1 {
+    magic: [u8; 8],
+    version: u32,
+    protocol_epoch: u32,
+    policy_digest: [u8; 32],
+    family_name: BoundedFamilyName,
+    rows: BoundedRowCount,
+}
+
+#[derive(Debug)]
+struct BoundedFamilyName(String);
+
+impl<'de> Deserialize<'de> for BoundedFamilyName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_str(BoundedFamilyNameVisitor)
+    }
+}
+
+struct BoundedFamilyNameVisitor;
+
+impl Visitor<'_> for BoundedFamilyNameVisitor {
+    type Value = BoundedFamilyName;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "a schedule family name containing 1..={MAX_FAMILY_NAME_BYTES} bytes"
+        )
+    }
+
+    fn visit_borrowed_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        bounded_family_name(value)
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        bounded_family_name(value)
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        validate_family_name(&value).map_err(E::custom)?;
+        Ok(BoundedFamilyName(value))
+    }
+}
+
+fn bounded_family_name<E: de::Error>(value: &str) -> Result<BoundedFamilyName, E> {
+    validate_family_name(value).map_err(E::custom)?;
+    Ok(BoundedFamilyName(value.to_owned()))
+}
+
+#[derive(Debug)]
+struct BoundedRowCount(usize);
+
+impl<'de> Deserialize<'de> for BoundedRowCount {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(BoundedRowCountVisitor)
+    }
+}
+
+struct BoundedRowCountVisitor;
+
+impl<'de> Visitor<'de> for BoundedRowCountVisitor {
+    type Value = BoundedRowCount;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "a trusted schedule row array containing 1..={MAX_TRUSTED_CATALOG_ROWS} rows"
+        )
+    }
+
+    fn visit_seq<A>(self, mut rows: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut count = 0usize;
+        while count < MAX_TRUSTED_CATALOG_ROWS {
+            if rows.next_element::<IgnoredAny>()?.is_none() {
+                if count == 0 {
+                    return Err(de::Error::custom(
+                        "trusted schedule catalog row count 0 is outside 1..=16384",
+                    ));
+                }
+                return Ok(BoundedRowCount(count));
+            }
+            count += 1;
+        }
+
+        match rows.next_element_seed(RejectExtraScheduleRow) {
+            Ok(None) => Ok(BoundedRowCount(count)),
+            Ok(Some(())) => unreachable!("rejecting row seed cannot deserialize a value"),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+struct RejectExtraScheduleRow;
+
+impl<'de> DeserializeSeed<'de> for RejectExtraScheduleRow {
+    type Value = ();
+
+    fn deserialize<D>(self, _deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Err(de::Error::custom(format!(
+            "trusted schedule catalog row count exceeds {MAX_TRUSTED_CATALOG_ROWS}"
+        )))
+    }
 }
 
 /// An owned, validated schedule catalog supplied through a trusted parameter path.
@@ -62,7 +193,10 @@ impl TrustedScheduleCatalog {
     ) -> Result<Self, AkitaError> {
         let family_name = family_name.into();
         validate_family_name(&family_name)?;
-        let rows = rows.into_iter().collect::<Vec<_>>();
+        let rows = rows
+            .into_iter()
+            .take(MAX_TRUSTED_CATALOG_ROWS + 1)
+            .collect::<Vec<_>>();
         if rows.is_empty() || rows.len() > MAX_TRUSTED_CATALOG_ROWS {
             return Err(AkitaError::InvalidSetup(format!(
                 "trusted schedule catalog row count {} is outside 1..={MAX_TRUSTED_CATALOG_ROWS}",
@@ -125,22 +259,44 @@ impl TrustedScheduleCatalog {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     ) -> Result<Self, AkitaError> {
-        if bytes.is_empty() || bytes.len() > MAX_ARTIFACT_BYTES {
+        if bytes.is_empty() || bytes.len() > MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES {
             return Err(AkitaError::InvalidSetup(format!(
-                "schedule artifact byte length {} is outside 1..={MAX_ARTIFACT_BYTES}",
+                "schedule artifact byte length {} is outside 1..={MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES}",
                 bytes.len()
             )));
         }
+        let envelope: ScheduleCatalogArtifactEnvelopeV1 =
+            serde_json::from_slice(bytes).map_err(|error| {
+                AkitaError::InvalidSetup(format!("invalid schedule artifact envelope: {error}"))
+            })?;
+        if envelope.magic != ARTIFACT_MAGIC || envelope.version != ARTIFACT_VERSION {
+            return Err(AkitaError::InvalidSetup(
+                "unsupported schedule artifact format".to_string(),
+            ));
+        }
+        if envelope.protocol_epoch != AKITA_INSTANCE_DESCRIPTOR_VERSION {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule artifact protocol epoch {} does not match runtime epoch {}",
+                envelope.protocol_epoch, AKITA_INSTANCE_DESCRIPTOR_VERSION
+            )));
+        }
+        if envelope.family_name.0 != expected_family_name {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule artifact family {:?} does not match trusted family {:?}",
+                envelope.family_name.0, expected_family_name
+            )));
+        }
+        if envelope.policy_digest != policy_digest(policy) {
+            return Err(AkitaError::InvalidSetup(
+                "schedule artifact policy does not match the runtime config".to_string(),
+            ));
+        }
+        debug_assert!((1..=MAX_TRUSTED_CATALOG_ROWS).contains(&envelope.rows.0));
+
         let artifact: ScheduleCatalogArtifactV1 =
             serde_json::from_slice(bytes).map_err(|error| {
                 AkitaError::InvalidSetup(format!("invalid schedule artifact encoding: {error}"))
             })?;
-        let canonical = encode_artifact(&artifact)?;
-        if canonical != bytes {
-            return Err(AkitaError::InvalidSetup(
-                "schedule artifact is not in canonical JSON form".to_string(),
-            ));
-        }
         if artifact.magic != ARTIFACT_MAGIC || artifact.version != ARTIFACT_VERSION {
             return Err(AkitaError::InvalidSetup(
                 "unsupported schedule artifact format".to_string(),
@@ -163,6 +319,12 @@ impl TrustedScheduleCatalog {
                 "schedule artifact policy does not match the runtime config".to_string(),
             ));
         }
+        let canonical = encode_artifact(&artifact)?;
+        if canonical != bytes {
+            return Err(AkitaError::InvalidSetup(
+                "schedule artifact is not in canonical JSON form".to_string(),
+            ));
+        }
         let catalog = Self::try_new(
             artifact.family_name,
             artifact
@@ -182,28 +344,15 @@ impl TrustedScheduleCatalog {
 
     /// Encode this validated catalog as the canonical versioned artifact.
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, AkitaError> {
-        let artifact = ScheduleCatalogArtifactV1 {
+        let artifact = ScheduleCatalogArtifactRefV1 {
             magic: ARTIFACT_MAGIC,
             version: ARTIFACT_VERSION,
             protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
             policy_digest: self.policy_digest,
-            family_name: self.family_name.clone(),
-            rows: self
-                .rows_by_digest
-                .iter()
-                .map(|row| ScheduleCatalogArtifactRowV1 {
-                    profiles: row.profiles().clone(),
-                    schedule: row.schedule().clone(),
-                })
-                .collect(),
+            family_name: &self.family_name,
+            rows: ScheduleCatalogArtifactRowsRef(&self.rows_by_digest),
         };
-        let bytes = encode_artifact(&artifact)?;
-        if bytes.len() > MAX_ARTIFACT_BYTES {
-            return Err(AkitaError::InvalidSetup(format!(
-                "encoded schedule artifact exceeds {MAX_ARTIFACT_BYTES} bytes"
-            )));
-        }
-        Ok(bytes)
+        encode_artifact(&artifact)
     }
 
     /// Stable family label carried by the trusted artifact.
@@ -316,13 +465,100 @@ impl TrustedScheduleCatalog {
     }
 }
 
-fn encode_artifact(artifact: &ScheduleCatalogArtifactV1) -> Result<Vec<u8>, AkitaError> {
-    let mut serializer =
-        serde_json::Serializer::with_formatter(Vec::new(), ReadableArtifactFormatter::default());
-    artifact.serialize(&mut serializer).map_err(|error| {
+#[derive(Serialize)]
+struct ScheduleCatalogArtifactRefV1<'a> {
+    magic: [u8; 8],
+    version: u32,
+    protocol_epoch: u32,
+    policy_digest: [u8; 32],
+    family_name: &'a str,
+    rows: ScheduleCatalogArtifactRowsRef<'a>,
+}
+
+struct ScheduleCatalogArtifactRowsRef<'a>(&'a [ResolvedScheduleRow]);
+
+impl Serialize for ScheduleCatalogArtifactRowsRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut rows = serializer.serialize_seq(Some(self.0.len()))?;
+        for row in self.0 {
+            rows.serialize_element(&ScheduleCatalogArtifactRowRefV1 {
+                profiles: row.profiles(),
+                schedule: row.schedule(),
+            })?;
+        }
+        rows.end()
+    }
+}
+
+#[derive(Serialize)]
+struct ScheduleCatalogArtifactRowRefV1<'a> {
+    profiles: &'a CommittedGroupBatchProfile,
+    schedule: &'a FoldSchedule,
+}
+
+fn encode_artifact(artifact: &impl Serialize) -> Result<Vec<u8>, AkitaError> {
+    encode_artifact_with_limit(artifact, MAX_TRUSTED_SCHEDULE_ARTIFACT_BYTES)
+}
+
+fn encode_artifact_with_limit(
+    artifact: &impl Serialize,
+    limit: usize,
+) -> Result<Vec<u8>, AkitaError> {
+    let mut writer = CappedArtifactWriter::new(limit);
+    let result = {
+        let mut serializer = serde_json::Serializer::with_formatter(
+            &mut writer,
+            ReadableArtifactFormatter::default(),
+        );
+        artifact.serialize(&mut serializer)
+    };
+    if writer.limit_exceeded {
+        return Err(AkitaError::InvalidSetup(format!(
+            "encoded schedule artifact exceeds {limit} bytes"
+        )));
+    }
+    result.map_err(|error| {
         AkitaError::InvalidSetup(format!("failed to encode schedule artifact: {error}"))
     })?;
-    Ok(serializer.into_inner())
+    Ok(writer.bytes)
+}
+
+struct CappedArtifactWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    limit_exceeded: bool,
+}
+
+impl CappedArtifactWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            limit_exceeded: false,
+        }
+    }
+}
+
+impl Write for CappedArtifactWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let Some(next_len) = self.bytes.len().checked_add(buffer.len()) else {
+            self.limit_exceeded = true;
+            return Err(io::Error::other("schedule artifact byte length overflow"));
+        };
+        if next_len > self.limit {
+            self.limit_exceeded = true;
+            return Err(io::Error::other("schedule artifact byte limit exceeded"));
+        }
+        self.bytes.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -578,4 +814,16 @@ fn validate_schedule_challenge_hooks(
             position,
         ),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_encoder_stops_at_the_writer_limit() {
+        let error = encode_artifact_with_limit(&vec![0u8; 32], 8)
+            .expect_err("encoding must stop at the configured byte limit");
+        assert!(error.to_string().contains("exceeds 8 bytes"));
+    }
 }
